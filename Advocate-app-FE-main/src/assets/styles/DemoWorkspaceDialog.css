@@ -1,0 +1,230 @@
+.demo-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.demo-modal {
+  background: var(--bg-primary, #fff);
+  border-radius: 16px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.25s ease;
+  overflow: hidden;
+  position: relative;
+}
+
+.demo-header {
+  text-align: center;
+  padding: 32px 32px 16px;
+  position: relative;
+}
+
+.demo-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366F1, #8B5CF6);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.demo-header h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary, #1a1a2e);
+}
+
+.demo-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.5;
+}
+
+.demo-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--text-muted, #6b7280);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.demo-close-btn:hover {
+  background: var(--bg-tertiary, #f3f4f6);
+  color: var(--text-primary, #1a1a2e);
+}
+
+.demo-body {
+  padding: 16px 32px 24px;
+}
+
+.demo-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.demo-alert-error {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.demo-alert-success {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+
+.demo-status-section {
+  margin-bottom: 20px;
+}
+
+.demo-status-section h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a2e);
+}
+
+.demo-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.demo-stat-card {
+  background: var(--bg-secondary, #f9fafb);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 10px;
+  padding: 10px 8px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.demo-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted, #6b7280);
+}
+
+.demo-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary, #1a1a2e);
+}
+
+.demo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.demo-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: 100%;
+}
+
+.demo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.demo-btn-primary {
+  background: linear-gradient(135deg, #6366F1, #8B5CF6);
+  color: #fff;
+}
+
+.demo-btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+  transform: translateY(-1px);
+}
+
+.demo-btn-danger {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.demo-btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.demo-btn-secondary {
+  background: var(--bg-tertiary, #f3f4f6);
+  color: var(--text-primary, #1a1a2e);
+  border: 1px solid var(--border-color, #e5e7eb);
+}
+
+.demo-btn-secondary:hover:not(:disabled) {
+  background: var(--bg-hover, #e5e7eb);
+}
+
+.demo-generated-info {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted, #9ca3af);
+}
+
+.demo-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 32px;
+  background: var(--bg-secondary, #f9fafb);
+  border-top: 1px solid var(--border-color, #e5e7eb);
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}

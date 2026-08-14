@@ -1,0 +1,160 @@
+.appeal-alert-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.appeal-alert-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 32px 40px 40px;
+}
+
+.appeal-alert-title {
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2a44;
+  margin: 0 0 28px;
+}
+
+.appeal-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 22px 28px;
+}
+
+.appeal-form-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+.appeal-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.appeal-field label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2a44;
+  margin-bottom: 8px;
+}
+
+.appeal-field input[type="text"],
+.appeal-field input[type="date"],
+.appeal-field select {
+  padding: 12px 14px;
+  border: 1px solid #d6dae2;
+  border-radius: 8px;
+  font-size: 15px;
+  color: #1f2a44;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.appeal-field input[type="text"]:focus,
+.appeal-field input[type="date"]:focus,
+.appeal-field select:focus {
+  border-color: #10b981;
+}
+
+.appeal-field input.forum-readonly {
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: not-allowed;
+  border-style: solid;
+}
+
+.appeal-form-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 32px;
+}
+
+.appeal-submit-btn {
+  background: #10b981;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 28px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.appeal-submit-btn:hover {
+  background: #0ea371;
+}
+
+.appeal-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* --- Saved alerts list --- */
+.appeal-list-section {
+  margin-top: 36px;
+}
+
+.appeal-list-section h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1f2a44;
+  margin: 0 0 16px;
+}
+
+.appeal-table-wrap {
+  overflow-x: auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.appeal-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.appeal-table th,
+.appeal-table td {
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid #eef0f4;
+  color: #374151;
+}
+
+.appeal-table th {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #1f2a44;
+}
+
+.appeal-delete-btn {
+  background: transparent;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.appeal-empty {
+  padding: 24px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+@media (max-width: 720px) {
+  .appeal-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .appeal-alert-card {
+    padding: 24px 20px 28px;
+  }
+}

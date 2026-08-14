@@ -1,0 +1,127 @@
+.board-container {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.board-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.board-sub {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.board-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.board-meta {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin-bottom: 14px;
+}
+
+.board-meta strong { color: var(--text-primary); }
+
+.board-auto { font-style: italic; opacity: 0.8; }
+
+.board-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid #e04f5f;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+
+.board-error button {
+  margin-left: auto;
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.board-loading,
+.board-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.board-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.board-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.board-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  text-align: left;
+  font-weight: 600;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.board-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+
+.board-table tbody tr:last-child td { border-bottom: none; }
+.board-table tbody tr:hover { background: var(--bg-secondary); }
+
+.board-table tr.row-over td { opacity: 0.6; }
+
+.board-court {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.board-case { font-weight: 600; }
+
+.board-judges { color: var(--text-muted); }
+.board-judges div { line-height: 1.4; }
+
+@media (max-width: 640px) {
+  .board-container { padding: 16px; }
+  .board-header { flex-direction: column; }
+  .board-controls { width: 100%; }
+}

@@ -1,0 +1,70 @@
+# ==========================
+# Backend
+# ==========================
+Advocate-app-BE-main/target/
+Advocate-app-BE-main/logs/
+Advocate-app-BE-main/*.log
+
+# Maven Wrapper Logs
+**/.mvn/wrapper/maven-wrapper.jar
+
+# ==========================
+# Frontend
+# ==========================
+Advocate-app-FE-main/node_modules/
+Advocate-app-FE-main/dist/
+Advocate-app-FE-main/.vite/
+
+# ==========================
+# Environment Files
+# ==========================
+**/.env
+**/.env.local
+**/.env.production
+
+# ==========================
+# IDE
+# ==========================
+.vscode/
+.idea/
+*.iml
+
+# ==========================
+# OS Files
+# ==========================
+Thumbs.db
+.DS_Store
+
+# ==========================
+# Logs
+# ==========================
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ==========================
+# Python / Django backend
+# ==========================
+**/venv/
+**/.venv/
+**/__pycache__/
+*.py[cod]
+*.sqlite3
+Advocate-app-BE-Django/staticfiles/
+Advocate-app-BE-Django/media/
+
+# ==========================
+# Secrets / sensitive (never commit)
+# ==========================
+recovery-codes.txt
+**/.env
+*.pem
+*.key
+
+# ==========================
+# Tooling / local
+# ==========================
+.claude/
+Advocate-app-FE-main/node_modules/
+Advocate-app-FE-main/dist/

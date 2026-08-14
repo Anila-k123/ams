@@ -1,0 +1,302 @@
+/* ─── Full-page background ─── */
+.signup-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  width: 100%;
+  background-image: url('../images/login-2.jpeg');
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+}
+
+.signup-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  pointer-events: none;
+}
+
+/* ─── Glass Card ─── */
+.signup-box {
+  width: 100%;
+  max-width: 650px;
+  background: rgba(255,255,255,.12);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(255,255,255,.20);
+  border-radius: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  padding: 50px;
+  position: relative;
+  z-index: 1;
+  animation: fadeInUp 0.7s ease-out;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Back Button ─── */
+.signup-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.15);
+  color: rgba(255,255,255,.85);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-bottom: 16px;
+}
+
+.signup-back:hover {
+  background: rgba(139,92,246,.12);
+  color: #8B5CF6;
+  transform: translateY(-1px);
+}
+
+/* ─── Title ─── */
+.signup-box h2 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  text-align: center;
+  margin: 0 0 20px;
+  letter-spacing: 0.5px;
+}
+
+/* ─── Form ─── */
+.signup-box form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.signup-box input,
+.signup-box textarea,
+.signup-box select {
+  height: 48px;
+  border-radius: 14px;
+  padding: 0 16px;
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.18);
+  color: #ffffff;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.signup-box input::placeholder,
+.signup-box textarea::placeholder {
+  color: rgba(255,255,255,.6);
+}
+
+.signup-box input:focus,
+.signup-box textarea:focus,
+.signup-box select:focus {
+  border-color: #8B5CF6;
+  background: rgba(255,255,255,.15);
+  box-shadow: 0 0 0 3px rgba(139,92,246,.2);
+}
+
+.signup-box textarea {
+  resize: none;
+  min-height: 70px;
+  padding: 14px 16px;
+}
+
+.signup-box select {
+  cursor: pointer;
+  appearance: auto;
+}
+
+.signup-box select option {
+  background: #1a1a2e;
+  color: #fff;
+}
+
+/* ─── Submit Button ─── */
+.signup-box button[type="submit"] {
+  height: 52px;
+  border-radius: 18px;
+  border: none;
+  background: linear-gradient(135deg, #6C63FF, #8B5CF6);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 12px 30px rgba(108,99,255,.45);
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+
+.signup-box button[type="submit"]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 40px rgba(108,99,255,.6);
+}
+
+.signup-box button[type="submit"]:active {
+  transform: translateY(0);
+}
+
+/* ─── Bottom text ─── */
+.signup-box > p {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 14px;
+  color: rgba(255,255,255,.7);
+}
+
+.signup-box .link {
+  color: #ffffff;
+  cursor: pointer;
+  font-weight: 600;
+  position: relative;
+  transition: color 0.3s ease;
+}
+
+.signup-box .link::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: #8B5CF6;
+  transition: width 0.3s ease;
+}
+
+.signup-box .link:hover {
+  color: #8B5CF6;
+}
+
+.signup-box .link:hover::after {
+  width: 100%;
+}
+
+/* ─── Password field with toggle ─── */
+.pwd-field {
+  position: relative;
+  width: 100%;
+}
+
+.pwd-field input {
+  padding-right: 64px;
+}
+
+.pwd-toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 8px;
+  color: rgba(255,255,255,.75);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.pwd-toggle:hover {
+  background: rgba(139,92,246,.20);
+  color: #8B5CF6;
+}
+
+/* ─── Password checklist ─── */
+.pwd-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.rule {
+  font-size: 12px;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.rule.ok {
+  color: #22c55e;
+}
+
+.rule.fail {
+  color: rgba(255,255,255,.50);
+}
+
+/* ─── Password strength indicator ─── */
+.pwd-strength {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.strength-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,.12);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.strength-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.strength-fill.weak {
+  background: #ef4444;
+}
+
+.strength-fill.medium {
+  background: #f59e0b;
+}
+
+.strength-fill.strong {
+  background: #22c55e;
+}
+
+.strength-label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 52px;
+  text-align: right;
+}
+
+.strength-label.weak {
+  color: #ef4444;
+}
+
+.strength-label.medium {
+  color: #f59e0b;
+}
+
+.strength-label.strong {
+  color: #22c55e;
+}
+
+/* ─── Disabled submit button ─── */
+.signup-box button[type="submit"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}

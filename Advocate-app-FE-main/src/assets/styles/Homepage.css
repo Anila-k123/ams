@@ -1,0 +1,384 @@
+/* ─── Full-page background with dark overlay ─── */
+#homepage {
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background-image: url('../images/login-2.jpeg');
+  background-size: cover;
+  background-attachment: fixed;
+  background-position: center;
+  animation: fadeIn 0.3s ease-out;
+}
+
+#homepage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(rgba(0,0,0,.35), rgba(0,0,0,.45));
+  pointer-events: none;
+  z-index: 0;
+}
+
+#homepage > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── Glass Navbar ─── */
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between !important;
+  gap: 12px;
+  padding: 14px 24px !important;
+  margin: 20px 28px 0;
+  background: rgba(255,255,255,.10) !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 20px !important;
+  box-shadow: 0 8px 40px rgba(0,0,0,.35);
+  max-width: calc(100% - 56px);
+  animation: slideDown 0.5s ease-out;
+}
+
+/* ─── Navbar Branding (left) ─── */
+.navbar-branding {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.navbar-logo-wrap {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.navbar-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  display: block;
+}
+
+.navbar-title-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.navbar-app-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+  line-height: 1.1;
+}
+
+.navbar-app-sub {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255,255,255,.65);
+  margin-top: 2px;
+}
+
+/* ─── Navbar Links (right) ─── */
+.navbar-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navbar .btn.btn-outline-secondary.border {
+  background: transparent !important;
+  backdrop-filter: none;
+  border: none !important;
+  border-radius: 12px;
+  padding: 10px 22px;
+  font-weight: 600;
+  font-size: 13px;
+  color: rgba(255,255,255,.85) !important;
+  transition: all 0.3s ease;
+}
+
+.navbar .btn.btn-outline-secondary.border:hover {
+  color: #8B5CF6 !important;
+  background: rgba(139,92,246,.12) !important;
+  transform: translateY(-1px);
+}
+
+.navbar .btn.btn-outline-secondary.border a.navbar-brand,
+.navbar-brand {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255,255,255,.85) !important;
+  text-decoration: none;
+  background: none;
+  transition: color 0.3s ease;
+}
+
+.navbar .btn.btn-outline-secondary.border:hover a.navbar-brand,
+.navbar-brand:hover {
+  color: #8B5CF6 !important;
+}
+
+/* ─── Welcome Card — Glassmorphism ─── */
+#welcomebox {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 24px 40px;
+  animation: fadeInUp 0.7s ease-out;
+}
+
+#welcomebox > div {
+  background: rgba(255,255,255,.12);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  border: 1px solid rgba(255,255,255,.20);
+  border-radius: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  padding: 50px;
+  max-width: 650px;
+  width: 100%;
+  text-align: center;
+  animation: float 6s ease-in-out infinite;
+}
+
+/* ─── Welcome Title ─── */
+.welcome-title {
+  font-size: 58px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #ffffff;
+  margin: 0 0 12px;
+  line-height: 1.1;
+}
+
+/* ─── Main Title ─── */
+.main-title {
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #ffffff;
+  margin: 0 0 20px;
+}
+
+/* ─── Logo ─── */
+#welcomebox img {
+  width: 90px;
+  height: 90px;
+  object-fit: contain;
+  background: rgba(255,255,255,.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 50%;
+  padding: 16px;
+  margin: 8px auto;
+  display: block;
+}
+
+/* ─── Coder Text ─── */
+.coder-text {
+  font-size: 20px;
+  color: #E2E8F0;
+  font-weight: 400;
+  margin: 8px 0 16px;
+}
+
+/* ─── Premium Divider ─── */
+.premium-divider {
+  color: rgba(139,92,246,.30);
+  font-size: 14px;
+  letter-spacing: 8px;
+  margin: 16px 0 20px;
+  user-select: none;
+}
+
+/* ─── Signup Button ─── */
+#signup {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  padding: 0 36px;
+  background: linear-gradient(135deg, #6C63FF, #8B5CF6) !important;
+  border: none !important;
+  border-radius: 18px !important;
+  box-shadow: 0 12px 30px rgba(108,99,255,.45) !important;
+  font-weight: 700;
+  font-size: 15px;
+  color: #ffffff !important;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin: 8px 0;
+}
+
+#signup:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 40px rgba(108,99,255,.6) !important;
+}
+
+#signup a {
+  color: #ffffff !important;
+  text-decoration: none;
+}
+
+/* ─── Login Link ─── */
+#welcomebox span {
+  display: inline-block;
+  font-size: 14px;
+  color: rgba(255,255,255,.7);
+  margin-top: 12px;
+}
+
+#loginbtn {
+  margin-left: 4px;
+}
+
+#loginbtn a {
+  color: #ffffff !important;
+  text-decoration: none;
+  font-weight: 600;
+  position: relative;
+  transition: color 0.3s ease;
+}
+
+#loginbtn a::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: #8B5CF6;
+  transition: width 0.3s ease;
+}
+
+#loginbtn a:hover {
+  color: #8B5CF6 !important;
+}
+
+#loginbtn a:hover::after {
+  width: 100%;
+}
+
+/* ─── Glassmorphism override for Bootstrap container classes ─── */
+.container-xl.d-flex.justify-content-center.rounded.text-center {
+  background: none !important;
+  backdrop-filter: none;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  max-width: 100%;
+  margin: 0 auto;
+  box-shadow: none !important;
+}
+
+/* ─── Animations ─── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* ─── Remove conflicting Bootstrap styles ─── */
+.container.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between !important;
+  gap: 12px;
+}
+
+.br {
+  display: none;
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 768px) {
+  .navbar {
+    flex-wrap: wrap;
+    padding: 12px 18px !important;
+    margin: 12px 16px 0;
+    max-width: calc(100% - 32px);
+  }
+
+  .navbar-app-title {
+    font-size: 22px;
+  }
+
+  .navbar-app-sub {
+    display: none;
+  }
+
+  .navbar-logo-wrap {
+    width: 44px;
+    height: 44px;
+  }
+
+  .navbar-logo {
+    width: 26px;
+    height: 26px;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px !important;
+  }
+
+  .navbar-branding {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .navbar-links {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .navbar-app-title {
+    font-size: 20px;
+  }
+}

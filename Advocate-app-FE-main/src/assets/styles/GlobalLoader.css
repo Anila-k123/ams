@@ -1,0 +1,61 @@
+.global-loader-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.global-loader-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.global-loader-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.global-loader-svg {
+  width: 52px;
+  height: 52px;
+  animation: global-spin 0.9s linear infinite;
+}
+
+.global-loader-track {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 4;
+}
+
+.global-loader-stroke {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 125;
+  stroke-dashoffset: 100;
+}
+
+@keyframes global-spin {
+  100% { transform: rotate(360deg); }
+}
+
+.global-loader-message {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  text-align: center;
+  margin: 0;
+  opacity: 0.9;
+}

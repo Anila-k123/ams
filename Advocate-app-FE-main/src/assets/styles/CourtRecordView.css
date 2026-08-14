@@ -1,0 +1,95 @@
+.cr-record { width: 100%; }
+
+.cr-case {
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.cr-case-head {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cr-sec { margin-bottom: 20px; }
+.cr-sec h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
+.cr-kv { margin: 0; }
+.cr-kv-row {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.cr-kv-row:last-child { border-bottom: none; }
+.cr-kv-row dt { color: var(--text-muted); font-size: 0.84rem; font-weight: 600; }
+.cr-kv-row dd { margin: 0; color: var(--text-primary); font-size: 0.88rem; word-break: break-word; }
+
+.cr-prayer {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.cr-table-wrap { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 8px; }
+.cr-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.cr-table th {
+  text-align: left;
+  padding: 9px 12px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.cr-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+.cr-table tr:last-child td { border-bottom: none; }
+
+.cr-note { margin: 8px 2px 0; font-size: 0.78rem; font-style: italic; color: var(--text-muted); }
+
+@media (max-width: 720px) { .cr-kv-row { grid-template-columns: 1fr; gap: 2px; } }
+
+.cr-raw { margin-top: 10px; }
+.cr-raw > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 8px 0;
+}
+.cr-raw pre {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cr-party { margin: 0; padding-left: 18px; }
+.cr-party li { color: var(--text-primary); font-size: 0.88rem; padding: 3px 0; }
+.cr-adv { color: var(--text-muted); }

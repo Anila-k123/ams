@@ -1,0 +1,2 @@
+All shared models live in core/models.py. Domain apps import from core.models and
+keep their own models.py empty (no per-app tables).

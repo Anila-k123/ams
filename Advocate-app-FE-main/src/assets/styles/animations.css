@@ -1,0 +1,188 @@
+/* ============================================
+   REUSABLE ANIMATIONS — Advocate App
+   ============================================ */
+
+/* ─── Fade ─── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ─── Slide ─── */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideLeft {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideRight {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Scale ─── */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes scaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.92); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ─── Card Hover ─── */
+@keyframes cardHover {
+  from { transform: translateY(0); box-shadow: var(--card-shadow); }
+  to { transform: translateY(-4px); box-shadow: var(--shadow-md); }
+}
+
+/* ─── Button Hover ─── */
+@keyframes buttonHover {
+  from { transform: translateY(0); }
+  to { transform: translateY(-1px); }
+}
+
+/* ─── Glow Pulse ─── */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 5px rgba(79, 124, 255, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(79, 124, 255, 0.4); }
+}
+
+/* ─── Gradient Shift ─── */
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ─── Floating Blob ─── */
+@keyframes floatingBlob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(30px, -30px) scale(1.05); }
+  50% { transform: translate(-20px, 20px) scale(0.95); }
+  75% { transform: translate(20px, 30px) scale(1.02); }
+}
+
+/* ─── Shimmer (Skeleton) ─── */
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, var(--border-color) 25%, var(--bg-primary) 50%, var(--border-color) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ─── Ripple ─── */
+@keyframes ripple {
+  from { transform: scale(0); opacity: 0.5; }
+  to { transform: scale(4); opacity: 0; }
+}
+
+/* ─── Skeleton Loading ─── */
+@keyframes skeletonLoading {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.skeleton-pulse {
+  animation: skeletonLoading 1.5s ease-in-out infinite;
+}
+
+/* ─── Spin ─── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+/* ─── Pulse ─── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.05); }
+}
+
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* ─── Dot Bounce (Thinking) ─── */
+@keyframes dotBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ─── Badge Pop ─── */
+@keyframes badgePop {
+  0% { transform: scale(0.5); opacity: 0; }
+  70% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* ─── Notification slide-in for toasts ─── */
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes toastFadeOut {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(24px); }
+}
+
+/* ─── Period fade (dashboard) ─── */
+@keyframes periodFadeIn {
+  0% { opacity: 0.6; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes periodFadeOut {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0.4; transform: translateY(-4px); }
+}
+
+/* ─── Highlight row fade ─── */
+@keyframes highlightFade {
+  0%   { background-color: rgba(79, 124, 255, 0.25); }
+  70%  { background-color: rgba(79, 124, 255, 0.25); }
+  100% { background-color: transparent; }
+}
+
+/* ─── Card update flash ─── */
+@keyframes cardUpdateFlash {
+  0% { box-shadow: 0 0 0 0 var(--primary); background-color: rgba(79, 124, 255, 0.08); }
+  50% { box-shadow: 0 0 20px 4px rgba(79, 124, 255, 0.15); background-color: rgba(79, 124, 255, 0.04); }
+  100% { box-shadow: var(--card-shadow); background-color: transparent; }
+}
+
+/* ─── Assistant slide in ─── */
+@keyframes assistantSlideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}

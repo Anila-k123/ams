@@ -1,0 +1,177 @@
+.calendar-container {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  animation: fadeIn 0.3s ease-out, slideUp 0.3s ease-out;
+}
+
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.calendar-header h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.calendar-header-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.calendar-header-actions button {
+  background: var(--btn-secondary-bg);
+  border: none;
+  color: var(--text-primary);
+  padding: 10px 20px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+
+.calendar-header-actions button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-glow);
+}
+
+.calendar-header-actions button.add-event-btn {
+  background: var(--btn-primary-bg);
+  color: #fff;
+}
+
+.calendar-header-actions button.active-view {
+  background: var(--btn-primary-bg);
+  color: #fff;
+  box-shadow: var(--shadow-glow);
+}
+
+.rbc-calendar {
+  background: var(--card-bg) !important;
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border-radius: var(--radius) !important;
+  border: 1px solid var(--card-border) !important;
+  padding: 20px;
+  box-shadow: var(--card-shadow);
+  transition: all var(--transition);
+  color: var(--text-primary) !important;
+}
+
+.rbc-calendar:hover {
+  border-color: var(--card-hover-border);
+  box-shadow: var(--shadow-md);
+}
+
+.rbc-toolbar {
+  margin-bottom: 20px !important;
+  display: none !important;
+}
+
+.rbc-header {
+  padding: 12px 6px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted) !important;
+  border-bottom: 1px solid var(--card-border) !important;
+}
+
+.rbc-month-view,
+.rbc-time-view,
+.rbc-agenda-view {
+  border: 1px solid var(--card-border) !important;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.rbc-day-bg {
+  border-left: 1px solid var(--card-border) !important;
+}
+
+.rbc-day-bg:hover {
+  background-color: var(--table-row-hover);
+  cursor: pointer;
+}
+
+.rbc-month-row {
+  border-bottom: 1px solid var(--card-border) !important;
+}
+
+.rbc-off-range-bg {
+  background-color: rgba(0, 0, 0, 0.02) !important;
+}
+
+.rbc-today {
+  background-color: rgba(var(--primary-rgb), 0.08) !important;
+}
+
+.rbc-event {
+  border-radius: var(--radius-sm) !important;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+  transition: transform var(--transition) !important;
+}
+
+.rbc-event:hover {
+  transform: scale(1.04);
+}
+
+.rbc-event-content {
+  font-size: 11px !important;
+}
+
+.rbc-show-more {
+  font-weight: 700 !important;
+  color: var(--primary) !important;
+  font-size: 11px !important;
+}
+
+.event-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.event-form input,
+.event-form select,
+.event-form textarea {
+  padding: 10px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  width: 100%;
+  transition: all var(--transition-fast);
+}
+
+.event-form input:focus,
+.event-form select:focus,
+.event-form textarea:focus {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--input-focus-shadow);
+}
+
+.event-form label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: -10px;
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
@@ -8,6 +8,7 @@ import {
 } from "react-icons/fi";
 import CaseTimeline from "../components/CaseTimeline.jsx";
 import CourtRecordView from "../components/CourtRecordView.jsx";
+import { fetchCourtDocument } from "../services/courtDocuments";
 import { useToast } from "../contexts/ToastContext.jsx";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 import { formatCurrency } from "../utils/formatCurrency";
@@ -16,17 +17,33 @@ import "../assets/styles/CaseDetail.css";
 
 const TABS = ["Overview", "Expenses", "Payments", "Invoices", "Hearings", "Documents", "Notes", "Tasks", "Orders", "Court Record", "Timeline"];
 
+// Parse the portal's mixed date formats into ISO (yyyy-mm-dd); "" if unparseable.
+const _CD_MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
+  jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12 };
+function toISO(s) {
+  if (!s) return "";
+  const t = String(s).trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2,"0")}-${String(m[3]).padStart(2,"0")}`;
+  m = t.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  m = t.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\.?\s+(\d{4})/);
+  if (m) { const mo = _CD_MONTHS[m[2].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,"0")}-${m[1].padStart(2,"0")}`; }
+  return "";
+}
+
 // Normalize orders out of a stored court record (Madras or eCourts) → [{number, date, details, judge}].
 function extractOrders(record) {
   if (!record) return [];
   if (record.cases !== undefined) {
     const out = [];
     (record.cases || []).forEach((c) => (c.detail?.orders || []).forEach((o) =>
-      out.push({ number: o.order_number || "", date: o.order_date || "", details: o.order_details || "", judge: "" })));
+      out.push({ number: o.order_number || "", date: o.order_date || "", details: o.order_details || "", judge: "",
+                 pdf: o.pdf || null, viewToken: c.view_token })));
     return out;
   }
   return (record.orders || []).map((o) => ({
-    number: o.sl_no || "", date: o.order_date || "", details: o.case_details || "", judge: o.judge || "",
+    number: o.sl_no || "", date: o.order_date || "", details: o.case_details || "", judge: o.judge || "", pdf: null,
   }));
 }
 
@@ -72,8 +89,59 @@ export default function CaseDetail() {
 
   // Court record (imported from the court API)
   const [courtRecord, setCourtRecord] = useState(null);
+  const [courtRecordComplex, setCourtRecordComplex] = useState("");
   const [courtRecordLoading, setCourtRecordLoading] = useState(false);
   const [courtRecordLoaded, setCourtRecordLoaded] = useState(false);
+  const [orderDlBusy, setOrderDlBusy] = useState(-1);
+
+  const [hearingBizModal, setHearingBizModal] = useState(null);
+  const [hearingViewBusy, setHearingViewBusy] = useState(null);
+
+  const downloadOrderPdf = async (order, i) => {
+    setOrderDlBusy(i);
+    try {
+      await fetchCourtDocument({
+        courtComplex: courtRecordComplex,
+        viewToken: order.viewToken,
+        kind: "order_pdf",
+        token: order.pdf,
+        label: `Order ${order.number || ""} ${order.date || ""}`.trim(),
+      });
+    } catch (e) {
+      error && error(e?.message || "Couldn’t download the order PDF.");
+    } finally {
+      setOrderDlBusy(-1);
+    }
+  };
+
+  // Map an event's ISO date -> the court record's hearing "business" token, so the
+  // Hearings tab can offer a "View" (Daily Status) matching that date.
+  const hearingBizByDate = useMemo(() => {
+    const m = new Map();
+    (courtRecord?.cases || []).forEach((c) => (c.detail?.history || []).forEach((h) => {
+      if (!h.business) return;
+      const iso = toISO(h.hearing_date) || toISO(h.business_date);
+      if (iso && !m.has(iso)) m.set(iso, { business: h.business, viewToken: c.view_token, label: `Business ${h.business_date || ""}` });
+    }));
+    return m;
+  }, [courtRecord]);
+
+  const viewHearingBusiness = async (ev) => {
+    const match = hearingBizByDate.get(ev.date);
+    if (!match) return;
+    setHearingViewBusy(ev.id);
+    try {
+      const biz = await fetchCourtDocument({
+        courtComplex: courtRecordComplex, viewToken: match.viewToken,
+        kind: "hearing_business", token: match.business, label: match.label,
+      });
+      if (biz) setHearingBizModal(biz);
+    } catch (e) {
+      error && error(e?.message || "Couldn’t fetch the hearing status.");
+    } finally {
+      setHearingViewBusy(null);
+    }
+  };
 
   // Inputs
   const [newTag, setNewTag] = useState("");
@@ -334,6 +402,7 @@ export default function CaseDetail() {
     try {
       const res = await axios.get(`/api/courtsearch/imported-records?caseId=${id}`, authHeaders);
       setCourtRecord(res.data?.raw || null);
+      setCourtRecordComplex(res.data?.query?.court_complex || "");
     } catch {
       setCourtRecord(null); // 404 = no imported record for this case
     } finally {
@@ -350,7 +419,7 @@ export default function CaseDetail() {
     if (tab === "Documents") fetchDocs();
     if (tab === "Notes") fetchNotes();
     if (tab === "Tasks") fetchTasks();
-    if ((tab === "Court Record" || tab === "Orders") && !courtRecordLoaded) fetchCourtRecord();
+    if ((tab === "Court Record" || tab === "Orders" || tab === "Hearings") && !courtRecordLoaded) fetchCourtRecord();
   }, [tab, fetchFinancials, fetchEvents, fetchDocs, fetchNotes, fetchTasks, fetchParties, fetchRelated, fetchLinkableCases, fetchCourtRecord, courtRecordLoaded]);
 
   // ---------- Tags ----------
@@ -831,6 +900,12 @@ export default function CaseDetail() {
                   {ev.description && <span className="cd-li-desc">{ev.description}</span>}
                 </div>
                 <span className="cd-li-date">{fmtDate(ev.date)}{ev.time ? ` · ${ev.time.slice(0, 5)}` : ""}</span>
+                {hearingBizByDate.has(ev.date) && (
+                  <button className="cd-order-dl" style={{ marginLeft: 10 }} disabled={hearingViewBusy === ev.id}
+                    onClick={() => viewHearingBusiness(ev)}>
+                    {hearingViewBusy === ev.id ? "…" : "👁 View"}
+                  </button>
+                )}
               </div>
             ))}
             </div>
@@ -966,17 +1041,25 @@ export default function CaseDetail() {
                 <>
                   <div className="cd-orders-wrap">
                     <table className="cd-orders-table">
-                      <thead><tr><th>#</th><th>Order Date</th><th>Details</th><th>Judge</th></tr></thead>
+                      <thead><tr><th>#</th><th>Order Date</th><th>Details</th><th>Judge</th><th>Document</th></tr></thead>
                       <tbody>
                         {orders.map((o, i) => (
                           <tr key={i}>
                             <td>{o.number || i + 1}</td><td>{o.date}</td><td>{o.details}</td><td>{o.judge}</td>
+                            <td>
+                              {o.pdf && o.pdf.filename ? (
+                                <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
+                                  onClick={() => downloadOrderPdf(o, i)}>
+                                  {orderDlBusy === i ? "Fetching…" : "⬇ Download PDF"}
+                                </button>
+                              ) : <span className="cd-order-muted">—</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  <p className="cd-muted cd-orders-note">Order PDFs are not downloadable from the court at this time.</p>
+                  <p className="cd-muted cd-orders-note">PDFs are fetched live from the court and downloaded to your device; nothing is stored on our servers.</p>
                 </>
               );
             })()}
@@ -989,7 +1072,7 @@ export default function CaseDetail() {
             {!courtRecordLoading && courtRecord && (
               <>
                 <p className="cd-muted">The official court record captured when this case was imported. Shown as fetched — structured views will come later.</p>
-                <CourtRecordView record={courtRecord} />
+                <CourtRecordView record={courtRecord} courtComplex={courtRecordComplex} />
               </>
             )}
             {!courtRecordLoading && courtRecordLoaded && !courtRecord && (
@@ -1014,6 +1097,24 @@ export default function CaseDetail() {
           caseNumber={summary.caseNumber}
           onClose={() => setShowTimeline(false)}
         />
+      )}
+
+      {hearingBizModal && (
+        <div className="cr-modal-overlay" onClick={() => setHearingBizModal(null)}>
+          <div className="cr-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cr-modal-head">
+              <span>Daily Status</span>
+              <button type="button" className="cr-modal-x" onClick={() => setHearingBizModal(null)}>×</button>
+            </div>
+            {hearingBizModal.court && <p className="cr-modal-court">{hearingBizModal.court}</p>}
+            {hearingBizModal.parties && <p className="cr-modal-parties">{hearingBizModal.parties}</p>}
+            <dl className="cr-kv">
+              {Object.entries(hearingBizModal.fields || {}).map(([k, v]) => (
+                <div className="cr-kv-row" key={k}><dt>{k}</dt><dd>{String(v)}</dd></div>
+              ))}
+            </dl>
+          </div>
+        </div>
       )}
 
       {/* Add Expense modal */}

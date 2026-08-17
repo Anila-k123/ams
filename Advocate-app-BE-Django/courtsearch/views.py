@@ -9,6 +9,7 @@ import datetime
 import logging
 
 from django.core.cache import cache
+from django.http import StreamingHttpResponse
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -207,6 +208,43 @@ class EcourtsSearchView(APIView):
                 return _mapped(exc)
             cache.set(key, data, SEARCH_CACHE_TTL)
         return Response(data)
+
+
+class EcourtsDocumentView(APIView):
+    """Stream ONE court document on demand, straight from the scraper to the client.
+
+    Body: { court_complex, view_token, kind, token } — all taken verbatim from the
+    search response's documents[] entry. Nothing is stored: the scraper streams the
+    PDF (order_pdf) or JSON (hearing_business) and we pipe it through, preserving the
+    status, Content-Type and Content-Disposition so the browser saves/handles it."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        d = request.data
+        kind = (d.get('kind') or '').strip()
+        if not kind or d.get('token') in (None, '') or d.get('view_token') in (None, ''):
+            return Response({'error': 'kind, token and view_token are required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        body = {
+            'court_complex': str(d.get('court_complex') or ''),
+            'view_token': d.get('view_token'),
+            'kind': kind,
+            'token': d.get('token'),
+        }
+        try:
+            upstream = client.open_document_stream(body)
+        except client.ScraperUnavailable:
+            return _unavailable()
+
+        resp = StreamingHttpResponse(
+            upstream.iter_content(chunk_size=8192),
+            status=upstream.status_code,
+            content_type=upstream.headers.get('Content-Type', 'application/octet-stream'),
+        )
+        disposition = upstream.headers.get('Content-Disposition')
+        if disposition:
+            resp['Content-Disposition'] = disposition
+        return resp
 
 
 class ImportedRecordView(APIView):

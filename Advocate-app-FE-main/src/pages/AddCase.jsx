@@ -852,7 +852,7 @@ export default function AddCase() {
 
           <div className="ac-record">
             <div className="ac-record-head">Case details from the court</div>
-            <CourtRecordView record={fetchedRecord} />
+            <CourtRecordView record={fetchedRecord} courtComplex={ecComplexVal} />
           </div>
 
           <div className="ac-savebar">

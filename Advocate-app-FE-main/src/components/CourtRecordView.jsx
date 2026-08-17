@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import { fetchCourtDocument } from "../services/courtDocuments";
 import "../assets/styles/CourtRecordView.css";
 
 // Known column order for Madras HC row-based sections (API sends headerless rows).
@@ -51,8 +52,9 @@ function KV({ obj }) {
   );
 }
 
-function EcourtsRecord({ record }) {
+function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
   const cases = record.cases || [];
+  const canFetch = typeof onFetchDoc === "function";
   return (
     <div className="cr-record">
       {cases.length === 0 && <p className="cr-note">No detailed record was stored.</p>}
@@ -63,6 +65,7 @@ function EcourtsRecord({ record }) {
         const acts = d.acts || [];
         const history = d.history || [];
         const orders = d.orders || [];
+        const docs = c.documents || [];
         return (
           <div className="cr-case" key={idx}>
             <div className="cr-case-head">
@@ -102,18 +105,42 @@ function EcourtsRecord({ record }) {
             {history.length > 0 && (
               <section className="cr-sec"><h4>Case History</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
-                  <thead><tr><th>Judge</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th></tr></thead>
-                  <tbody>{history.map((h, i) => <tr key={i}><td>{h.judge}</td><td>{h.business_date}</td><td>{h.hearing_date}</td><td>{h.purpose}</td></tr>)}</tbody>
+                  <thead><tr><th>Judge</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th><th></th></tr></thead>
+                  <tbody>{history.map((h, i) => {
+                    const key = `${idx}:h${i}`;
+                    return (
+                      <tr key={i}>
+                        <td>{h.judge}</td><td>{h.business_date}</td><td>{h.hearing_date}</td><td>{h.purpose}</td>
+                        <td>{canFetch && h.business ? (
+                          <button type="button" className="cr-doc-btn cr-doc-inline" disabled={busyKey === key}
+                            onClick={() => onFetchDoc(c, { kind: "hearing_business", token: h.business, label: `Business ${h.business_date}` }, key)}>
+                            {busyKey === key ? "…" : "👁 View"}
+                          </button>) : null}</td>
+                      </tr>
+                    );
+                  })}</tbody>
                 </table></div>
               </section>
             )}
             {orders.length > 0 && (
               <section className="cr-sec"><h4>Orders / Judgements</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
-                  <thead><tr><th>#</th><th>Order Date</th><th>Details</th></tr></thead>
-                  <tbody>{orders.map((o, i) => <tr key={i}><td>{o.order_number || i + 1}</td><td>{o.order_date}</td><td>{o.order_details}</td></tr>)}</tbody>
+                  <thead><tr><th>#</th><th>Order Date</th><th>Details</th><th></th></tr></thead>
+                  <tbody>{orders.map((o, i) => {
+                    const key = `${idx}:o${i}`;
+                    const hasPdf = o.pdf && o.pdf.filename;
+                    return (
+                      <tr key={i}>
+                        <td>{o.order_number || i + 1}</td><td>{o.order_date}</td><td>{o.order_details}</td>
+                        <td>{canFetch && hasPdf ? (
+                          <button type="button" className="cr-doc-btn cr-doc-inline" disabled={busyKey === key}
+                            onClick={() => onFetchDoc(c, { kind: "order_pdf", token: o.pdf, label: `Order ${o.order_number || ""} ${o.order_date || ""}`.trim() }, key)}>
+                            {busyKey === key ? "…" : "⬇ Download"}
+                          </button>) : null}</td>
+                      </tr>
+                    );
+                  })}</tbody>
                 </table></div>
-                <p className="cr-note">Order PDFs are not downloadable from the court at this time.</p>
               </section>
             )}
           </div>
@@ -179,19 +206,59 @@ function MadrasRecord({ record }) {
 }
 
 // Renders a stored/scraped court record for either court shape (raw, unstructured).
-export default function CourtRecordView({ record }) {
+// `courtComplex` (the value used for the search) is required to fetch eCourts documents.
+export default function CourtRecordView({ record, courtComplex }) {
+  const [busyKey, setBusyKey] = useState("");
+  const [modal, setModal] = useState(null);
+  const [docError, setDocError] = useState("");
+
+  const fetchDoc = async (caseObj, doc, key) => {
+    setBusyKey(key);
+    setDocError("");
+    try {
+      const business = await fetchCourtDocument({
+        courtComplex,
+        viewToken: caseObj.view_token,
+        kind: doc.kind,
+        token: doc.token,
+        label: doc.label,
+      });
+      if (doc.kind !== "order_pdf" && business) setModal(business);
+    } catch (e) {
+      setDocError(e?.message || "Couldn’t fetch the document. Please try again.");
+    } finally {
+      setBusyKey("");
+    }
+  };
+
   if (!record) return null;
   const body = record.cases !== undefined
-    ? <EcourtsRecord record={record} />
+    ? <EcourtsRecord record={record} courtComplex={courtComplex} onFetchDoc={fetchDoc} busyKey={busyKey} />
     : <MadrasRecord record={record} />;
+
   return (
     <>
       {body}
+      {docError && <p className="cr-note" style={{ color: "#e04f5f" }}>{docError}</p>}
       {/* Guarantees every scraped field is visible even if a section shape is unexpected. */}
       <details className="cr-raw">
         <summary>Raw data (everything fetched)</summary>
         <pre>{JSON.stringify(record, null, 2)}</pre>
       </details>
+
+      {modal && (
+        <div className="cr-modal-overlay" onClick={() => setModal(null)}>
+          <div className="cr-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cr-modal-head">
+              <span>Daily Status</span>
+              <button type="button" className="cr-modal-x" onClick={() => setModal(null)}>×</button>
+            </div>
+            {modal.court && <p className="cr-modal-court">{modal.court}</p>}
+            {modal.parties && <p className="cr-modal-parties">{modal.parties}</p>}
+            <KV obj={modal.fields || {}} />
+          </div>
+        </div>
+      )}
     </>
   );
 }

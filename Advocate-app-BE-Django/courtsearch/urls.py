@@ -8,6 +8,7 @@ urlpatterns = [
 
     # eCourts District Courts — stateful cascade
     path('courtsearch/ecourts/search', views.EcourtsSearchView.as_view()),
+    path('courtsearch/ecourts/document', views.EcourtsDocumentView.as_view()),
     path('courtsearch/ecourts/<str:step>', views.EcourtsCascadeView.as_view()),
 
     # Persisted full court-API record for an imported case

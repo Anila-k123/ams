@@ -568,3 +568,13 @@
 }
 .cd-orders-table tr:last-child td { border-bottom: none; }
 .cd-orders-note { margin-top: 10px; font-style: italic; }
+
+/* Orders tab — download action */
+.cd-order-dl {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 8px;
+  background: var(--bg-primary); color: var(--text-primary); cursor: pointer; font-size: 0.82rem; white-space: nowrap;
+}
+.cd-order-dl:hover:not(:disabled) { border-color: var(--accent); }
+.cd-order-dl:disabled { opacity: 0.6; cursor: wait; }
+.cd-order-muted { color: var(--text-muted); font-size: 0.8rem; }

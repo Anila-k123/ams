@@ -111,3 +111,16 @@ def post_json(path: str, body: dict, timeout: int = SEARCH_TIMEOUT):
             time.sleep(RETRY_BACKOFFS[i])
             continue
         return _handle(resp)
+
+
+def open_document_stream(body: dict, timeout: int = SEARCH_TIMEOUT):
+    """Open a streaming POST to documents:fetch and return the raw requests.Response
+    (stream=True) so the view can pipe bytes straight to the client — nothing is
+    buffered to disk or DB. Caller is responsible for consuming/closing it."""
+    try:
+        return requests.post(
+            _url('/courts/ecourts_dc/documents:fetch'),
+            json=body, stream=True, timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise ScraperUnavailable(str(exc))

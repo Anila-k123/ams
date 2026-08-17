@@ -75,6 +75,18 @@ class SearchCasesView(APIView):
         return Response(CaseSerializer(qs, many=True).data)
 
 
+def _clear_import_children(case_id):
+    """Remove the auto-generated (import) children of a case so a re-import starts
+    clean: the stored court record, and the parties/hearings we derive from it.
+    User-authored content (notes, tags, tasks) is left untouched."""
+    from workspace.models import CaseParty
+    from core.models import CaseEvent
+    from courtsearch.models import ImportedCaseRecord
+    CaseParty.objects.filter(case_id=case_id).delete()
+    CaseEvent.objects.filter(case_id=case_id).delete()
+    ImportedCaseRecord.objects.filter(case_id=case_id).delete()
+
+
 class CreateCaseView(APIView):
     permission_classes = [RequirePermission('CASE_CREATE')]
 
@@ -83,12 +95,30 @@ class CreateCaseView(APIView):
         case_number = data.get('caseNumber')
         if not case_number:
             return Response({'error': 'caseNumber is required'}, status=status.HTTP_400_BAD_REQUEST)
-        if Case.objects.filter(case_number=case_number).exists():
+        existing = Case.objects.filter(case_number=case_number).first()
+        if existing is not None and not existing.deleted:
             return Response({'error': 'Case number already exists'}, status=status.HTTP_409_CONFLICT)
         client_id = _extract_client_id(data)
         client = None
         if client_id is not None:
             client = Client.objects.filter(id=client_id, advocate_id=request.user.id).first()
+        if existing is not None and existing.deleted:
+            # Re-adding a previously archived case: case_number is globally unique, so
+            # reuse the row — reset it to a fresh, active case for this advocate and
+            # clear the import-generated children so a re-import repopulates cleanly.
+            existing.case_title = data.get('caseTitle')
+            existing.case_type = data.get('caseType')
+            existing.court_level = data.get('courtLevel')
+            existing.status = data.get('status')
+            existing.amount = data.get('amount')
+            existing.description = data.get('description')
+            existing.deleted = False
+            existing.created_at = datetime.date.today()
+            existing.advocate_id = request.user.id
+            existing.client = client
+            existing.save()
+            _clear_import_children(existing.id)
+            return Response(CaseSerializer(existing).data, status=status.HTTP_200_OK)
         case = Case.objects.create(
             case_number=case_number,
             case_title=data.get('caseTitle'),

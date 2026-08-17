@@ -273,3 +273,11 @@
   max-width: 480px;
 }
 .ac-savebar .ac-actions { justify-content: flex-start; }
+
+/* eCourts search mode toggle (Case Number vs CNR) */
+.ac-mode-toggle { display: flex; gap: 0; margin-bottom: 18px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; max-width: 420px; }
+.ac-mode-toggle button {
+  flex: 1; padding: 10px 14px; border: none; background: var(--bg-primary);
+  color: var(--text-muted); cursor: pointer; font-size: 0.88rem; font-weight: 600;
+}
+.ac-mode-toggle button.active { background: var(--accent); color: #fff; }

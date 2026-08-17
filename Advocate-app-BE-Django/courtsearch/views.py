@@ -210,6 +210,28 @@ class EcourtsSearchView(APIView):
         return Response(data)
 
 
+class EcourtsCnrView(APIView):
+    """POST /api/courtsearch/ecourts/cnr — fetch an eCourts case by 16-char CNR.
+    No cascade selection needed; returns the same {cases:[...]} shape as search."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        cnr = (request.data.get('cnr') or '').strip()
+        if not cnr:
+            return Response({'error': 'cnr is required.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        key = f'courtsearch:ecourts:cnr:{cnr}'
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.post_json('/courts/ecourts_dc/cnr:search', {'cnr': cnr})
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set(key, data, SEARCH_CACHE_TTL)
+        return Response(data)
+
+
 class EcourtsDocumentView(APIView):
     """Stream ONE court document on demand, straight from the scraper to the client.
 

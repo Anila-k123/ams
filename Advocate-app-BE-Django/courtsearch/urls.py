@@ -9,6 +9,8 @@ urlpatterns = [
     # eCourts District Courts — stateful cascade
     path('courtsearch/ecourts/search', views.EcourtsSearchView.as_view()),
     path('courtsearch/ecourts/cnr', views.EcourtsCnrView.as_view()),
+    path('courtsearch/ecourts/list-search', views.EcourtsListSearchView.as_view()),
+    path('courtsearch/ecourts/case-detail', views.EcourtsCaseDetailView.as_view()),
     path('courtsearch/ecourts/document', views.EcourtsDocumentView.as_view()),
     path('courtsearch/ecourts/<str:step>', views.EcourtsCascadeView.as_view()),
 

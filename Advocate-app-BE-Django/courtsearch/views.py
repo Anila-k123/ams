@@ -129,8 +129,9 @@ class SearchView(APIView):
 
 # --- eCourts District Courts (stateful cascade) --------------------------
 
-ECOURTS_STEPS = {'states', 'districts', 'complexes', 'establishments', 'case-types'}
-ECOURTS_PARAMS = ('state_code', 'dist_code', 'court_complex', 'est_code')
+ECOURTS_STEPS = {'states', 'districts', 'complexes', 'establishments', 'case-types',
+                 'police-stations', 'act-types'}
+ECOURTS_PARAMS = ('state_code', 'dist_code', 'court_complex', 'est_code', 'search')
 ECOURTS_CASCADE_TTL = 60 * 60 * 24   # 24h — states/districts/complexes rarely change
 
 
@@ -202,6 +203,63 @@ class EcourtsSearchView(APIView):
         if data is None:
             try:
                 data = client.post_json('/courts/ecourts_dc/cases:search', body)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set(key, data, SEARCH_CACHE_TTL)
+        return Response(data)
+
+
+class EcourtsListSearchView(APIView):
+    """POST /api/courtsearch/ecourts/list-search — a list-returning search
+    (party/filing/advocate/fir/act/case_type). Returns {rows:[...]} (no detail)."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        d = request.data
+        missing = [k for k in ('state_code', 'dist_code', 'court_complex', 'mode')
+                   if d.get(k) in (None, '')]
+        if missing:
+            return Response({'error': f'Missing required fields: {", ".join(missing)}'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            body = {
+                'state_code': int(d.get('state_code')),
+                'dist_code': int(d.get('dist_code')),
+                'court_complex': str(d.get('court_complex')),
+                'est_code': str(d.get('est_code')) if d.get('est_code') not in (None, '') else None,
+                'mode': str(d.get('mode')),
+                'params': d.get('params') or {},
+            }
+        except (TypeError, ValueError):
+            return Response({'error': 'state_code and dist_code must be numbers.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            data = client.post_json('/courts/ecourts_dc/list:search', body)
+        except client.ScraperUnavailable:
+            return _unavailable()
+        except client.ScraperError as exc:
+            return _mapped(exc)
+        return Response(data)
+
+
+class EcourtsCaseDetailView(APIView):
+    """POST /api/courtsearch/ecourts/case-detail — full detail (+ documents) for a
+    result row's view_token, chosen from a list search."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        view_token = request.data.get('view_token')
+        if not view_token:
+            return Response({'error': 'view_token is required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        body = {'court_complex': str(request.data.get('court_complex') or ''), 'view_token': view_token}
+        key = 'courtsearch:ecourts:detail:' + str(view_token)[:300]
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.post_json('/courts/ecourts_dc/case:detail', body)
             except client.ScraperUnavailable:
                 return _unavailable()
             except client.ScraperError as exc:

@@ -335,8 +335,24 @@ export default function AddCase() {
   const [ecComplexVal, setEcComplexVal] = useState("");
   const [ecEstCode, setEcEstCode] = useState("");
   const [cascadeBusy, setCascadeBusy] = useState(""); // "" | states|districts|complexes|establishments|case-types
-  const [ecMode, setEcMode] = useState("cascade");    // eCourts search mode: "cascade" | "cnr"
+  // eCourts search mode: case_number | cnr | party_name | filing_number | advocate | fir_number | act | case_type
+  const [ecMode, setEcMode] = useState("case_number");
   const [cnrInput, setCnrInput] = useState("");
+  // shared list-mode inputs (only one mode active at a time)
+  const [ecYear, setEcYear] = useState("");
+  const [ecStatus, setEcStatus] = useState("Both");   // Pending | Disposed | Both
+  const [pName, setPName] = useState("");             // party name
+  const [filingNo, setFilingNo] = useState("");       // filing number
+  const [advName, setAdvName] = useState("");         // advocate name
+  const [policeStations, setPoliceStations] = useState({});
+  const [firPolice, setFirPolice] = useState("");
+  const [firNo, setFirNo] = useState("");
+  const [actTypes, setActTypes] = useState({});
+  const [actSearch, setActSearch] = useState("");
+  const [actCode, setActCode] = useState("");
+  const [actSection, setActSection] = useState("");
+  const [resultRows, setResultRows] = useState([]);   // list-search results
+  const [picking, setPicking] = useState(-1);          // index being fetched to detail
 
   const [newCase, setNewCase] = useState(EMPTY_CASE);
   const [caseNumberError, setCaseNumberError] = useState("");
@@ -403,6 +419,18 @@ export default function AddCase() {
   }, [ecGet]);
 
   const needsEst = ecComplexVal.endsWith("@Y");
+  const cascadeReady = !!(ecStateCode && ecDistCode && ecComplexVal && (!needsEst || ecEstCode));
+
+  const EC_TABS = [
+    ["case_number", "Case Number"], ["cnr", "CNR Number"], ["party_name", "Party Name"],
+    ["filing_number", "Filing Number"], ["advocate", "Advocate"], ["fir_number", "FIR Number"],
+    ["act", "Act"], ["case_type", "Case Type"],
+  ];
+  const onEcTab = (key) => {
+    setEcMode(key); setSearchError("");
+    if (key === "fir_number" && cascadeReady && !Object.keys(policeStations).length) loadPoliceStations();
+    if (key === "act" && cascadeReady && !Object.keys(actTypes).length) loadActTypes("");
+  };
 
   const loadCaseTypesEc = async (params) => {
     setCascadeBusy("case-types"); setCaseTypes({}); setLkType(null);
@@ -469,7 +497,10 @@ export default function AddCase() {
       setSelectedCourt(f);
       setLkNumber(""); setLkYear(""); setLkType(null); setCaseTypes({});
       if (f.id === "ecourts_dc") {
-        setEcMode("cascade"); setCnrInput("");
+        setEcMode("case_number"); setCnrInput("");
+        setEcYear(""); setEcStatus("Both"); setPName(""); setFilingNo(""); setAdvName("");
+        setPoliceStations({}); setFirPolice(""); setFirNo("");
+        setActTypes({}); setActSearch(""); setActCode(""); setActSection(""); setResultRows([]);
         setEcStates({}); setEcDistricts({}); setEcComplexes({}); setEcEstabs({});
         setEcStateCode(""); setEcDistCode(""); setEcComplexVal(""); setEcEstCode("");
         loadStates();
@@ -566,6 +597,104 @@ export default function AddCase() {
       setSearching(false);
     }
   };
+
+  // Cascade codes shared by all eCourts list-search modes.
+  const ecCascade = () => ({
+    state_code: Number(ecStateCode), dist_code: Number(ecDistCode),
+    court_complex: ecComplexVal, est_code: ecEstCode || null,
+  });
+
+  const loadPoliceStations = useCallback(async () => {
+    setCascadeBusy("police"); setPoliceStations({}); setFirPolice("");
+    try {
+      setPoliceStations(await ecGet("police-stations", {
+        state_code: ecStateCode, dist_code: ecDistCode, court_complex: ecComplexVal,
+        ...(ecEstCode ? { est_code: ecEstCode } : {}),
+      }));
+    } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load police stations."); }
+    finally { setCascadeBusy(""); }
+  }, [ecGet, ecStateCode, ecDistCode, ecComplexVal, ecEstCode]);
+
+  const loadActTypes = useCallback(async (search) => {
+    setCascadeBusy("acts"); setActTypes({}); setActCode("");
+    try {
+      setActTypes(await ecGet("act-types", {
+        state_code: ecStateCode, dist_code: ecDistCode, court_complex: ecComplexVal,
+        ...(ecEstCode ? { est_code: ecEstCode } : {}), search: search || "",
+      }));
+    } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load acts."); }
+    finally { setCascadeBusy(""); }
+  }, [ecGet, ecStateCode, ecDistCode, ecComplexVal, ecEstCode]);
+
+  const runListSearch = async (mode, params) => {
+    if (!ecStateCode || !ecDistCode || !ecComplexVal || (needsEst && !ecEstCode)) return;
+    setSearching(true); setSearchError(""); setResultRows([]);
+    try {
+      const res = await axios.post("/api/courtsearch/ecourts/list-search",
+        { ...ecCascade(), mode, params }, authHeaders);
+      const rows = res.data?.rows || [];
+      if (!rows.length) { setSearchError("No matching cases found."); return; }
+      setResultRows(rows);
+      setStep("results");
+    } catch (err) {
+      setSearchError(err?.response?.data?.error || "Search failed. Please try again.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const pickResult = async (row, i) => {
+    setPicking(i); setSearchError("");
+    try {
+      const res = await axios.post("/api/courtsearch/ecourts/case-detail",
+        { court_complex: ecComplexVal, view_token: row.view_token }, authHeaders);
+      const mapped = mapEcourtsToCase(res.data, "");
+      setNewCase({ ...EMPTY_CASE, ...mapped });
+      setFetchedRecord(res.data);
+      setFetchedQuery({ ...ecCascade(), view_token: row.view_token });
+      setCaseNumberError(mapped.caseNumber.trim() ? "" : "Enter the case number to save.");
+      setStep("review");
+    } catch (err) {
+      setSearchError(err?.response?.data?.error || "Couldn’t fetch that case. Please try again.");
+    } finally {
+      setPicking(-1);
+    }
+  };
+
+  const onEcSearch = () => {
+    if (ecMode === "cnr") return runSearchCnr();
+    if (ecMode === "case_number") return runSearchEcourts();
+    if (ecMode === "party_name") return runListSearch("party_name", { name: pName.trim(), year: ecYear, status: ecStatus });
+    if (ecMode === "filing_number") return runListSearch("filing_number", { filing_no: filingNo.trim(), year: ecYear });
+    if (ecMode === "advocate") return runListSearch("advocate", { adv_name: advName.trim(), adv_mode: "1", status: ecStatus });
+    if (ecMode === "fir_number") return runListSearch("fir_number", { police_st: firPolice, fir_no: firNo.trim(), year: ecYear, status: ecStatus });
+    if (ecMode === "act") return runListSearch("act", { act_code: actCode, section: actSection.trim(), status: ecStatus });
+    if (ecMode === "case_type") return runListSearch("case_type", { case_type: lkType?.value, year: ecYear, status: ecStatus });
+  };
+
+  const ecSearchEnabled = (() => {
+    if (ecMode === "cnr") return !!cnrInput.trim();
+    if (!cascadeReady) return false;
+    if (ecMode === "case_number") return !!(lkType && lkNumber.trim() && lkYear);
+    if (ecMode === "party_name") return pName.trim().length >= 3 && !!ecYear;
+    if (ecMode === "filing_number") return !!filingNo.trim() && !!ecYear;
+    if (ecMode === "advocate") return advName.trim().length >= 3;
+    if (ecMode === "fir_number") return !!firPolice && !!firNo.trim() && !!ecYear;
+    if (ecMode === "act") return !!actCode;
+    if (ecMode === "case_type") return !!(lkType && ecYear);
+    return false;
+  })();
+
+  const statusField = () => (
+    <div className="ac-field">
+      <label>Status</label>
+      <div className="ac-status">
+        {["Pending", "Disposed", "Both"].map((s) => (
+          <label key={s}><input type="radio" name="ecStatus" checked={ecStatus === s} onChange={() => setEcStatus(s)} /> {s}</label>
+        ))}
+      </div>
+    </div>
+  );
 
   // The 16-digit rule is Madras HC's CNR format; eCourts / manual cases use other formats.
   const requires16 = selectedCourt?.id === "madras_hc";
@@ -807,86 +936,137 @@ export default function AddCase() {
             <span>Selected: <strong>{selectedCourt.name}</strong></span>
             <button className="ac-clear" onClick={() => setStep("select")} title="Change court"><FiX /></button>
           </div>
-          <div className="ac-mode-toggle">
-            <button type="button" className={ecMode === "cascade" ? "active" : ""} onClick={() => setEcMode("cascade")}>By Case Number</button>
-            <button type="button" className={ecMode === "cnr" ? "active" : ""} onClick={() => setEcMode("cnr")}>By CNR Number</button>
+          {/* Cascade selectors — every mode except CNR needs the court location */}
+          {ecMode !== "cnr" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>State</label>
+                <Select options={mapToOptions(ecStates)} value={mapToOptions(ecStates).find((o) => o.value === ecStateCode) || null}
+                  onChange={onSelectState} isLoading={cascadeBusy === "states"} placeholder="Select state" styles={customSelectStyles} /></div>
+              <div className="ac-field"><label>District</label>
+                <Select options={mapToOptions(ecDistricts)} value={mapToOptions(ecDistricts).find((o) => o.value === ecDistCode) || null}
+                  onChange={onSelectDistrict} isDisabled={!ecStateCode} isLoading={cascadeBusy === "districts"} placeholder="Select district" styles={customSelectStyles} /></div>
+              <div className="ac-field"><label>Court Complex</label>
+                <Select options={mapToOptions(ecComplexes)} value={mapToOptions(ecComplexes).find((o) => o.value === ecComplexVal) || null}
+                  onChange={onSelectComplex} isDisabled={!ecDistCode} isLoading={cascadeBusy === "complexes"} placeholder="Select court complex" styles={customSelectStyles} /></div>
+              {needsEst && (
+                <div className="ac-field"><label>Establishment</label>
+                  <Select options={mapToOptions(ecEstabs)} value={mapToOptions(ecEstabs).find((o) => o.value === ecEstCode) || null}
+                    onChange={onSelectEst} isLoading={cascadeBusy === "establishments"} placeholder="Select establishment" styles={customSelectStyles} /></div>
+              )}
+            </div>
+          )}
+
+          {/* Search-type tabs */}
+          <div className="ac-tabs">
+            {EC_TABS.map(([key, label]) => (
+              <button key={key} type="button" className={ecMode === key ? "active" : ""} onClick={() => onEcTab(key)}>{label}</button>
+            ))}
           </div>
 
-          {ecMode === "cascade" && (
-            <>
-              <div className="ac-search-form">
-                <div className="ac-field">
-                  <label>State</label>
-                  <Select options={mapToOptions(ecStates)}
-                    value={mapToOptions(ecStates).find((o) => o.value === ecStateCode) || null}
-                    onChange={onSelectState} isLoading={cascadeBusy === "states"}
-                    placeholder="Select state" styles={customSelectStyles} />
-                </div>
-                <div className="ac-field">
-                  <label>District</label>
-                  <Select options={mapToOptions(ecDistricts)}
-                    value={mapToOptions(ecDistricts).find((o) => o.value === ecDistCode) || null}
-                    onChange={onSelectDistrict} isDisabled={!ecStateCode} isLoading={cascadeBusy === "districts"}
-                    placeholder="Select district" styles={customSelectStyles} />
-                </div>
-                <div className="ac-field">
-                  <label>Court Complex</label>
-                  <Select options={mapToOptions(ecComplexes)}
-                    value={mapToOptions(ecComplexes).find((o) => o.value === ecComplexVal) || null}
-                    onChange={onSelectComplex} isDisabled={!ecDistCode} isLoading={cascadeBusy === "complexes"}
-                    placeholder="Select court complex" styles={customSelectStyles} />
-                </div>
-                {needsEst && (
-                  <div className="ac-field">
-                    <label>Establishment</label>
-                    <Select options={mapToOptions(ecEstabs)}
-                      value={mapToOptions(ecEstabs).find((o) => o.value === ecEstCode) || null}
-                      onChange={onSelectEst} isLoading={cascadeBusy === "establishments"}
-                      placeholder="Select establishment" styles={customSelectStyles} />
-                  </div>
-                )}
-                <div className="ac-field">
-                  <label>Case Type</label>
-                  <Select options={caseTypeOptions} value={lkType} onChange={setLkType}
-                    isDisabled={!ecComplexVal || (needsEst && !ecEstCode)} isLoading={cascadeBusy === "case-types"}
-                    placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"}
-                    styles={customSelectStyles} />
-                </div>
-                <div className="ac-field">
-                  <label>Case Number</label>
-                  <input value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" />
-                </div>
-                <div className="ac-field">
-                  <label>Case Year</label>
-                  <input type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} min="1900" max="2100" placeholder="e.g. 2024" />
-                </div>
-              </div>
-              <div className="ac-actions">
-                <button className="ac-search-btn" onClick={runSearchEcourts}
-                        disabled={searching || !ecStateCode || !ecDistCode || !ecComplexVal || (needsEst && !ecEstCode) || !lkType || !lkNumber.trim() || !lkYear}>
-                  <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
-                </button>
-              </div>
-            </>
-          )}
-
+          {/* Per-mode fields */}
           {ecMode === "cnr" && (
-            <>
-              <div className="ac-search-form">
-                <div className="ac-field ac-field-full">
-                  <label>CNR Number</label>
-                  <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16}
-                    placeholder="16-digit CNR, e.g. KLML170000832024" />
-                </div>
-              </div>
-              <div className="ac-actions">
-                <button className="ac-search-btn" onClick={runSearchCnr} disabled={searching || !cnrInput.trim()}>
-                  <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
-                </button>
-              </div>
-            </>
+            <div className="ac-search-form"><div className="ac-field ac-field-full"><label>CNR Number</label>
+              <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-digit CNR, e.g. KLML170000832024" /></div></div>
+          )}
+          {ecMode === "case_number" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>Case Type</label>
+                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!cascadeReady} isLoading={cascadeBusy === "case-types"}
+                  placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} styles={customSelectStyles} /></div>
+              <div className="ac-field"><label>Case Number</label><input value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" /></div>
+              <div className="ac-field"><label>Case Year</label><input type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
+            </div>
+          )}
+          {ecMode === "party_name" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>Petitioner / Respondent</label><input value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Party name (min 3 chars)" /></div>
+              <div className="ac-field"><label>Registration Year</label><input type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
+              {statusField()}
+            </div>
+          )}
+          {ecMode === "filing_number" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>Filing Number</label><input value={filingNo} onChange={(e) => setFilingNo(e.target.value)} placeholder="Filing number" /></div>
+              <div className="ac-field"><label>Filing Year</label><input type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
+            </div>
+          )}
+          {ecMode === "advocate" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>Advocate Name</label><input value={advName} onChange={(e) => setAdvName(e.target.value)} placeholder="Advocate name (min 3 chars)" /></div>
+              {statusField()}
+            </div>
+          )}
+          {ecMode === "fir_number" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>Police Station</label>
+                <Select options={mapToOptions(policeStations)} value={mapToOptions(policeStations).find((o) => o.value === firPolice) || null}
+                  onChange={(o) => setFirPolice(o ? o.value : "")} isDisabled={!cascadeReady} isLoading={cascadeBusy === "police"} placeholder="Select police station" styles={customSelectStyles} /></div>
+              <div className="ac-field"><label>FIR Number</label><input value={firNo} onChange={(e) => setFirNo(e.target.value)} placeholder="FIR number" /></div>
+              <div className="ac-field"><label>Year</label><input type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
+              {statusField()}
+            </div>
+          )}
+          {ecMode === "act" && (
+            <div className="ac-search-form">
+              <div className="ac-field ac-field-full"><label>Search Act</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input value={actSearch} onChange={(e) => setActSearch(e.target.value)} placeholder="Type ≥3 characters, then Find" />
+                  <button type="button" className="ac-search-btn" style={{ padding: "0 16px" }} onClick={() => loadActTypes(actSearch)} disabled={!cascadeReady || actSearch.trim().length < 3}>Find</button>
+                </div></div>
+              <div className="ac-field"><label>Act Type</label>
+                <Select options={mapToOptions(actTypes)} value={mapToOptions(actTypes).find((o) => o.value === actCode) || null}
+                  onChange={(o) => setActCode(o ? o.value : "")} isLoading={cascadeBusy === "acts"} placeholder="Select act" styles={customSelectStyles} /></div>
+              <div className="ac-field"><label>Under Section</label><input value={actSection} onChange={(e) => setActSection(e.target.value)} placeholder="Section (optional)" /></div>
+              {statusField()}
+            </div>
+          )}
+          {ecMode === "case_type" && (
+            <div className="ac-search-form">
+              <div className="ac-field"><label>Case Type</label>
+                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!cascadeReady} isLoading={cascadeBusy === "case-types"}
+                  placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} styles={customSelectStyles} /></div>
+              <div className="ac-field"><label>Registration Year</label><input type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
+              {statusField()}
+            </div>
           )}
 
+          <div className="ac-actions">
+            <button className="ac-search-btn" onClick={onEcSearch} disabled={searching || !ecSearchEnabled}>
+              <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
+            </button>
+          </div>
+
+          {searchError && <p className="ac-error">{searchError}</p>}
+        </div>
+      )}
+
+      {/* Results list (list-returning modes) — pick one to fetch its full detail */}
+      {step === "results" && (
+        <div className="ac-card">
+          <div className="ac-selected">
+            <span>{resultRows.length} matching case{resultRows.length === 1 ? "" : "s"} — pick one to import</span>
+            <button className="ac-clear" onClick={() => setStep("search")} title="Back to search"><FiX /></button>
+          </div>
+          <div className="ac-rtable-wrap">
+            <table className="ac-rtable">
+              <thead><tr><th>#</th><th>Case Number</th><th>Parties</th><th></th></tr></thead>
+              <tbody>
+                {resultRows.map((row, i) => (
+                  <tr key={i}>
+                    <td>{row.sr_no || i + 1}</td>
+                    <td>{row.case_number}</td>
+                    <td>{row.parties}</td>
+                    <td>
+                      <button type="button" className="ac-search-btn" style={{ padding: "6px 14px" }}
+                        onClick={() => pickResult(row, i)} disabled={picking !== -1}>
+                        {picking === i ? "Fetching…" : "Select"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {searchError && <p className="ac-error">{searchError}</p>}
         </div>
       )}

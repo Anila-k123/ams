@@ -137,6 +137,69 @@ def sci_case_detail(diary_no, diary_year, timeout: int = SEARCH_TIMEOUT):
                      timeout=timeout)
 
 
+def sci_search_diary_no(diary_no, year, timeout: int = SCI_TIMEOUT):
+    """Search Supreme Court case status by Diary Number."""
+    return post_json('/courts/sci/diary-no:search',
+                     {'diary_no': str(diary_no), 'year': int(year)}, timeout=timeout)
+
+
+def sci_search_cnr(cnr_no, timeout: int = SCI_TIMEOUT):
+    """Search Supreme Court case status by 16-char CNR."""
+    return post_json('/courts/sci/cnr:search', {'cnr_no': cnr_no}, timeout=timeout)
+
+
+def sci_search_aor_code(aor_code, year, party_type='any', status='P',
+                        timeout: int = SCI_TIMEOUT):
+    """Search Supreme Court case status by Advocate-on-Record code."""
+    return post_json('/courts/sci/aor-code:search', {
+        'aor_code': str(aor_code), 'year': int(year),
+        'party_type': party_type, 'status': status,
+    }, timeout=timeout)
+
+
+def sci_search_party_name(party_name, year=None, party_type='any', status=None,
+                          timeout: int = SCI_TIMEOUT):
+    """Search Supreme Court case status by party name."""
+    return post_json('/courts/sci/party-name:search', {
+        'party_name': party_name,
+        'year': int(year) if year not in (None, '') else None,
+        'party_type': party_type, 'status': status,
+    }, timeout=timeout)
+
+
+def sci_court_types(timeout: int = LIST_TIMEOUT):
+    """{ label -> code } for the top-level Court selector (Supreme/High/District/State Agency)."""
+    return get_json('/courts/sci/court-types', timeout=timeout)
+
+
+def sci_court_states(court_type, timeout: int = LIST_TIMEOUT):
+    """{ state label -> code } for one court type."""
+    return get_json('/courts/sci/court-states', {'court_type': court_type}, timeout=timeout)
+
+
+def sci_court_benches(court_type, state, timeout: int = LIST_TIMEOUT):
+    """{ bench label -> code } for one court type + state."""
+    return get_json('/courts/sci/court-benches',
+                    {'court_type': court_type, 'state': state}, timeout=timeout)
+
+
+def sci_court_case_types(court_type, state, bench, timeout: int = LIST_TIMEOUT):
+    """{ case-type label -> code } for one court type + state + bench."""
+    return get_json('/courts/sci/court-case-types',
+                    {'court_type': court_type, 'state': state, 'bench': bench}, timeout=timeout)
+
+
+def sci_search_court(court_type, state, bench, case_type=None, case_no=None,
+                     year=None, listing_date=None, timeout: int = SCI_TIMEOUT):
+    """Search Supreme Court's court-wise cascade (court type -> state -> bench)."""
+    return post_json('/courts/sci/court:search', {
+        'court_type': court_type, 'state': state, 'bench': bench,
+        'case_type': case_type, 'case_no': case_no,
+        'year': int(year) if year not in (None, '') else None,
+        'listing_date': listing_date,
+    }, timeout=timeout)
+
+
 def get_display_courts(timeout: int = LIST_TIMEOUT):
     """The list of courts whose display boards the scraper can serve, for the
     accordion. Cheap — no scraping — returns [{value, label}, ...]."""
@@ -179,6 +242,38 @@ def hc_search(state_code, court_complex, case_type, case_number, case_year,
         'case_number': str(case_number),
         'case_year': case_year,
     }, timeout=timeout)
+
+
+def hc_police_stations(state_code, court_complex, timeout: int = LIST_TIMEOUT):
+    """{ police-station label -> code } for the FIR-number search, one bench."""
+    return get_json('/courts/ecourts_hc/police-stations',
+                    {'state_code': state_code, 'court_complex': court_complex}, timeout=timeout)
+
+
+def hc_act_types(state_code, court_complex, search='', timeout: int = LIST_TIMEOUT):
+    """{ act label -> code } for the Act search, one bench."""
+    return get_json('/courts/ecourts_hc/act-types', {
+        'state_code': state_code, 'court_complex': court_complex, 'search': search,
+    }, timeout=timeout)
+
+
+def hc_list_search(state_code, court_complex, mode, params, timeout: int = SEARCH_TIMEOUT):
+    """List-returning HC search (party/filing/advocate/fir/act/case_type).
+    Returns {"rows": [{sr_no, case_number, parties, view_token}]}."""
+    return post_json('/courts/ecourts_hc/list:search', {
+        'state_code': str(state_code), 'court_complex': str(court_complex),
+        'mode': str(mode), 'params': params or {},
+    }, timeout=timeout)
+
+
+def hc_case_detail(view_token, timeout: int = SEARCH_TIMEOUT):
+    """Full detail (+ documents) for one HC result row's view_token."""
+    return post_json('/courts/ecourts_hc/case:detail', {'view_token': view_token}, timeout=timeout)
+
+
+def hc_cnr_search(cnr, timeout: int = SEARCH_TIMEOUT):
+    """Fetch a High Court case directly by its 16-char CNR."""
+    return post_json('/courts/ecourts_hc/cnr:search', {'cnr': cnr}, timeout=timeout)
 
 
 def hc_open_order_pdf(url: str, timeout: int = SEARCH_TIMEOUT):

@@ -22,7 +22,8 @@ function LoginModule() {
     const interceptor = axios.interceptors.response.use(
       (response) => response,
       (error) => {
-        if (error.response && error.response.status === 401) {
+        const isLoginRequest = error.config?.url?.includes("/advocates/login");
+        if (error.response && error.response.status === 401 && !isLoginRequest) {
           console.warn("Session expired or unauthorized. Logging out...");
           logoutAndRedirect();
         }

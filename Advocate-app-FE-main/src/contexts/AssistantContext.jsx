@@ -42,6 +42,11 @@ export function AssistantProvider({ children, token }) {
     setMessages(prev => [...prev, { ...msg, id: msg.id || `msg-${++msgIdCounter.current}` }]);
   }, []);
 
+  // Replace the text of an existing message by id (used while streaming tokens in).
+  const setMessageText = useCallback((id, text) => {
+    setMessages(prev => prev.map(m => (m.id === id ? { ...m, text } : m)));
+  }, []);
+
   const clearHistory = useCallback(() => {
     setMessages([{ id: "welcome", sender: "bot", text: "⚖️ Hello! I'm your AI Advocate Assistant. How can I help you manage your practice today?" }]);
     localStorage.removeItem(STORAGE_KEY);
@@ -61,6 +66,48 @@ export function AssistantProvider({ children, token }) {
   }, [messages]);
 
   const actionTimerRef = useRef(null);
+
+  // Stream a conversational answer from the LLM assistant (SSE token deltas).
+  const streamChat = useCallback(async (query) => {
+    const botId = `msg-${++msgIdCounter.current}`;
+    addMessage({ id: botId, sender: "bot", text: "" });
+    let acc = "";
+    try {
+      const res = await fetch(`${window.API_BASE}/api/assistant/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() || "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find(l => l.startsWith("data:"));
+          if (!line) continue;
+          let evt;
+          try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+          if (evt.type === "text") {
+            acc += evt.text;
+            setMessageText(botId, acc);
+          } else if (evt.type === "error") {
+            setMessageText(botId, acc || evt.message || "Sorry, something went wrong.");
+          }
+          // "done" needs no action — the accumulated text is already shown.
+        }
+      }
+      if (!acc) setMessageText(botId, "I couldn't find anything for that. Try rephrasing.");
+    } catch {
+      setMessageText(botId, acc || "Sorry, I couldn't reach the assistant. Please try again.");
+    }
+  }, [token, addMessage, setMessageText]);
 
   const sendQuery = useCallback(async (query) => {
     if (!query.trim() || !token) return;
@@ -88,15 +135,17 @@ export function AssistantProvider({ children, token }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const data = await res.json();
-      addMessage({
-        sender: "bot",
-        text: data.message,
-        response: data,
-      });
 
-      actionTimerRef.current = setTimeout(() => {
-        handleAction(data);
-      }, 100);
+      // Deterministic nav/data/search command → act instantly (free, no LLM).
+      // Anything the rule router doesn't recognise → hand to the LLM assistant.
+      if (data.intent === "UNKNOWN") {
+        await streamChat(query);
+      } else {
+        addMessage({ sender: "bot", text: data.message, response: data });
+        actionTimerRef.current = setTimeout(() => {
+          handleAction(data);
+        }, 100);
+      }
 
     } catch (err) {
       addMessage({
@@ -106,7 +155,7 @@ export function AssistantProvider({ children, token }) {
     } finally {
       setIsProcessing(false);
     }
-  }, [token, location.pathname, addMessage]);
+  }, [token, location.pathname, addMessage, streamChat]);
 
   // Cleanup action timer on unmount
   useEffect(() => {

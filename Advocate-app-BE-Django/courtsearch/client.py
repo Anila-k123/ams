@@ -113,6 +113,86 @@ def post_json(path: str, body: dict, timeout: int = SEARCH_TIMEOUT):
         return _handle(resp)
 
 
+# A Supreme Court search solves an arithmetic CAPTCHA by OCR + retries, each
+# retry being a fresh page load, so it can take noticeably longer than eCourts.
+SCI_TIMEOUT = config('COURT_API_SCI_TIMEOUT', default=150, cast=int)
+
+
+def sci_case_types(timeout: int = LIST_TIMEOUT):
+    """SCI case-type id->label map (for the Case Number dropdown)."""
+    return get_json('/courts/sci/case-types', timeout=timeout)
+
+
+def sci_search_case_no(case_type: str, case_no: str, case_year, timeout: int = SCI_TIMEOUT):
+    """Search Supreme Court case status by Case Number."""
+    return post_json('/courts/sci/case-no:search',
+                     {'case_type': case_type, 'case_no': case_no, 'case_year': case_year},
+                     timeout=timeout)
+
+
+def sci_case_detail(diary_no, diary_year, timeout: int = SEARCH_TIMEOUT):
+    """Full Supreme Court case-details record for a diary no/year (no CAPTCHA)."""
+    return post_json('/courts/sci/case-detail',
+                     {'diary_no': str(diary_no), 'diary_year': str(diary_year)},
+                     timeout=timeout)
+
+
+def get_display_courts(timeout: int = LIST_TIMEOUT):
+    """The list of courts whose display boards the scraper can serve, for the
+    accordion. Cheap — no scraping — returns [{value, label}, ...]."""
+    return get_json('/display-board/courts', timeout=timeout)
+
+
+def get_display_board(court: str, timeout: int = SEARCH_TIMEOUT):
+    """Live daily display board (cause list) for a court, from the scraper's
+    /display-board endpoint. A live scrape (with a homepage warm-up) can take a
+    while, so use the longer search timeout. Returns the scraper's envelope:
+    {court, boardDate, fetchedAt, count, rows[], courts[]}."""
+    return get_json('/display-board', {'court': court}, timeout=timeout)
+
+
+# --- eCourts High Court Services (stateful cascade + OCR-CAPTCHA search) ------
+
+def hc_high_courts(timeout: int = LIST_TIMEOUT):
+    """{ High Court name -> state_code } for the first dropdown."""
+    return get_json('/courts/ecourts_hc/high-courts', timeout=timeout)
+
+
+def hc_benches(state_code, timeout: int = LIST_TIMEOUT):
+    """{ bench name -> court_code } for one High Court."""
+    return get_json('/courts/ecourts_hc/benches', {'state_code': state_code}, timeout=timeout)
+
+
+def hc_case_types(state_code, court_complex, timeout: int = LIST_TIMEOUT):
+    """{ case-type label -> code } for one bench."""
+    return get_json('/courts/ecourts_hc/case-types',
+                    {'state_code': state_code, 'court_complex': court_complex}, timeout=timeout)
+
+
+def hc_search(state_code, court_complex, case_type, case_number, case_year,
+              timeout: int = SEARCH_TIMEOUT):
+    """Search a High Court by case number; returns {cases:[...]} with full detail."""
+    return post_json('/courts/ecourts_hc/cases:search', {
+        'state_code': str(state_code),
+        'court_complex': str(court_complex),
+        'case_type': str(case_type),
+        'case_number': str(case_number),
+        'case_year': case_year,
+    }, timeout=timeout)
+
+
+def hc_open_order_pdf(url: str, timeout: int = SEARCH_TIMEOUT):
+    """Open a streaming POST for a HC order/judgement PDF (by its documents[].url).
+    Returns the raw requests.Response (stream=True) for the view to pipe through."""
+    try:
+        return requests.post(
+            _url('/courts/ecourts_hc/orders:pdf'),
+            json={'url': url}, stream=True, timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise ScraperUnavailable(str(exc))
+
+
 def open_document_stream(body: dict, timeout: int = SEARCH_TIMEOUT):
     """Open a streaming POST to documents:fetch and return the raw requests.Response
     (stream=True) so the view can pipe bytes straight to the client — nothing is

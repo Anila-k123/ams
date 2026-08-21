@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { fetchCourtDocument } from "../services/courtDocuments";
+import { fetchCourtDocument, downloadHcOrderPdf } from "../services/courtDocuments";
 import "../assets/styles/CourtRecordView.css";
 
 // Known column order for Madras HC row-based sections (API sends headerless rows).
@@ -143,9 +143,121 @@ function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
                 </table></div>
               </section>
             )}
+
+            {/* Any other section table on the page (Subordinate Court Info, Case
+                Transfer Details, etc.), captured generically. */}
+            {(d.extra || []).map((sec, si) => (
+              (sec.rows && sec.rows.length) ? (
+                <section className="cr-sec" key={`x${si}`}><h4>{sec.title || "Details"}</h4>
+                  <RowTable rows={sec.rows} />
+                </section>
+              ) : null
+            ))}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// eCourts High Courts: { cases: [ { case_number, parties, detail:{ case_details,
+//   case_status, petitioners[], respondents[], acts[], category, hearings[],
+//   orders[{order_number, order_date, judge, pdf_url}] } } ] }.
+function HcRecord({ record }) {
+  const [busyKey, setBusyKey] = useState("");
+  const [docError, setDocError] = useState("");
+  const cases = record.cases || [];
+
+  const download = async (url, label, key) => {
+    setBusyKey(key); setDocError("");
+    try { await downloadHcOrderPdf(url, label); }
+    catch (e) { setDocError(e?.message || "Couldn’t fetch the order PDF."); }
+    finally { setBusyKey(""); }
+  };
+
+  return (
+    <div className="cr-record">
+      {cases.length === 0 && <p className="cr-note">No detailed record was stored.</p>}
+      {cases.map((c, idx) => {
+        const d = c.detail || {};
+        const pet = d.petitioners || [];
+        const res = d.respondents || [];
+        const acts = d.acts || [];
+        const hearings = d.hearings || [];
+        const orders = d.orders || [];
+        return (
+          <div className="cr-case" key={idx}>
+            <div className="cr-case-head">
+              {c.case_number || `Case ${idx + 1}`}{c.parties ? ` — ${c.parties}` : ""}
+            </div>
+
+            {Object.keys(d.case_details || {}).length > 0 && (
+              <section className="cr-sec"><h4>Case Details</h4><KV obj={d.case_details} /></section>
+            )}
+            {Object.keys(d.case_status || {}).length > 0 && (
+              <section className="cr-sec"><h4>Case Status</h4><KV obj={d.case_status} /></section>
+            )}
+
+            {pet.length > 0 && (
+              <section className="cr-sec"><h4>Petitioner(s) &amp; Advocate</h4>
+                <ul className="cr-party">
+                  {pet.map((p, i) => <li key={i}>{p.name}{p.advocate ? <span className="cr-adv"> — Adv: {p.advocate}</span> : null}</li>)}
+                </ul>
+              </section>
+            )}
+            {res.length > 0 && (
+              <section className="cr-sec"><h4>Respondent(s) &amp; Advocate</h4>
+                <ul className="cr-party">
+                  {res.map((p, i) => <li key={i}>{p.name}{p.advocate ? <span className="cr-adv"> — Adv: {p.advocate}</span> : null}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {acts.length > 0 && (
+              <section className="cr-sec"><h4>Acts</h4>
+                <div className="cr-table-wrap"><table className="cr-table">
+                  <thead><tr><th>Act</th><th>Section(s)</th></tr></thead>
+                  <tbody>{acts.map((a, i) => <tr key={i}><td>{a.act}</td><td>{a.sections}</td></tr>)}</tbody>
+                </table></div>
+              </section>
+            )}
+            {Object.keys(d.category || {}).length > 0 && (
+              <section className="cr-sec"><h4>Category</h4><KV obj={d.category} /></section>
+            )}
+            {hearings.length > 0 && (
+              <section className="cr-sec"><h4>Hearing History</h4>
+                <div className="cr-table-wrap"><table className="cr-table">
+                  <thead><tr><th>Cause List</th><th>Judge</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th></tr></thead>
+                  <tbody>{hearings.map((h, i) => (
+                    <tr key={i}><td>{h.cause_list_type}</td><td>{h.judge}</td><td>{h.business_on_date}</td><td>{h.hearing_date}</td><td>{h.purpose}</td></tr>
+                  ))}</tbody>
+                </table></div>
+              </section>
+            )}
+            {orders.length > 0 && (
+              <section className="cr-sec"><h4>Orders / Judgements</h4>
+                <div className="cr-table-wrap"><table className="cr-table">
+                  <thead><tr><th>#</th><th>Order Date</th><th>Judge</th><th></th></tr></thead>
+                  <tbody>{orders.map((o, i) => {
+                    const key = `${idx}:o${i}`;
+                    return (
+                      <tr key={i}>
+                        <td>{o.order_number || i + 1}</td><td>{o.order_date}</td><td>{o.judge}</td>
+                        <td>{o.pdf_url ? (
+                          <button type="button" className="cr-doc-btn cr-doc-inline" disabled={busyKey === key}
+                            onClick={() => download(o.pdf_url, `Order ${o.order_number || ""} ${o.order_date || ""}`.trim(), key)}>
+                            {busyKey === key ? "…" : "⬇ Download"}
+                          </button>) : null}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table></div>
+              </section>
+            )}
+          </div>
+        );
+      })}
+      {docError && <p className="cr-note" style={{ color: "#e04f5f" }}>{docError}</p>}
     </div>
   );
 }
@@ -207,7 +319,7 @@ function MadrasRecord({ record }) {
 
 // Renders a stored/scraped court record for either court shape (raw, unstructured).
 // `courtComplex` (the value used for the search) is required to fetch eCourts documents.
-export default function CourtRecordView({ record, courtComplex }) {
+export default function CourtRecordView({ record, courtComplex, courtId }) {
   const [busyKey, setBusyKey] = useState("");
   const [modal, setModal] = useState(null);
   const [docError, setDocError] = useState("");
@@ -232,19 +344,19 @@ export default function CourtRecordView({ record, courtComplex }) {
   };
 
   if (!record) return null;
-  const body = record.cases !== undefined
-    ? <EcourtsRecord record={record} courtComplex={courtComplex} onFetchDoc={fetchDoc} busyKey={busyKey} />
-    : <MadrasRecord record={record} />;
+  let body;
+  if (courtId === "ecourts_hc") {
+    body = <HcRecord record={record} />;
+  } else if (record.cases !== undefined) {
+    body = <EcourtsRecord record={record} courtComplex={courtComplex} onFetchDoc={fetchDoc} busyKey={busyKey} />;
+  } else {
+    body = <MadrasRecord record={record} />;
+  }
 
   return (
     <>
       {body}
       {docError && <p className="cr-note" style={{ color: "#e04f5f" }}>{docError}</p>}
-      {/* Guarantees every scraped field is visible even if a section shape is unexpected. */}
-      <details className="cr-raw">
-        <summary>Raw data (everything fetched)</summary>
-        <pre>{JSON.stringify(record, null, 2)}</pre>
-      </details>
 
       {modal && (
         <div className="cr-modal-overlay" onClick={() => setModal(null)}>

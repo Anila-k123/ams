@@ -14,6 +14,18 @@ urlpatterns = [
     path('courtsearch/ecourts/document', views.EcourtsDocumentView.as_view()),
     path('courtsearch/ecourts/<str:step>', views.EcourtsCascadeView.as_view()),
 
+    # Supreme Court of India — case status
+    path('courtsearch/sci/case-types', views.SciCaseTypesView.as_view()),
+    path('courtsearch/sci/case-no', views.SciCaseNoSearchView.as_view()),
+    path('courtsearch/sci/case-detail', views.SciCaseDetailView.as_view()),
+
+    # eCourts High Court Services — cascade + case-number search
+    path('courtsearch/hc/high-courts', views.HcHighCourtsView.as_view()),
+    path('courtsearch/hc/benches', views.HcBenchesView.as_view()),
+    path('courtsearch/hc/case-types', views.HcCaseTypesView.as_view()),
+    path('courtsearch/hc/search', views.HcSearchView.as_view()),
+    path('courtsearch/hc/order-pdf', views.HcOrderPdfView.as_view()),
+
     # Persisted full court-API record for an imported case
     path('courtsearch/imported-records', views.ImportedRecordView.as_view()),
 ]

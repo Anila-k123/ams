@@ -471,73 +471,75 @@ class DeleteRelatedCaseView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# --- Court display board (Madras HC cause list) -------------------------
+# --- Court display boards (live cause lists) ----------------------------
+# All scraping lives in the standalone FastAPI scraper service (scrap_court);
+# this view is a thin, server-side-cached proxy to its /display-board endpoint.
+# The frontend contract (bench / benches / rows[...]) is preserved by mapping
+# the scraper's envelope (court / courts / rows[...]) onto it.
 
 log = logging.getLogger(__name__)
 
-# Human-readable labels for the scraper's bench keys, used to populate the
-# frontend dropdown from a single source of truth.
-BENCH_LABELS = {'chennai': 'Chennai (Principal Bench)', 'madurai': 'Madurai Bench'}
+from courtsearch import client as court_client
 
-# Refresh is managed entirely server-side: the board is scraped at most once an
-# hour per bench and served from cache in between, so users always get fast loads
-# and the court's server is never hammered regardless of how many advocates view it.
+# Cached once an hour per court so page loads are fast and the courts' servers
+# (and the scraper) are never hammered regardless of how many advocates view.
 BOARD_CACHE_TTL = 3600  # 1 hour
 
 
-def _bench_options():
-    from .mhc_scraper import BENCHES
-    return [{'value': b, 'label': BENCH_LABELS.get(b, b.title())} for b in sorted(BENCHES)]
-
-
-def _row_payload(row):
-    return {
-        'courtNumber': row.court_number,
-        'itemNumber': row.item_number,
-        'judge': row.judge,
-        'judges': row.judges,
-        'caseString': row.case_string,
-        'status': row.status,
-    }
-
-
-class DisplayBoardView(APIView):
-    """Live Madras High Court display board for a bench (Chennai or Madurai).
-
-    Scrapes the court's public display-board page via the vendored mhc_scraper
-    module, cached server-side for BOARD_CACHE_TTL seconds per bench."""
+class DisplayBoardCourtsView(APIView):
+    """List of courts whose boards can be shown (feeds the accordion), proxied and
+    cached from the scraper microservice. Cheap — no scraping involved."""
     permission_classes = [RequirePermission()]
 
     def get(self, request):
-        from .mhc_scraper import BENCHES, Fetcher, parse_board
+        courts = cache.get('court_display_courts')
+        if courts is None:
+            try:
+                courts = court_client.get_display_courts()
+            except (court_client.ScraperUnavailable, court_client.ScraperError):
+                return Response({'courts': []}, status=status.HTTP_502_BAD_GATEWAY)
+            cache.set('court_display_courts', courts, BOARD_CACHE_TTL)
+        return Response({'courts': courts})
 
-        bench = (request.query_params.get('bench') or 'chennai').strip().lower()
-        if bench not in BENCHES:
-            return Response(
-                {'error': f'Unknown bench {bench!r}', 'benches': _bench_options()},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
-        cache_key = f'mhc_display_board:{bench}'
+class DisplayBoardView(APIView):
+    """Live court display board for a selected court, proxied and cached from the
+    scraper microservice's /display-board endpoint."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        court = (request.query_params.get('bench') or 'chennai').strip().lower()
+
+        cache_key = f'court_display_board:{court}'
         payload = cache.get(cache_key)
         if payload is None:
             try:
-                html = Fetcher().get(BENCHES[bench])
-                rows = parse_board(html, bench=bench)
-            except Exception as exc:  # noqa: BLE001 — surface a clean 502 to the UI
-                log.warning('display board fetch failed for %s: %s', bench, exc)
+                data = court_client.get_display_board(court)
+            except court_client.ScraperUnavailable:
                 return Response(
-                    {'error': 'Could not reach the court display board. Please try again shortly.',
-                     'bench': bench, 'benches': _bench_options()},
+                    {'error': 'Could not reach the court display board service. Please try again shortly.',
+                     'bench': court, 'benches': []},
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
+            except court_client.ScraperError as exc:
+                if exc.status == 404:
+                    return Response({'error': f'Unknown court {court!r}', 'bench': court, 'benches': []},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                log.warning('display board proxy failed for %s: %s', court, exc)
+                return Response(
+                    {'error': 'Could not load the court display board. Please try again shortly.',
+                     'bench': court, 'benches': []},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            # Map the scraper envelope onto the frontend contract.
             payload = {
-                'bench': bench,
-                'boardDate': rows[0].board_date if rows else '',
-                'fetchedAt': datetime.datetime.now().isoformat(timespec='seconds'),
-                'count': len(rows),
-                'rows': [_row_payload(r) for r in rows],
+                'bench': data.get('court', court),
+                'boardDate': data.get('boardDate', ''),
+                'fetchedAt': data.get('fetchedAt', ''),
+                'count': data.get('count', 0),
+                'rows': data.get('rows', []),
+                'benches': data.get('courts', []),
             }
             cache.set(cache_key, payload, BOARD_CACHE_TTL)
 
-        return Response({**payload, 'benches': _bench_options()})
+        return Response(payload)

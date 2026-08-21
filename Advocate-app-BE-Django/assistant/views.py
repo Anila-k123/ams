@@ -5,10 +5,31 @@ navigation/data actions the frontend acts on.
 
 import datetime
 from django.db.models import Q
+from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Document
+from core.permissions import RequirePermission
+from .llm import stream_answer
+
+
+class AssistantChatView(APIView):
+    """LLM-backed conversational assistant. Streams a Claude tool-use answer over
+    the logged-in advocate's own data as Server-Sent Events."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        question = (request.data.get('query') or request.data.get('message') or '').strip()
+        aid = request.user.id
+        if not question:
+            def _empty():
+                yield 'data: {"type": "error", "message": "Please type a question."}\n\n'
+            return StreamingHttpResponse(_empty(), content_type='text/event-stream')
+        resp = StreamingHttpResponse(stream_answer(question, aid), content_type='text/event-stream')
+        resp['Cache-Control'] = 'no-cache'
+        resp['X-Accel-Buffering'] = 'no'  # disable proxy buffering so tokens flush live
+        return resp
 
 
 def _any(text, *phrases):

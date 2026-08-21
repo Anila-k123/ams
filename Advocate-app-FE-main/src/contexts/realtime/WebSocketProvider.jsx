@@ -5,6 +5,10 @@ const WebSocketContext = createContext(null);
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
 const WS_URL = API_BASE.replace(/^http/, "ws") + "/ws";
+// The backend serves no STOMP /ws endpoint, so real-time is off by default —
+// this avoids a 5s reconnect loop of 404s. Set VITE_ENABLE_WS=true to re-enable
+// once a WebSocket backend exists.
+const WS_ENABLED = String(import.meta.env.VITE_ENABLE_WS) === "true";
 
 export function WebSocketProvider({ children }) {
   const [status, setStatus] = useState("disconnected");
@@ -23,6 +27,10 @@ export function WebSocketProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    if (!WS_ENABLED) {
+      setStatus("disconnected");
+      return;
+    }
     const token = localStorage.getItem("token");
     if (!token) {
       setStatus("disconnected");

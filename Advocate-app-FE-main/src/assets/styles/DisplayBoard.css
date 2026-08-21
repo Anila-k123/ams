@@ -31,6 +31,95 @@
   flex-wrap: wrap;
 }
 
+/* Court accordion — one collapsible panel per court */
+.court-accordion {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-secondary, #fff);
+}
+
+.court-panel + .court-panel {
+  border-top: 1px solid var(--border-color, #e5e7eb);
+}
+
+.court-panel-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  transition: background 0.15s ease;
+}
+
+.court-panel-header:hover { background: var(--bg-hover, rgba(0, 0, 0, 0.03)); }
+
+.court-panel.open .court-panel-header {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.03));
+  color: var(--accent);
+}
+
+.court-panel-title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.court-panel-chevron {
+  flex-shrink: 0;
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.court-panel.open .court-panel-chevron {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.court-panel-body {
+  padding: 4px 20px 20px;
+}
+
+.board-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color, #d0d5dd);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.board-refresh:hover { background: var(--bg-hover, rgba(0, 0, 0, 0.04)); }
+
+.board-title {
+  margin-top: 3px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.board-vc {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.board-vc:hover { text-decoration: underline; }
+
 .board-meta {
   display: flex;
   gap: 20px;

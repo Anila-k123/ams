@@ -158,7 +158,8 @@ class EcourtsCascadeView(APIView):
                 return _unavailable()
             except client.ScraperError as exc:
                 return _mapped(exc)
-            cache.set(key, data, ECOURTS_CASCADE_TTL)
+            if data:  # don't cache an empty list — lets a transient miss self-heal
+                cache.set(key, data, ECOURTS_CASCADE_TTL)
         return Response(data)
 
 
@@ -316,6 +317,213 @@ class EcourtsDocumentView(APIView):
         except client.ScraperUnavailable:
             return _unavailable()
 
+        resp = StreamingHttpResponse(
+            upstream.iter_content(chunk_size=8192),
+            status=upstream.status_code,
+            content_type=upstream.headers.get('Content-Type', 'application/octet-stream'),
+        )
+        disposition = upstream.headers.get('Content-Disposition')
+        if disposition:
+            resp['Content-Disposition'] = disposition
+        return resp
+
+
+class SciCaseTypesView(APIView):
+    """GET /api/courtsearch/sci/case-types — cached SCI case-type dropdown."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        data = cache.get('courtsearch:sci:case-types')
+        if data is None:
+            try:
+                data = client.sci_case_types()
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set('courtsearch:sci:case-types', data, COURTS_CACHE_TTL)
+        return Response(data)
+
+
+class SciCaseNoSearchView(APIView):
+    """POST /api/courtsearch/sci/case-no — Supreme Court case status by Case Number.
+    Body: { case_type, case_no, case_year }. Returns { cases:[...] }."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        case_type = (str(request.data.get('case_type') or '')).strip()
+        case_no = (str(request.data.get('case_no') or '')).strip()
+        year_raw = request.data.get('case_year')
+        if not case_type or not case_no:
+            return Response({'error': 'case_type and case_no are required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            case_year = int(year_raw)
+        except (TypeError, ValueError):
+            return Response({'error': 'case_year must be a valid year.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+        key = f'courtsearch:sci:caseno:{case_type}:{case_no}:{case_year}'
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.sci_search_case_no(case_type, case_no, case_year)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set(key, data, SEARCH_CACHE_TTL)
+        return Response(data)
+
+
+class SciCaseDetailView(APIView):
+    """POST /api/courtsearch/sci/case-detail — full SCI case-details record.
+    Body: { diary_no, diary_year }. No CAPTCHA needed."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        diary_no = (str(request.data.get('diary_no') or '')).strip()
+        diary_year = (str(request.data.get('diary_year') or '')).strip()
+        if not diary_no or not diary_year:
+            return Response({'error': 'diary_no and diary_year are required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        key = f'courtsearch:sci:detail:{diary_no}:{diary_year}'
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.sci_case_detail(diary_no, diary_year)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set(key, data, SEARCH_CACHE_TTL)
+        return Response(data)
+
+
+# --- eCourts High Court Services (stateful cascade) ----------------------
+
+HC_CASCADE_TTL = 60 * 60 * 24   # 24h — High Courts/benches/case-types rarely change
+
+
+class HcHighCourtsView(APIView):
+    """GET /api/courtsearch/hc/high-courts — cached { name: state_code } map."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        data = cache.get('courtsearch:hc:high-courts')
+        if data is None:
+            try:
+                data = client.hc_high_courts()
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set('courtsearch:hc:high-courts', data, HC_CASCADE_TTL)
+        return Response(data)
+
+
+class HcBenchesView(APIView):
+    """GET /api/courtsearch/hc/benches?state_code= — cached { bench: court_code }."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        state_code = (request.query_params.get('state_code') or '').strip()
+        if not state_code:
+            return Response({'error': 'state_code is required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        key = f'courtsearch:hc:benches:{state_code}'
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.hc_benches(state_code)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            if data:
+                cache.set(key, data, HC_CASCADE_TTL)
+        return Response(data)
+
+
+class HcCaseTypesView(APIView):
+    """GET /api/courtsearch/hc/case-types?state_code=&court_complex= — cached map."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        state_code = (request.query_params.get('state_code') or '').strip()
+        court_complex = (request.query_params.get('court_complex') or '').strip()
+        if not state_code or not court_complex:
+            return Response({'error': 'state_code and court_complex are required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        key = f'courtsearch:hc:case-types:{state_code}:{court_complex}'
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.hc_case_types(state_code, court_complex)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            if data:
+                cache.set(key, data, HC_CASCADE_TTL)
+        return Response(data)
+
+
+class HcSearchView(APIView):
+    """POST /api/courtsearch/hc/search — High Court case-number lookup.
+    Body: { state_code, court_complex, case_type, case_number, case_year }."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        d = request.data
+        required = ['state_code', 'court_complex', 'case_type', 'case_number', 'case_year']
+        missing = [k for k in required if d.get(k) in (None, '')]
+        if missing:
+            return Response({'error': f'Missing required fields: {", ".join(missing)}'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            case_year = int(d.get('case_year'))
+        except (TypeError, ValueError):
+            return Response({'error': 'case_year must be a valid year.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        this_year = datetime.date.today().year
+        if case_year < 1900 or case_year > this_year:
+            return Response({'error': f'case_year must be between 1900 and {this_year}.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+        state_code = str(d.get('state_code'))
+        court_complex = str(d.get('court_complex'))
+        case_type = str(d.get('case_type'))
+        case_number = str(d.get('case_number'))
+        key = (f'courtsearch:hc:search:{state_code}:{court_complex}:'
+               f'{case_type}:{case_number}:{case_year}')
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.hc_search(state_code, court_complex, case_type,
+                                        case_number, case_year)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set(key, data, SEARCH_CACHE_TTL)
+        return Response(data)
+
+
+class HcOrderPdfView(APIView):
+    """POST /api/courtsearch/hc/order-pdf — stream an order/judgement PDF.
+    Body: { url } taken from a search result's cases[].documents[].url."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        url = (request.data.get('url') or '').strip()
+        if not url:
+            return Response({'error': 'url is required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            upstream = client.hc_open_order_pdf(url)
+        except client.ScraperUnavailable:
+            return _unavailable()
         resp = StreamingHttpResponse(
             upstream.iter_content(chunk_size=8192),
             status=upstream.status_code,

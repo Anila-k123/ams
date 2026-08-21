@@ -10,3 +10,8 @@ reportlab==4.*
 requests==2.34.*
 beautifulsoup4==4.15.*
 truststore; sys_platform == "win32"  # optional: fixes gov SSL chains, import-guarded
+# AI assistant uses an OpenAI-compatible LLM over the already-present `requests`.
+# Backend is selectable via LLM_PROVIDER: 'local' (a local model over ngrok, LLM_BASE_URL)
+# or 'gemini' (Google Gemini's OpenAI-compatible endpoint, GEMINI_API_KEY). No extra deps.
+# anthropic is optional (kept for a future cloud option).
+# anthropic==0.122.*

@@ -2,7 +2,8 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # Court display board (Madras HC cause list)
+    # Court display boards (live cause lists, proxied from the scraper service)
+    path('workspace/display-board/courts', views.DisplayBoardCourtsView.as_view()),
     path('workspace/display-board', views.DisplayBoardView.as_view()),
 
     # Aggregations

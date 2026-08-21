@@ -229,11 +229,41 @@ function mapEcourtsToCase(record, caseTypeLabel) {
   };
 }
 
+// eCourts High Courts share the eCourts detail shape ({cases:[{detail:{case_details,
+// case_status, petitioners[], respondents[], hearings[], orders[]}}]}); only the
+// court level and CNR format differ (HC CNRs may carry dashes, e.g. HCMA01-000393-2023).
+function mapHcToCase(record, caseTypeLabel) {
+  const c0 = (record && record.cases && record.cases[0]) || {};
+  const d = c0.detail || {};
+  const cd = d.case_details || {};
+  const cs = d.case_status || {};
+  const pet = (d.petitioners || [])[0];
+  const res = (d.respondents || [])[0];
+  const cnr = String(cd["CNR Number"] || cd["CNR"] || "").replace(/[^A-Za-z0-9]/g, "").trim();
+  const title =
+    c0.parties ||
+    [pet && pet.name, res && res.name].filter(Boolean).join(" vs ") ||
+    c0.case_number || "";
+  const statusText = (Object.values(cs).join(" ") + " " + String(cd["Case Status"] || "")).toLowerCase();
+  let status = "Active";
+  if (/dispos|dismiss|withdraw|closed|allowed|rejected|decided/.test(statusText)) status = "Closed";
+  else if (/pending/.test(statusText)) status = "Pending";
+  const desc = Object.entries(cd).slice(0, 8).map(([k, v]) => `${k}: ${v}`).join("\n");
+  return {
+    caseNumber: cnr.length === 16 ? cnr : (c0.case_number || ""),
+    caseType: cd["Case Type"] || caseTypeLabel || "",
+    caseTitle: title,
+    courtLevel: "High Court",
+    status,
+    description: desc,
+  };
+}
+
 // Build case Party rows (name, role, counsel, opponent) from a fetched court record.
 function buildParties(record, courtId) {
   const out = [];
   if (!record) return out;
-  if (courtId === "ecourts_dc") {
+  if (courtId === "ecourts_dc" || courtId === "ecourts_hc") {
     const d = (record.cases && record.cases[0] && record.cases[0].detail) || {};
     (d.petitioners || []).forEach((p) =>
       out.push({ name: p.name, role: "Petitioner", counsel: p.advocate || "", isOpponent: false }));
@@ -277,6 +307,12 @@ function buildEvents(record, courtId) {
     const d = (record.cases && record.cases[0] && record.cases[0].detail) || {};
     (d.history || []).forEach((h) => {
       const date = toISODate(h.hearing_date) || toISODate(h.business_date);
+      if (date) out.push({ title: cap(h.purpose || "Hearing"), eventType: "HEARING", description: cap(h.judge ? `Judge: ${h.judge}` : ""), date });
+    });
+  } else if (courtId === "ecourts_hc") {
+    const d = (record.cases && record.cases[0] && record.cases[0].detail) || {};
+    (d.hearings || []).forEach((h) => {
+      const date = toISODate(h.hearing_date) || toISODate(h.business_on_date);
       if (date) out.push({ title: cap(h.purpose || "Hearing"), eventType: "HEARING", description: cap(h.judge ? `Judge: ${h.judge}` : ""), date });
     });
   } else {
@@ -344,6 +380,11 @@ export default function AddCase() {
   const [pName, setPName] = useState("");             // party name
   const [filingNo, setFilingNo] = useState("");       // filing number
   const [advName, setAdvName] = useState("");         // advocate name
+  const [advSubMode, setAdvSubMode] = useState("1");  // 1=name 2=bar code 3=date case list
+  const [barState, setBarState] = useState("");
+  const [barCode, setBarCode] = useState("");
+  const [barYear, setBarYear] = useState("");
+  const [caselistDate, setCaselistDate] = useState("");
   const [policeStations, setPoliceStations] = useState({});
   const [firPolice, setFirPolice] = useState("");
   const [firNo, setFirNo] = useState("");
@@ -353,6 +394,13 @@ export default function AddCase() {
   const [actSection, setActSection] = useState("");
   const [resultRows, setResultRows] = useState([]);   // list-search results
   const [picking, setPicking] = useState(-1);          // index being fetched to detail
+  const [sciDetail, setSciDetail] = useState(null);    // full SCI case-details record
+
+  // eCourts High Court cascade state (High Court -> bench -> case type)
+  const [hcCourts, setHcCourts] = useState({});        // {name: state_code}
+  const [hcBenchList, setHcBenchList] = useState({});  // {bench: court_code}
+  const [hcStateCode, setHcStateCode] = useState("");
+  const [hcBenchCode, setHcBenchCode] = useState("");
 
   const [newCase, setNewCase] = useState(EMPTY_CASE);
   const [caseNumberError, setCaseNumberError] = useState("");
@@ -386,7 +434,17 @@ export default function AddCase() {
   }, []);
 
   const forums = useMemo(() => {
-    const list = (courts || []).map((c) => ({ id: c.court_id, name: c.name, kind: "court" }));
+    const list = (courts || []).map((c) => ({
+      id: c.court_id,
+      name: c.court_id === "ecourts_dc" ? "District Courts"
+        : c.court_id === "ecourts_hc" ? "High Courts"
+        : c.name,
+      kind: "court",
+    }));
+    // CNR is an eCourts lookup that needs no court selection — offer it standalone.
+    if ((courts || []).some((c) => c.court_id === "ecourts_dc")) {
+      list.push({ id: "__cnr__", name: "CNR Number", kind: "cnr" });
+    }
     list.push({ id: "__manual__", name: "Offline / Manual Entry", kind: "manual" });
     return list;
   }, [courts]);
@@ -422,7 +480,7 @@ export default function AddCase() {
   const cascadeReady = !!(ecStateCode && ecDistCode && ecComplexVal && (!needsEst || ecEstCode));
 
   const EC_TABS = [
-    ["case_number", "Case Number"], ["cnr", "CNR Number"], ["party_name", "Party Name"],
+    ["case_number", "Case Number"], ["party_name", "Party Name"],
     ["filing_number", "Filing Number"], ["advocate", "Advocate"], ["fir_number", "FIR Number"],
     ["act", "Act"], ["case_type", "Case Type"],
   ];
@@ -489,7 +547,11 @@ export default function AddCase() {
   const chooseForum = (f) => {
     setSearchError(""); setSaveError("");
     setFetchedRecord(null); setFetchedQuery(null);
-    if (f.kind === "manual") {
+    if (f.kind === "cnr") {
+      setSelectedCourt({ id: "ecourts_dc", name: "CNR Number" });
+      setCnrInput("");
+      setStep("cnr");
+    } else if (f.kind === "manual") {
       setNewCase(EMPTY_CASE);
       setSelectedCourt(null);
       setStep("manual");
@@ -499,11 +561,20 @@ export default function AddCase() {
       if (f.id === "ecourts_dc") {
         setEcMode("case_number"); setCnrInput("");
         setEcYear(""); setEcStatus("Both"); setPName(""); setFilingNo(""); setAdvName("");
+        setAdvSubMode("1"); setBarState(""); setBarCode(""); setBarYear(""); setCaselistDate("");
         setPoliceStations({}); setFirPolice(""); setFirNo("");
         setActTypes({}); setActSearch(""); setActCode(""); setActSection(""); setResultRows([]);
         setEcStates({}); setEcDistricts({}); setEcComplexes({}); setEcEstabs({});
         setEcStateCode(""); setEcDistCode(""); setEcComplexVal(""); setEcEstCode("");
         loadStates();
+      } else if (f.id === "ecourts_hc") {
+        setResultRows([]); setSciDetail(null);
+        setCaseTypes({}); setLkType(null);
+        setHcCourts({}); setHcBenchList({}); setHcStateCode(""); setHcBenchCode("");
+        loadHcCourts();
+      } else if (f.id === "sci") {
+        setResultRows([]); setSciDetail(null);
+        loadSciCaseTypes();
       } else {
         loadCaseTypes(f.id);
       }
@@ -513,10 +584,16 @@ export default function AddCase() {
 
   // Case-type options: eCourts must submit the numeric CODE; Madras accepts the label key.
   const caseTypeOptions = useMemo(() => {
-    if (selectedCourt?.id === "ecourts_dc") {
+    if (selectedCourt?.id === "ecourts_dc" || selectedCourt?.id === "ecourts_hc") {
       return Object.entries(caseTypes)
         .map(([label, code]) => ({ value: String(code), label }))
         .sort((a, b) => a.label.localeCompare(b.label));
+    }
+    if (selectedCourt?.id === "sci") {
+      // SCI case types come as {code: label}; submit the numeric code.
+      return Object.entries(caseTypes)
+        .map(([code, label]) => ({ value: String(code), label }))
+        .sort((a, b) => Number(a.value) - Number(b.value));
     }
     return Object.keys(caseTypes).sort().map((k) => ({ value: k, label: k }));
   }, [caseTypes, selectedCourt]);
@@ -525,6 +602,105 @@ export default function AddCase() {
     Object.entries(m || {})
       .map(([label, code]) => ({ value: String(code), label }))
       .sort((a, b) => a.label.localeCompare(b.label));
+
+  // ---- Supreme Court of India (case number) ----
+  const loadSciCaseTypes = useCallback(async () => {
+    setTypesLoading(true); setCaseTypes({}); setLkType(null);
+    try {
+      const res = await axios.get("/api/courtsearch/sci/case-types", authHeaders);
+      setCaseTypes(res.data || {});
+    } catch { /* ignore */ } finally { setTypesLoading(false); }
+  }, []);
+
+  const mapSciStatus = (s) => (/dispos/i.test(s) ? "Closed" : "Pending");
+
+  const runSearchSci = async () => {
+    if (!lkType || !lkNumber.trim() || !lkYear) return;
+    setSearching(true); setSearchError(""); setResultRows([]);
+    try {
+      const res = await axios.post("/api/courtsearch/sci/case-no", {
+        case_type: lkType.value, case_no: lkNumber.trim(), case_year: Number(lkYear),
+      }, authHeaders);
+      const cases = res.data?.cases || [];
+      if (!cases.length) { setSearchError("No matching cases found."); return; }
+      setResultRows(cases.map((c) => ({
+        sr_no: c.serial,
+        case_number: c.caseNumber,
+        parties: [c.petitioner, c.respondent].filter(Boolean).join("  vs  "),
+        _sci: c,
+      })));
+      setStep("results");
+    } catch (err) {
+      setSearchError(err?.response?.data?.error || "Lookup failed. Please try again.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // ---- eCourts High Courts (High Court -> bench -> case type -> case no) ----
+  const loadHcCourts = useCallback(async () => {
+    setCascadeBusy("hc-courts"); setHcCourts({});
+    try {
+      const res = await axios.get("/api/courtsearch/hc/high-courts", authHeaders);
+      setHcCourts(res.data || {});
+    } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load High Courts."); }
+    finally { setCascadeBusy(""); }
+  }, []);
+
+  const onSelectHcCourt = async (opt) => {
+    const code = opt ? opt.value : "";
+    setHcStateCode(code);
+    setHcBenchCode(""); setHcBenchList({}); setCaseTypes({}); setLkType(null);
+    if (!code) return;
+    setCascadeBusy("hc-benches");
+    try {
+      const res = await axios.get("/api/courtsearch/hc/benches", { ...authHeaders, params: { state_code: code } });
+      setHcBenchList(res.data || {});
+    } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load benches."); }
+    finally { setCascadeBusy(""); }
+  };
+
+  const onSelectHcBench = async (opt) => {
+    const code = opt ? opt.value : "";
+    setHcBenchCode(code);
+    setCaseTypes({}); setLkType(null);
+    if (!code) return;
+    setCascadeBusy("case-types");
+    try {
+      const res = await axios.get("/api/courtsearch/hc/case-types", { ...authHeaders, params: { state_code: hcStateCode, court_complex: code } });
+      setCaseTypes(res.data || {});
+    } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load case types."); }
+    finally { setCascadeBusy(""); }
+  };
+
+  const hcReady = !!(hcStateCode && hcBenchCode);
+
+  const runSearchHc = async () => {
+    if (!hcReady || !lkType || !lkNumber.trim() || !lkYear) return;
+    setSearching(true); setSearchError("");
+    try {
+      const res = await axios.post("/api/courtsearch/hc/search", {
+        state_code: hcStateCode,
+        court_complex: hcBenchCode,
+        case_type: lkType.value,
+        case_number: lkNumber.trim(),
+        case_year: Number(lkYear),
+      }, authHeaders);
+      const mapped = mapHcToCase(res.data, lkType.label);
+      setNewCase({ ...EMPTY_CASE, ...mapped });
+      setFetchedRecord(res.data);
+      setFetchedQuery({
+        state_code: hcStateCode, court_complex: hcBenchCode,
+        case_type: lkType.value, case_number: lkNumber.trim(), case_year: Number(lkYear),
+      });
+      setCaseNumberError(mapped.caseNumber.trim() ? "" : "Enter the case number to save.");
+      setStep("review");
+    } catch (err) {
+      setSearchError(err?.response?.data?.error || "Lookup failed. Please try again.");
+    } finally {
+      setSearching(false);
+    }
+  };
 
   const runSearch = async () => {
     if (!selectedCourt || !lkType || !lkNumber.trim() || !lkYear) return;
@@ -618,10 +794,14 @@ export default function AddCase() {
   const loadActTypes = useCallback(async (search) => {
     setCascadeBusy("acts"); setActTypes({}); setActCode("");
     try {
-      setActTypes(await ecGet("act-types", {
+      const acts = await ecGet("act-types", {
         state_code: ecStateCode, dist_code: ecDistCode, court_complex: ecComplexVal,
         ...(ecEstCode ? { est_code: ecEstCode } : {}), search: search || "",
-      }));
+      });
+      setActTypes(acts);
+      // Auto-select when the search narrows to a single act (e.g. "Indian Penal Code").
+      const codes = Object.values(acts || {});
+      if (codes.length === 1) setActCode(String(codes[0]));
     } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load acts."); }
     finally { setCascadeBusy(""); }
   }, [ecGet, ecStateCode, ecDistCode, ecComplexVal, ecEstCode]);
@@ -644,6 +824,38 @@ export default function AddCase() {
   };
 
   const pickResult = async (row, i) => {
+    // SCI — fetch the full Case Details record for the picked diary no/year.
+    if (selectedCourt?.id === "sci") {
+      const c = row._sci || {};
+      const tok = c.viewToken || {};
+      setPicking(i); setSearchError(""); setSciDetail(null);
+      try {
+        const res = await axios.post("/api/courtsearch/sci/case-detail",
+          { diary_no: tok.diaryNo, diary_year: tok.diaryYear }, authHeaders);
+        const detail = res.data || {};
+        const f = detail.fields || {};
+        const cnr = (f["CNR Number"] || "").trim();
+        const caseNo = (f["Case Number"] || c.caseNumber || "").split("\n")[0].trim();
+        setSciDetail(detail);
+        setNewCase({
+          ...EMPTY_CASE,
+          caseNumber: (cnr || caseNo || "").slice(0, 255),
+          caseTitle: (detail.parties || [c.petitioner, c.respondent].filter(Boolean).join(" vs ")).slice(0, 255),
+          caseType: lkType?.label || "",
+          courtLevel: "Supreme Court",
+          status: mapSciStatus(f["Status/Stage"] || c.status || ""),
+        });
+        setFetchedRecord(null);
+        setFetchedQuery({ diary_no: tok.diaryNo, diary_year: tok.diaryYear });
+        setCaseNumberError("");
+        setStep("review");
+      } catch (err) {
+        setSearchError(err?.response?.data?.error || "Couldn’t fetch the full case details. Please try again.");
+      } finally {
+        setPicking(-1);
+      }
+      return;
+    }
     setPicking(i); setSearchError("");
     try {
       const res = await axios.post("/api/courtsearch/ecourts/case-detail",
@@ -666,7 +878,11 @@ export default function AddCase() {
     if (ecMode === "case_number") return runSearchEcourts();
     if (ecMode === "party_name") return runListSearch("party_name", { name: pName.trim(), year: ecYear, status: ecStatus });
     if (ecMode === "filing_number") return runListSearch("filing_number", { filing_no: filingNo.trim(), year: ecYear });
-    if (ecMode === "advocate") return runListSearch("advocate", { adv_name: advName.trim(), adv_mode: "1", status: ecStatus });
+    if (ecMode === "advocate") {
+      if (advSubMode === "1") return runListSearch("advocate", { adv_name: advName.trim(), adv_mode: "1", status: ecStatus });
+      if (advSubMode === "2") return runListSearch("advocate", { bar_state: barState.trim(), bar_code: barCode.trim(), bar_year: barYear.trim(), adv_mode: "2", status: ecStatus });
+      return runListSearch("advocate", { bar_state: barState.trim(), bar_code: barCode.trim(), bar_year: barYear.trim(), date: caselistDate.trim(), adv_mode: "3" });
+    }
     if (ecMode === "fir_number") return runListSearch("fir_number", { police_st: firPolice, fir_no: firNo.trim(), year: ecYear, status: ecStatus });
     if (ecMode === "act") return runListSearch("act", { act_code: actCode, section: actSection.trim(), status: ecStatus });
     if (ecMode === "case_type") return runListSearch("case_type", { case_type: lkType?.value, year: ecYear, status: ecStatus });
@@ -678,7 +894,11 @@ export default function AddCase() {
     if (ecMode === "case_number") return !!(lkType && lkNumber.trim() && lkYear);
     if (ecMode === "party_name") return pName.trim().length >= 3 && !!ecYear;
     if (ecMode === "filing_number") return !!filingNo.trim() && !!ecYear;
-    if (ecMode === "advocate") return advName.trim().length >= 3;
+    if (ecMode === "advocate") {
+      if (advSubMode === "1") return advName.trim().length >= 3;
+      if (advSubMode === "2") return !!barCode.trim() && !!barYear.trim();
+      return !!barCode.trim() && !!caselistDate.trim();
+    }
     if (ecMode === "fir_number") return !!firPolice && !!firNo.trim() && !!ecYear;
     if (ecMode === "act") return !!actCode;
     if (ecMode === "case_type") return !!(lkType && ecYear);
@@ -860,7 +1080,7 @@ export default function AddCase() {
                 {filteredForums.map((f) => (
                   <li key={f.id}>
                     <button className="ac-forum-item" onClick={() => chooseForum(f)}>
-                      {f.kind === "manual" ? <FiEdit3 /> : <FiHome />}
+                      {f.kind === "manual" ? <FiEdit3 /> : f.kind === "cnr" ? <FiSearch /> : <FiHome />}
                       <span>{f.name}</span>
                     </button>
                   </li>
@@ -878,7 +1098,7 @@ export default function AddCase() {
                 {forums.map((f) => (
                   <li key={f.id}>
                     <button className="ac-forum-item" onClick={() => chooseForum(f)}>
-                      {f.kind === "manual" ? <FiEdit3 /> : <FiHome />}
+                      {f.kind === "manual" ? <FiEdit3 /> : f.kind === "cnr" ? <FiSearch /> : <FiHome />}
                       <span>{f.name}</span>
                     </button>
                   </li>
@@ -894,8 +1114,8 @@ export default function AddCase() {
       )}
 
       {/* STEP 2 — search the court record */}
-      {/* Madras HC — flat lookup */}
-      {step === "search" && selectedCourt && selectedCourt.id !== "ecourts_dc" && (
+      {/* Madras HC / SCI — flat lookup */}
+      {step === "search" && selectedCourt && !["ecourts_dc", "ecourts_hc"].includes(selectedCourt.id) && (
         <div className="ac-card">
           <div className="ac-selected">
             <span>Selected: <strong>{selectedCourt.name}</strong></span>
@@ -921,9 +1141,12 @@ export default function AddCase() {
           </div>
           {searchError && <p className="ac-error">{searchError}</p>}
           <div className="ac-actions">
-            <button className="ac-search-btn" onClick={runSearch}
+            <button className="ac-search-btn"
+                    onClick={selectedCourt.id === "sci" ? runSearchSci : runSearch}
                     disabled={searching || !lkType || !lkNumber.trim() || !lkYear}>
-              <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
+              <FiSearch /> {searching
+                ? (selectedCourt.id === "sci" ? "Searching… (solving CAPTCHA, up to 2 min)" : "Searching… (up to 30s)")
+                : "Search For Case"}
             </button>
           </div>
         </div>
@@ -991,10 +1214,37 @@ export default function AddCase() {
             </div>
           )}
           {ecMode === "advocate" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Advocate Name</label><input value={advName} onChange={(e) => setAdvName(e.target.value)} placeholder="Advocate name (min 3 chars)" /></div>
-              {statusField()}
-            </div>
+            <>
+              <div className="ac-status" style={{ marginBottom: 12 }}>
+                {[["1", "Advocate Name"], ["2", "Bar Code"], ["3", "Date Case List"]].map(([v, l]) => (
+                  <label key={v}><input type="radio" name="advSubMode" checked={advSubMode === v} onChange={() => setAdvSubMode(v)} /> {l}</label>
+                ))}
+              </div>
+              <div className="ac-search-form">
+                {advSubMode === "1" && (
+                  <>
+                    <div className="ac-field"><label>Advocate Name</label><input value={advName} onChange={(e) => setAdvName(e.target.value)} placeholder="Advocate name (min 3 chars)" /></div>
+                    {statusField()}
+                  </>
+                )}
+                {advSubMode === "2" && (
+                  <>
+                    <div className="ac-field"><label>State Code</label><input value={barState} onChange={(e) => setBarState(e.target.value)} placeholder="e.g. KL" /></div>
+                    <div className="ac-field"><label>Bar Code Number</label><input value={barCode} onChange={(e) => setBarCode(e.target.value)} placeholder="Bar registration no." /></div>
+                    <div className="ac-field"><label>Bar Year</label><input type="number" value={barYear} onChange={(e) => setBarYear(e.target.value)} placeholder="e.g. 1998" /></div>
+                    {statusField()}
+                  </>
+                )}
+                {advSubMode === "3" && (
+                  <>
+                    <div className="ac-field"><label>State Code</label><input value={barState} onChange={(e) => setBarState(e.target.value)} placeholder="e.g. KL" /></div>
+                    <div className="ac-field"><label>Bar Code Number</label><input value={barCode} onChange={(e) => setBarCode(e.target.value)} placeholder="Bar registration no." /></div>
+                    <div className="ac-field"><label>Bar Year</label><input type="number" value={barYear} onChange={(e) => setBarYear(e.target.value)} placeholder="e.g. 1998" /></div>
+                    <div className="ac-field"><label>Cause List Date</label><input value={caselistDate} onChange={(e) => setCaselistDate(e.target.value)} placeholder="dd-mm-yyyy" /></div>
+                  </>
+                )}
+              </div>
+            </>
           )}
           {ecMode === "fir_number" && (
             <div className="ac-search-form">
@@ -1040,6 +1290,38 @@ export default function AddCase() {
         </div>
       )}
 
+      {/* eCourts High Courts — High Court -> bench -> case type cascade */}
+      {step === "search" && selectedCourt && selectedCourt.id === "ecourts_hc" && (
+        <div className="ac-card">
+          <div className="ac-selected">
+            <span>Selected: <strong>{selectedCourt.name}</strong></span>
+            <button className="ac-clear" onClick={() => setStep("select")} title="Change court"><FiX /></button>
+          </div>
+          <div className="ac-search-form">
+            <div className="ac-field"><label>High Court</label>
+              <Select options={mapToOptions(hcCourts)} value={mapToOptions(hcCourts).find((o) => o.value === hcStateCode) || null}
+                onChange={onSelectHcCourt} isLoading={cascadeBusy === "hc-courts"} placeholder="Select High Court" styles={customSelectStyles} /></div>
+            <div className="ac-field"><label>Bench</label>
+              <Select options={mapToOptions(hcBenchList)} value={mapToOptions(hcBenchList).find((o) => o.value === hcBenchCode) || null}
+                onChange={onSelectHcBench} isDisabled={!hcStateCode} isLoading={cascadeBusy === "hc-benches"} placeholder="Select bench" styles={customSelectStyles} /></div>
+            <div className="ac-field"><label>Case Type</label>
+              <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!hcReady} isLoading={cascadeBusy === "case-types"}
+                placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} styles={customSelectStyles} /></div>
+            <div className="ac-field"><label>Case Number</label>
+              <input value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" /></div>
+            <div className="ac-field"><label>Case Year</label>
+              <input type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} min="1900" max="2100" placeholder="e.g. 2024" /></div>
+          </div>
+          {searchError && <p className="ac-error">{searchError}</p>}
+          <div className="ac-actions">
+            <button className="ac-search-btn" onClick={runSearchHc}
+                    disabled={searching || !hcReady || !lkType || !lkNumber.trim() || !lkYear}>
+              <FiSearch /> {searching ? "Searching… (solving CAPTCHA, up to 60s)" : "Search For Case"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Results list (list-returning modes) — pick one to fetch its full detail */}
       {step === "results" && (
         <div className="ac-card">
@@ -1075,33 +1357,63 @@ export default function AddCase() {
       {step === "review" && (
         <div className="ac-card">
           <div className="ac-selected">
-            <span>Fetched from <strong>{selectedCourt?.name}</strong> — review and save</span>
-            <button className="ac-clear" onClick={() => setStep("search")} title="Back to search"><FiX /></button>
+            <span>{fetchedRecord ? <>Fetched from <strong>{selectedCourt?.name}</strong> — review and save</>
+                                  : <>From <strong>{selectedCourt?.name}</strong> — review and save</>}</span>
+            <button className="ac-clear" onClick={() => setStep(resultRows.length ? "results" : "search")} title="Back"><FiX /></button>
           </div>
 
-          <div className="ac-record">
-            <div className="ac-record-head">Case details from the court</div>
-            <CourtRecordView record={fetchedRecord} courtComplex={ecComplexVal} />
-          </div>
+          {fetchedRecord ? (
+            <>
+              <div className="ac-record">
+                <div className="ac-record-head">Case details from the court</div>
+                <CourtRecordView record={fetchedRecord} courtComplex={ecComplexVal} courtId={selectedCourt?.id} />
+              </div>
 
-          <div className="ac-savebar">
-            <div className="ac-field">
-              <label>Assign to client</label>
-              <Select
-                options={clientOptions}
-                value={clientOptions.find((o) => o.value === Number(newCase.clientId)) || null}
-                onChange={(sel) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }))}
-                isClearable placeholder="Select client" styles={customSelectStyles}
-              />
-            </div>
-            {caseNumberError && <p className="ac-error">{caseNumberError}</p>}
-            {saveError && <p className="ac-error">{saveError}</p>}
-            <div className="ac-actions">
-              <button type="button" className="ac-save" onClick={handleSave} disabled={saving}>
-                {saving ? "Saving…" : "Save Case to Workspace"}
-              </button>
-            </div>
-          </div>
+              <div className="ac-savebar">
+                <div className="ac-field">
+                  <label>Assign to client</label>
+                  <Select
+                    options={clientOptions}
+                    value={clientOptions.find((o) => o.value === Number(newCase.clientId)) || null}
+                    onChange={(sel) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }))}
+                    isClearable placeholder="Select client" styles={customSelectStyles}
+                  />
+                </div>
+                {caseNumberError && <p className="ac-error">{caseNumberError}</p>}
+                {saveError && <p className="ac-error">{saveError}</p>}
+                <div className="ac-actions">
+                  <button type="button" className="ac-save" onClick={handleSave} disabled={saving}>
+                    {saving ? "Saving…" : "Save Case to Workspace"}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {sciDetail && (
+                <div className="ac-record">
+                  <div className="ac-record-head">
+                    Case details from the Supreme Court
+                    {sciDetail.diaryNo ? ` — Diary No. ${sciDetail.diaryNo}` : ""}
+                  </div>
+                  {sciDetail.parties && <p className="ac-sci-parties">{sciDetail.parties}</p>}
+                  <div className="ac-rtable-wrap">
+                    <table className="ac-rtable ac-sci-detail">
+                      <tbody>
+                        {Object.entries(sciDetail.fields || {}).map(([k, v]) => (
+                          <tr key={k}>
+                            <th style={{ width: "28%", textAlign: "left", verticalAlign: "top" }}>{k}</th>
+                            <td style={{ whiteSpace: "pre-line" }}>{v}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {renderCaseForm()}
+            </>
+          )}
         </div>
       )}
 
@@ -1113,6 +1425,29 @@ export default function AddCase() {
             <button className="ac-clear" onClick={() => setStep("select")} title="Back"><FiX /></button>
           </div>
           {renderCaseForm()}
+        </div>
+      )}
+
+      {/* Standalone CNR lookup (no court selection needed) */}
+      {step === "cnr" && (
+        <div className="ac-card">
+          <div className="ac-selected">
+            <span>Search by CNR Number</span>
+            <button className="ac-clear" onClick={() => setStep("select")} title="Back"><FiX /></button>
+          </div>
+          <div className="ac-search-form">
+            <div className="ac-field ac-field-full">
+              <label>CNR Number</label>
+              <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16}
+                placeholder="16-digit CNR, e.g. KLML170000832024" />
+            </div>
+          </div>
+          <div className="ac-actions">
+            <button className="ac-search-btn" onClick={runSearchCnr} disabled={searching || !cnrInput.trim()}>
+              <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
+            </button>
+          </div>
+          {searchError && <p className="ac-error">{searchError}</p>}
         </div>
       )}
     </div>

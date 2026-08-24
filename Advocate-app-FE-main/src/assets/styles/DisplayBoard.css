@@ -67,9 +67,22 @@
   color: var(--accent);
 }
 
+.court-panel-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
 .court-panel-title {
   font-size: 1rem;
   font-weight: 600;
+}
+
+.court-panel-note {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-muted);
 }
 
 .court-panel-chevron {
@@ -103,12 +116,6 @@
 }
 
 .board-refresh:hover { background: var(--bg-hover, rgba(0, 0, 0, 0.04)); }
-
-.board-title {
-  margin-top: 3px;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
 
 .board-vc {
   display: inline-block;
@@ -204,10 +211,24 @@
   white-space: nowrap;
 }
 
-.board-case { font-weight: 600; }
+.board-field-caseString { font-weight: 600; }
 
-.board-judges { color: var(--text-muted); }
-.board-judges div { line-height: 1.4; }
+.board-field-title { color: var(--text-muted); font-size: 0.9rem; }
+
+.board-field-judges { color: var(--text-muted); }
+.board-field-judges div { line-height: 1.4; }
+
+.board-field-advocates { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
+
+.board-field-keptBack { color: var(--text-muted); font-size: 0.85rem; }
+
+.board-field-cino { color: var(--text-muted); font-size: 0.85rem; }
+
+.board-field-venue { color: var(--text-muted); font-size: 0.85rem; }
+
+.board-field-message { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
+
+.board-field-stage { color: var(--text-muted); font-size: 0.85rem; text-align: center; }
 
 @media (max-width: 640px) {
   .board-container { padding: 16px; }

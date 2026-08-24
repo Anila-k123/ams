@@ -454,13 +454,18 @@ export default function AddCase() {
   }, []);
 
   const forums = useMemo(() => {
-    const list = (courts || []).map((c) => ({
-      id: c.court_id,
-      name: c.court_id === "ecourts_dc" ? "District Courts"
-        : c.court_id === "ecourts_hc" ? "High Courts"
-        : c.name,
-      kind: "court",
-    }));
+    // The standalone Madras HC flat lookup is superseded by the eCourts High
+    // Courts cascade below (which covers Madras HC plus every other High
+    // Court with richer search + full case detail), so hide it here.
+    const list = (courts || [])
+      .filter((c) => c.court_id !== "madras_hc")
+      .map((c) => ({
+        id: c.court_id,
+        name: c.court_id === "ecourts_dc" ? "District Courts"
+          : c.court_id === "ecourts_hc" ? "High Courts"
+          : c.name,
+        kind: "court",
+      }));
     // CNR is a unified eCourts lookup that needs no cascade/court selection -
     // it tries District Courts and High Courts together and offers it standalone
     // (see CnrSearchView on the backend for why this is one box, not two).
@@ -822,7 +827,15 @@ export default function AddCase() {
     setCascadeBusy("hc-benches");
     try {
       const res = await axios.get("/api/courtsearch/hc/benches", { ...authHeaders, params: { state_code: code } });
-      setHcBenchList(res.data || {});
+      const benches = res.data || {};
+      setHcBenchList(benches);
+      // Some High Courts (e.g. Madras) present as a single merged entry
+      // instead of separate benches — skip the extra click and select it
+      // immediately, same as if the user had picked the only option.
+      const entries = Object.entries(benches);
+      if (entries.length === 1) {
+        await onSelectHcBench({ value: entries[0][1] });
+      }
     } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load benches."); }
     finally { setCascadeBusy(""); }
   };

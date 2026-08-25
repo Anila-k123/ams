@@ -139,6 +139,12 @@ class CnrSearchView(APIView):
     than making the user pick a court first, query both portals concurrently
     and return whichever one actually has the case.
 
+    The Supreme Court is deliberately NOT part of this fan-out: its CNR search
+    solves a CAPTCHA and can take far longer than eCourts (~150s vs ~60s), so
+    folding it in here would drag every ordinary District/High Court CNR
+    lookup's worst case down to SCI's pace. SCI keeps its own dedicated CNR
+    search inside the Supreme Court forum instead.
+
     Body: { cnr }. Returns { courtId: 'ecourts_dc' | 'ecourts_hc', cases: [...] }
     — the same envelope shape either backend already returns, plus the
     discriminator the frontend needs to render/map the result correctly.
@@ -161,29 +167,40 @@ class CnrSearchView(APIView):
             except (client.ScraperUnavailable, client.ScraperError) as exc:
                 return court_id, None, exc
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [
-                pool.submit(lookup, 'ecourts_dc',
-                           lambda: client.post_json('/courts/ecourts_dc/cnr:search', {'cnr': cnr})),
-                pool.submit(lookup, 'ecourts_hc', lambda: client.hc_cnr_search(cnr)),
-            ]
-            results = [f.result() for f in futures]
+        # Short-circuit on the first confirmed match via as_completed() instead
+        # of waiting on every future in submission order, so a fast hit on one
+        # portal isn't held up behind a still-running lookup on the other.
+        # shutdown(wait=False) lets a lookup still running when we already have
+        # an answer finish in the background rather than blocking the response.
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        futures = [
+            pool.submit(lookup, 'ecourts_dc',
+                       lambda: client.post_json('/courts/ecourts_dc/cnr:search', {'cnr': cnr})),
+            pool.submit(lookup, 'ecourts_hc', lambda: client.hc_cnr_search(cnr)),
+        ]
+        results = []
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                court_id, payload, exc = future.result()
+                if payload is not None:
+                    data = {'courtId': court_id, 'cases': payload.get('cases', [])}
+                    cache.set(key, data, SEARCH_CACHE_TTL)
+                    return Response(data)
+                results.append((court_id, payload, exc))
+        finally:
+            pool.shutdown(wait=False)
 
-        for court_id, payload, exc in results:
-            if payload is not None:
-                data = {'courtId': court_id, 'cases': payload.get('cases', [])}
-                cache.set(key, data, SEARCH_CACHE_TTL)
-                return Response(data)
-
-        # Neither portal returned a case. Only report "not found" once BOTH
-        # sides gave a *confirmed* negative (a clean 404). A portal that merely
-        # failed to solve its CAPTCHA in 15 tries (503) or timed out (504) has
-        # told us nothing about whether the case exists there - if we let a
-        # sibling portal's genuine 404 stand in for that, we'd falsely tell the
-        # user "not found" for a case one portal simply couldn't check this
-        # time. (Caught exactly this in testing: a real district-court CNR
-        # whose DC lookup exhausted its CAPTCHA retries, while HC correctly
-        # said 404 - the honest answer is "please retry", not "not found".)
+        # Neither portal returned a case (both futures ran to completion above,
+        # since neither produced a payload to short-circuit on). Only report
+        # "not found" once BOTH sides gave a *confirmed* negative (a clean
+        # 404). A portal that merely failed to solve its CAPTCHA in 15 tries
+        # (503) or timed out (504) has told us nothing about whether the case
+        # exists there - if we let a sibling portal's genuine 404 stand in for
+        # that, we'd falsely tell the user "not found" for a case one portal
+        # simply couldn't check this time. (Caught exactly this in testing: a
+        # real district-court CNR whose DC lookup exhausted its CAPTCHA
+        # retries, while HC correctly said 404 - the honest answer is "please
+        # retry", not "not found".)
         errors = [exc for _, _, exc in results if exc is not None]
         confirmed_404 = [exc for exc in errors
                         if isinstance(exc, client.ScraperError) and exc.status == 404]
@@ -467,6 +484,35 @@ class SciCaseDetailView(APIView):
         if data is None:
             try:
                 data = client.sci_case_detail(diary_no, diary_year)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            except client.ScraperError as exc:
+                return _mapped(exc)
+            cache.set(key, data, SEARCH_CACHE_TTL)
+        return Response(data)
+
+
+class SciCaseSectionView(APIView):
+    """POST /api/courtsearch/sci/case-section — one lazy-loaded dropdown
+    section (Listing Dates, Judgement/Orders, Notices, ...) of an SCI case
+    record. Body: { diary_no, diary_year, tab_name, label? }. No CAPTCHA
+    needed. Fetched on demand instead of via case-detail's expand=True so a
+    case review doesn't pay for every section up front."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        diary_no = (str(request.data.get('diary_no') or '')).strip()
+        diary_year = (str(request.data.get('diary_year') or '')).strip()
+        tab_name = (str(request.data.get('tab_name') or '')).strip()
+        label = (str(request.data.get('label') or '')).strip()
+        if not diary_no or not diary_year or not tab_name:
+            return Response({'error': 'diary_no, diary_year and tab_name are required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        key = f'courtsearch:sci:section:{diary_no}:{diary_year}:{tab_name}'
+        data = cache.get(key)
+        if data is None:
+            try:
+                data = client.sci_case_section(diary_no, diary_year, tab_name, label)
             except client.ScraperUnavailable:
                 return _unavailable()
             except client.ScraperError as exc:

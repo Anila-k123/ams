@@ -22,6 +22,7 @@ urlpatterns = [
     path('courtsearch/sci/case-types', views.SciCaseTypesView.as_view()),
     path('courtsearch/sci/case-no', views.SciCaseNoSearchView.as_view()),
     path('courtsearch/sci/case-detail', views.SciCaseDetailView.as_view()),
+    path('courtsearch/sci/case-section', views.SciCaseSectionView.as_view()),
     path('courtsearch/sci/diary-no', views.SciDiaryNoSearchView.as_view()),
     path('courtsearch/sci/cnr', views.SciCnrSearchView.as_view()),
     path('courtsearch/sci/aor-code', views.SciAorCodeSearchView.as_view()),

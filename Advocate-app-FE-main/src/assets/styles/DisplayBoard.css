@@ -230,6 +230,12 @@
 
 .board-field-stage { color: var(--text-muted); font-size: 0.85rem; text-align: center; }
 
+.board-field-listType { color: var(--text-muted); font-size: 0.85rem; }
+
+.board-field-progress { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
+
+.board-field-reference { color: var(--text-muted); font-size: 0.85rem; text-align: center; }
+
 @media (max-width: 640px) {
   .board-container { padding: 16px; }
   .board-header { flex-direction: column; }

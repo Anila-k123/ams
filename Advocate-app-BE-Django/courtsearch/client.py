@@ -226,8 +226,16 @@ def hc_benches(state_code, timeout: int = LIST_TIMEOUT):
     return get_json('/courts/ecourts_hc/benches', {'state_code': state_code}, timeout=timeout)
 
 
-def hc_case_types(state_code, court_complex, timeout: int = LIST_TIMEOUT):
-    """{ case-type label -> code } for one bench."""
+# A merged High Court group (currently just Madras: court_complex="ALL") makes
+# the scraper query every real bench in the group sequentially and union the
+# results, so these three calls can take roughly Nx as long as a normal single-
+# bench fetch. LIST_TIMEOUT (30s default) is comfortably enough for one bench
+# but not for a 2-bench merge, so give these their own longer default.
+HC_MERGEABLE_LIST_TIMEOUT = config('COURT_API_HC_LIST_TIMEOUT', default=90, cast=int)
+
+
+def hc_case_types(state_code, court_complex, timeout: int = HC_MERGEABLE_LIST_TIMEOUT):
+    """{ case-type label -> code } for one bench (or unioned, for a merged group)."""
     return get_json('/courts/ecourts_hc/case-types',
                     {'state_code': state_code, 'court_complex': court_complex}, timeout=timeout)
 
@@ -244,14 +252,14 @@ def hc_search(state_code, court_complex, case_type, case_number, case_year,
     }, timeout=timeout)
 
 
-def hc_police_stations(state_code, court_complex, timeout: int = LIST_TIMEOUT):
-    """{ police-station label -> code } for the FIR-number search, one bench."""
+def hc_police_stations(state_code, court_complex, timeout: int = HC_MERGEABLE_LIST_TIMEOUT):
+    """{ police-station label -> code } for the FIR-number search (unioned, for a merged group)."""
     return get_json('/courts/ecourts_hc/police-stations',
                     {'state_code': state_code, 'court_complex': court_complex}, timeout=timeout)
 
 
-def hc_act_types(state_code, court_complex, search='', timeout: int = LIST_TIMEOUT):
-    """{ act label -> code } for the Act search, one bench."""
+def hc_act_types(state_code, court_complex, search='', timeout: int = HC_MERGEABLE_LIST_TIMEOUT):
+    """{ act label -> code } for the Act search (unioned, for a merged group)."""
     return get_json('/courts/ecourts_hc/act-types', {
         'state_code': state_code, 'court_complex': court_complex, 'search': search,
     }, timeout=timeout)

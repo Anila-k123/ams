@@ -83,6 +83,7 @@ async function fetchBenches(benchValues) {
 // else. Never hardcode a specific court's column set; the data decides.
 const FIELD_CATALOG = [
   { key: "itemNumber", label: "Item", has: (r) => !!r.itemNumber, render: (r) => r.itemNumber },
+  { key: "listType", label: "List", has: (r) => !!r.listType, render: (r) => r.listType },
   { key: "caseString", label: "Case No.", has: (r) => !!r.caseString, render: (r) => r.caseString },
   { key: "title", label: "Title", has: (r) => !!r.title, render: (r) => r.title },
   {
@@ -105,6 +106,8 @@ const FIELD_CATALOG = [
   { key: "venue", label: "Venue", has: (r) => !!r.venue, render: (r) => r.venue },
   { key: "message", label: "Message", has: (r) => !!r.message, render: (r) => r.message },
   { key: "stage", label: "Stage", has: (r) => !!r.stage, render: (r) => r.stage },
+  { key: "progress", label: "Progress", has: (r) => !!r.progress, render: (r) => r.progress },
+  { key: "reference", label: "Reference", has: (r) => !!r.reference, render: (r) => r.reference },
 ];
 
 // One court row: header toggles open; the board loads lazily on first open.

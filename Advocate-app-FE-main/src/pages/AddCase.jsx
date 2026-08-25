@@ -834,20 +834,21 @@ export default function AddCase() {
       // immediately, same as if the user had picked the only option.
       const entries = Object.entries(benches);
       if (entries.length === 1) {
-        await onSelectHcBench({ value: entries[0][1] });
+        await onSelectHcBench({ value: entries[0][1] }, code);
       }
     } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load benches."); }
     finally { setCascadeBusy(""); }
   };
 
-  const onSelectHcBench = async (opt) => {
+  const onSelectHcBench = async (opt, stateCodeOverride) => {
     const code = opt ? opt.value : "";
+    const stateCode = stateCodeOverride || hcStateCode;
     setHcBenchCode(code);
     setCaseTypes({}); setLkType(null);
     if (!code) return;
     setCascadeBusy("case-types");
     try {
-      const res = await axios.get("/api/courtsearch/hc/case-types", { ...authHeaders, params: { state_code: hcStateCode, court_complex: code } });
+      const res = await axios.get("/api/courtsearch/hc/case-types", { ...authHeaders, params: { state_code: stateCode, court_complex: code } });
       setCaseTypes(res.data || {});
     } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load case types."); }
     finally { setCascadeBusy(""); }

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import Select from "react-select";
-import { FiSearch, FiX, FiChevronLeft, FiHome, FiEdit3 } from "react-icons/fi";
+import { FiSearch, FiX, FiChevronLeft, FiHome, FiEdit3, FiChevronDown } from "react-icons/fi";
 import { useToast } from "../contexts/ToastContext.jsx";
 import CourtRecordView from "../components/CourtRecordView.jsx";
 import "../assets/styles/AddCase.css";
@@ -395,6 +395,8 @@ export default function AddCase() {
   const [resultRows, setResultRows] = useState([]);   // list-search results
   const [picking, setPicking] = useState(-1);          // index being fetched to detail
   const [sciDetail, setSciDetail] = useState(null);    // full SCI case-details record
+  const [sciSectionsOpen, setSciSectionsOpen] = useState(() => new Set()); // expanded dropdown-section tab names
+  const [sciSectionLoading, setSciSectionLoading] = useState("");         // tab name currently being fetched
 
   // SCI search mode: case_number | diary_no | cnr | aor_code | party_name | court
   const [sciMode, setSciMode] = useState("case_number");
@@ -811,7 +813,7 @@ export default function AddCase() {
 
   // ---- eCourts High Courts (High Court -> bench -> case type -> case no) ----
   const loadHcCourts = useCallback(async () => {
-    setCascadeBusy("hc-courts"); setHcCourts({});
+    setCascadeBusy("hc-courts"); setHcCourts({}); setSearchError("");
     try {
       const res = await axios.get("/api/courtsearch/hc/high-courts", authHeaders);
       setHcCourts(res.data || {});
@@ -822,16 +824,16 @@ export default function AddCase() {
   const onSelectHcCourt = async (opt) => {
     const code = opt ? opt.value : "";
     setHcStateCode(code);
-    setHcBenchCode(""); setHcBenchList({}); setCaseTypes({}); setLkType(null);
+    setHcBenchCode(""); setHcBenchList({}); setCaseTypes({}); setLkType(null); setSearchError("");
     if (!code) return;
     setCascadeBusy("hc-benches");
     try {
       const res = await axios.get("/api/courtsearch/hc/benches", { ...authHeaders, params: { state_code: code } });
       const benches = res.data || {};
       setHcBenchList(benches);
-      // Some High Courts (e.g. Madras) present as a single merged entry
-      // instead of separate benches — skip the extra click and select it
-      // immediately, same as if the user had picked the only option.
+      // High Courts with only one bench (most of them) skip the extra
+      // click — select it immediately, same as if the user had picked
+      // the only option.
       const entries = Object.entries(benches);
       if (entries.length === 1) {
         await onSelectHcBench({ value: entries[0][1] }, code);
@@ -844,7 +846,7 @@ export default function AddCase() {
     const code = opt ? opt.value : "";
     const stateCode = stateCodeOverride || hcStateCode;
     setHcBenchCode(code);
-    setCaseTypes({}); setLkType(null);
+    setCaseTypes({}); setLkType(null); setSearchError("");
     if (!code) return;
     setCascadeBusy("case-types");
     try {
@@ -910,6 +912,10 @@ export default function AddCase() {
   // concurrently and tells us which one actually had the case (courtId) - use
   // that exactly like selectedCourt.id is used everywhere else (mapping,
   // CourtRecordView, parties/events extraction, imported-record courtId).
+  // The Supreme Court is NOT part of this - its own CNR search stays inside
+  // the Supreme Court forum (its CAPTCHA-solving is much slower than eCourts,
+  // so folding it into this fan-out would drag every ordinary District/High
+  // Court lookup's worst case down to SCI's pace).
   const runSearchCnr = async () => {
     const cnr = cnrInput.trim();
     if (!cnr) return;
@@ -1029,6 +1035,7 @@ export default function AddCase() {
       const c = row._sci || {};
       const tok = c.viewToken || {};
       setPicking(i); setSearchError(""); setSciDetail(null);
+      setSciSectionsOpen(new Set());
       try {
         const res = await axios.post("/api/courtsearch/sci/case-detail",
           { diary_no: tok.diaryNo, diary_year: tok.diaryYear }, authHeaders);
@@ -1044,6 +1051,7 @@ export default function AddCase() {
           caseType: lkType?.label || "",
           courtLevel: "Supreme Court",
           status: mapSciStatus(f["Status/Stage"] || c.status || ""),
+          description: Object.entries(f).slice(0, 8).map(([k, v]) => `${k}: ${v}`).join("\n"),
         });
         setFetchedRecord(null);
         setFetchedQuery({ diary_no: tok.diaryNo, diary_year: tok.diaryYear });
@@ -1090,6 +1098,34 @@ export default function AddCase() {
     } finally {
       setPicking(-1);
     }
+  };
+
+  // SCI dropdown sections (Listing Dates, Judgement/Orders, Notices, ...) are
+  // listed up front by case-detail but not fetched - load one lazily the
+  // first time it's expanded, then cache its content in sciDetail so
+  // re-collapsing/re-expanding doesn't re-fetch.
+  const toggleSciSection = (sec) => {
+    setSciSectionsOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(sec.tabName)) next.delete(sec.tabName);
+      else next.add(sec.tabName);
+      return next;
+    });
+    if (sec.loaded || !fetchedQuery?.diary_no) return;
+    setSciSectionLoading(sec.tabName);
+    axios.post("/api/courtsearch/sci/case-section", {
+      diary_no: fetchedQuery.diary_no, diary_year: fetchedQuery.diary_year,
+      tab_name: sec.tabName, label: sec.label,
+    }, authHeaders).then((res) => {
+      setSciDetail((prev) => prev && ({
+        ...prev,
+        sections: (prev.sections || []).map((s) => (s.tabName === sec.tabName ? { ...s, ...res.data } : s)),
+      }));
+    }).catch((err) => {
+      setSearchError(err?.response?.data?.error || "Couldn’t load that section.");
+    }).finally(() => {
+      setSciSectionLoading("");
+    });
   };
 
   const onEcSearch = () => {
@@ -1633,7 +1669,7 @@ export default function AddCase() {
                 onChange={onSelectHcCourt} isLoading={cascadeBusy === "hc-courts"} placeholder="Select High Court" styles={customSelectStyles} /></div>
             <div className="ac-field"><label>Bench</label>
               <Select options={mapToOptions(hcBenchList)} value={mapToOptions(hcBenchList).find((o) => o.value === hcBenchCode) || null}
-                onChange={onSelectHcBench} isDisabled={!hcStateCode} isLoading={cascadeBusy === "hc-benches"} placeholder="Select bench" styles={customSelectStyles} /></div>
+                onChange={(opt) => onSelectHcBench(opt)} isDisabled={!hcStateCode} isLoading={cascadeBusy === "hc-benches"} placeholder="Select bench" styles={customSelectStyles} /></div>
           </div>
 
           {/* Search-type tabs */}
@@ -1823,9 +1859,68 @@ export default function AddCase() {
                       </tbody>
                     </table>
                   </div>
+
+                  {(sciDetail.sections || []).length > 0 && (
+                    <div className="ac-sci-sections">
+                      {sciDetail.sections.map((sec) => {
+                        const isOpen = sciSectionsOpen.has(sec.tabName);
+                        return (
+                          <div key={sec.tabName} className={`ac-sci-section ${isOpen ? "open" : ""}`}>
+                            <button type="button" className="ac-sci-section-toggle" onClick={() => toggleSciSection(sec)}>
+                              <span>{sec.label}</span>
+                              <FiChevronDown className="ac-sci-section-chevron" />
+                            </button>
+                            {isOpen && (
+                              <div className="ac-sci-section-body">
+                                {sciSectionLoading === sec.tabName && <p className="ac-record-note">Loading…</p>}
+                                {sec.loaded && sec.empty && <p className="ac-record-note">No records.</p>}
+                                {sec.loaded && !sec.empty && sec.columns?.length > 0 && (
+                                  <div className="ac-rtable-wrap">
+                                    <table className="ac-rtable">
+                                      <thead><tr>{sec.columns.map((c, ci) => <th key={ci}>{c}</th>)}</tr></thead>
+                                      <tbody>
+                                        {(sec.rows || []).map((row, ri) => (
+                                          <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                                {sec.loaded && !sec.empty && !(sec.columns?.length > 0) && sec.links?.length > 0 && (
+                                  <ul className="ac-sci-links">
+                                    {sec.links.map((l, li) => (
+                                      <li key={li}><a href={l.href} target="_blank" rel="noreferrer">{l.text}</a></li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
-              {renderCaseForm()}
+
+              <div className="ac-savebar">
+                <div className="ac-field">
+                  <label>Assign to client</label>
+                  <Select
+                    options={clientOptions}
+                    value={clientOptions.find((o) => o.value === Number(newCase.clientId)) || null}
+                    onChange={(sel) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }))}
+                    isClearable placeholder="Select client" styles={customSelectStyles}
+                  />
+                </div>
+                {caseNumberError && <p className="ac-error">{caseNumberError}</p>}
+                {saveError && <p className="ac-error">{saveError}</p>}
+                <div className="ac-actions">
+                  <button type="button" className="ac-save" onClick={handleSave} disabled={saving}>
+                    {saving ? "Saving…" : "Save Case to Workspace"}
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>

@@ -247,6 +247,25 @@
 .ac-rtable tr:last-child td { border-bottom: none; }
 .ac-record-note { margin: 8px 2px 0; font-size: 0.78rem; font-style: italic; color: var(--text-muted); }
 
+/* SCI: party names under the "Case details from the Supreme Court" heading */
+.ac-sci-parties { margin: 2px 0 12px; color: var(--text-primary); font-size: 0.9rem; font-weight: 600; }
+
+/* SCI: lazy-loaded dropdown sections (Listing Dates, Judgement/Orders, ...) */
+.ac-sci-sections { margin-top: 16px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+.ac-sci-section + .ac-sci-section { border-top: 1px solid var(--border-color); }
+.ac-sci-section-toggle {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border: none; background: var(--bg-primary); color: var(--text-primary);
+  font-size: 0.86rem; font-weight: 600; cursor: pointer; text-align: left;
+}
+.ac-sci-section-toggle:hover { color: var(--accent); }
+.ac-sci-section-chevron { transition: transform 0.15s ease; color: var(--text-muted); flex-shrink: 0; }
+.ac-sci-section.open .ac-sci-section-chevron { transform: rotate(180deg); color: var(--accent); }
+.ac-sci-section-body { padding: 4px 14px 14px; }
+.ac-sci-links { margin: 0; padding-left: 18px; }
+.ac-sci-links li { margin-bottom: 4px; }
+.ac-sci-links a { color: var(--accent); }
+
 @media (max-width: 720px) { .ac-kv-row { grid-template-columns: 1fr; gap: 2px; } }
 
 /* eCourts: one block per matched case */

@@ -85,6 +85,28 @@ class Section(models.Model):
         return f'Section {self.number}: {self.title}'
 
 
+class ActPaper(models.Model):
+    """Subordinate delegated legislation tied to an act - the "Act Papers"
+    tab. RULE and NOTIFICATION items, each with their own title/date/PDF -
+    confirmed live, not something bundled into the ACT record itself."""
+    act = models.ForeignKey(Act, on_delete=models.DO_NOTHING, db_column='act_id',
+                            related_name='papers')
+    paper_type = models.CharField(max_length=32)   # "RULE" | "NOTIFICATION"
+    title = models.CharField(max_length=512, blank=True)
+    paper_date = models.DateField(null=True, blank=True)
+    pdf_url = models.URLField(max_length=1024, blank=True)
+
+    source_uuid = models.CharField(max_length=64)
+    source_paper_id = models.CharField(max_length=128, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'acts_actpaper'
+
+    def __str__(self):
+        return f'{self.paper_type}: {self.title}'
+
+
 class ActCaseLink(models.Model):
     """Advocate-created link between an act and one of their own cases - the
     "Cases Linked" tab. Unlike Act/Chapter/Section above, this table IS owned

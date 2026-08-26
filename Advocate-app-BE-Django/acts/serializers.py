@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Act, Chapter, Section
+from .models import Act, ActPaper, Chapter, Section
 
 
 def _jurisdiction_label(state_name: str) -> str:
@@ -44,6 +44,18 @@ class SectionListSerializer(serializers.ModelSerializer):
         fields = ['id', 'number', 'title', 'order_number']
 
 
+class ActPaperSerializer(serializers.ModelSerializer):
+    """One Act Papers row - a RULE or NOTIFICATION item, few enough per act
+    (0-2 typically) to embed eagerly, unlike Sections' lazy per-item fetch."""
+    paperType = serializers.CharField(source='paper_type')
+    paperDate = serializers.DateField(source='paper_date')
+    pdfUrl = serializers.CharField(source='pdf_url')
+
+    class Meta:
+        model = ActPaper
+        fields = ['id', 'paperType', 'title', 'paperDate', 'pdfUrl']
+
+
 class ActDetailSerializer(ActListSerializer):
     longTitle = serializers.CharField(source='long_title')
     preambleHtml = serializers.CharField(source='preamble_html')
@@ -51,16 +63,20 @@ class ActDetailSerializer(ActListSerializer):
     pdfUrl = serializers.CharField(source='pdf_url')
     chapters = ChapterSerializer(many=True, read_only=True)
     sections = serializers.SerializerMethodField()
+    papers = serializers.SerializerMethodField()
     caseLinksCount = serializers.SerializerMethodField()
 
     class Meta(ActListSerializer.Meta):
         fields = ActListSerializer.Meta.fields + [
             'longTitle', 'preambleHtml', 'noOfChapter', 'pdfUrl', 'chapters', 'sections',
-            'caseLinksCount',
+            'papers', 'caseLinksCount',
         ]
 
     def get_sections(self, obj):
         return SectionListSerializer(obj.sections.order_by('order_number'), many=True).data
+
+    def get_papers(self, obj):
+        return ActPaperSerializer(obj.papers.order_by('-paper_date'), many=True).data
 
     def get_caseLinksCount(self, obj):
         return obj.case_links.count()

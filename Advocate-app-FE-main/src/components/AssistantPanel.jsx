@@ -8,6 +8,16 @@ export default function AssistantPanel() {
   const { isOpen, setIsOpen, messages, isProcessing, clearHistory, exportHistory } = useAssistant();
   const chatEndRef = useRef(null);
   const [isMaximized, setIsMaximized] = React.useState(false);
+  // Clearing wipes the conversation (and its localStorage copy) irreversibly,
+  // and the button sits right next to Close — so ask first.
+  const [confirmClear, setConfirmClear] = React.useState(false);
+  // Only the welcome message = nothing worth clearing.
+  const hasHistory = messages.length > 1;
+
+  // Never leave the confirm bar hanging open across a close/reopen.
+  useEffect(() => {
+    if (!isOpen) setConfirmClear(false);
+  }, [isOpen]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -54,7 +64,12 @@ export default function AssistantPanel() {
           <button className="header-icon-btn" onClick={exportHistory} title="Export History">
             <FiDownload />
           </button>
-          <button className="header-icon-btn" onClick={clearHistory} title="Clear History">
+          <button
+            className="header-icon-btn"
+            onClick={() => setConfirmClear((v) => !v)}
+            disabled={!hasHistory}
+            title={hasHistory ? "Clear History" : "Nothing to clear"}
+          >
             <FiTrash2 />
           </button>
           <button className="header-icon-btn close-btn" onClick={() => setIsOpen(false)} title="Close">
@@ -62,6 +77,31 @@ export default function AssistantPanel() {
           </button>
         </div>
       </div>
+
+      {confirmClear && (
+        <div className="assistant-confirm-clear" role="alertdialog" aria-label="Confirm clear history">
+          <span>Clear this conversation? This can’t be undone.</span>
+          <div className="assistant-confirm-actions">
+            <button
+              type="button"
+              className="confirm-btn-ghost"
+              onClick={() => { exportHistory(); setConfirmClear(false); }}
+            >
+              Export first
+            </button>
+            <button type="button" className="confirm-btn-ghost" onClick={() => setConfirmClear(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="confirm-btn-danger"
+              onClick={() => { clearHistory(); setConfirmClear(false); }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="assistant-body">

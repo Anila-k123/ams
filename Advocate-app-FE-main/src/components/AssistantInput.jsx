@@ -38,6 +38,14 @@ export default function AssistantInput() {
   };
 
   const handleQuickAction = (cmd) => {
+    // "Find Client" needs a name to search for - there's nothing useful to
+    // submit yet, so pre-fill the input (like a suggestion) instead of
+    // sending immediately, matching every other search command's "verb + name"
+    // shape.
+    if (cmd === "Find Client") {
+      handleSuggestionClick("Find client ");
+      return;
+    }
     sendQuery(cmd);
   };
 
@@ -57,7 +65,7 @@ export default function AssistantInput() {
       {/* Quick action chips */}
       <div className="assistant-quick-chips">
         <span className="chip-label">Quick:</span>
-        {["Open Cases", "Open Clients", "Today's Hearings", "Summary", "Find Client"].map((cmd) => (
+        {["Open Cases", "Open Clients", "Today's Hearings", "Dashboard Summary", "Find Client"].map((cmd) => (
           <button
             key={cmd}
             className="quick-chip"

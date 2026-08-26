@@ -8,9 +8,9 @@ list; `run_tool(name, args, advocate_id)` dispatches and enforces ownership.
 
 import datetime
 
-from django.db.models import Q
+from django.db.models import Count, Q, Sum
 
-from core.models import Case, Client, CaseEvent, Invoice, ClientPayment
+from core.models import Case, Client, CaseEvent, Document, Expense, Invoice, ClientPayment
 from workspace.models import CaseNote, CaseTag, CaseTask
 
 
@@ -38,6 +38,255 @@ def find_case(advocate_id, query):
         'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title,
         'status': c.status, 'client': c.client.name if c.client_id and c.client else None,
     } for c in qs]}
+
+
+def find_client(advocate_id, query):
+    """Search clients by name/email/phone - mirrors the assistant router's
+    own _search_clients() and the Client Directory's own search."""
+    q = (query or '').strip()
+    qs = Client.objects.filter(advocate_id=advocate_id, deleted=False).filter(
+        Q(name__icontains=q) | Q(email__icontains=q) | Q(phone__icontains=q)
+    )[:5]
+    return {'clients': [{
+        'clientId': c.id, 'name': c.name, 'email': c.email, 'phone': c.phone,
+    } for c in qs]}
+
+
+def list_cases_for_client(advocate_id, client_id):
+    """All of one client's cases as light rows (not full detail) - grounds a
+    "what are the cases of client X" style question without the per-case
+    detail-fetching cost get_case_summary()/etc. carry."""
+    qs = Case.objects.filter(advocate_id=advocate_id, client_id=client_id, deleted=False).order_by('-created_at')[:20]
+    return {'cases': [{
+        'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title, 'status': c.status,
+    } for c in qs]}
+
+
+# Cap on rows returned by list_cases(). A "list/which/how many" question needs
+# breadth, but the whole caseload could be thousands of rows - so the cap is
+# generous and, critically, ALWAYS reported alongside the true total so the
+# caller can say "17 total, showing 50" instead of implying it saw everything.
+CASE_LIST_LIMIT = 50
+
+
+def caseload_breakdown(advocate_id):
+    """Exact counts across the WHOLE caseload, grouped by status and by court
+    level. Cheap (two GROUP BYs) and always complete, so "how many High Court
+    cases do I have" is answered from a real aggregate rather than from
+    whichever cases happened to keyword-match the question."""
+    base = Case.objects.filter(advocate_id=advocate_id, deleted=False)
+    by_status, by_court = {}, {}
+    for row in base.values('status').annotate(n=Count('id')):
+        by_status[(row['status'] or 'Unspecified')] = row['n']
+    for row in base.values('court_level').annotate(n=Count('id')):
+        by_court[(row['court_level'] or 'Unspecified')] = row['n']
+    return {'totalCases': base.count(), 'byStatus': by_status, 'byCourtLevel': by_court}
+
+
+def list_cases(advocate_id, court_level=None, status=None, client_id=None,
+               limit=CASE_LIST_LIMIT):
+    """Light case rows for a real filter over the whole caseload.
+
+    Returns {total, returned, truncated, cases:[...]} - `total` is the true
+    match count BEFORE the limit, so a truncated list can never be mistaken
+    for a complete one.
+    """
+    qs = Case.objects.select_related('client').filter(advocate_id=advocate_id, deleted=False)
+    if court_level:
+        qs = qs.filter(court_level__icontains=court_level)
+    if status:
+        qs = qs.filter(status__iexact=status)
+    if client_id:
+        qs = qs.filter(client_id=client_id)
+    total = qs.count()
+    rows = qs.order_by('-created_at')[:limit]
+    return {
+        'total': total,
+        'returned': min(total, limit),
+        'truncated': total > limit,
+        'cases': [{
+            'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title,
+            'status': c.status, 'courtLevel': c.court_level,
+            'client': c.client.name if c.client_id and c.client else None,
+        } for c in rows],
+    }
+
+
+def overdue_tasks(advocate_id, limit=30):
+    """Open tasks whose deadline has passed, across EVERY case (not one case),
+    newest deadline last. Case numbers are resolved in one extra query so the
+    rows are readable without a join per task."""
+    today = datetime.date.today()
+    qs = CaseTask.objects.filter(
+        advocate_id=advocate_id, completed=False, deadline__lt=today
+    ).exclude(deadline=None).order_by('deadline')
+    total = qs.count()
+    rows = list(qs[:limit])
+    numbers = dict(Case.objects.filter(
+        advocate_id=advocate_id, id__in=[t.case_id for t in rows if t.case_id]
+    ).values_list('id', 'case_number'))
+    return {
+        'total': total,
+        'returned': len(rows),
+        'truncated': total > len(rows),
+        'tasks': [{
+            'taskId': t.id, 'title': t.title, 'priority': t.priority,
+            'deadline': _iso(t.deadline),
+            'daysOverdue': (today - t.deadline).days if t.deadline else None,
+            'caseNumber': numbers.get(t.case_id),
+        } for t in rows],
+    }
+
+
+def client_financials(advocate_id, client_id):
+    """Billed / paid / outstanding for ONE client across all their cases —
+    the per-client sibling of get_case_financials()."""
+    invoices = list(Invoice.objects.filter(advocate_id=advocate_id, client_id=client_id))
+    billed = sum((i.amount or 0) for i in invoices)
+    unpaid = [i for i in invoices if (i.status or '').upper() != 'PAID']
+    paid = sum((p.amount or 0) for p in
+               ClientPayment.objects.filter(advocate_id=advocate_id, client_id=client_id))
+    return {
+        'totalBilled': billed,
+        'totalPaid': paid,
+        'outstanding': sum((i.amount or 0) for i in unpaid),
+        'invoiceCount': len(invoices),
+        'unpaidInvoices': [{
+            'invoiceNumber': i.invoice_number, 'amount': i.amount,
+            'status': i.status, 'dueDate': _iso(i.due_date),
+        } for i in unpaid[:20]],
+    }
+
+
+def list_documents(advocate_id, case_id):
+    """Documents filed against one case (name/category/type/date only — never
+    file contents)."""
+    c = _owned_case(advocate_id, case_id)
+    if c is None:
+        return {'error': 'Case not found or not accessible.'}
+    qs = Document.objects.filter(advocate_id=advocate_id, case_id=c.id).order_by('-upload_date')
+    total = qs.count()
+    rows = qs[:20]
+    return {
+        'total': total,
+        'returned': min(total, 20),
+        'truncated': total > 20,
+        'documents': [{
+            'name': d.document_name, 'category': d.category,
+            'fileType': d.file_type, 'uploadedAt': _iso(d.upload_date),
+        } for d in rows],
+    }
+
+
+def pending_invoices(advocate_id, limit=25):
+    """Every unsettled invoice with its amount, client and due date.
+
+    dashboard_summary only carries the COUNT, so a question like "what
+    invoices are still pending" could otherwise only be answered with a bare
+    number. 'Unsettled' is anything not marked PAID — matching how
+    dashboard_summary counts them, so the list and the count never disagree.
+    """
+    today = datetime.date.today()
+    qs = (Invoice.objects.select_related('client')
+          .filter(advocate_id=advocate_id).exclude(status__iexact='PAID')
+          .order_by('due_date'))
+    total = qs.count()
+    rows = list(qs[:limit])
+    return {
+        'total': total,
+        'returned': len(rows),
+        'truncated': total > len(rows),
+        'totalOutstanding': sum((i.amount or 0) for i in qs),
+        'invoices': [{
+            'invoiceNumber': i.invoice_number, 'amount': i.amount, 'status': i.status,
+            'dueDate': _iso(i.due_date),
+            'daysOverdue': (today - i.due_date).days if i.due_date and i.due_date < today else None,
+            'client': i.client.name if i.client_id and i.client else None,
+        } for i in rows],
+    }
+
+
+def _month_bounds(today=None):
+    """(this_month_start, last_month_start, last_month_end) for `today`."""
+    today = today or datetime.date.today()
+    this_start = today.replace(day=1)
+    last_end = this_start - datetime.timedelta(days=1)
+    return this_start, last_end.replace(day=1), last_end
+
+
+def expense_summary(advocate_id, limit=15):
+    """Spend this month and last, a category breakdown, and recent entries.
+
+    Both months are always included so "how much did I spend this month" and
+    "what about last month" are answerable without parsing dates out of the
+    question.
+    """
+    today = datetime.date.today()
+    this_start, last_start, last_end = _month_bounds(today)
+    base = Expense.objects.filter(advocate_id=advocate_id)
+
+    def window(start, end):
+        qs = base.filter(payment_date__gte=start, payment_date__lte=end)
+        return {'from': _iso(start), 'to': _iso(end),
+                'total': sum((e.amount or 0) for e in qs), 'count': qs.count()}
+
+    by_cat = {}
+    for r in (base.filter(payment_date__gte=this_start, payment_date__lte=today)
+              .values('category').annotate(s=Sum('amount'))):
+        by_cat[r['category'] or 'Uncategorised'] = r['s'] or 0
+    recent = base.exclude(payment_date=None).order_by('-payment_date')[:limit]
+    return {
+        'thisMonth': window(this_start, today),
+        'lastMonth': window(last_start, last_end),
+        'thisMonthByCategory': by_cat,
+        'recent': [{
+            'title': e.title, 'amount': e.amount, 'category': e.category,
+            'date': _iso(e.payment_date), 'status': e.payment_status,
+        } for e in recent],
+    }
+
+
+def income_summary(advocate_id, limit=15):
+    """Payments actually RECEIVED this month and last, plus recent receipts.
+
+    This is money in the door (ClientPayment) — deliberately distinct from
+    what has merely been billed, which pending_invoices() covers.
+    """
+    today = datetime.date.today()
+    this_start, last_start, last_end = _month_bounds(today)
+    base = ClientPayment.objects.select_related('client').filter(advocate_id=advocate_id)
+
+    def window(start, end):
+        qs = base.filter(payment_date__gte=start, payment_date__lte=end)
+        return {'from': _iso(start), 'to': _iso(end),
+                'total': sum((p.amount or 0) for p in qs), 'count': qs.count()}
+
+    recent = base.exclude(payment_date=None).order_by('-payment_date')[:limit]
+    return {
+        'thisMonth': window(this_start, today),
+        'lastMonth': window(last_start, last_end),
+        'recent': [{
+            'amount': p.amount, 'date': _iso(p.payment_date), 'mode': p.payment_mode,
+            'client': p.client.name if p.client_id and p.client else None,
+        } for p in recent],
+    }
+
+
+def clients_by_case_count(advocate_id, limit=10):
+    """Top clients by number of live cases — answers "which client has the
+    most cases" from a real aggregate. Capped, with the true client total
+    reported so a partial ranking is never mistaken for the whole book."""
+    rows = (Case.objects.filter(advocate_id=advocate_id, deleted=False, client_id__isnull=False)
+            .values('client_id', 'client__name')
+            .annotate(n=Count('id')).order_by('-n')[:limit])
+    return {
+        'totalClientsWithCases': Case.objects.filter(
+            advocate_id=advocate_id, deleted=False, client_id__isnull=False
+        ).values('client_id').distinct().count(),
+        'topClients': [{
+            'clientId': r['client_id'], 'name': r['client__name'], 'caseCount': r['n'],
+        } for r in rows],
+    }
 
 
 def get_case_summary(advocate_id, case_id):

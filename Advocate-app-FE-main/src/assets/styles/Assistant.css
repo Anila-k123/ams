@@ -147,6 +147,64 @@
   background: rgba(var(--danger-rgb), 0.4);
 }
 
+.header-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.header-icon-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Inline confirmation before wiping the conversation */
+.assistant-confirm-clear {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.assistant-confirm-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.assistant-confirm-clear button {
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+}
+
+.confirm-btn-ghost {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.confirm-btn-ghost:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+}
+
+.confirm-btn-danger {
+  background: #e04f5f;
+  border-color: #e04f5f !important;
+  color: #fff;
+}
+
+.confirm-btn-danger:hover {
+  background: #c8404f;
+}
+
 .assistant-body {
   flex: 1;
   overflow-y: auto;
@@ -199,6 +257,24 @@
 
 .assistant-msg-text strong {
   font-weight: 700;
+}
+
+.assistant-msg-text .assistant-msg-heading {
+  font-weight: 700;
+  margin: 8px 0 4px;
+}
+
+.assistant-msg-text .assistant-msg-heading:first-child {
+  margin-top: 0;
+}
+
+.assistant-msg-text ul {
+  margin: 2px 0 8px;
+  padding-left: 18px;
+}
+
+.assistant-msg-text li {
+  margin: 2px 0;
 }
 
 .assistant-msg.bot .assistant-msg-text {

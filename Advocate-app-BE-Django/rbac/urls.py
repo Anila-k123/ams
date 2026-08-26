@@ -3,6 +3,7 @@ from . import views
 
 urlpatterns = [
     path('roles', views.list_roles),
+    path('roles/<int:role_id>', views.role_detail),
     path('roles/<int:role_id>/permissions', views.role_permissions),
     path('permissions', views.list_permissions),
     # Admin user management

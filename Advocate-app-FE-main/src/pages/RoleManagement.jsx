@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { FiEdit2, FiTrash2, FiPlus, FiX, FiSave, FiShield } from "react-icons/fi";
 import rbacService from "../services/rbacService";
 import { usePermission } from "../contexts/PermissionContext";
+import { useToast } from "../contexts/ToastContext.jsx";
 import "../assets/styles/AdminManagement.css";
 
 export default function RoleManagement() {
@@ -12,7 +13,10 @@ export default function RoleManagement() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", description: "" });
   const [selectedPerms, setSelectedPerms] = useState([]);
+  const [permsLoading, setPermsLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const { hasPermission } = usePermission();
+  const { success, error } = useToast();
   const canManage = hasPermission("ROLE_MANAGE");
 
   const loadData = async () => {
@@ -21,7 +25,7 @@ export default function RoleManagement() {
       setRoles(r);
       setPermissions(p);
     } catch (err) {
-      console.error("Failed to load roles:", err);
+      error("Couldn't load roles and permissions.");
     } finally {
       setLoading(false);
     }
@@ -33,22 +37,41 @@ export default function RoleManagement() {
     setEditingRole(null);
     setForm({ name: "", description: "" });
     setSelectedPerms([]);
+    setPermsLoading(false);
+    setLoadFailed(false);
     setShowForm(true);
   };
 
   const openEdit = async (role) => {
     setEditingRole(role);
+    setLoadFailed(false);
     setForm({ name: role.name, description: role.description || "" });
-    try {
-      const permIds = await rbacService.getRolePermissions(role.id);
-      setSelectedPerms(permIds);
-    } catch {
-      setSelectedPerms([]);
-    }
+    // GET roles/<id>/permissions returns full permission OBJECTS; the
+    // checkboxes below compare against permission IDs. Mapping was missing, so
+    // every box rendered unchecked and saving then posted an empty list —
+    // silently stripping the role of every permission it had.
+    setPermsLoading(true);
+    setSelectedPerms([]);
     setShowForm(true);
+    try {
+      const perms = await rbacService.getRolePermissions(role.id);
+      setSelectedPerms((perms || []).map((p) => (typeof p === "object" ? p.id : p)));
+    } catch {
+      error("Couldn't load this role's current permissions — not saving would be safer.");
+      setLoadFailed(true);
+    } finally {
+      setPermsLoading(false);
+    }
   };
 
   const handleSave = async () => {
+    if (!form.name.trim()) { error("Role name is required."); return; }
+    // Never write a permission set we failed to read — that is the wipe.
+    if (editingRole && (permsLoading || loadFailed)) {
+      error(permsLoading ? "Still loading this role's permissions…"
+                         : "Cannot save: this role's current permissions could not be loaded.");
+      return;
+    }
     try {
       if (editingRole) {
         await rbacService.updateRole(editingRole.id, form);
@@ -60,19 +83,21 @@ export default function RoleManagement() {
         }
       }
       setShowForm(false);
+      success(editingRole ? "Role updated." : "Role created.");
       loadData();
     } catch (err) {
-      alert("Error: " + err.message);
+      error(err.message || "Couldn't save the role.");
     }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this role?")) return;
+    if (!window.confirm("Delete this role? This cannot be undone.")) return;
     try {
       await rbacService.deleteRole(id);
+      success("Role deleted.");
       loadData();
     } catch (err) {
-      alert("Error: " + err.message);
+      error(err.message || "Couldn't delete the role.");
     }
   };
 
@@ -111,7 +136,14 @@ export default function RoleManagement() {
                 <label>Description<input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
               </div>
               <h4>Permissions</h4>
-              <div className="am-permission-grid">
+              {permsLoading && <p className="am-empty">Loading this role's permissions…</p>}
+              {loadFailed && (
+                <p className="am-empty">
+                  Couldn't load this role's current permissions. Close and retry —
+                  saving now would overwrite them.
+                </p>
+              )}
+              <div className="am-permission-grid" hidden={permsLoading || loadFailed}>
                 {Object.entries(groupedPerms).map(([module, perms]) => (
                   <div key={module} className="am-perm-group">
                     <h5 className="am-perm-module">{module}</h5>
@@ -132,7 +164,11 @@ export default function RoleManagement() {
             </div>
             <div className="am-modal-footer">
               <button className="am-btn am-btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
-              <button className="am-btn am-btn-primary" onClick={handleSave}><FiSave /> Save</button>
+              <button
+                className="am-btn am-btn-primary"
+                onClick={handleSave}
+                disabled={!!editingRole && (permsLoading || loadFailed)}
+              ><FiSave /> Save</button>
             </div>
           </div>
         </div>

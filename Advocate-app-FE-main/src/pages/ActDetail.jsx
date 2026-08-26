@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { FiChevronLeft } from "react-icons/fi";
+import Select from "react-select";
+import { FiChevronLeft, FiX, FiTrash2 } from "react-icons/fi";
 import { InlineLoader } from "../components/Loader";
 import "../assets/styles/Acts.css";
 
@@ -14,8 +15,34 @@ function formatDate(iso) {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
 }
+
+const customSelectStyles = {
+  control: (base, state) => ({
+    ...base,
+    backgroundColor: "var(--bg-primary)",
+    borderColor: state.isFocused ? "var(--accent)" : "var(--border-color)",
+    color: "var(--text-primary)",
+    borderRadius: "8px",
+    boxShadow: "none",
+  }),
+  menu: (base) => ({
+    ...base,
+    backgroundColor: "var(--bg-secondary)",
+    border: "1px solid var(--border-color)",
+    zIndex: 9999,
+  }),
+  option: (base, state) => ({
+    ...base,
+    backgroundColor: state.isSelected ? "var(--accent)" : state.isFocused ? "var(--border-color)" : "transparent",
+    color: state.isSelected ? "#fff" : "var(--text-primary)",
+    cursor: "pointer",
+  }),
+  singleValue: (base) => ({ ...base, color: "var(--text-primary)" }),
+  placeholder: (base) => ({ ...base, color: "var(--text-muted)" }),
+  input: (base) => ({ ...base, color: "var(--text-primary)" }),
+};
 
 // Section content/footnote come from India Code as light HTML (<span>, <hr>,
 // <i>, <sup> for footnote markers) - real formatting, not something to strip
@@ -104,6 +131,19 @@ export default function ActDetail() {
   const [error, setError] = useState("");
   const [tab, setTab] = useState("sections");
 
+  // Cases Linked tab
+  const [linkedCases, setLinkedCases] = useState(null); // null = not loaded yet
+  const [linkedCasesLoading, setLinkedCasesLoading] = useState(false);
+  const [linkedCasesError, setLinkedCasesError] = useState("");
+
+  // Link Cases modal
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [myCases, setMyCases] = useState([]);
+  const [myCasesLoading, setMyCasesLoading] = useState(false);
+  const [selectedCase, setSelectedCase] = useState(null);
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState("");
+
   const fetchAct = useCallback(async () => {
     setLoading(true);
     try {
@@ -118,6 +158,61 @@ export default function ActDetail() {
   }, [id]);
 
   useEffect(() => { fetchAct(); }, [fetchAct]);
+
+  const loadLinkedCases = useCallback(async () => {
+    setLinkedCasesLoading(true);
+    try {
+      const res = await axios.get(`/api/acts/${id}/cases`, authHeaders());
+      setLinkedCases(res.data || []);
+      setLinkedCasesError("");
+    } catch (err) {
+      setLinkedCasesError(err?.response?.data?.error || "Couldn't load linked cases.");
+    } finally {
+      setLinkedCasesLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (tab === "cases" && linkedCases === null && !linkedCasesLoading) loadLinkedCases();
+  }, [tab, linkedCases, linkedCasesLoading, loadLinkedCases]);
+
+  const openLinkModal = async () => {
+    setShowLinkModal(true);
+    setSelectedCase(null);
+    setLinkError("");
+    if (!myCases.length) {
+      setMyCasesLoading(true);
+      try {
+        const res = await axios.get("/api/cases/my-cases", authHeaders());
+        setMyCases(res.data || []);
+      } catch {
+        setLinkError("Couldn't load your cases.");
+      } finally {
+        setMyCasesLoading(false);
+      }
+    }
+  };
+
+  const confirmLink = async () => {
+    if (!selectedCase) return;
+    setLinking(true);
+    try {
+      await axios.post(`/api/acts/${id}/cases`, { caseId: selectedCase.value }, authHeaders());
+      setShowLinkModal(false);
+      await Promise.all([fetchAct(), loadLinkedCases()]);
+    } catch (err) {
+      setLinkError(err?.response?.data?.error || "Couldn't link this case.");
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const unlinkCase = async (caseId) => {
+    try {
+      await axios.delete(`/api/acts/${id}/cases/${caseId}`, authHeaders());
+      await Promise.all([fetchAct(), loadLinkedCases()]);
+    } catch { /* leave the row - user can retry */ }
+  };
 
   if (loading) return <div className="acts-container"><InlineLoader type="page" /></div>;
   if (error) return <div className="acts-container"><p className="error-message">{error}</p></div>;
@@ -149,6 +244,10 @@ export default function ActDetail() {
           </div>
         </div>
 
+        <div className="act-link-cases-row">
+          <button type="button" className="act-link-cases-btn" onClick={openLinkModal}>Link Cases</button>
+        </div>
+
         <div className="act-tabs">
           {TABS.map(([key, label]) => (
             <button
@@ -160,6 +259,9 @@ export default function ActDetail() {
               {label}
               {key === "sections" && act.sections?.length > 0 && (
                 <span className="act-tab-count">{act.sections.length}</span>
+              )}
+              {key === "cases" && (
+                <span className="act-tab-count">{act.caseLinksCount ?? 0}</span>
               )}
             </button>
           ))}
@@ -192,10 +294,64 @@ export default function ActDetail() {
           )}
 
           {tab === "cases" && (
-            <p className="no-data">Linking cases to acts isn't available yet.</p>
+            linkedCasesLoading ? (
+              <InlineLoader type="spinner" />
+            ) : linkedCasesError ? (
+              <p className="error-message">{linkedCasesError}</p>
+            ) : !linkedCases?.length ? (
+              <p className="no-data">No cases linked to this act yet.</p>
+            ) : (
+              <div className="act-cases-linked-list">
+                {linkedCases.map((lc) => (
+                  <div key={lc.id} className="act-cases-linked-row">
+                    <button
+                      type="button" className="act-section-link"
+                      onClick={() => navigate(`/dashboard/cases/${lc.caseId}`)}
+                    >
+                      {lc.caseTitle || lc.caseNumber || `Case #${lc.caseId}`}
+                    </button>
+                    <span className="act-cases-linked-date">{formatDate(lc.linkedAt)}</span>
+                    <button
+                      type="button" className="act-cases-unlink-btn"
+                      title="Unlink" onClick={() => unlinkCase(lc.caseId)}
+                    >
+                      <FiTrash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )
           )}
         </div>
       </div>
+
+      {showLinkModal && (
+        <div className="modal-overlay" onClick={() => setShowLinkModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="case-docs-header">
+              <h3>Link a Case</h3>
+              <button className="close-btn" onClick={() => setShowLinkModal(false)}><FiX /></button>
+            </div>
+            <p className="act-link-modal-hint">Choose one of your cases to link to this act.</p>
+            <Select
+              options={myCases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }))}
+              value={selectedCase}
+              onChange={setSelectedCase}
+              isLoading={myCasesLoading}
+              placeholder={myCasesLoading ? "Loading your cases…" : "Select a case"}
+              styles={customSelectStyles}
+              isClearable
+            />
+            {linkError && <p className="field-error">{linkError}</p>}
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={confirmLink} disabled={!selectedCase || linking}>
+                {linking ? "Linking…" : "Link Case"}
+              </button>
+              <button type="button" className="close-btn" onClick={() => setShowLinkModal(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -329,3 +329,121 @@
   line-height: 1.6;
   white-space: pre-wrap;
 }
+
+/* ---- Link Cases ---- */
+.act-link-cases-row {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 0;
+}
+
+.act-link-cases-btn {
+  background: none;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.act-link-cases-btn:hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.act-cases-linked-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.act-cases-linked-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.act-cases-linked-row .act-section-link {
+  flex: 1;
+  padding: 0;
+}
+
+.act-cases-linked-date {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.act-cases-unlink-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+}
+
+.act-cases-unlink-btn:hover {
+  color: var(--danger);
+}
+
+.act-link-modal-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+
+/* ---- Modal (scoped like Cases.css does under its own container) ---- */
+.acts-container .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.acts-container .modal-content {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border, var(--border-color));
+  border-radius: var(--radius, 12px);
+  box-shadow: var(--shadow-lg);
+  padding: 28px;
+  width: 460px;
+  max-width: 90%;
+  animation: scaleIn 0.25s ease-out;
+}
+
+.acts-container .case-docs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.acts-container .case-docs-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.acts-container .close-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.acts-container .close-btn:hover {
+  color: var(--text-primary);
+}

@@ -65,6 +65,7 @@ const NotificationTemplates = lazy(() => import("./NotificationTemplates.jsx"));
 const CommunicationHistory = lazy(() => import("./CommunicationHistory.jsx"));
 const AppealAlert = lazy(() => import("./AppealAlert.jsx"));
 const Acts = lazy(() => import("./Acts.jsx"));
+const ActDetail = lazy(() => import("./ActDetail.jsx"));
 const CaseDetail = lazy(() => import("./CaseDetail.jsx"));
 
 // --- Active bar shape for hover growth animation ---
@@ -1329,6 +1330,7 @@ function DashboardShell() {
             <Route path="/notifications" element={<NotificationsCenter />} />
             <Route path="/appeal-alert" element={<AppealAlert />} />
             <Route path="/acts" element={<Acts />} />
+            <Route path="/acts/:id" element={<ActDetail />} />
             <Route path="/activity" element={<SystemActivity />} />
             <Route path="/backup" element={<BackupPage />} />
             <Route path="/users" element={<UserManagement />} />

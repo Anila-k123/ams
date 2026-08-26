@@ -38,6 +38,18 @@ function formatDate(iso) {
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// India Code's "abstract" field ranges from a short one-line purpose
+// statement to a full multi-section AI-generated summary (Objectives / Key
+// Provisions / Significance / Conclusion, bullet points and all) depending
+// on the act - not something we control at the source. Keep the card compact
+// regardless by cutting to one short line at a word boundary.
+function shortDescription(text, max = 140) {
+  if (!text) return "";
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  return clean.slice(0, max).replace(/\s+\S*$/, "") + "…";
+}
+
 export default function Acts() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -112,7 +124,7 @@ export default function Acts() {
                 <span className="act-card-title">{act.title} - {act.jurisdiction}</span>
                 <span className="act-card-number">Act {act.actNumber} of {act.actYear}</span>
               </div>
-              {act.description && <p className="act-card-desc">Description : {act.description}</p>}
+              {act.description && <p className="act-card-desc">Description : {shortDescription(act.description)}</p>}
               <div className="act-card-meta">
                 {act.ministry && <span><strong>Ministry</strong> : {act.ministry}</span>}
                 {act.department && <span><strong>Department</strong> : {act.department}</span>}

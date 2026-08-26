@@ -470,20 +470,29 @@ class SciCaseNoSearchView(APIView):
 
 class SciCaseDetailView(APIView):
     """POST /api/courtsearch/sci/case-detail — full SCI case-details record.
-    Body: { diary_no, diary_year }. No CAPTCHA needed."""
+    Body: { diary_no, diary_year, expand? }. No CAPTCHA needed.
+
+    expand=true also pulls every dropdown section's content (Listing Dates,
+    Judgement/Orders, ...) rather than just naming them — far slower (~20s+,
+    one upstream request per section), so it's used when importing a case,
+    where the whole record must be captured for storage in one go.
+    """
     permission_classes = [RequirePermission()]
 
     def post(self, request):
         diary_no = (str(request.data.get('diary_no') or '')).strip()
         diary_year = (str(request.data.get('diary_year') or '')).strip()
+        expand = str(request.data.get('expand') or '').lower() in ('true', '1', 'yes')
         if not diary_no or not diary_year:
             return Response({'error': 'diary_no and diary_year are required.'},
                             status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        key = f'courtsearch:sci:detail:{diary_no}:{diary_year}'
+        # Keyed on expand too: the expanded record is a superset, so the two
+        # must never serve each other from cache.
+        key = f'courtsearch:sci:detail:{diary_no}:{diary_year}:{int(expand)}'
         data = cache.get(key)
         if data is None:
             try:
-                data = client.sci_case_detail(diary_no, diary_year)
+                data = client.sci_case_detail(diary_no, diary_year, expand=expand)
             except client.ScraperUnavailable:
                 return _unavailable()
             except client.ScraperError as exc:

@@ -25,6 +25,12 @@
 }
 
 .cr-kv { margin: 0; }
+
+/* SCI: document/order links inside a stored section */
+.cr-links { margin: 0; padding-left: 18px; }
+.cr-links li { margin-bottom: 4px; font-size: 0.86rem; }
+.cr-links a { color: var(--accent); word-break: break-word; }
+
 .cr-kv-row {
   display: grid;
   grid-template-columns: 240px 1fr;

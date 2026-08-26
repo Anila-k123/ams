@@ -90,6 +90,7 @@ export default function CaseDetail() {
   // Court record (imported from the court API)
   const [courtRecord, setCourtRecord] = useState(null);
   const [courtRecordComplex, setCourtRecordComplex] = useState("");
+  const [courtRecordCourtId, setCourtRecordCourtId] = useState("");
   const [courtRecordLoading, setCourtRecordLoading] = useState(false);
   const [courtRecordLoaded, setCourtRecordLoaded] = useState(false);
   const [orderDlBusy, setOrderDlBusy] = useState(-1);
@@ -403,6 +404,7 @@ export default function CaseDetail() {
       const res = await axios.get(`/api/courtsearch/imported-records?caseId=${id}`, authHeaders);
       setCourtRecord(res.data?.raw || null);
       setCourtRecordComplex(res.data?.query?.court_complex || "");
+      setCourtRecordCourtId(res.data?.courtId || "");
     } catch {
       setCourtRecord(null); // 404 = no imported record for this case
     } finally {
@@ -1072,7 +1074,7 @@ export default function CaseDetail() {
             {!courtRecordLoading && courtRecord && (
               <>
                 <p className="cd-muted">The official court record captured when this case was imported. Shown as fetched — structured views will come later.</p>
-                <CourtRecordView record={courtRecord} courtComplex={courtRecordComplex} />
+                <CourtRecordView record={courtRecord} courtComplex={courtRecordComplex} courtId={courtRecordCourtId} />
               </>
             )}
             {!courtRecordLoading && courtRecordLoaded && !courtRecord && (

@@ -130,10 +130,20 @@ def sci_search_case_no(case_type: str, case_no: str, case_year, timeout: int = S
                      timeout=timeout)
 
 
-def sci_case_detail(diary_no, diary_year, timeout: int = SEARCH_TIMEOUT):
-    """Full Supreme Court case-details record for a diary no/year (no CAPTCHA)."""
+def sci_case_detail(diary_no, diary_year, expand=False, timeout: int = None):
+    """Full Supreme Court case-details record for a diary no/year (no CAPTCHA).
+
+    expand=True also fetches EVERY dropdown section's content (Listing Dates,
+    Judgement/Orders, Notices, ...) instead of just listing their names - one
+    extra upstream request per section, so it takes ~20s+ rather than ~1s.
+    Used when importing a case, where the complete record has to be captured
+    once and stored; the interactive view lazy-loads sections instead.
+    """
+    if timeout is None:
+        timeout = SCI_TIMEOUT if expand else SEARCH_TIMEOUT
     return post_json('/courts/sci/case-detail',
-                     {'diary_no': str(diary_no), 'diary_year': str(diary_year)},
+                     {'diary_no': str(diary_no), 'diary_year': str(diary_year),
+                      'expand': bool(expand)},
                      timeout=timeout)
 
 

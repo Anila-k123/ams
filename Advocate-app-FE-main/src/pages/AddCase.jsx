@@ -259,6 +259,27 @@ function mapHcToCase(record, caseTypeLabel) {
   };
 }
 
+// SCI flattens its numbered party list into a single string
+// ("1 THE STATE OF ODISHA 2 ENGINEER-IN-CHIEF 3 ..."); split it back into
+// individual names. Falls back to the whole string if it isn't numbered.
+function splitSciParties(blob) {
+  const s = String(blob || "").trim();
+  if (!s) return [];
+  const out = [];
+  const re = /(?:^|\s)\d+\s+(.*?)(?=\s\d+\s|$)/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const name = m[1].trim();
+    if (name) out.push(name);
+  }
+  return out.length ? out : [s];
+}
+
+// Find a stored SCI section by its label ("Listing Dates", "Judgement/Orders").
+function sciSection(record, label) {
+  return (record?.sections || []).find((s) => s.label === label) || null;
+}
+
 // Build case Party rows (name, role, counsel, opponent) from a fetched court record.
 function buildParties(record, courtId) {
   const out = [];
@@ -269,6 +290,14 @@ function buildParties(record, courtId) {
       out.push({ name: p.name, role: "Petitioner", counsel: p.advocate || "", isOpponent: false }));
     (d.respondents || []).forEach((p) =>
       out.push({ name: p.name, role: "Respondent", counsel: p.advocate || "", isOpponent: true }));
+  } else if (courtId === "sci") {
+    // SCI gives one combined advocate string per side rather than a per-party
+    // one, so it's attached to that side's first (lead) party only.
+    const f = record.fields || {};
+    splitSciParties(f["Petitioner(s)"]).forEach((name, i) =>
+      out.push({ name, role: "Petitioner", counsel: i === 0 ? (f["Petitioner Advocate(s)"] || "") : "", isOpponent: false }));
+    splitSciParties(f["Respondent(s)"]).forEach((name, i) =>
+      out.push({ name, role: "Respondent", counsel: i === 0 ? (f["Respondent Advocate(s)"] || "") : "", isOpponent: true }));
   } else {
     const f = record.fields || {};
     if (f["Petitioner Details"])
@@ -315,6 +344,39 @@ function buildEvents(record, courtId) {
       const date = toISODate(h.hearing_date) || toISODate(h.business_on_date);
       if (date) out.push({ title: cap(h.purpose || "Hearing"), eventType: "HEARING", description: cap(h.judge ? `Judge: ${h.judge}` : ""), date });
     });
+  } else if (courtId === "sci") {
+    // The hearing history is the "Listing Dates" section (columns: CL Date,
+    // Misc./Regular, Stage, Purpose, ..., Judges, IA, Remarks, Listed), which
+    // is only populated on an expanded fetch. Fall back to the always-present
+    // "Present/Last Listed On" field when it wasn't captured.
+    const listing = sciSection(record, "Listing Dates");
+    const cols = listing?.columns || [];
+    const at = (row, name) => {
+      const i = cols.indexOf(name);
+      return i >= 0 ? String(row[i] || "").trim() : "";
+    };
+    if (listing?.rows?.length) {
+      listing.rows.forEach((row) => {
+        if (!Array.isArray(row)) return;
+        const date = toISODate(at(row, "CL Date"));
+        if (!date) return;
+        const judges = at(row, "Judges");
+        const remarks = at(row, "Remarks");
+        out.push({
+          title: cap(at(row, "Purpose") || "Hearing"),
+          eventType: "HEARING",
+          description: cap([judges, remarks].filter(Boolean).join(" — ")),
+          date,
+        });
+      });
+    } else {
+      const listed = String((record.fields || {})["Present/Last Listed On"] || "");
+      const date = toISODate(listed);
+      if (date) {
+        const coram = (listed.match(/\[(.+)\]/) || [])[1] || "";
+        out.push({ title: "Hearing", eventType: "HEARING", description: cap(coram.trim()), date });
+      }
+    }
   } else {
     (record.hearing_history || []).forEach((row) => {
       if (!Array.isArray(row)) return;
@@ -407,16 +469,6 @@ export default function AddCase() {
   const [sciPartyName, setSciPartyName] = useState("");
   const [sciPartyType, setSciPartyType] = useState("any");        // any | P | R
   const [sciPartyStatus, setSciPartyStatus] = useState("");       // "" | P | D
-  const [sciListingDate, setSciListingDate] = useState("");
-  // SCI "Court" cascade: court type -> state -> bench -> case type
-  const [sciCourtTypes, setSciCourtTypes] = useState({});
-  const [sciCourtType, setSciCourtType] = useState("");
-  const [sciCourtStates, setSciCourtStates] = useState({});
-  const [sciCourtStateCode, setSciCourtStateCode] = useState("");
-  const [sciCourtBenches, setSciCourtBenches] = useState({});
-  const [sciCourtBenchCode, setSciCourtBenchCode] = useState("");
-  const [sciCourtCaseTypes, setSciCourtCaseTypes] = useState({});
-  const [sciCourtCaseType, setSciCourtCaseType] = useState("");
 
   // eCourts High Court cascade state (High Court -> bench -> case type)
   const [hcCourts, setHcCourts] = useState({});        // {name: state_code}
@@ -523,7 +575,7 @@ export default function AddCase() {
 
   const SCI_TABS = [
     ["diary_no", "Diary Number"], ["case_number", "Case Number"], ["cnr", "CNR Number"],
-    ["aor_code", "AOR Code"], ["party_name", "Party Name"], ["court", "Court"],
+    ["aor_code", "AOR Code"], ["party_name", "Party Name"],
   ];
   const onEcTab = (key) => {
     setEcMode(key); setSearchError("");
@@ -625,9 +677,7 @@ export default function AddCase() {
         setResultRows([]); setSciDetail(null);
         setSciMode("case_number"); setCnrInput("");
         setSciYear(""); setSciAorCode(""); setSciAorPartyType("any"); setSciAorStatus("P");
-        setSciPartyName(""); setSciPartyType("any"); setSciPartyStatus(""); setSciListingDate("");
-        setSciCourtTypes({}); setSciCourtType(""); setSciCourtStates({}); setSciCourtStateCode("");
-        setSciCourtBenches({}); setSciCourtBenchCode(""); setSciCourtCaseTypes({}); setSciCourtCaseType("");
+        setSciPartyName(""); setSciPartyType("any"); setSciPartyStatus("");
         loadSciCaseTypes();
       } else {
         loadCaseTypes(f.id);
@@ -725,22 +775,12 @@ export default function AddCase() {
     });
   };
 
-  const runSearchSciCourt = () => {
-    if (!sciCourtType || !sciCourtStateCode || !sciCourtBenchCode) return;
-    return runSearchSciMode("/api/courtsearch/sci/court-search", {
-      court_type: sciCourtType, state: sciCourtStateCode, bench: sciCourtBenchCode,
-      case_type: sciCourtCaseType || null, case_no: lkNumber.trim() || null,
-      year: sciYear ? Number(sciYear) : null, listing_date: sciListingDate.trim() || null,
-    });
-  };
-
   const onSciSearch = () => {
     if (sciMode === "case_number") return runSearchSci();
     if (sciMode === "diary_no") return runSearchSciDiaryNo();
     if (sciMode === "cnr") return runSearchSciCnr();
     if (sciMode === "aor_code") return runSearchSciAorCode();
     if (sciMode === "party_name") return runSearchSciPartyName();
-    if (sciMode === "court") return runSearchSciCourt();
   };
 
   const sciSearchEnabled = (() => {
@@ -749,66 +789,11 @@ export default function AddCase() {
     if (sciMode === "cnr") return !!cnrInput.trim();
     if (sciMode === "aor_code") return !!sciAorCode.trim() && !!sciYear;
     if (sciMode === "party_name") return sciPartyName.trim().length >= 3;
-    if (sciMode === "court") return !!(sciCourtType && sciCourtStateCode && sciCourtBenchCode);
     return false;
   })();
 
   const onSciTab = (key) => {
     setSciMode(key); setSearchError("");
-    if (key === "court" && !Object.keys(sciCourtTypes).length) loadSciCourtTypes();
-  };
-
-  // ---- SCI "Court" cascade: court type -> state -> bench -> case type ----
-  const sciGet = useCallback(async (path, params) => {
-    setSearchError("");
-    const res = await axios.get(`/api/courtsearch/sci/${path}`, { ...authHeaders, params });
-    return res.data || {};
-  }, []);
-
-  const loadSciCourtTypes = useCallback(async () => {
-    setCascadeBusy("sci-court-types"); setSciCourtTypes({});
-    try { setSciCourtTypes(await sciGet("court-types")); }
-    catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load court types."); }
-    finally { setCascadeBusy(""); }
-  }, [sciGet]);
-
-  const onSelectSciCourtType = async (opt) => {
-    const val = opt ? opt.value : "";
-    setSciCourtType(val);
-    setSciCourtStateCode(""); setSciCourtStates({});
-    setSciCourtBenchCode(""); setSciCourtBenches({});
-    setSciCourtCaseType(""); setSciCourtCaseTypes({});
-    if (!val) return;
-    setCascadeBusy("sci-court-states");
-    try { setSciCourtStates(await sciGet("court-states", { court_type: val })); }
-    catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load states."); }
-    finally { setCascadeBusy(""); }
-  };
-
-  const onSelectSciCourtState = async (opt) => {
-    const val = opt ? opt.value : "";
-    setSciCourtStateCode(val);
-    setSciCourtBenchCode(""); setSciCourtBenches({});
-    setSciCourtCaseType(""); setSciCourtCaseTypes({});
-    if (!val) return;
-    setCascadeBusy("sci-court-benches");
-    try { setSciCourtBenches(await sciGet("court-benches", { court_type: sciCourtType, state: val })); }
-    catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load benches."); }
-    finally { setCascadeBusy(""); }
-  };
-
-  const onSelectSciCourtBench = async (opt) => {
-    const val = opt ? opt.value : "";
-    setSciCourtBenchCode(val);
-    setSciCourtCaseType(""); setSciCourtCaseTypes({});
-    if (!val) return;
-    setCascadeBusy("sci-court-case-types");
-    try {
-      setSciCourtCaseTypes(await sciGet("court-case-types", {
-        court_type: sciCourtType, state: sciCourtStateCode, bench: val,
-      }));
-    } catch (e) { setSearchError(e?.response?.data?.error || "Couldn’t load case types."); }
-    finally { setCascadeBusy(""); }
   };
 
   // ---- eCourts High Courts (High Court -> bench -> case type -> case no) ----
@@ -1217,15 +1202,34 @@ export default function AddCase() {
     try {
       const res = await axios.post("/api/cases/create", payload, authHeaders);
       const caseId = res.data?.id ?? null;
-      if (fetchedRecord && caseId) {
+      // SCI keeps its fetched record in sciDetail rather than fetchedRecord
+      // (its shape differs from the eCourts one CourtRecordView renders), but
+      // it still has to be persisted like every other imported record. Its
+      // dropdown sections are lazy-loaded, so the on-screen copy holds only
+      // the ones the user happened to expand - re-fetch with expand=true so
+      // the STORED record is complete (Listing Dates, Judgement/Orders,
+      // Notices, ...). That costs ~20s, hence only at save time.
+      let courtRecord = fetchedRecord;
+      if (!courtRecord && selectedCourt?.id === "sci" && sciDetail) {
+        courtRecord = sciDetail;
+        if (fetchedQuery?.diary_no && fetchedQuery?.diary_year) {
+          try {
+            const full = await axios.post("/api/courtsearch/sci/case-detail", {
+              diary_no: fetchedQuery.diary_no, diary_year: fetchedQuery.diary_year, expand: true,
+            }, authHeaders);
+            if (full.data) courtRecord = full.data;
+          } catch { /* keep the on-screen record if the full fetch fails */ }
+        }
+      }
+      if (courtRecord && caseId) {
         // Persist the full court-API response (all fields/tables/orders) for later use.
         try {
           await axios.post("/api/courtsearch/imported-records", {
-            caseId, courtId: selectedCourt?.id || "", query: fetchedQuery || {}, raw: fetchedRecord,
+            caseId, courtId: selectedCourt?.id || "", query: fetchedQuery || {}, raw: courtRecord,
           }, authHeaders);
         } catch { /* case is saved regardless; record storage is best-effort */ }
         // Populate the case's Parties from the court record (petitioners/respondents + counsel).
-        for (const p of buildParties(fetchedRecord, selectedCourt?.id)) {
+        for (const p of buildParties(courtRecord, selectedCourt?.id)) {
           try {
             await axios.post(`/api/workspace/cases/${caseId}/parties`, {
               name: p.name, role: p.role, counsel: p.counsel, isOpponent: p.isOpponent,
@@ -1233,7 +1237,7 @@ export default function AddCase() {
           } catch { /* best-effort */ }
         }
         // Populate Hearings as dated case events (orders handled by a dedicated section later).
-        for (const ev of buildEvents(fetchedRecord, selectedCourt?.id)) {
+        for (const ev of buildEvents(courtRecord, selectedCourt?.id)) {
           try {
             await axios.post("/api/events/create", {
               caseId, title: ev.title, eventType: ev.eventType, description: ev.description, date: ev.date,
@@ -1487,26 +1491,6 @@ export default function AddCase() {
                 </div></div>
             </div>
           )}
-          {sciMode === "court" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Court</label>
-                <Select options={mapToOptions(sciCourtTypes)} value={mapToOptions(sciCourtTypes).find((o) => o.value === sciCourtType) || null}
-                  onChange={onSelectSciCourtType} isLoading={cascadeBusy === "sci-court-types"} placeholder="Select court" styles={customSelectStyles} /></div>
-              <div className="ac-field"><label>State</label>
-                <Select options={mapToOptions(sciCourtStates)} value={mapToOptions(sciCourtStates).find((o) => o.value === sciCourtStateCode) || null}
-                  onChange={onSelectSciCourtState} isDisabled={!sciCourtType} isLoading={cascadeBusy === "sci-court-states"} placeholder="Select state" styles={customSelectStyles} /></div>
-              <div className="ac-field"><label>Bench</label>
-                <Select options={mapToOptions(sciCourtBenches)} value={mapToOptions(sciCourtBenches).find((o) => o.value === sciCourtBenchCode) || null}
-                  onChange={onSelectSciCourtBench} isDisabled={!sciCourtStateCode} isLoading={cascadeBusy === "sci-court-benches"} placeholder="Select bench" styles={customSelectStyles} /></div>
-              <div className="ac-field"><label>Case Type (optional)</label>
-                <Select options={mapToOptions(sciCourtCaseTypes)} value={mapToOptions(sciCourtCaseTypes).find((o) => o.value === sciCourtCaseType) || null}
-                  onChange={(o) => setSciCourtCaseType(o ? o.value : "")} isDisabled={!sciCourtBenchCode} isLoading={cascadeBusy === "sci-court-case-types"} placeholder="Select case type" styles={customSelectStyles} /></div>
-              <div className="ac-field"><label>Case Number (optional)</label><input value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
-              <div className="ac-field"><label>Year (optional)</label><input type="number" value={sciYear} onChange={(e) => setSciYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              <div className="ac-field"><label>Listing Date (optional)</label><input value={sciListingDate} onChange={(e) => setSciListingDate(e.target.value)} placeholder="dd-mm-yyyy" /></div>
-            </div>
-          )}
-
           <div className="ac-actions">
             <button className="ac-search-btn" onClick={onSciSearch} disabled={searching || !sciSearchEnabled}>
               <FiSearch /> {searching ? "Searching… (solving CAPTCHA, up to 2 min)" : "Search For Case"}

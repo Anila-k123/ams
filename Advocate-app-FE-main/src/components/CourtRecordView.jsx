@@ -317,6 +317,56 @@ function MadrasRecord({ record }) {
   );
 }
 
+// Supreme Court: { diaryNo, parties, fields, sections, html }. Sections are
+// stored with their content when the case was imported (case-detail is
+// fetched with expand=true at save time); any that came back empty are just
+// named so it's clear the court had nothing there rather than that we missed it.
+function SciRecord({ record }) {
+  const f = record.fields || {};
+  const fieldKeys = Object.keys(f);
+  const sections = record.sections || [];
+  const withData = sections.filter((s) => (s.rows?.length || s.links?.length));
+  const withoutData = sections.filter((s) => !(s.rows?.length || s.links?.length));
+  return (
+    <div className="cr-record">
+      {(record.diaryNo || record.parties) && (
+        <section className="cr-sec">
+          {record.diaryNo && <h4>Diary No. {record.diaryNo}</h4>}
+          {record.parties && <p className="cr-prayer">{record.parties}</p>}
+        </section>
+      )}
+      {fieldKeys.length > 0 && (
+        <section className="cr-sec"><h4>Case Details</h4>
+          <dl className="cr-kv">
+            {fieldKeys.map((k) => (<div className="cr-kv-row" key={k}><dt>{k}</dt><dd>{String(f[k])}</dd></div>))}
+          </dl>
+        </section>
+      )}
+      {withData.map((s) => (
+        <section className="cr-sec" key={s.tabName || s.label}><h4>{s.label}</h4>
+          {s.rows?.length > 0 && (
+            <RowTable rows={s.rows} columns={s.columns?.length ? s.columns : null} />
+          )}
+          {s.links?.length > 0 && (
+            <ul className="cr-links">
+              {s.links.map((l, i) => (
+                <li key={i}><a href={l.href} target="_blank" rel="noreferrer">{l.text || l.href}</a></li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ))}
+      {withoutData.length > 0 && (
+        <section className="cr-sec"><h4>Empty Sections</h4>
+          <p className="cr-note">
+            The court listed no records under: {withoutData.map((s) => s.label).join(", ")}.
+          </p>
+        </section>
+      )}
+    </div>
+  );
+}
+
 // Renders a stored/scraped court record for either court shape (raw, unstructured).
 // `courtComplex` (the value used for the search) is required to fetch eCourts documents.
 export default function CourtRecordView({ record, courtComplex, courtId }) {
@@ -345,7 +395,9 @@ export default function CourtRecordView({ record, courtComplex, courtId }) {
 
   if (!record) return null;
   let body;
-  if (courtId === "ecourts_hc") {
+  if (courtId === "sci" || record.diaryNo !== undefined) {
+    body = <SciRecord record={record} />;
+  } else if (courtId === "ecourts_hc") {
     body = <HcRecord record={record} />;
   } else if (record.cases !== undefined) {
     body = <EcourtsRecord record={record} courtComplex={courtComplex} onFetchDoc={fetchDoc} busyKey={busyKey} />;

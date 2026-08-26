@@ -228,6 +228,11 @@ export default function ActDetail() {
         <div className="act-detail-head">
           <span className="act-jurisdiction-badge">{act.jurisdiction}</span>
           <span className="act-number-badge">Act {act.actNumber} of {act.actYear}</span>
+          {act.pdfUrl && (
+            <a className="act-view-pdf-btn" href={act.pdfUrl} target="_blank" rel="noreferrer">
+              View PDF
+            </a>
+          )}
         </div>
 
         <div className="act-detail-body">
@@ -260,6 +265,9 @@ export default function ActDetail() {
               {key === "sections" && act.sections?.length > 0 && (
                 <span className="act-tab-count">{act.sections.length}</span>
               )}
+              {key === "papers" && act.papers?.length > 0 && (
+                <span className="act-tab-count">{act.papers.length}</span>
+              )}
               {key === "cases" && (
                 <span className="act-tab-count">{act.caseLinksCount ?? 0}</span>
               )}
@@ -290,7 +298,25 @@ export default function ActDetail() {
           )}
 
           {tab === "papers" && (
-            <p className="no-data">Act Papers aren't available yet.</p>
+            !act.papers?.length ? (
+              <p className="no-data">No Act Papers found for this act.</p>
+            ) : (
+              <div className="act-papers-list">
+                {act.papers.map((p) => (
+                  <div key={p.id} className="act-papers-row">
+                    <span className="act-papers-type">{p.paperType}</span>
+                    {p.pdfUrl ? (
+                      <a className="act-section-link" href={p.pdfUrl} target="_blank" rel="noreferrer">
+                        {p.title}
+                      </a>
+                    ) : (
+                      <span className="act-papers-title">{p.title}</span>
+                    )}
+                    <span className="act-cases-linked-date">{formatDate(p.paperDate)}</span>
+                  </div>
+                ))}
+              </div>
+            )
           )}
 
           {tab === "cases" && (

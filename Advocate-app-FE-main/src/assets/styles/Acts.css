@@ -185,6 +185,21 @@
   color: var(--text-muted);
 }
 
+.act-view-pdf-btn {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  padding: 4px 10px;
+  text-decoration: none;
+}
+
+.act-view-pdf-btn:hover {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
 .act-detail-body {
   display: flex;
   justify-content: space-between;
@@ -383,6 +398,42 @@
   cursor: pointer;
   padding: 4px;
   display: flex;
+}
+
+/* ---- Act Papers ---- */
+.act-papers-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.act-papers-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.act-papers-type {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  background: var(--bg-secondary, var(--bg-primary));
+  border-radius: 4px;
+  padding: 2px 7px;
+  flex-shrink: 0;
+}
+
+.act-papers-row .act-section-link,
+.act-papers-title {
+  flex: 1;
+  padding: 0;
+  font-size: 13.5px;
+}
+
+.act-papers-title {
+  color: var(--text-primary);
 }
 
 .act-cases-unlink-btn:hover {

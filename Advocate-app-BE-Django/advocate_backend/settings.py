@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'appeals',
     'workspace',
     'courtsearch',
+    'acts',
 ]
 
 WHATSAPP_VERIFY_TOKEN = config('WHATSAPP_VERIFY_TOKEN', default='AdvocateApp2026SecureToken')

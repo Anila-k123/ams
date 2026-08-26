@@ -51,14 +51,19 @@ class ActDetailSerializer(ActListSerializer):
     pdfUrl = serializers.CharField(source='pdf_url')
     chapters = ChapterSerializer(many=True, read_only=True)
     sections = serializers.SerializerMethodField()
+    caseLinksCount = serializers.SerializerMethodField()
 
     class Meta(ActListSerializer.Meta):
         fields = ActListSerializer.Meta.fields + [
             'longTitle', 'preambleHtml', 'noOfChapter', 'pdfUrl', 'chapters', 'sections',
+            'caseLinksCount',
         ]
 
     def get_sections(self, obj):
         return SectionListSerializer(obj.sections.order_by('order_number'), many=True).data
+
+    def get_caseLinksCount(self, obj):
+        return obj.case_links.count()
 
 
 class SectionDetailSerializer(serializers.ModelSerializer):

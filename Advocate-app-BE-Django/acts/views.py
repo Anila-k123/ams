@@ -2,11 +2,13 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
 
+from core.models import Case
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 
-from .models import Act, Section
+from .models import Act, Section, ActCaseLink
 from .serializers import ActListSerializer, ActDetailSerializer, SectionDetailSerializer
 
 # Provakil-style field-scoped search chips. "all" searches every act-level
@@ -77,3 +79,52 @@ class ActSectionDetailView(APIView):
     def get(self, request, pk, section_id):
         section = get_object_or_404(Section, pk=section_id, act_id=pk)
         return Response(SectionDetailSerializer(section).data)
+
+
+class ActCaseLinksView(APIView):
+    """GET the "Cases Linked" tab's rows; POST to link one of the advocate's
+    own cases to this act (the "Link Cases" button's picker). Case display
+    fields come from core.models.Case directly - ActCaseLink only stores the
+    id, same reasoning as courtsearch.models.ImportedCaseRecord not taking a
+    real FK to it."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request, pk):
+        links = ActCaseLink.objects.filter(act_id=pk).order_by('-linked_at')
+        cases_by_id = {c.id: c for c in Case.objects.filter(id__in=[l.case_id for l in links])}
+        return Response([
+            {
+                'id': link.id,
+                'caseId': link.case_id,
+                'caseNumber': cases_by_id[link.case_id].case_number if link.case_id in cases_by_id else None,
+                'caseTitle': cases_by_id[link.case_id].case_title if link.case_id in cases_by_id else None,
+                'linkedAt': link.linked_at,
+            }
+            for link in links
+        ])
+
+    def post(self, request, pk):
+        act = get_object_or_404(Act, pk=pk)
+        case_id = request.data.get('caseId')
+        if not case_id:
+            return Response({'error': 'caseId is required.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        # Only the advocate's own cases can be linked - same scoping cases/views.py uses.
+        case = Case.objects.filter(id=case_id, advocate_id=request.user.id).first()
+        if not case:
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
+        link, created = ActCaseLink.objects.get_or_create(
+            act=act, case_id=case_id, defaults={'advocate_id': request.user.id},
+        )
+        return Response(
+            {'id': link.id, 'caseId': link.case_id, 'caseNumber': case.case_number,
+             'caseTitle': case.case_title, 'linkedAt': link.linked_at},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class ActCaseUnlinkView(APIView):
+    permission_classes = [RequirePermission()]
+
+    def delete(self, request, pk, case_id):
+        ActCaseLink.objects.filter(act_id=pk, case_id=case_id).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

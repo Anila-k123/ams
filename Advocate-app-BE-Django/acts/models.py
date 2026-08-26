@@ -83,3 +83,23 @@ class Section(models.Model):
 
     def __str__(self):
         return f'Section {self.number}: {self.title}'
+
+
+class ActCaseLink(models.Model):
+    """Advocate-created link between an act and one of their own cases - the
+    "Cases Linked" tab. Unlike Act/Chapter/Section above, this table IS owned
+    and written by ams itself, so it's Django-managed with a real migration.
+    case_id/advocate_id are plain ints, not real ForeignKeys, matching
+    courtsearch.models.ImportedCaseRecord's convention for referencing
+    Case/Advocate - both live in core.models, a different, Spring-owned
+    unmanaged table this app doesn't want a hard FK constraint against."""
+    act = models.ForeignKey(Act, on_delete=models.CASCADE, related_name='case_links')
+    case_id = models.BigIntegerField()       # -> core.Case.id (Spring-owned)
+    advocate_id = models.BigIntegerField()   # -> core.Advocate.id, who linked it
+    linked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('act', 'case_id')]
+
+    def __str__(self):
+        return f'ActCaseLink(act={self.act_id}, case={self.case_id})'

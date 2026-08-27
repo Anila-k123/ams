@@ -112,3 +112,67 @@ def is_candidate(our_names, candidate_text, filed_on=None, judgment_date=None):
     shared = shared_tokens(our_names, candidate_text)
     ok = score >= MIN_SCORE and len(shared) >= MIN_SHARED_TOKENS
     return ok, round(score, 3), ', '.join(sorted(shared)[:6])
+
+# --- picking something a court search box will actually match ---------------
+#
+# Party fields from the eCourts High Court portal are polluted with advocate
+# names, bar numbers and service notes, e.g.
+#   "RAJA MOHAMED, V.S.KARTHI-MS/928/1995 FOR R2,DT 29/08/2022 SR24100,COURT
+#    NOTICE ,--------,R1 - RAJA MOHAMED (NOTICE RECEIVED BY SOME OTHER PERSON)"
+# The LONGEST name is therefore the WORST one to search on. What a registry
+# will match is a short, clean, alphabetic personal or entity name.
+
+# Everything from one of these onwards is procedural, not part of a name.
+_NOISE_MARKERS = re.compile(
+    r'\b(advocate|vak\.?|vakalath|rep\s+by|represented|notice'
+    r'|proof\s+of\s+service|typed\s+set|filed\s+for|for\s+r\d'
+    r'|dt\.?\s*\d|sr\d)', re.I)
+
+
+def clean_party_name(raw):
+    """Trim a court party string down to the name itself ('' if unusable).
+
+    Cuts at the first procedural marker, then drops comma-separated segments
+    that carry reference numbers. It deliberately does NOT just take the first
+    segment: "Secretary, Pattikkad Service Co Operative Bank" would collapse
+    to "Secretary", which matches half the register and identifies nobody.
+    """
+    text = str(raw or '').strip()
+    if not text:
+        return ''
+    m = _NOISE_MARKERS.search(text)
+    if m:
+        text = text[:m.start()]
+    text = re.sub(r'\([^)]*\)', ' ', text)          # bracketed asides
+    kept = []
+    for seg in text.split(','):
+        seg = seg.strip()
+        if not seg or any(ch.isdigit() for ch in seg):
+            continue                                  # a reference, not a name
+        kept.append(seg)
+        if len(kept) == 2:
+            break                                     # a name plus its qualifier
+    text = ', '.join(kept)
+    text = re.sub(r'\s+', ' ', text).strip(' .,-')
+    return text
+
+
+def searchable_names(names):
+    """Party names ranked by how likely a court search box is to match them."""
+    scored = []
+    for raw in names:
+        name = clean_party_name(raw)
+        if not name or any(ch.isdigit() for ch in name):
+            continue
+        words = name.split()
+        if len(words) > 8:
+            continue                                  # a sentence, not a name
+        distinctive = name_tokens(name)
+        if not distinctive:
+            continue                                  # only honorifics/roles
+        # Two or three distinctive words is the sweet spot: enough to identify,
+        # short enough that the registry's LIKE match still hits.
+        penalty = abs(len(distinctive) - 2)
+        scored.append((penalty, len(name), name))
+    scored.sort()
+    return [n for _, _, n in scored]

@@ -49,6 +49,11 @@ class Advocate(models.Model):
     whatsapp_enabled = models.BooleanField(default=False)
     email_notifications_enabled = models.BooleanField(default=False)
     browser_notifications_enabled = models.BooleanField(default=True)
+    # Practice membership: NULL means this advocate owns a practice (or works
+    # alone); a value means they are a member of that advocate's practice.
+    # Added by `manage.py enable_shared_practice` - the table is Spring-owned,
+    # so there is no migration for it. See core/practice.py.
+    parent_advocate_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         managed = False

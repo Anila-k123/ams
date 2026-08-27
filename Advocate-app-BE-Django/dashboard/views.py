@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Activity
 from workspace.models import CaseTask
+from core.practice import practice_ids
 
 MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -20,13 +21,16 @@ class DashboardView(APIView):
     """
 
     def get(self, request):
-        advocate_id = request.user.id
+        # Every widget on the dashboard is scoped to the practice, not to
+        # the single logged-in advocate, so a junior sees the chambers'
+        # workload rather than an empty page.
+        advocate_ids = practice_ids(request.user)
         today = datetime.date.today()
 
-        cases = list(Case.objects.filter(advocate_id=advocate_id, deleted=False)
+        cases = list(Case.objects.filter(advocate_id__in=advocate_ids, deleted=False)
                      .select_related('client'))
-        clients_qs = Client.objects.filter(advocate_id=advocate_id, deleted=False)
-        events = list(CaseEvent.objects.filter(advocate_id=advocate_id).select_related('case'))
+        clients_qs = Client.objects.filter(advocate_id__in=advocate_ids, deleted=False)
+        events = list(CaseEvent.objects.filter(advocate_id__in=advocate_ids).select_related('case'))
 
         active_cases = sum(1 for c in cases if (c.status or '').lower() == 'active')
         upcoming = [e for e in events if e.date and e.date >= today]
@@ -77,7 +81,7 @@ class DashboardView(APIView):
         recent_clients = list(clients_qs.order_by('-created_at', '-id')[:4])
 
         # --- Financials ---
-        invoices = list(Invoice.objects.filter(advocate_id=advocate_id))
+        invoices = list(Invoice.objects.filter(advocate_id__in=advocate_ids))
         paid = unpaid = overdue = 0
         for inv in invoices:
             if (inv.status or '').upper() == 'PAID':
@@ -88,11 +92,11 @@ class DashboardView(APIView):
                 unpaid += 1
 
         income_by_month = defaultdict(float)
-        for p in ClientPayment.objects.filter(advocate_id=advocate_id):
+        for p in ClientPayment.objects.filter(advocate_id__in=advocate_ids):
             if p.payment_date:
                 income_by_month[p.payment_date.month] += (p.amount or 0)
         expense_by_month = defaultdict(float)
-        for e in Expense.objects.filter(advocate_id=advocate_id):
+        for e in Expense.objects.filter(advocate_id__in=advocate_ids):
             if e.payment_date:
                 expense_by_month[e.payment_date.month] += (e.amount or 0)
         ie_months = sorted(set(income_by_month) | set(expense_by_month))
@@ -129,7 +133,7 @@ class DashboardView(APIView):
                 'id': a.id, 'description': a.description, 'action': a.action_type,
                 'actionType': a.action_type,
                 'timestamp': a.timestamp.isoformat() if a.timestamp else None,
-            } for a in Activity.objects.filter(advocate_id=advocate_id).order_by('-timestamp', '-id')[:10]],
+            } for a in Activity.objects.filter(advocate_id__in=advocate_ids).order_by('-timestamp', '-id')[:10]],
             # Was hardcoded to [], so the checklist was always empty. Reads
             # workspace.CaseTask - the task system the app actually uses
             # (TasksPage and CaseDetail both go through /api/workspace/tasks).
@@ -141,7 +145,7 @@ class DashboardView(APIView):
                 'deadline': t.deadline.isoformat() if t.deadline else None,
                 'caseId': t.case_id,
             } for t in sorted(
-                CaseTask.objects.filter(advocate_id=advocate_id, completed=False),
+                CaseTask.objects.filter(advocate_id__in=advocate_ids, completed=False),
                 key=lambda t: (t.deadline is None, t.deadline or datetime.date.max),
             )[:5]],
             'recentClients': [{'id': c.id, 'name': c.name} for c in recent_clients],

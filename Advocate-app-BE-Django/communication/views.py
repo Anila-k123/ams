@@ -10,6 +10,7 @@ from rest_framework import status as http
 from core.models import (CommunicationSettings, NotificationTemplate,
                          NotificationHistory, NotificationLog, NotificationQueue)
 from core.pagination import SpringStylePagination
+from core.practice import practice_ids
 
 
 def _now():
@@ -92,7 +93,7 @@ def _template_map(t):
 
 class TemplatesView(APIView):
     def get(self, request):
-        qs = NotificationTemplate.objects.filter(advocate_id=request.user.id).order_by('id')
+        qs = NotificationTemplate.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('id')
         return Response([_template_map(t) for t in qs])
 
     def post(self, request):
@@ -108,7 +109,7 @@ class TemplatesView(APIView):
 
 class TemplateDetailView(APIView):
     def put(self, request, pk):
-        t = NotificationTemplate.objects.filter(id=pk, advocate_id=request.user.id).first()
+        t = NotificationTemplate.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if t is None:
             return Response({'error': 'Template not found'}, status=http.HTTP_404_NOT_FOUND)
         d = request.data
@@ -122,7 +123,7 @@ class TemplateDetailView(APIView):
         return Response(_template_map(t))
 
     def delete(self, request, pk):
-        t = NotificationTemplate.objects.filter(id=pk, advocate_id=request.user.id).first()
+        t = NotificationTemplate.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if t is None:
             return Response({'error': 'Template not found'}, status=http.HTTP_404_NOT_FOUND)
         t.delete()
@@ -148,7 +149,7 @@ def _history_map(h):
 class HistoryView(APIView):
     def get(self, request):
         p = request.query_params
-        qs = NotificationHistory.objects.filter(advocate_id=request.user.id)
+        qs = NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user))
         if p.get('channel'):
             qs = qs.filter(channel=p['channel'])
         if p.get('status'):
@@ -194,7 +195,7 @@ class StatisticsView(APIView):
 
 class LogsView(APIView):
     def get(self, request):
-        qs = NotificationLog.objects.filter(advocate_id=request.user.id).order_by('-created_at', '-id')
+        qs = NotificationLog.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('-created_at', '-id')
         return Response([{
             'id': l.id, 'logLevel': l.log_level, 'message': l.message, 'channel': l.channel,
             'eventType': l.event_type, 'recipient': l.recipient, 'details': l.details,
@@ -206,7 +207,7 @@ class LogsView(APIView):
 
 class QueueStatusView(APIView):
     def get(self, request):
-        Q = NotificationQueue.objects.filter(advocate_id=request.user.id)
+        Q = NotificationQueue.objects.filter(advocate_id__in=practice_ids(request.user))
         return Response({
             'pending': Q.filter(status='PENDING').count(),
             'processing': Q.filter(status='PROCESSING').count(),
@@ -259,7 +260,7 @@ class TestView(APIView):
 
 class ExportCsvView(APIView):
     def get(self, request):
-        qs = NotificationHistory.objects.filter(advocate_id=request.user.id).order_by('-sent_at')[:10000]
+        qs = NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('-sent_at')[:10000]
         resp = HttpResponse(content_type='text/csv; charset=UTF-8')
         resp['Content-Disposition'] = 'attachment; filename=notification_history.csv'
         w = csv.writer(resp)

@@ -7,6 +7,7 @@ from core.models import Client
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ClientSerializer, ClientRequestSerializer
+from core.practice import practice_ids
 
 SORT_MAP = {'createdAt': 'created_at', 'name': 'name', 'email': 'email', 'id': 'id'}
 
@@ -26,7 +27,7 @@ class ClientListView(APIView):
         keyword = request.query_params.get('keyword')
         sort_by = request.query_params.get('sortBy', 'createdAt')
         sort_dir = request.query_params.get('sortDir', 'desc')
-        qs = Client.objects.filter(advocate_id=request.user.id, deleted=archived)
+        qs = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=archived)
         if keyword:
             qs = qs.filter(Q(name__icontains=keyword) | Q(email__icontains=keyword) |
                            Q(phone__icontains=keyword) | Q(address__icontains=keyword))
@@ -40,7 +41,7 @@ class MyClientsView(APIView):
     permission_classes = [RequirePermission('CLIENT_VIEW')]
 
     def get(self, request):
-        qs = Client.objects.filter(advocate_id=request.user.id, deleted=False).order_by('name')
+        qs = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False).order_by('name')
         return Response(ClientSerializer(qs, many=True).data)
 
 
@@ -48,7 +49,7 @@ class ArchivedClientsView(APIView):
     permission_classes = [RequirePermission('CLIENT_VIEW')]
 
     def get(self, request):
-        qs = Client.objects.filter(advocate_id=request.user.id, deleted=True).order_by('name')
+        qs = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=True).order_by('name')
         return Response(ClientSerializer(qs, many=True).data)
 
 
@@ -57,7 +58,7 @@ class SearchClientsView(APIView):
 
     def get(self, request):
         keyword = request.query_params.get('keyword', '') or ''
-        qs = Client.objects.filter(advocate_id=request.user.id, deleted=False)
+        qs = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False)
         if keyword:
             qs = qs.filter(Q(name__icontains=keyword) | Q(email__icontains=keyword) |
                            Q(phone__icontains=keyword) | Q(address__icontains=keyword))
@@ -79,7 +80,7 @@ class CreateClientView(APIView):
 
 
 def _owned(request, pk):
-    return Client.objects.filter(id=pk, advocate_id=request.user.id).first()
+    return Client.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
 
 
 class UpdateClientView(APIView):

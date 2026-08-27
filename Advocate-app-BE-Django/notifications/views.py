@@ -5,6 +5,12 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from core.models import Case, Client, Notification, NotificationHistory
+from core.practice import practice_ids
+
+# A notification is addressed to one advocate. Unlike cases and clients
+# it is NOT practice-scoped: a colleague must not read or dismiss an
+# alert raised for somebody else. NotificationHistory below is scoped to
+# the practice, because "was the client told?" is a practice question.
 
 
 def _serialize(n):
@@ -74,7 +80,7 @@ def _history_row(h):
 
 def _history_qs(request):
     return NotificationHistory.objects.filter(
-        advocate_id=request.user.id).order_by('-sent_at', '-id')
+        advocate_id__in=practice_ids(request.user)).order_by('-sent_at', '-id')
 
 
 def _paged(request, qs):
@@ -125,7 +131,7 @@ def history_filter(request):
 
 @api_view(['GET'])
 def history_stats(request):
-    qs = NotificationHistory.objects.filter(advocate_id=request.user.id)
+    qs = NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user))
     midnight = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today = qs.filter(sent_at__gte=midnight)
     return Response({

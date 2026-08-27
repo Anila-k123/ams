@@ -351,6 +351,13 @@ function BackupPage() {
 
       <section className="backup-cards-section">
         <h3>Create Backup</h3>
+        {/* A backup covers the rows this account created, not everything it can
+            see. In a shared practice that is a real difference, so say it here
+            rather than letting someone assume the whole chambers is covered. */}
+        <p className="backup-scope-note">
+          Covers the records <strong>you created</strong>. If you share a practice,
+          colleagues' records are backed up from their own accounts.
+        </p>
         <div className="backup-cards">
           {BACKUP_TYPES.map((bt) => (
             <div key={bt.key} className="backup-card" onClick={() => createBackup(bt.key)}>

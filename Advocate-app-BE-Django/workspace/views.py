@@ -21,7 +21,7 @@ from .serializers import (CaseNoteSerializer, CaseTagSerializer, CaseTaskSeriali
 
 def _owns_case(request, case_id):
     """Only allow workspace ops on cases the requesting advocate owns."""
-    return Case.objects.filter(id=case_id, advocate_id=request.user.id).exists()
+    return Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists()
 
 
 def _event_payload(ev):
@@ -41,7 +41,7 @@ class CaseNotesView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        qs = CaseNote.objects.filter(advocate_id=request.user.id, case_id=case_id)
+        qs = CaseNote.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
         return Response(CaseNoteSerializer(qs, many=True).data)
 
     def post(self, request, case_id):
@@ -58,7 +58,7 @@ class DeleteCaseNoteView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        note = CaseNote.objects.filter(id=pk, advocate_id=request.user.id).first()
+        note = CaseNote.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if note is None:
             return Response({'error': 'Note not found'}, status=status.HTTP_404_NOT_FOUND)
         note.delete()
@@ -71,7 +71,7 @@ class CaseTagsView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        qs = CaseTag.objects.filter(advocate_id=request.user.id, case_id=case_id)
+        qs = CaseTag.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
         return Response(CaseTagSerializer(qs, many=True).data)
 
     def post(self, request, case_id):
@@ -91,7 +91,7 @@ class DeleteCaseTagView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        tag = CaseTag.objects.filter(id=pk, advocate_id=request.user.id).first()
+        tag = CaseTag.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if tag is None:
             return Response({'error': 'Tag not found'}, status=status.HTTP_404_NOT_FOUND)
         tag.delete()
@@ -103,7 +103,7 @@ class AllTagsView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request):
-        qs = CaseTag.objects.filter(advocate_id=request.user.id)
+        qs = CaseTag.objects.filter(advocate_id__in=practice_ids(request.user))
         by_case = {}
         for t in qs:
             by_case.setdefault(t.case_id, []).append(
@@ -118,7 +118,7 @@ class CaseTasksView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        qs = CaseTask.objects.filter(advocate_id=request.user.id, case_id=case_id)
+        qs = CaseTask.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
         return Response(CaseTaskSerializer(qs, many=True).data)
 
     def post(self, request, case_id):
@@ -142,7 +142,7 @@ class MyTasksAllView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request):
-        qs = CaseTask.objects.filter(advocate_id=request.user.id).order_by('completed', 'deadline', 'id')
+        qs = CaseTask.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('completed', 'deadline', 'id')
         return Response(CaseTaskSerializer(qs, many=True).data)
 
 
@@ -173,13 +173,13 @@ class TaskDocumentsView(APIView):
     permission_classes = [RequirePermission()]
 
     def post(self, request, task_id):
-        task = CaseTask.objects.filter(id=task_id, advocate_id=request.user.id).first()
+        task = CaseTask.objects.filter(id=task_id, advocate_id__in=practice_ids(request.user)).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         document_id = request.data.get('documentId')
         if not document_id:
             return Response({'error': 'documentId is required'}, status=status.HTTP_400_BAD_REQUEST)
-        if not Document.objects.filter(id=document_id, advocate_id=request.user.id).exists():
+        if not Document.objects.filter(id=document_id, advocate_id__in=practice_ids(request.user)).exists():
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         CaseTaskDocument.objects.get_or_create(
             task_id=task_id, document_id=document_id,
@@ -193,7 +193,7 @@ class DeleteTaskDocumentView(APIView):
 
     def delete(self, request, task_id, document_id):
         link = CaseTaskDocument.objects.filter(
-            task_id=task_id, document_id=document_id, advocate_id=request.user.id).first()
+            task_id=task_id, document_id=document_id, advocate_id__in=practice_ids(request.user)).first()
         if link is None:
             return Response({'error': 'Attachment not found'}, status=status.HTTP_404_NOT_FOUND)
         link.delete()
@@ -204,7 +204,7 @@ class ToggleCaseTaskView(APIView):
     permission_classes = [RequirePermission()]
 
     def put(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id=request.user.id).first()
+        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         task.completed = not task.completed
@@ -216,7 +216,7 @@ class DeleteCaseTaskView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id=request.user.id).first()
+        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         task.delete()
@@ -232,7 +232,7 @@ class CaseEventsView(APIView):
     def get(self, request, case_id):
         if not _owns_case(request, case_id):
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
-        qs = CaseEvent.objects.filter(advocate_id=request.user.id, case_id=case_id).order_by('date', 'id')
+        qs = CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id).order_by('date', 'id')
         return Response([_event_payload(e) for e in qs])
 
 
@@ -244,7 +244,7 @@ class NextHearingsView(APIView):
     def get(self, request):
         today = datetime.date.today()
         qs = (CaseEvent.objects
-              .filter(advocate_id=request.user.id, date__gte=today)
+              .filter(advocate_id__in=practice_ids(request.user), date__gte=today)
               .order_by('case_id', 'date', 'id'))
         result = {}
         for ev in qs:
@@ -264,7 +264,7 @@ class WorkspaceStatsView(APIView):
 
     def get(self, request):
         today = datetime.date.today()
-        base = Case.objects.filter(advocate_id=request.user.id, deleted=False)
+        base = Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False)
 
         def _count(value):
             return base.filter(status__iexact=value).count()
@@ -274,7 +274,7 @@ class WorkspaceStatsView(APIView):
             for c in base.only('pending_from_client')
         )
         upcoming = (CaseEvent.objects
-                    .filter(advocate_id=request.user.id, date__gte=today)
+                    .filter(advocate_id__in=practice_ids(request.user), date__gte=today)
                     .count())
 
         return Response({
@@ -298,13 +298,13 @@ class CaseFinancialsView(APIView):
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
 
         expenses = (Expense.objects.select_related('case')
-                    .filter(advocate_id=request.user.id, case_id=case_id)
+                    .filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
                     .order_by('-payment_date', '-id'))
         invoices = (Invoice.objects.select_related('case', 'client')
-                    .filter(advocate_id=request.user.id, case_id=case_id)
+                    .filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
                     .order_by('-invoice_date', '-id'))
         payments = (ClientPayment.objects.select_related('case', 'client')
-                    .filter(advocate_id=request.user.id, case_id=case_id)
+                    .filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
                     .order_by('-payment_date', '-id'))
 
         total_expenses = sum((e.amount or 0) for e in expenses)
@@ -336,17 +336,17 @@ class CaseSummaryView(APIView):
 
     def get(self, request, case_id):
         case = Case.objects.select_related('client').filter(
-            id=case_id, advocate_id=request.user.id).first()
+            id=case_id, advocate_id__in=practice_ids(request.user)).first()
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
         today = datetime.date.today()
         next_ev = (CaseEvent.objects
-                   .filter(advocate_id=request.user.id, case_id=case_id, date__gte=today)
+                   .filter(advocate_id__in=practice_ids(request.user), case_id=case_id, date__gte=today)
                    .order_by('date', 'id').first())
-        tasks = CaseTask.objects.filter(advocate_id=request.user.id, case_id=case_id)
+        tasks = CaseTask.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
         open_tasks = tasks.filter(completed=False).count()
         done_tasks = tasks.filter(completed=True).count()
-        tags = CaseTag.objects.filter(advocate_id=request.user.id, case_id=case_id)
+        tags = CaseTag.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
         return Response({
             'id': case.id,
             'caseNumber': case.case_number,
@@ -368,7 +368,7 @@ class CaseSummaryView(APIView):
             },
             'nextHearing': _event_payload(next_ev) if next_ev else None,
             'taskCounts': {'open': open_tasks, 'done': done_tasks},
-            'noteCount': CaseNote.objects.filter(advocate_id=request.user.id, case_id=case_id).count(),
+            'noteCount': CaseNote.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id).count(),
             'tags': CaseTagSerializer(tags, many=True).data,
         })
 
@@ -379,7 +379,7 @@ class CasePartiesView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        qs = CaseParty.objects.filter(advocate_id=request.user.id, case_id=case_id)
+        qs = CaseParty.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
         return Response(CasePartySerializer(qs, many=True).data)
 
     def post(self, request, case_id):
@@ -402,7 +402,7 @@ class DeleteCasePartyView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        party = CaseParty.objects.filter(id=pk, advocate_id=request.user.id).first()
+        party = CaseParty.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if party is None:
             return Response({'error': 'Party not found'}, status=status.HTTP_404_NOT_FOUND)
         party.delete()
@@ -417,12 +417,12 @@ class RelatedCasesView(APIView):
     permission_classes = [RequirePermission()]
 
     def _case_map(self, request, ids):
-        cases = Case.objects.filter(id__in=ids, advocate_id=request.user.id)
+        cases = Case.objects.filter(id__in=ids, advocate_id__in=practice_ids(request.user))
         return {c.id: c for c in cases}
 
     def get(self, request, case_id):
-        outgoing = list(RelatedCase.objects.filter(advocate_id=request.user.id, case_id=case_id))
-        incoming = list(RelatedCase.objects.filter(advocate_id=request.user.id, related_case_id=case_id))
+        outgoing = list(RelatedCase.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id))
+        incoming = list(RelatedCase.objects.filter(advocate_id__in=practice_ids(request.user), related_case_id=case_id))
         other_ids = ([r.related_case_id for r in outgoing] + [r.case_id for r in incoming])
         cmap = self._case_map(request, other_ids)
         result = []
@@ -464,7 +464,7 @@ class DeleteRelatedCaseView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        link = RelatedCase.objects.filter(id=pk, advocate_id=request.user.id).first()
+        link = RelatedCase.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if link is None:
             return Response({'error': 'Link not found'}, status=status.HTTP_404_NOT_FOUND)
         link.delete()
@@ -480,6 +480,7 @@ class DeleteRelatedCaseView(APIView):
 log = logging.getLogger(__name__)
 
 from courtsearch import client as court_client
+from core.practice import practice_ids
 
 # Cached once an hour per court so page loads are fast and the courts' servers
 # (and the scraper) are never hammered regardless of how many advocates view.

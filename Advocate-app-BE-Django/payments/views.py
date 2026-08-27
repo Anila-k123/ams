@@ -8,12 +8,13 @@ from core.models import ClientPayment, Case
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ClientPaymentSerializer
+from core.practice import practice_ids
 
 SORT_MAP = {'paymentDate': 'payment_date', 'amount': 'amount', 'id': 'id'}
 
 
 def _base(request):
-    return ClientPayment.objects.select_related('case', 'client').filter(advocate_id=request.user.id)
+    return ClientPayment.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(request.user))
 
 
 def _case_id(data):
@@ -76,7 +77,7 @@ class CreatePaymentView(APIView):
     def post(self, request):
         data = request.data
         cid = _case_id(data)
-        case = Case.objects.filter(id=cid, advocate_id=request.user.id).first() if cid else None
+        case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first() if cid else None
         payment = ClientPayment.objects.create(
             amount=data.get('amount'),
             payment_mode=data.get('paymentMode'),

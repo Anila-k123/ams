@@ -18,6 +18,7 @@ from core.jwt import decode_token
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import DocumentSerializer
+from core.practice import practice_ids
 
 SORT_MAP = {'uploadDate': 'upload_date', 'documentName': 'document_name',
             'fileSize': 'file_size', 'id': 'id'}
@@ -133,8 +134,8 @@ class UploadDocumentView(APIView):
 
         case_id = request.data.get('caseId') or None
         client_id = request.data.get('clientId') or None
-        case = Case.objects.filter(id=case_id, advocate_id=request.user.id).first() if case_id else None
-        client = Client.objects.filter(id=client_id, advocate_id=request.user.id).first() if client_id else None
+        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first() if case_id else None
+        client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first() if client_id else None
         file_type = f.content_type or mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
         now = datetime.datetime.now()
         doc = Document.objects.create(
@@ -175,7 +176,7 @@ class DocumentDetailView(APIView):
         return Response(DocumentSerializer(doc).data)
 
     def put(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id=request.user.id).first()
+        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         for attr, key in [('document_name', 'documentName'), ('category', 'category'),
@@ -187,7 +188,7 @@ class DocumentDetailView(APIView):
         return Response(DocumentSerializer(doc).data)
 
     def delete(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id=request.user.id).first()
+        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         try:

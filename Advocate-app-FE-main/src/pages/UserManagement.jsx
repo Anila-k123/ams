@@ -14,6 +14,9 @@ export default function UserManagement() {
   const [form, setForm] = useState({ fullName: "", email: "", phone: "", barCouncilId: "", specialization: "", experience: 0 });
   const [selectedRoles, setSelectedRoles] = useState([]);
   const [password, setPassword] = useState("");
+  // Default to sharing: a user created without practice access logs in to
+  // an empty application, which is the confusing case, not the safe one.
+  const [sharePractice, setSharePractice] = useState(true);
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesLoadFailed, setRolesLoadFailed] = useState(false);
   const { hasPermission } = usePermission();
@@ -37,6 +40,7 @@ export default function UserManagement() {
   const openCreate = () => {
     setEditingUser(null);
     setForm({ fullName: "", email: "", phone: "", barCouncilId: "", specialization: "", experience: 0 });
+    setSharePractice(true);
     setSelectedRoles([]);
     setPassword("");
     setRolesLoading(false);
@@ -93,7 +97,7 @@ export default function UserManagement() {
         await rbacService.setUserRoles(editingUser.id, selectedRoles);
       } else {
         // Was hardcoded to a shared "changeme123" for every new account.
-        const created = await rbacService.createUser({ ...form, password });
+        const created = await rbacService.createUser({ ...form, password, sharePractice });
         if (selectedRoles.length > 0) {
           await rbacService.setUserRoles(created.id, selectedRoles);
         }
@@ -162,9 +166,26 @@ export default function UserManagement() {
                 )}
               </div>
               {!editingUser && (
+                <>
                 <p className="am-empty" style={{ textAlign: "left", padding: "4px 0" }}>
                   Share this password with the user directly and ask them to change it after first sign-in.
                 </p>
+                <label className="am-practice-toggle">
+                  <input
+                    type="checkbox"
+                    checked={sharePractice}
+                    onChange={(e) => setSharePractice(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Give access to the practice's cases and clients</strong>
+                    <small>
+                      Leave this on for colleagues in your chambers. Turn it off only
+                      for an advocate who should start with an empty, separate
+                      workspace — they will not see any existing case or client.
+                    </small>
+                  </span>
+                </label>
+                </>
               )}
               <div className="am-role-select">
                 <h4>Assign Roles</h4>
@@ -203,6 +224,7 @@ export default function UserManagement() {
             <th>Phone</th>
             <th>Specialization</th>
             <th>Roles</th>
+            <th>Practice</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -214,6 +236,11 @@ export default function UserManagement() {
               <td>{u.phone}</td>
               <td>{u.specialization}</td>
               <td>{(u.roles || []).join(", ")}</td>
+              <td>
+                {u.sharesPractice
+                  ? <span className="am-practice-badge shared">Shared</span>
+                  : <span className="am-practice-badge solo">Separate</span>}
+              </td>
               <td className="am-actions">
                 <button className="am-icon-btn" title="Edit" onClick={() => openEdit(u)}><FiEdit2 /></button>
                 <button className="am-icon-btn danger" title="Delete" onClick={() => handleDelete(u.id)}><FiTrash2 /></button>

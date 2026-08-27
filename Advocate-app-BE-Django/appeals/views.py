@@ -5,6 +5,7 @@ from rest_framework import status
 from core.permissions import RequirePermission
 from .models import AppealDetection
 from .serializers import AppealDetectionSerializer
+from core.practice import practice_ids
 
 
 # ---- Detected (candidate) appeals, produced by the scan_appeals sweep -------
@@ -15,7 +16,7 @@ class AppealDetectionListView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request):
-        qs = AppealDetection.objects.filter(advocate_id=request.user.id)
+        qs = AppealDetection.objects.filter(advocate_id__in=practice_ids(request.user))
         wanted = (request.query_params.get('status') or '').upper()
         if wanted:
             qs = qs.filter(status=wanted)
@@ -38,7 +39,7 @@ class AppealDetectionStatusView(APIView):
 
     def put(self, request, pk):
         det = AppealDetection.objects.filter(
-            id=pk, advocate_id=request.user.id).first()
+            id=pk, advocate_id__in=practice_ids(request.user)).first()
         if det is None:
             return Response({'error': 'Detection not found'},
                             status=status.HTTP_404_NOT_FOUND)

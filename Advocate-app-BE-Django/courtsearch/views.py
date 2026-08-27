@@ -19,6 +19,7 @@ from rest_framework import status
 from core.permissions import RequirePermission
 from . import client
 from .models import CourtCaseTypes, ImportedCaseRecord
+from core.practice import practice_ids
 
 log = logging.getLogger(__name__)
 
@@ -1050,7 +1051,7 @@ class ImportedRecordView(APIView):
 
     def get(self, request):
         """Latest stored record for a case (?caseId=) — powers later display."""
-        qs = ImportedCaseRecord.objects.filter(advocate_id=request.user.id)
+        qs = ImportedCaseRecord.objects.filter(advocate_id__in=practice_ids(request.user))
         case_id = request.query_params.get('caseId')
         if case_id:
             qs = qs.filter(case_id=case_id)

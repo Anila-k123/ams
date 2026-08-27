@@ -8,6 +8,7 @@ from core.models import Case, Client
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseSerializer
+from core.practice import practice_ids
 
 SORT_MAP = {'createdAt': 'created_at', 'caseNumber': 'case_number',
             'caseTitle': 'case_title', 'status': 'status', 'id': 'id'}
@@ -15,7 +16,7 @@ SEARCH_FIELDS = ['case_number', 'case_title', 'case_type', 'court_level', 'statu
 
 
 def _base_qs(request):
-    return Case.objects.select_related('client').filter(advocate_id=request.user.id)
+    return Case.objects.select_related('client').filter(advocate_id__in=practice_ids(request.user))
 
 
 def _search(qs, keyword):
@@ -95,13 +96,25 @@ class CreateCaseView(APIView):
         case_number = data.get('caseNumber')
         if not case_number:
             return Response({'error': 'caseNumber is required'}, status=status.HTTP_400_BAD_REQUEST)
+        # case_number carries a GLOBAL unique constraint in the schema
+        # (ukd2x5t06l1d3krie16abr38r0y), so this lookup cannot be scoped - the
+        # row may belong to another practice entirely and the insert would
+        # still collide.
         existing = Case.objects.filter(case_number=case_number).first()
         if existing is not None and not existing.deleted:
             return Response({'error': 'Case number already exists'}, status=status.HTTP_409_CONFLICT)
+        # An archived row is reused rather than re-inserted. Only reuse one this
+        # practice actually owns: reassigning advocate_id on someone else's row
+        # would hand their archived case, and its history, to whoever guessed
+        # the number.
+        if existing is not None and existing.advocate_id not in practice_ids(request.user):
+            return Response(
+                {'error': 'Case number already exists'},
+                status=status.HTTP_409_CONFLICT)
         client_id = _extract_client_id(data)
         client = None
         if client_id is not None:
-            client = Client.objects.filter(id=client_id, advocate_id=request.user.id).first()
+            client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first()
         if existing is not None and existing.deleted:
             # Re-adding a previously archived case: case_number is globally unique, so
             # reuse the row — reset it to a fresh, active case for this advocate and
@@ -114,7 +127,9 @@ class CreateCaseView(APIView):
             existing.description = data.get('description')
             existing.deleted = False
             existing.created_at = datetime.date.today()
-            existing.advocate_id = request.user.id
+            # advocate_id is left as it was: within a practice the row is
+            # already reachable, and overwriting it would rewrite who created
+            # the case every time it was re-added.
             existing.client = client
             existing.save()
             _clear_import_children(existing.id)
@@ -136,7 +151,7 @@ class CreateCaseView(APIView):
 
 
 def _owned(request, pk):
-    return Case.objects.select_related('client').filter(id=pk, advocate_id=request.user.id).first()
+    return Case.objects.select_related('client').filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
 
 
 class UpdateCaseView(APIView):
@@ -156,7 +171,7 @@ class UpdateCaseView(APIView):
             case.case_number = data['caseNumber']
         client_id = _extract_client_id(data)
         if client_id is not None:
-            case.client = Client.objects.filter(id=client_id, advocate_id=request.user.id).first()
+            case.client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first()
         case.save()
         return Response(CaseSerializer(case).data)
 

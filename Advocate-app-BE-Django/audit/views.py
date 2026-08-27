@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from core.models import AuditLog, Activity
 from core.pagination import SpringStylePagination
 from core.permissions import RequirePermission
+from core.practice import practice_ids
 
 
 def _parse_dt(v):
@@ -37,7 +38,7 @@ class AuditView(APIView):
 
     def get(self, request):
         p = request.query_params
-        qs = AuditLog.objects.filter(advocate_id=request.user.id)
+        qs = AuditLog.objects.filter(advocate_id__in=practice_ids(request.user))
         if p.get('actionType'):
             qs = qs.filter(action_type=p['actionType'])
         if p.get('module'):
@@ -69,7 +70,7 @@ class ActivityListView(APIView):
     permission_classes = [RequirePermission('AUDIT_VIEW')]
 
     def get(self, request):
-        qs = Activity.objects.filter(advocate_id=request.user.id).order_by('-timestamp', '-id')
+        qs = Activity.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('-timestamp', '-id')
         paginator = SpringStylePagination()
         page = paginator.paginate_queryset(qs, request, self)
         return paginator.get_paginated_response([_activity_map(a) for a in page])
@@ -77,5 +78,5 @@ class ActivityListView(APIView):
 
 class MyActivitiesView(APIView):
     def get(self, request):
-        qs = Activity.objects.filter(advocate_id=request.user.id).order_by('-timestamp', '-id')[:20]
+        qs = Activity.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('-timestamp', '-id')[:20]
         return Response([_activity_map(a) for a in qs])

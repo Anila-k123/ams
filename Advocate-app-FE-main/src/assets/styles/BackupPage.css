@@ -1076,3 +1076,10 @@
   border-radius: var(--radius-sm);
   box-shadow: var(--card-shadow);
 }
+
+.backup-scope-note {
+  margin: -4px 0 14px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}

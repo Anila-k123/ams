@@ -8,12 +8,13 @@ from core.models import Invoice, Case
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import InvoiceSerializer
+from core.practice import practice_ids
 
 SORT_MAP = {'invoiceDate': 'invoice_date', 'dueDate': 'due_date', 'amount': 'amount', 'id': 'id'}
 
 
 def _base(request):
-    return Invoice.objects.select_related('case', 'client').filter(advocate_id=request.user.id)
+    return Invoice.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(request.user))
 
 
 def _case_id(data):
@@ -98,7 +99,7 @@ class CreateInvoiceView(APIView):
         if Invoice.objects.filter(invoice_number=number).exists():
             return Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
         cid = _case_id(data)
-        case = Case.objects.filter(id=cid, advocate_id=request.user.id).first() if cid else None
+        case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first() if cid else None
         if case is None:
             return Response({'error': 'Valid caseId is required'}, status=http.HTTP_400_BAD_REQUEST)
         if case.client_id is None:

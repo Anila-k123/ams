@@ -4,6 +4,14 @@ Produces a ZIP with the same layout the Spring backend used:
   metadata.json, data/<table>.json, database/database.sql, documents/, settings/settings.json
 Data is scoped to the current advocate. Restore is transactional (all-or-nothing)
 and creates a rollback FULL backup first.
+
+NOT practice-wide, deliberately. Since shared practices were introduced
+(core/practice.py) an advocate can SEE rows created by colleagues, but a backup
+still exports only the rows they created themselves. Widening the export would
+mean widening the DELETE in restore to the whole practice, which turns one
+person's mis-drop into a chambers-wide loss - so each member backs up their own
+work from their own account instead, and the page says so. Making this
+practice-wide needs restore reworked first, not just the export.
 """
 
 import os

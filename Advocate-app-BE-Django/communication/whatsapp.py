@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status as http
 
 from core.models import NotificationHistory
+from core.practice import practice_ids
 
 VERIFY_TOKEN = getattr(settings, 'WHATSAPP_VERIFY_TOKEN', 'AdvocateApp2026SecureToken')
 
@@ -48,7 +49,7 @@ class SendManualView(APIView):
 class ResendView(APIView):
     """POST /api/whatsapp/resend/{historyId} — mock re-send of a past message."""
     def post(self, request, history_id):
-        h = NotificationHistory.objects.filter(id=history_id, advocate_id=request.user.id).first()
+        h = NotificationHistory.objects.filter(id=history_id, advocate_id__in=practice_ids(request.user)).first()
         if h is None:
             return Response({'success': False, 'error': 'History item not found'},
                             status=http.HTTP_404_NOT_FOUND)

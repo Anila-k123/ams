@@ -5,6 +5,7 @@ from rest_framework import status
 from core.models import Role, Permission, RolePermission, Advocate, AdvocateRole
 from core.permissions import RequirePermission
 from core.passwords import hash_password
+from core.practice import practice_root
 
 
 def _parse_ids(data, key):
@@ -128,6 +129,8 @@ def _user_map(adv):
         'id': adv.id, 'fullName': adv.full_name, 'email': adv.email, 'phone': adv.phone,
         'barCouncilId': adv.bar_council_id, 'specialization': adv.specialization,
         'experience': adv.experience, 'role': adv.role, 'roles': role_names,
+        'practiceOwnerId': adv.parent_advocate_id,
+        'sharesPractice': adv.parent_advocate_id is not None,
     }
 
 USER_MANAGE = [RequirePermission('USER_MANAGE')]
@@ -163,6 +166,14 @@ class UsersView(APIView):
             whatsapp_enabled=False,
             email_notifications_enabled=True,
             browser_notifications_enabled=True,
+            # Join the creator's practice, so the new account can see the
+            # chambers' cases. Without this a user created here would log in to
+            # an empty application - the account exists, the roles are granted,
+            # and every query finds nothing because the data belongs to
+            # somebody else. Pass sharePractice=false to create an isolated
+            # account instead.
+            parent_advocate_id=(None if d.get('sharePractice') is False
+                                else practice_root(request.user)),
         )
         adv.save()
         return Response(_user_map(adv), status=status.HTTP_201_CREATED)

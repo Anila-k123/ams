@@ -10,6 +10,7 @@ from core.pagination import SpringStylePagination
 
 from .models import Act, Section, ActCaseLink
 from .serializers import ActListSerializer, ActDetailSerializer, SectionDetailSerializer
+from core.practice import practice_ids
 
 # Provakil-style field-scoped search chips. "all" searches every act-level
 # text field; the two section-scoped modes join through Section and return
@@ -109,7 +110,7 @@ class ActCaseLinksView(APIView):
         if not case_id:
             return Response({'error': 'caseId is required.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
         # Only the advocate's own cases can be linked - same scoping cases/views.py uses.
-        case = Case.objects.filter(id=case_id, advocate_id=request.user.id).first()
+        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
         if not case:
             return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
         link, created = ActCaseLink.objects.get_or_create(

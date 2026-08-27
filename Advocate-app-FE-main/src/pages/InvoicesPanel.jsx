@@ -15,7 +15,10 @@ export default function InvoicesPanel() {
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
   const [cases, setCases] = useState([]);
-  const [summary, setSummary] = useState({ paid: 0, unpaid: 0, overdue: 0, monthlyRevenue: 0 });
+  const [summary, setSummary] = useState({
+    paid: 0, unpaid: 0, overdue: 0,
+    paidAmount: 0, unpaidAmount: 0, overdueAmount: 0, monthlyRevenue: 0,
+  });
   const [showModal, setShowModal] = useState(false);
   const [closing, setClosing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -246,8 +249,8 @@ export default function InvoicesPanel() {
             <span>Paid Invoices</span>
             <span className="card-icon">🟢</span>
           </div>
-          <h3>{formatCurrency(summary.paid)}</h3>
-          <p>Total cash collected</p>
+          <h3>{formatCurrency(summary.paidAmount)}</h3>
+          <p>Total cash collected · {summary.paid} invoice{summary.paid === 1 ? "" : "s"}</p>
         </div>
 
         <div className="inv-card unpaid">
@@ -255,8 +258,8 @@ export default function InvoicesPanel() {
             <span>Unpaid Invoices</span>
             <span className="card-icon">⌛</span>
           </div>
-          <h3>{formatCurrency(summary.unpaid)}</h3>
-          <p>Outstanding client dues</p>
+          <h3>{formatCurrency(summary.unpaidAmount)}</h3>
+          <p>Outstanding client dues · {summary.unpaid} invoice{summary.unpaid === 1 ? "" : "s"}</p>
         </div>
 
         <div className="inv-card overdue">
@@ -264,8 +267,8 @@ export default function InvoicesPanel() {
             <span>Overdue Dues</span>
             <span className="card-icon">🔴</span>
           </div>
-          <h3>{formatCurrency(summary.overdue)}</h3>
-          <p>Payment deadline passed</p>
+          <h3>{formatCurrency(summary.overdueAmount)}</h3>
+          <p>Payment deadline passed · {summary.overdue} invoice{summary.overdue === 1 ? "" : "s"}</p>
         </div>
       </div>
 

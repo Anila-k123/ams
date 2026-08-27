@@ -1,5 +1,5 @@
 import datetime
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status as http
@@ -29,7 +29,19 @@ class InvoiceListView(APIView):
     def get(self, request):
         sort_by = SORT_MAP.get(request.query_params.get('sortBy', 'invoiceDate'), 'invoice_date')
         sort_dir = request.query_params.get('sortDir', 'desc')
-        qs = _base(request).order_by(sort_by if sort_dir == 'asc' else '-' + sort_by, '-id')
+        qs = _base(request)
+        # The panel's search box has always sent ?keyword=, but it was never
+        # read here — so typing in it did nothing at all.
+        keyword = (request.query_params.get('keyword') or '').strip()
+        if keyword:
+            qs = qs.filter(
+                Q(invoice_number__icontains=keyword) |
+                Q(status__icontains=keyword) |
+                Q(client__name__icontains=keyword) |
+                Q(case__case_number__icontains=keyword) |
+                Q(case__case_title__icontains=keyword)
+            )
+        qs = qs.order_by(sort_by if sort_dir == 'asc' else '-' + sort_by, '-id')
         paginator = SpringStylePagination()
         page = paginator.paginate_queryset(qs, request, self)
         return paginator.get_paginated_response(InvoiceSerializer(page, many=True).data)
@@ -48,18 +60,31 @@ class InvoiceSummaryView(APIView):
     def get(self, request):
         today = datetime.date.today()
         paid = unpaid = overdue = 0
+        # The cards are labelled "Total cash collected" / "Outstanding client
+        # dues" / "Payment deadline passed", i.e. they want AMOUNTS - but only
+        # counts were returned, and the frontend ran them through a currency
+        # formatter, so 7 paid invoices displayed as "₹7". Send both.
+        paid_amount = unpaid_amount = overdue_amount = 0.0
         monthly_revenue = 0.0
         for inv in _base(request):
+            amount = inv.amount or 0
             if (inv.status or '').upper() == 'PAID':
                 paid += 1
+                paid_amount += amount
                 if inv.invoice_date and inv.invoice_date.year == today.year and inv.invoice_date.month == today.month:
-                    monthly_revenue += inv.amount or 0
+                    monthly_revenue += amount
             elif inv.due_date and inv.due_date < today:
                 overdue += 1
+                overdue_amount += amount
             else:
                 unpaid += 1
-        return Response({'paid': paid, 'unpaid': unpaid, 'overdue': overdue,
-                         'monthlyRevenue': monthly_revenue})
+                unpaid_amount += amount
+        return Response({
+            'paid': paid, 'unpaid': unpaid, 'overdue': overdue,
+            'paidAmount': paid_amount, 'unpaidAmount': unpaid_amount,
+            'overdueAmount': overdue_amount,
+            'monthlyRevenue': monthly_revenue,
+        })
 
 
 class CreateInvoiceView(APIView):

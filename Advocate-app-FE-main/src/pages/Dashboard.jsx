@@ -29,6 +29,7 @@ import dashboardService from "../services/DashboardService";
 import DashboardTimeNavigator from "../components/DashboardTimeNavigator";
 import TimeSwitcher from "../components/TimeSwitcher";
 import AssistantPanel from "../components/AssistantPanel";
+import PermissionRoute from "../components/PermissionRoute";
 import LiveStatusIndicator from "../components/LiveStatusIndicator";
 import NotificationBell from "../components/NotificationBell";
 import ActivityFeed from "../components/ActivityFeed";
@@ -483,7 +484,7 @@ function DashboardShell() {
     }
     try {
       const res = await withLoading(
-        axios.get(`/api/dashboard/global-search?keyword=${encodeURIComponent(query)}`, {
+        axios.get(`/api/search?keyword=${encodeURIComponent(query)}`, {
           headers: { Authorization: `Bearer ${token}` }
         }),
         "Searching..."
@@ -686,19 +687,23 @@ function DashboardShell() {
                   <span className="nav-text">Settings</span>
                 </NavLink>
             </li>
-            <li>
+            <IfPermitted perm="BACKUP_MANAGE">
+              <li>
                 <NavLink to="/dashboard/backup" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Backup">
                   <span className="nav-icon">🔐</span>
                   <span className="nav-text">Backup</span>
                 </NavLink>
-            </li>
+              </li>
+            </IfPermitted>
             <li className="nav-section-label">Administration</li>
-            <li>
+            <IfPermitted perm="AUDIT_VIEW">
+              <li>
                 <NavLink to="/dashboard/activity" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="System Activity">
                   <span className="nav-icon">📋</span>
                   <span className="nav-text">System Activity</span>
                 </NavLink>
-            </li>
+              </li>
+            </IfPermitted>
             <IfPermitted perm="USER_MANAGE">
               <li>
                 <NavLink to="/dashboard/users" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="User Management">
@@ -1331,10 +1336,21 @@ function DashboardShell() {
             <Route path="/appeal-alert" element={<AppealAlert />} />
             <Route path="/acts" element={<Acts />} />
             <Route path="/acts/:id" element={<ActDetail />} />
-            <Route path="/activity" element={<SystemActivity />} />
-            <Route path="/backup" element={<BackupPage />} />
-            <Route path="/users" element={<UserManagement />} />
-            <Route path="/roles" element={<RoleManagement />} />
+            <Route path="/activity" element={
+              <PermissionRoute permissions="AUDIT_VIEW"><SystemActivity /></PermissionRoute>
+            } />
+            <Route path="/backup" element={
+              <PermissionRoute permissions="BACKUP_MANAGE"><BackupPage /></PermissionRoute>
+            } />
+            {/* Admin routes are permission-gated, not just hidden from the
+                sidebar - otherwise they stay reachable by typing the URL. The
+                codes match what the backend enforces (rbac/views.py). */}
+            <Route path="/users" element={
+              <PermissionRoute permissions="USER_MANAGE"><UserManagement /></PermissionRoute>
+            } />
+            <Route path="/roles" element={
+              <PermissionRoute permissions="ROLE_MANAGE"><RoleManagement /></PermissionRoute>
+            } />
             <Route path="/communication" element={<CommunicationDashboard />} />
             <Route path="/communication/settings" element={<CommunicationSettings />} />
             <Route path="/communication/templates" element={<NotificationTemplates />} />

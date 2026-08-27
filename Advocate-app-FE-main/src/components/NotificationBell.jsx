@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { FiBell } from "react-icons/fi";
+import axios from "axios";
 import { useWebSocketContext } from "../contexts/realtime/WebSocketProvider";
 
 export default function NotificationBell({ onOpen }) {
@@ -10,10 +11,43 @@ export default function NotificationBell({ onOpen }) {
   const { subscribe } = useWebSocketContext();
   const dropdownRef = useRef(null);
 
+  // The bell was WebSocket-only, and there is no /ws backend - so it always
+  // read "No live notifications yet." Unread notifications are now loaded over
+  // REST; the WS subscription is kept below so it still upgrades to push if a
+  // /ws backend ever lands.
+  const load = useCallback(async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.get("/api/notifications/unread", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const rows = (Array.isArray(res.data) ? res.data : []).map((n) => ({
+        id: n.id,
+        message: n.message,
+        timestamp: n.timestamp || n.createdAt,
+      }));
+      setAlerts(rows.slice(0, 50));
+      setCount(rows.length);
+    } catch {
+      /* the dropdown's empty state covers it */
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Poll gently: notifications are produced by a scheduled job, not per
+  // keystroke, so a minute of latency is fine and this costs one small query.
+  useEffect(() => {
+    const t = setInterval(load, 60000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(t); window.removeEventListener("focus", onFocus); };
+  }, [load]);
+
   useEffect(() => {
     const unsub = subscribe("notification", (event) => {
       setAlerts((prev) => {
-        const updated = [{ ...event, id: Date.now() + Math.random() }, ...prev];
+        const updated = [{ ...event, id: `live-${Date.now()}-${Math.random()}` }, ...prev];
         return updated.slice(0, 50);
       });
       setCount((c) => c + 1);
@@ -23,11 +57,22 @@ export default function NotificationBell({ onOpen }) {
 
   const handleClick = useCallback(() => {
     setShowDropdown((v) => !v);
-    setCount(0);
   }, []);
 
-  const handleNotificationClick = useCallback((alert) => {
+  const handleNotificationClick = useCallback(async (alert) => {
     setShowDropdown(false);
+    // Actually mark it read server-side; previously opening the dropdown just
+    // zeroed the badge locally and it came back on the next load.
+    if (alert.id && !String(alert.id).startsWith("live-")) {
+      try {
+        const token = localStorage.getItem("token");
+        await axios.put(`/api/notifications/${alert.id}/read`, {}, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+        setCount((c) => Math.max(0, c - 1));
+      } catch { /* leave it unread rather than lying about it */ }
+    }
     if (onOpen && alert.route) {
       onOpen(alert.route);
     }
@@ -60,12 +105,12 @@ export default function NotificationBell({ onOpen }) {
       {showDropdown && (
         <div ref={dropdownRef} className="live-notif-dropdown">
           <div className="live-notif-header">
-            <h4>Live Notifications</h4>
+            <h4>Notifications</h4>
             <button className="clear-btn" onClick={() => setShowDropdown(false)}>Close</button>
           </div>
           <div className="live-notif-list">
             {alerts.length === 0 ? (
-              <p className="no-data">No live notifications yet.</p>
+              <p className="no-data">Nothing unread.</p>
             ) : (
               alerts.map((a) => (
                 <div key={a.id} className="live-notif-item clickable" onClick={() => handleNotificationClick(a)}>

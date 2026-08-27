@@ -2,10 +2,9 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('appeal-alerts', views.AppealAlertListView.as_view()),
-    path('appeal-alerts/create', views.CreateAppealAlertView.as_view()),
-    path('appeal-alerts/delete/<int:pk>', views.DeleteAppealAlertView.as_view()),
-    # Candidate appeals detected by the scan_appeals sweep
+    # Candidate appeals detected by the nightly scan_appeals sweep.
+    # There is no manual-entry route: the old form recorded a
+    # court/case-number/judgment-date and did nothing with them.
     path('appeal-detections', views.AppealDetectionListView.as_view()),
     path('appeal-detections/<int:pk>', views.AppealDetectionStatusView.as_view()),
 ]

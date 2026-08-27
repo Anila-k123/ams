@@ -2,7 +2,8 @@ from django.db.models import Q
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from core.models import Client, Case, Document, Invoice, Expense, Task, CaseEvent, ClientPayment
+from core.models import Client, Case, Document, Invoice, Expense, CaseEvent, ClientPayment
+from workspace.models import CaseTask
 from clients.serializers import ClientSerializer
 from cases.serializers import CaseSerializer
 from documents.serializers import DocumentSerializer
@@ -10,7 +11,7 @@ from invoices.serializers import InvoiceSerializer
 from expenses.serializers import ExpenseSerializer
 from payments.serializers import ClientPaymentSerializer
 from events.serializers import CaseEventSerializer
-from tasks.serializers import TaskSerializer
+from workspace.serializers import CaseTaskSerializer
 
 MAX = 5
 
@@ -41,7 +42,9 @@ def _global_search(advocate_id, q):
         Q(title__icontains=q) | Q(category__icontains=q) | Q(description__icontains=q)
     )[:MAX]
 
-    tasks = Task.objects.filter(advocate_id=advocate_id).filter(title__icontains=q)[:MAX]
+    # workspace.CaseTask, not the legacy core.Task table - that one is empty,
+    # so searching for a task never matched anything.
+    tasks = CaseTask.objects.filter(advocate_id=advocate_id).filter(title__icontains=q)[:MAX]
 
     events = CaseEvent.objects.select_related('case').filter(advocate_id=advocate_id).filter(
         Q(title__icontains=q) | Q(description__icontains=q) | Q(event_type__icontains=q)
@@ -57,7 +60,7 @@ def _global_search(advocate_id, q):
         'documents': DocumentSerializer(documents, many=True).data,
         'invoices': InvoiceSerializer(invoices, many=True).data,
         'expenses': ExpenseSerializer(expenses, many=True).data,
-        'tasks': TaskSerializer(tasks, many=True).data,
+        'tasks': CaseTaskSerializer(tasks, many=True).data,
         'events': CaseEventSerializer(events, many=True).data,
         'payments': ClientPaymentSerializer(payments, many=True).data,
     }

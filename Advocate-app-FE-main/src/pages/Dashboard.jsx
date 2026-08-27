@@ -455,16 +455,17 @@ function DashboardShell() {
   const handleToggleTask = async (id) => {
     try {
       await withLoading(
-        axios.put(`/api/tasks/toggle/${id}`, {}, {
+        axios.put(`/api/workspace/tasks/${id}/toggle`, {}, {
           headers: { Authorization: `Bearer ${token}` }
         }),
         "Toggling task..."
       );
-      // Was GET /api/dashboard/tasks, which does not exist (404 on every
-      // toggle, so the checkbox never reflected the change). /api/tasks is
-      // the real endpoint; keep only the open ones, matching the widget.
+      // Was GET /api/dashboard/tasks, which does not exist - a 404 on every
+      // toggle, so the checkbox never reflected the change. Uses the
+      // workspace task API, the one the Tasks page and CaseDetail use;
+      // /api/tasks is a legacy table nothing writes to.
       const res = await withLoading(
-        axios.get("/api/tasks", { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get("/api/workspace/tasks/all", { headers: { Authorization: `Bearer ${token}` } }),
         "Refreshing tasks..."
       );
       const rows = Array.isArray(res.data) ? res.data : (res.data?.content || []);

@@ -257,19 +257,6 @@ class ClientPayment(models.Model):
         db_table = 'client_payments'
 
 
-class Task(models.Model):
-    id = models.BigAutoField(primary_key=True)
-    title = models.CharField(max_length=255)
-    priority = models.CharField(max_length=255, default='MEDIUM')
-    completed = models.BooleanField(default=False)
-    deadline = models.DateField(null=True, blank=True)
-    advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, db_column='advocate_id')
-
-    class Meta:
-        managed = False
-        db_table = 'tasks'
-
-
 class PasswordResetOtp(models.Model):
     id = models.BigAutoField(primary_key=True)
     advocate_id = models.BigIntegerField()

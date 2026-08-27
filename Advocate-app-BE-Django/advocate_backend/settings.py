@@ -39,7 +39,6 @@ INSTALLED_APPS = [
     'expenses',
     'invoices',
     'payments',
-    'tasks',
     'search',
     'reports',
     'audit',

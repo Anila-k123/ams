@@ -12,7 +12,7 @@ from django.db import models
 
 
 class Act(models.Model):
-    title = models.CharField(max_length=512)
+    title = models.TextField()
     long_title = models.TextField(blank=True)
     abstract = models.TextField(blank=True)
     preamble_html = models.TextField(blank=True)
@@ -52,7 +52,7 @@ class Chapter(models.Model):
     act = models.ForeignKey(Act, on_delete=models.DO_NOTHING, db_column='act_id',
                             related_name='chapters')
     number = models.CharField(max_length=32, blank=True)
-    title = models.CharField(max_length=512, blank=True)
+    title = models.TextField(blank=True)
     order = models.IntegerField(default=0)
 
     class Meta:
@@ -70,7 +70,7 @@ class Section(models.Model):
                                 null=True, blank=True, related_name='sections')
 
     number = models.CharField(max_length=32)
-    title = models.CharField(max_length=512, blank=True)
+    title = models.TextField(blank=True)
     content = models.TextField(blank=True)
     footnote = models.TextField(blank=True)
     order_number = models.IntegerField(default=0)
@@ -92,7 +92,7 @@ class ActPaper(models.Model):
     act = models.ForeignKey(Act, on_delete=models.DO_NOTHING, db_column='act_id',
                             related_name='papers')
     paper_type = models.CharField(max_length=32)   # "RULE" | "NOTIFICATION"
-    title = models.CharField(max_length=512, blank=True)
+    title = models.TextField(blank=True)
     paper_date = models.DateField(null=True, blank=True)
     pdf_url = models.URLField(max_length=1024, blank=True)
 

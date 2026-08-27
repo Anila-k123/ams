@@ -29,6 +29,43 @@ _NOISE = {
     'pvt', 'private', 'company', 'co', 'sons', 'inspector', 'police',
     'secretary', 'government', 'govt', 'district', 'collector', 'officer',
 }
+
+# A state's name is not evidence that two cases share a litigant: EVERY case
+# the state is party to would "match". A live sweep searching "The State of
+# Tamil Nadu" returned 79 false positives, all matched on [tamil, nadu].
+_STATE_WORDS = set()
+for _s in (
+    'andhra pradesh arunachal assam bihar chhattisgarh goa gujarat haryana '
+    'himachal jharkhand karnataka kerala madhya maharashtra manipur meghalaya '
+    'mizoram nagaland odisha orissa punjab rajasthan sikkim tamil nadu '
+    'telangana tripura uttarakhand uttar bengal delhi jammu kashmir ladakh '
+    'puducherry chandigarh andaman nicobar lakshadweep daman diu dadra haveli'
+).split():
+    _STATE_WORDS.add(_s)
+
+# Words naming an OFFICE rather than a person or business. A party made only of
+# these ("The Presiding Officer", "The District Collector") cannot be searched
+# for usefully - thousands of unrelated cases name the same office.
+_INSTITUTIONAL = {
+    'state', 'union', 'government', 'govt', 'republic', 'ministry',
+    'department', 'commissioner', 'collector', 'superintendent', 'director',
+    'general', 'inspector', 'officer', 'secretary', 'registrar', 'tahsildar',
+    'municipal', 'corporation', 'municipality', 'panchayat', 'board',
+    'authority', 'commission', 'tribunal', 'council', 'committee',
+    'presiding', 'principal', 'master', 'head', 'headmaster', 'prison',
+    'police', 'station', 'circle', 'divisional', 'forest', 'revenue',
+    'income', 'tax', 'customs', 'excise', 'bank', 'branch', 'manager',
+    # Courts themselves appear as respondents in writ matters, and the court
+    # is obviously not a litigant worth searching for.
+    'court', 'high', 'supreme', 'session', 'sessions', 'magistrate',
+    'judicial', 'bench', 'judge', 'registry',
+    # Rank/grade qualifiers that only ever decorate an office.
+    'chief', 'deputy', 'assistant', 'joint', 'additional', 'sub', 'zonal',
+    'regional', 'executive', 'educational', 'education', 'engineer',
+    'chairman', 'president', 'member', 'warden', 'health', 'transport',
+    'labour', 'welfare', 'establishment', 'institute', 'university',
+}
+_NOISE |= _STATE_WORDS
 _WORD = re.compile(r'[A-Za-z]{3,}')
 
 
@@ -110,8 +147,13 @@ def is_candidate(our_names, candidate_text, filed_on=None, judgment_date=None):
         return False, 0.0, ''
     score = score_match(our_names, candidate_text)
     shared = shared_tokens(our_names, candidate_text)
-    ok = score >= MIN_SCORE and len(shared) >= MIN_SHARED_TOKENS
-    return ok, round(score, 3), ', '.join(sorted(shared)[:6])
+    # Office vocabulary is never evidence that two cases share a litigant.
+    # Without this, "X Vs The Director of School Education" matches every
+    # other case naming that office, and "High Court of Kerala" as a
+    # respondent matches every writ petition in the state.
+    meaningful = shared - _INSTITUTIONAL
+    ok = score >= MIN_SCORE and len(meaningful) >= MIN_SHARED_TOKENS
+    return ok, round(score, 3), ', '.join(sorted(meaningful)[:6])
 
 # --- picking something a court search box will actually match ---------------
 #
@@ -170,9 +212,21 @@ def searchable_names(names):
         distinctive = name_tokens(name)
         if not distinctive:
             continue                                  # only honorifics/roles
+        # An office is not a litigant worth searching for: "The State of Tamil
+        # Nadu" or "The Presiding Officer" name thousands of unrelated cases.
+        # Rather than rely on an exhaustive word list, rank by WHAT SHARE of
+        # the name is office vocabulary - a private name scores 0 and always
+        # sorts above a partly-institutional one. Purely institutional names
+        # are dropped outright.
+        institutional = len(distinctive & _INSTITUTIONAL) / float(len(distinctive))
+        if institutional >= 1.0:
+            continue
+        # A leading "The" is, in Indian pleadings, almost always an office.
+        if name.lower().startswith('the '):
+            institutional = max(institutional, 0.5)
         # Two or three distinctive words is the sweet spot: enough to identify,
         # short enough that the registry's LIKE match still hits.
         penalty = abs(len(distinctive) - 2)
-        scored.append((penalty, len(name), name))
+        scored.append((round(institutional, 2), penalty, len(name), name))
     scored.sort()
-    return [n for _, _, n in scored]
+    return [n for _, _, _, n in scored]

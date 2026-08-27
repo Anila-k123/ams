@@ -25,6 +25,7 @@ from django.core.mail import send_mail
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from core.audit import record_system_action
 from core.models import (Advocate, Case, Client, Notification,
                          NotificationHistory, NotificationQueue)
 from notifications import service
@@ -75,6 +76,7 @@ class Command(BaseCommand):
                 self._fail(row, '{}: {}'.format(type(exc).__name__, exc), now)
                 self._history(row, payload, channel, 'FAILED',
                               error=str(exc)[:2000], now=now)
+                self._audit(row, payload, channel, ok=False, error=str(exc))
                 failed += 1
                 continue
 
@@ -82,6 +84,7 @@ class Command(BaseCommand):
             row.last_error = None
             row.save(update_fields=['status', 'last_error'])
             self._history(row, payload, channel, 'SENT', detail=detail, now=now)
+            self._audit(row, payload, channel, ok=True)
             sent += 1
 
 
@@ -128,6 +131,34 @@ class Command(BaseCommand):
         raise ValueError('unknown channel {!r}'.format(channel))
 
     # -- bookkeeping -------------------------------------------------------
+
+    def _audit(self, row, payload, channel, ok, error=None):
+        """One System Activity line per outbound attempt.
+
+        In-app notifications are skipped: they are already visible to the
+        advocate as the notification itself, and at a few hundred a week they
+        would drown out everything else in the feed. Email and WhatsApp are the
+        ones where "did it actually go out?" is a real question, so those are
+        recorded whether they succeed or fail.
+        """
+        if channel == service.IN_APP:
+            return
+        event = payload.get('eventType') or 'notification'
+        target = payload.get('recipientEmail') or payload.get('recipientPhone') or 'advocate'
+        if ok:
+            title = 'Sent {} by {}'.format(event.replace('_', ' ').lower(), channel.lower())
+            desc = 'to {}'.format(target)
+        else:
+            title = 'Failed to send {} by {}'.format(
+                event.replace('_', ' ').lower(), channel.lower())
+            desc = '{}: {}'.format(target, (error or '')[:180])
+        record_system_action(
+            row.advocate_id, 'NOTIFICATIONS', 'SEND', title,
+            description=desc, entity_type='NOTIFICATION_QUEUE',
+            entity_id=row.id, ok=ok,
+            # Successful sends stay out of the human-readable feed; a failure
+            # is something the advocate should see there.
+            in_feed=not ok)
 
     @staticmethod
     def _advocate_email(advocate_id):

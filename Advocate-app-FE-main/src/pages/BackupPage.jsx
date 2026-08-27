@@ -7,17 +7,30 @@ import DownloadLoader from "../components/DownloadLoader";
 import "../assets/styles/BackupPage.css";
 
 const API = `${import.meta.env.VITE_API_BASE || "http://localhost:8080"}/api/backup`;
-const PROGRESS_STAGES = [
-  "Preparing Backup\u2026",
-  "Exporting Database\u2026",
-  "Exporting JSON Data\u2026",
-  "Copying Documents\u2026",
-  "Generating Metadata\u2026",
-  "Compressing ZIP\u2026",
-  "Calculating Checksum\u2026",
-  "Saving Backup\u2026",
-  "Completed"
-];
+
+// Which sections each backup type actually writes. Mirrors TYPE_SECTIONS in
+// backup/service.py, so the dialog lists the real work rather than a fixed
+// nine-stage script that had nothing to do with what the server was doing.
+const TYPE_SECTIONS = {
+  QUICK: ["DATABASE", "DOCUMENTS"],
+  FULL: ["DATABASE", "DOCUMENTS", "REPORTS", "SETTINGS"],
+  DATABASE: ["DATABASE"],
+  DOCUMENTS: ["DOCUMENTS"],
+  REPORTS: ["REPORTS"],
+  SETTINGS: ["SETTINGS"],
+};
+
+const SECTION_LABELS = {
+  DATABASE: "Exporting records (SQL + JSON)",
+  DOCUMENTS: "Copying uploaded documents",
+  REPORTS: "Collecting generated reports",
+  SETTINGS: "Saving profile & preferences",
+};
+
+// Restore types that DELETE existing rows before re-inserting. These are the
+// only irreversible actions in the app, so they need a typed confirmation.
+const DESTRUCTIVE_RESTORE = new Set(["FULL", "DATABASE"]);
+const RESTORE_CONFIRM_WORD = "RESTORE";
 
 const SECTION_ICONS = {
   DATABASE: <FiDatabase />,
@@ -39,7 +52,7 @@ function BackupPage() {
   const [restoring, setRestoring] = useState(false);
   const [statusMsg, setStatusMsg] = useState({ type: "", text: "" });
   const [showProgress, setShowProgress] = useState(false);
-  const [currentStage, setCurrentStage] = useState(0);
+  const [progressType, setProgressType] = useState("FULL");
   const [showSuccess, setShowSuccess] = useState(false);
   const [successData, setSuccessData] = useState(null);
   const [showError, setShowError] = useState(false);
@@ -50,6 +63,7 @@ function BackupPage() {
   const [restoreFile, setRestoreFile] = useState(null);
   const [restoreType, setRestoreType] = useState("FULL");
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoreConfirmText, setRestoreConfirmText] = useState("");
   const [restoreValidation, setRestoreValidation] = useState(null);
   const [expandedRow, setExpandedRow] = useState(null);
 
@@ -89,20 +103,14 @@ function BackupPage() {
     }
   };
 
-  const simulateProgress = async (type) => {
-    setShowProgress(true);
-    setCurrentStage(0);
-    const stageCount = type === "QUICK" ? 6 : 9;
-    for (let i = 0; i < stageCount; i++) {
-      await new Promise(r => setTimeout(r, 400 + Math.random() * 600));
-      setCurrentStage(i + 1);
-    }
-  };
-
   const createBackup = async (type) => {
     setLoading(true);
     setStatusMsg({ type: "", text: "" });
-    simulateProgress(type);
+    // The server does the whole backup in one request, so there is no progress
+    // to report mid-flight. Show what it is working on and let it spin until
+    // the response lands - an animated fake stage list only looked informative.
+    setProgressType(type);
+    setShowProgress(true);
 
     try {
       const endpoint = type === "FULL" ? "full" : type === "QUICK" ? "quick" : type.toLowerCase();
@@ -117,6 +125,10 @@ function BackupPage() {
         durationSeconds: res.data.durationSeconds,
         fileName: res.data.fileName,
         status: res.data.status,
+        // Real per-section outcomes and timings from the server.
+        sections: res.data.sections || [],
+        healthScore: res.data.healthScore,
+        recordCounts: res.data.recordCounts || {},
       });
       setShowSuccess(true);
       setStatusMsg({ type: "success", text: `${type} backup completed!` });
@@ -129,8 +141,17 @@ function BackupPage() {
       setStatusMsg({ type: "error", text: `Backup failed: ${err.response?.data?.message || err.message}` });
     } finally {
       setLoading(false);
-      setCurrentStage(0);
+      setShowProgress(false);
     }
+  };
+
+  const isDestructiveRestore = DESTRUCTIVE_RESTORE.has(restoreType);
+  const restoreConfirmed =
+    restoreConfirmText.trim().toUpperCase() === RESTORE_CONFIRM_WORD;
+
+  const closeRestoreConfirm = () => {
+    setShowRestoreConfirm(false);
+    setRestoreConfirmText("");
   };
 
   const handleRestoreConfirm = async () => {
@@ -138,7 +159,10 @@ function BackupPage() {
       setStatusMsg({ type: "error", text: "Please select a backup file to restore" });
       return;
     }
-    setShowRestoreConfirm(false);
+    // Belt and braces: the button is disabled without the typed word, but the
+    // check lives here too so no future refactor can drop it.
+    if (isDestructiveRestore && !restoreConfirmed) return;
+    closeRestoreConfirm();
     setRestoring(true);
     setStatusMsg({ type: "", text: "" });
     try {
@@ -290,6 +314,13 @@ function BackupPage() {
               </span>
               <span className="dashboard-card-sub">
                 {latestBackup ? formatDate(latestBackup.createdAt) : "\u2014"}
+                {/* A partial last backup is worth noticing here rather than
+                    only after expanding the history row. */}
+                {latestBackup && latestMeta.healthScore < 100 && (
+                  <span style={{ color: healthColor(latestMeta.healthScore), marginLeft: 6 }}>
+                    \u00b7 partial ({latestMeta.healthScore}%)
+                  </span>
+                )}
               </span>
             </div>
           </div>
@@ -410,7 +441,8 @@ function BackupPage() {
 
           <div className="restore-type-select">
             <label>Restore Type:</label>
-            <select value={restoreType} onChange={(e) => setRestoreType(e.target.value)}>
+            <select value={restoreType}
+                    onChange={(e) => { setRestoreType(e.target.value); setRestoreConfirmText(""); }}>
               <option value="FULL">Full Restore</option>
               <option value="DATABASE">Database Only</option>
               <option value="DOCUMENTS">Documents Only</option>
@@ -518,18 +550,22 @@ function BackupPage() {
               <FiClock className="dialog-icon spinning" />
               <h3>Backup in Progress</h3>
             </div>
+            <p className="progress-note">
+              Building a {progressType} backup. This runs in one step on the
+              server, so there is nothing to report until it finishes.
+            </p>
             <div className="progress-stages">
-              {PROGRESS_STAGES.map((stage, idx) => (
-                <div key={idx} className={`progress-stage ${idx < currentStage ? "completed" : idx === currentStage ? "active" : "pending"}`}>
+              {(TYPE_SECTIONS[progressType] || TYPE_SECTIONS.FULL).map((s) => (
+                <div key={s} className="progress-stage active">
                   <div className="stage-indicator">
-                    {idx < currentStage ? <FiCheckCircle /> : idx === currentStage ? <FiClock /> : <div className="stage-dot" />}
+                    {SECTION_ICONS[s] || <FiClock />}
                   </div>
-                  <span className="stage-label">{stage}</span>
+                  <span className="stage-label">{SECTION_LABELS[s] || s}</span>
                 </div>
               ))}
             </div>
-            <div className="progress-track">
-              <div className="progress-track-fill" style={{ width: `${(currentStage / PROGRESS_STAGES.length) * 100}%` }} />
+            <div className="progress-track indeterminate">
+              <div className="progress-track-fill" />
             </div>
           </div>
         </div>
@@ -559,6 +595,44 @@ function BackupPage() {
                 <span className="detail-label">Status</span>
                 <span className="detail-value" style={{ color: successData.status === "SUCCESS" ? "#22c55e" : "#f59e0b" }}>{successData.status}</span>
               </div>
+              {successData.healthScore !== undefined && (
+                <div className="success-detail">
+                  <span className="detail-label">Health</span>
+                  <span className="detail-value" style={{ color: healthColor(successData.healthScore) }}>
+                    <FiHeart /> {successData.healthScore}%
+                  </span>
+                </div>
+              )}
+              {/* What the server actually did, section by section. */}
+              {successData.sections?.length > 0 && (
+                <div className="section-list" style={{ marginTop: 12 }}>
+                  {successData.sections.map((sec, idx) => (
+                    <div key={idx} className={`section-item section-${sec.status?.toLowerCase()}`}>
+                      <div className="section-icon">
+                        {sec.status === "SUCCESS"
+                          ? <FiCheckCircle style={{ color: "#22c55e" }} />
+                          : <FiXCircle style={{ color: "#ef4444" }} />}
+                      </div>
+                      <div className="section-info">
+                        <span className="section-name">{SECTION_ICONS[sec.name]} {SECTION_LABELS[sec.name] || sec.name}</span>
+                        {sec.error && <span className="section-error">{sec.error}</span>}
+                      </div>
+                      <div className="section-duration">{formatDurationMs(sec.durationMs)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Row counts, so "did it really capture my cases?" has an answer. */}
+              {Object.keys(successData.recordCounts || {}).length > 0 && (
+                <p className="success-counts">
+                  Captured{" "}
+                  {Object.entries(successData.recordCounts)
+                    .filter(([, n]) => n > 0)
+                    .map(([t, n]) => `${n} ${t.replace(/_/g, " ")}`)
+                    .join(", ") || "no records (this account is empty)"}
+                  .
+                </p>
+              )}
             </div>
             <div className="dialog-actions">
               <button className="dialog-btn primary" onClick={() => setShowSuccess(false)}>Done</button>
@@ -634,16 +708,72 @@ function BackupPage() {
               )}
               {restoreValidation?.isPartial && (
                 <div className="validation-warning partial" style={{ marginTop: 8 }}>
-                  <FiAlertCircle /> This backup is partial. A rollback will be created automatically. Continue?
+                  <FiAlertCircle /> This backup is partial. Some sections failed when
+                  it was created, so restoring it may leave gaps.
                 </div>
               )}
-              <p style={{ marginTop: 12, fontSize: "0.85rem", color: "#94a3b8" }}>
-                A rollback backup will be created automatically before restore.
-              </p>
+
+              {/* Spell out the destruction. A FULL/DATABASE restore deletes every
+                  row this account owns before re-inserting from the file: anything
+                  created since the backup is gone. That is worth stating plainly
+                  and worth making someone type, not just click. */}
+              {isDestructiveRestore ? (
+                <>
+                  <div className="validation-warning partial" style={{ marginTop: 12 }}>
+                    <FiAlertCircle />
+                    <span>
+                      <strong>This deletes your current data.</strong> A {restoreType}{" "}
+                      restore removes every client, case, hearing, document record,
+                      invoice, expense and task on this account, then re-inserts
+                      only what is in this file. Anything added since{" "}
+                      {restoreValidation?.backupDate
+                        ? formatDate(restoreValidation.backupDate)
+                        : "the backup was taken"}{" "}
+                      will be lost.
+                    </span>
+                  </div>
+                  {!restoreValidation && (
+                    <p className="restore-validate-hint">
+                      You have not validated this file yet. Cancel and click
+                      <strong> Validate</strong> first to see what it contains.
+                    </p>
+                  )}
+                  <p style={{ marginTop: 12, fontSize: "0.85rem", color: "#94a3b8" }}>
+                    A rollback backup of the current data is created first, so this
+                    can be undone by restoring that file.
+                  </p>
+                  <label className="restore-typed-confirm">
+                    Type <strong>{RESTORE_CONFIRM_WORD}</strong> to continue:
+                    <input
+                      type="text"
+                      value={restoreConfirmText}
+                      autoFocus
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(e) => setRestoreConfirmText(e.target.value)}
+                      placeholder={RESTORE_CONFIRM_WORD}
+                    />
+                  </label>
+                </>
+              ) : (
+                <p style={{ marginTop: 12, fontSize: "0.85rem", color: "#94a3b8" }}>
+                  A {restoreType} restore only adds files back; it does not delete
+                  your records. A rollback backup is still created first.
+                </p>
+              )}
             </div>
             <div className="dialog-actions">
-              <button className="dialog-btn" onClick={() => setShowRestoreConfirm(false)}>Cancel</button>
-              <button className="dialog-btn danger" onClick={handleRestoreConfirm}>Restore</button>
+              <button className="dialog-btn" onClick={closeRestoreConfirm}>Cancel</button>
+              <button
+                className="dialog-btn danger"
+                disabled={isDestructiveRestore && !restoreConfirmed}
+                title={isDestructiveRestore && !restoreConfirmed
+                  ? `Type ${RESTORE_CONFIRM_WORD} to enable`
+                  : undefined}
+                onClick={handleRestoreConfirm}
+              >
+                {isDestructiveRestore ? `Delete & Restore` : "Restore"}
+              </button>
             </div>
           </div>
         </div>

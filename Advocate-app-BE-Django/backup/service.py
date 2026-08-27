@@ -39,6 +39,17 @@ def _backup_dir():
     return d
 
 
+def _unique_name(directory, file_name):
+    """file_name, or file_name with a -2/-3 suffix if it is already taken."""
+    if not os.path.exists(os.path.join(directory, file_name)):
+        return file_name
+    stem, ext = os.path.splitext(file_name)
+    n = 2
+    while os.path.exists(os.path.join(directory, '{}-{}{}'.format(stem, n, ext))):
+        n += 1
+    return '{}-{}{}'.format(stem, n, ext)
+
+
 def _rows(table, advocate_id):
     with connection.cursor() as cur:
         cur.execute(f'SELECT * FROM {table} WHERE advocate_id = %s', [advocate_id])
@@ -122,7 +133,6 @@ def create_backup(advocate, backup_type):
         # SETTINGS section
         if 'SETTINGS' in sections_wanted:
             s = time.time()
-            _, adv_rows = _rows('advocate', advocate.id) if False else (None, None)
             with connection.cursor() as cur:
                 cur.execute('SELECT * FROM advocate WHERE id = %s', [advocate.id])
                 cols = [c[0] for c in cur.description]
@@ -153,6 +163,12 @@ def create_backup(advocate, backup_type):
 
     data = buf.getvalue()
     checksum = hashlib.sha256(data).hexdigest()
+    # The name is stamped to the second, and a restore takes its rollback
+    # backup immediately before writing - so two backups in the same second
+    # used to collide, the second silently overwriting the first while
+    # backup_history kept two rows pointing at one file. Never overwrite:
+    # find a free name instead.
+    file_name = _unique_name(_backup_dir(), file_name)
     path = os.path.join(_backup_dir(), file_name)
     with open(path, 'wb') as f:
         f.write(data)
@@ -171,6 +187,11 @@ def create_backup(advocate, backup_type):
         'fileSize': len(data), 'fileName': file_name,
         'message': 'Backup created successfully.', 'progress': '100',
         'durationSeconds': duration,
+        # The per-section outcome is what actually happened, section by section,
+        # with real timings. The page used to animate an invented stage list
+        # instead; now it has the truth to display.
+        'sections': sections, 'healthScore': health,
+        'recordCounts': counts,
     }
 
 
@@ -209,12 +230,33 @@ def validate_zip(file_bytes):
 def restore_backup(advocate, file_bytes, restore_type):
     """Restore data tables from the ZIP's data/*.json, scoped to this advocate,
     in a single transaction (FK-safe order). Creates a rollback FULL backup first."""
-    rollback = create_backup(advocate, 'FULL')
+    # Read the archive BEFORE taking the rollback backup. A bad ZIP used to
+    # cost a pointless rollback file on disk every time someone mis-dropped.
     try:
         z = zipfile.ZipFile(io.BytesIO(file_bytes))
     except zipfile.BadZipFile:
         return {'status': 'FAILED', 'message': 'Invalid ZIP archive.',
-                'rollbackFile': rollback['fileName']}
+                'rollbackFile': None}
+
+    # A data restore DELETEs every row this advocate owns before re-inserting.
+    # If the archive carries no data/ section there is nothing to re-insert, so
+    # the "restore" would simply erase the account - a DOCUMENTS-only backup
+    # picked with type=FULL used to wipe everything and put nothing back.
+    # Refuse instead, and say which sections the file actually has.
+    if restore_type in ('FULL', 'DATABASE'):
+        if not any(n.startswith('data/') and n.endswith('.json') for n in z.namelist()):
+            present = sorted({n.split('/')[0] for n in z.namelist() if '/' in n})
+            return {
+                'status': 'FAILED',
+                'message': ('This archive contains no database records, so a '
+                            '{} restore would delete your data without '
+                            'replacing it. Sections present: {}. Choose a '
+                            'matching restore type instead.'.format(
+                                restore_type, ', '.join(present) or 'none')),
+                'rollbackFile': None,
+            }
+
+    rollback = create_backup(advocate, 'FULL')
 
     if restore_type in ('DOCUMENTS', 'REPORTS', 'SETTINGS'):
         # Non-data restores: extract documents back to the uploads folder.
@@ -235,6 +277,7 @@ def restore_backup(advocate, file_bytes, restore_type):
     # so we can delete/insert without worrying about referencing tables like
     # notification_history; re-inserting the same-id rows keeps integrity intact.
     names = z.namelist()
+    inserted = 0
     try:
         with connection.cursor() as cur:
             cur.execute("SET session_replication_role = 'replica'")
@@ -248,14 +291,25 @@ def restore_backup(advocate, file_bytes, restore_type):
                             continue
                         rows = json.loads(z.read(entry) or b'[]')
                         for r in rows:
+                            # Force ownership to the advocate doing the restore.
+                            # The archive carries whatever advocate_id it was
+                            # exported with; trusting it would let an uploaded
+                            # file write rows into somebody else's account,
+                            # which the DELETE above would never clean up.
+                            if 'advocate_id' in r:
+                                r['advocate_id'] = advocate.id
                             cols = list(r.keys())
                             placeholders = ', '.join(['%s'] * len(cols))
                             cur.execute(
                                 f'INSERT INTO {t} ({", ".join(cols)}) VALUES ({placeholders})',
                                 [r[c] for c in cols])
+                            inserted += 1
             finally:
                 cur.execute("SET session_replication_role = 'origin'")
-        return {'status': 'SUCCESS', 'message': 'Restore completed successfully.',
+        return {'status': 'SUCCESS',
+                'message': 'Restore completed successfully: {} record(s) '
+                           'restored.'.format(inserted),
+                'recordsRestored': inserted,
                 'rollbackFile': rollback['fileName']}
     except Exception as e:
         return {'status': 'FAILED', 'message': f'Restore failed and was rolled back: {e}',

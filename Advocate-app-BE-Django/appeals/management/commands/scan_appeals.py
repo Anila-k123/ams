@@ -23,6 +23,7 @@ from django.core.mail import send_mail
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from core.audit import record_system_action
 from core.models import Advocate, Case, Notification
 from courtsearch.models import ImportedCaseRecord
 from courtsearch import client
@@ -141,6 +142,17 @@ class Command(BaseCommand):
                     ))
                 if created:
                     new_rows.append(det)
+                    # Into the audit trail as well as the notification: months
+                    # later "who flagged this as an appeal, and when?" needs an
+                    # answer, and no user action produced this row.
+                    record_system_action(
+                        rec.advocate_id, 'APPEALS', 'CREATE',
+                        'Detected a possible appeal against {}'.format(
+                            case.case_number or 'a decided case'),
+                        description='{} at {} (score {})'.format(
+                            row.get('caseNumber') or '?',
+                            row.get('forumLabel') or forum['court_id'], score),
+                        entity_type='APPEAL_DETECTIONS', entity_id=det.id)
 
         if new_rows and not o['no_notify']:
             self._notify(new_rows)

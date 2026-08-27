@@ -720,6 +720,73 @@
   transition: width 0.4s ease;
 }
 
+/* The server completes a backup in a single request, so there is no percentage
+   to report. A sliding bar says "working" without claiming a false position. */
+.progress-track.indeterminate .progress-track-fill {
+  width: 35%;
+  transition: none;
+  animation: backup-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes backup-indeterminate {
+  0%   { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+.progress-note {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.success-counts {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Typed confirmation for a destructive restore. */
+.restore-typed-confirm {
+  display: block;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--text-color);
+}
+
+.restore-typed-confirm input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-color);
+  background: var(--input-bg, var(--card-bg));
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.restore-typed-confirm input:focus {
+  outline: none;
+  border-color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+}
+
+.restore-validate-hint {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #f59e0b;
+}
+
+.restore-confirm-dialog .dialog-btn.danger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .success-dialog .dialog-body {
   display: flex;
   flex-direction: column;

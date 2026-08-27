@@ -22,6 +22,7 @@ import logging
 
 from django.utils import timezone
 
+from core.audit import record_system_action
 from core.models import (Advocate, Case, CaseEvent, Invoice,
                          NotificationHistory, NotificationQueue)
 from workspace.models import CaseTask
@@ -167,11 +168,25 @@ def scan_due_notifications(advocate_id=None):
                  else Advocate.objects.all())
     queued = []
     for advocate in advocates:
+        before = len(queued)
         for producer in PRODUCERS:
             try:
                 queued += producer(advocate)
-            except Exception:                               # noqa: BLE001
+            except Exception as exc:                        # noqa: BLE001
                 # One broken producer must not stop the others.
                 log.exception('notifications: %s failed for advocate %s',
                               producer.__name__, advocate.id)
+                # A producer that silently stops working is how reminders go
+                # missing without anyone noticing, so put it on the record.
+                record_system_action(
+                    advocate.id, 'NOTIFICATIONS', 'SCAN',
+                    'Reminder check failed ({})'.format(producer.__name__),
+                    description=str(exc)[:200], ok=False, in_feed=False)
+        raised = len(queued) - before
+        if raised:
+            record_system_action(
+                advocate.id, 'NOTIFICATIONS', 'SCAN',
+                'Queued {} reminder(s)'.format(raised),
+                description='scheduled reminder check',
+                entity_type='NOTIFICATION_QUEUE', in_feed=False)
     return queued

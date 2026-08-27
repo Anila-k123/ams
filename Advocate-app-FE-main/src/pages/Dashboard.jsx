@@ -30,7 +30,6 @@ import DashboardTimeNavigator from "../components/DashboardTimeNavigator";
 import TimeSwitcher from "../components/TimeSwitcher";
 import AssistantPanel from "../components/AssistantPanel";
 import PermissionRoute from "../components/PermissionRoute";
-import LiveStatusIndicator from "../components/LiveStatusIndicator";
 import NotificationBell from "../components/NotificationBell";
 import ActivityFeed from "../components/ActivityFeed";
 import HearingAlertPopup from "../components/HearingAlertPopup";
@@ -836,7 +835,6 @@ function DashboardShell() {
             <button className="icon-btn" onClick={() => ReportService.downloadDashboard()} title="Export Dashboard PDF">
               <FiDownload />
             </button>
-            <LiveStatusIndicator />
             <NotificationBell onOpen={(route) => navigate(route)} />
             <div className="notif-wrapper" ref={notifRef}>
               <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)}>

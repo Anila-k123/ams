@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
@@ -131,6 +131,18 @@ function getActionColor(type) {
   return "#f59e0b";
 }
 
+// Render one audit value for display. null/"" are meaningful in a diff - a
+// field being cleared is a change worth seeing - so they get a visible marker
+// rather than rendering as nothing.
+function fmtVal(v) {
+  if (v === null || v === undefined) return <em className="sa-change-empty">empty</em>;
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  const s = String(v);
+  if (s === "") return <em className="sa-change-empty">empty</em>;
+  if (s === "***") return <em className="sa-change-empty">hidden</em>;
+  return s;
+}
+
 export default function SystemActivity() {
   const { withLoading } = useLoading();
   const toast = useToast();
@@ -148,6 +160,19 @@ export default function SystemActivity() {
   const [page, setPage] = useState(0);
   const [size] = useState(25);
   const [selectedEvent, setSelectedEvent] = useState(null);
+
+  // audit_log.metadata carries {"changes":[...]} written by the backend's
+  // field-level capture. It is plain text in the database, so anything
+  // unparseable falls through to the raw view rather than blanking the panel.
+  const parsedChanges = useMemo(() => {
+    if (!selectedEvent?.metadata) return [];
+    try {
+      const parsed = JSON.parse(selectedEvent.metadata);
+      return Array.isArray(parsed?.changes) ? parsed.changes : [];
+    } catch {
+      return [];
+    }
+  }, [selectedEvent]);
   const [exporting, setExporting] = useState(false);
   const { isDownloading, withDownload } = useDownload();
 
@@ -537,7 +562,68 @@ export default function SystemActivity() {
                   <div className="sa-detail-row"><span className="sa-detail-label">Time</span><span className="sa-detail-value">{formatTime(selectedEvent.createdAt)}</span></div>
                   <div className="sa-detail-row"><span className="sa-detail-label">Full</span><span className="sa-detail-value">{formatDateTime(selectedEvent.createdAt)}</span></div>
                 </div>
-                {selectedEvent.metadata && (
+                {/* Field-level changes, when the request produced any. The
+                    backend stores these as JSON in metadata; showing raw JSON
+                    made the one genuinely useful part of the record the
+                    hardest to read. */}
+                {parsedChanges.length > 0 && (
+                  <div className="sa-detail-section sa-detail-fullwidth">
+                    <h4>What changed</h4>
+                    {parsedChanges.map((rec, i) => (
+                      <div key={i} className="sa-change-block">
+                        <div className="sa-change-head">
+                          <span className={`sa-change-action ${rec.action}`}>{rec.action}</span>
+                          <span className="sa-change-target">
+                            {(rec.table || "record").replace(/_/g, " ")}
+                            {rec.id != null && <> #{rec.id}</>}
+                          </span>
+                        </div>
+
+                        {rec.action === "updated" && rec.changes && Object.keys(rec.changes).length > 0 && (
+                          <table className="sa-change-table">
+                            <thead>
+                              <tr><th>Field</th><th>Before</th><th>After</th></tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(rec.changes).map(([field, d]) => (
+                                <tr key={field}>
+                                  <td className="sa-change-field">{field.replace(/_/g, " ")}</td>
+                                  <td className="sa-change-before">{fmtVal(d.from)}</td>
+                                  <td className="sa-change-after">{fmtVal(d.to)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+
+                        {/* A create or delete has no before/after - it has the
+                            whole row. On a delete this is the only surviving
+                            copy of what was removed. */}
+                        {(rec.action === "created" || rec.action === "deleted") && rec.values && (
+                          <table className="sa-change-table">
+                            <thead>
+                              <tr><th>Field</th><th>{rec.action === "deleted" ? "Deleted value" : "Value"}</th></tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(rec.values).map(([field, v]) => (
+                                <tr key={field}>
+                                  <td className="sa-change-field">{field.replace(/_/g, " ")}</td>
+                                  <td className="sa-change-after">{fmtVal(v)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+
+                        {rec.note && <p className="sa-change-note">{rec.note}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Fall back to the raw column when it holds something this
+                    view does not understand, rather than hiding it. */}
+                {parsedChanges.length === 0 && selectedEvent.metadata && (
                   <div className="sa-detail-section sa-detail-fullwidth">
                     <h4>Metadata</h4>
                     <pre className="sa-metadata">{selectedEvent.metadata}</pre>

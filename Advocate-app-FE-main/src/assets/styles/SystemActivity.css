@@ -480,3 +480,103 @@
   .sa-table thead th,
   .sa-table tbody td { padding: 8px 10px; }
 }
+
+/* --- field-level changes in the detail panel ---------------------------- */
+/* One block per record the request touched. */
+.sa-change-block {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: var(--input-bg);
+}
+
+.sa-change-block:last-child { margin-bottom: 0; }
+
+.sa-change-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sa-change-action {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.sa-change-action.created { color: #16a34a; background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.3); }
+.sa-change-action.updated { color: #d97706; background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); }
+.sa-change-action.deleted { color: #dc2626; background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.3); }
+
+.sa-change-target {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
+.sa-change-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.sa-change-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sa-change-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+  /* Values can be long single tokens (paths, hashes); wrap rather than
+     stretching the dialog. */
+  overflow-wrap: anywhere;
+}
+
+.sa-change-table tr:last-child td { border-bottom: none; }
+
+.sa-change-field {
+  color: var(--text-secondary);
+  text-transform: capitalize;
+  width: 30%;
+}
+
+.sa-change-before {
+  color: #dc2626;
+  text-decoration: line-through;
+  text-decoration-color: rgba(220,38,38,0.5);
+}
+
+.sa-change-after { color: #16a34a; }
+
+.sa-change-empty {
+  color: var(--text-secondary);
+  opacity: 0.7;
+  font-style: italic;
+  text-decoration: none;
+}
+
+.sa-change-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* text-decoration from an ancestor is not cancelled by `none` on a
+   descendant, so "empty" inside a struck-through Before cell would still be
+   struck through. inline-block stops the propagation. */
+.sa-change-before .sa-change-empty { display: inline-block; }

@@ -26,13 +26,57 @@ function AssistantResults({ results }) {
   );
 }
 
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function bold(str) {
+  return str.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+}
+
+// Lightweight markdown-lite -> HTML: turns "### Heading" and "* item" lines
+// into real headings/bullets instead of showing the raw "###"/"*" the LLM's
+// markdown-formatted replies come back with.
+function formatAssistantText(text) {
+  const lines = escapeHtml(text).split("\n");
+  const html = [];
+  let list = [];
+
+  const flushList = () => {
+    if (list.length) {
+      html.push(`<ul>${list.map((li) => `<li>${bold(li)}</li>`).join("")}</ul>`);
+      list = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    const bullet = line.match(/^[*-]\s+(.*)$/);
+    if (heading) {
+      flushList();
+      html.push(`<div class="assistant-msg-heading">${bold(heading[1])}</div>`);
+    } else if (bullet) {
+      list.push(bullet[1]);
+    } else if (line === "") {
+      flushList();
+      html.push("<br/>");
+    } else {
+      flushList();
+      html.push(`<div>${bold(line)}</div>`);
+    }
+  }
+  flushList();
+
+  return html.join("");
+}
+
 export default function AssistantMessage({ message }) {
   const isUser = message.sender === "user";
   const text = message.text || "";
   const response = message.response;
 
-  // Format bold text
-  const formatted = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
+  const formatted = formatAssistantText(text);
 
   return (
     <div className={`assistant-msg ${isUser ? "user" : "bot"}`}>

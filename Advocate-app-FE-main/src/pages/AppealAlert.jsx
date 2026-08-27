@@ -56,6 +56,9 @@ function AppealAlert() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [alerts, setAlerts] = useState([]);
   const [saving, setSaving] = useState(false);
+  // Candidate appeals the nightly scan_appeals sweep found in a higher court.
+  const [detections, setDetections] = useState([]);
+  const [busyId, setBusyId] = useState(null);
 
   const token = localStorage.getItem("token");
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
@@ -72,9 +75,33 @@ function AppealAlert() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  const fetchDetections = useCallback(async () => {
+    try {
+      const res = await axios.get("/api/appeal-detections", authHeaders);
+      setDetections(res.data || []);
+    } catch {
+      /* the section simply stays empty */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   useEffect(() => {
     fetchAlerts();
-  }, [fetchAlerts]);
+    fetchDetections();
+  }, [fetchAlerts, fetchDetections]);
+
+  const setDetectionStatus = async (id, status) => {
+    setBusyId(id);
+    try {
+      await axios.put(`/api/appeal-detections/${id}`, { status }, authHeaders);
+      success(status === "CONFIRMED" ? "Marked as a real appeal." : "Dismissed as unrelated.");
+      fetchDetections();
+    } catch (err) {
+      error("Couldn't update that detection.");
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -211,6 +238,65 @@ function AppealAlert() {
           </div>
         </form>
       </div>
+
+      {detections.length > 0 && (
+        <div className="appeal-list-section">
+          <h3>Detected Appeals</h3>
+          <p className="appeal-detect-note">
+            Found in a higher court by the nightly scan and matched on party names.
+            These are <strong>candidates read from the court record</strong>, not
+            confirmed appeals — please verify each one. No filing deadline is implied.
+          </p>
+          <div className="appeal-table-wrap">
+            <table className="appeal-table">
+              <thead>
+                <tr>
+                  <th>Your Case</th>
+                  <th>Appeal Found</th>
+                  <th>Forum</th>
+                  <th>Parties</th>
+                  <th>Filed</th>
+                  <th>Matched On</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {detections.map((d) => (
+                  <tr key={d.id} className={d.status === "DISMISSED" ? "appeal-row-dismissed" : ""}>
+                    <td>{d.sourceCaseNumber || "-"}</td>
+                    <td>{d.appealCaseNumber || "(number not listed)"}</td>
+                    <td>{d.forum || d.forumCourtId}</td>
+                    <td className="appeal-parties-cell">{d.appealParties || "-"}</td>
+                    <td>{d.appealFiledOn || "-"}</td>
+                    <td>
+                      <span className="appeal-match">{d.matchedOn || "-"}</span>
+                      {typeof d.matchScore === "number" && (
+                        <span className="appeal-score"> ({Math.round(d.matchScore * 100)}%)</span>
+                      )}
+                    </td>
+                    <td><span className={`appeal-status appeal-status-${(d.status || "").toLowerCase()}`}>{d.status}</span></td>
+                    <td>
+                      {d.status !== "CONFIRMED" && (
+                        <button className="appeal-confirm-btn" disabled={busyId === d.id}
+                                onClick={() => setDetectionStatus(d.id, "CONFIRMED")}>
+                          It is an appeal
+                        </button>
+                      )}
+                      {d.status !== "DISMISSED" && (
+                        <button className="appeal-delete-btn" disabled={busyId === d.id}
+                                onClick={() => setDetectionStatus(d.id, "DISMISSED")}>
+                          Not related
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="appeal-list-section">
         <h3>Appeal Alerts</h3>

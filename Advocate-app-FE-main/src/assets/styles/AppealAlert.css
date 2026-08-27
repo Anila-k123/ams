@@ -158,3 +158,46 @@
     padding: 24px 20px 28px;
   }
 }
+
+/* --- Detected (candidate) appeals found by the nightly sweep --- */
+.appeal-detect-note {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-muted, #6b7280);
+}
+.appeal-parties-cell {
+  max-width: 260px;
+  font-size: 0.8rem;
+  word-break: break-word;
+}
+.appeal-match { font-size: 0.78rem; color: var(--text-muted, #6b7280); }
+.appeal-score { font-size: 0.78rem; font-weight: 600; }
+
+.appeal-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.appeal-status-new { background: #fef3c7; color: #92400e; }
+.appeal-status-confirmed { background: #d1fae5; color: #065f46; }
+.appeal-status-dismissed { background: #e5e7eb; color: #4b5563; }
+
+.appeal-row-dismissed { opacity: 0.55; }
+
+.appeal-confirm-btn {
+  margin-right: 6px;
+  padding: 5px 10px;
+  border: 1px solid #10b981;
+  border-radius: 6px;
+  background: #10b981;
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.appeal-confirm-btn:hover:not(:disabled) { background: #059669; }
+.appeal-confirm-btn:disabled, .appeal-delete-btn:disabled { opacity: 0.5; cursor: default; }

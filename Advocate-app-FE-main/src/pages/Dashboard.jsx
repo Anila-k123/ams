@@ -460,15 +460,15 @@ function DashboardShell() {
         }),
         "Toggling task..."
       );
-      if (filter.data?.tasks) {
-        const res = await withLoading(
-          axios.get("/api/dashboard/tasks", {
-            headers: { Authorization: `Bearer ${token}` }
-          }),
-          "Refreshing tasks..."
-        );
-        setDash(prev => ({ ...prev, tasks: res.data || [] }));
-      }
+      // Was GET /api/dashboard/tasks, which does not exist (404 on every
+      // toggle, so the checkbox never reflected the change). /api/tasks is
+      // the real endpoint; keep only the open ones, matching the widget.
+      const res = await withLoading(
+        axios.get("/api/tasks", { headers: { Authorization: `Bearer ${token}` } }),
+        "Refreshing tasks..."
+      );
+      const rows = Array.isArray(res.data) ? res.data : (res.data?.content || []);
+      setDash(prev => ({ ...prev, tasks: rows.filter(t => !t.completed).slice(0, 5) }));
     } catch (err) {
       console.error("Error toggling task:", err);
     }

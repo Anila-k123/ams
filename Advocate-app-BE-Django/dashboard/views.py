@@ -4,7 +4,7 @@ from collections import defaultdict
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
-from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Activity
+from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Activity, Task
 
 MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -129,7 +129,17 @@ class DashboardView(APIView):
                 'actionType': a.action_type,
                 'timestamp': a.timestamp.isoformat() if a.timestamp else None,
             } for a in Activity.objects.filter(advocate_id=advocate_id).order_by('-timestamp', '-id')[:10]],
-            'tasks': [],
+            # Was hardcoded to [], so the dashboard's task checklist was
+            # always empty. Open tasks first, soonest deadline first, with
+            # undated ones last.
+            'tasks': [{
+                'id': t.id, 'title': t.title, 'priority': t.priority,
+                'completed': t.completed,
+                'deadline': t.deadline.isoformat() if t.deadline else None,
+            } for t in sorted(
+                Task.objects.filter(advocate_id=advocate_id, completed=False),
+                key=lambda t: (t.deadline is None, t.deadline or datetime.date.max),
+            )[:5]],
             'recentClients': [{'id': c.id, 'name': c.name} for c in recent_clients],
             'recentCases': [case_brief(c) for c in recent_cases],
         })

@@ -39,6 +39,30 @@ _MODULE_RE = re.compile(r'^/api/([a-z0-9\-]+)')
 _ENTITY_RE = re.compile(r'/(\d+)(?:/|$)')
 
 VERB = {'POST': 'CREATE', 'PUT': 'UPDATE', 'PATCH': 'UPDATE', 'DELETE': 'DELETE'}
+# Past tense for the human-readable feed line.
+PAST = {'CREATE': 'Created', 'UPDATE': 'Updated', 'DELETE': 'Deleted'}
+
+# Path segments that are actions rather than nouns, so they never name the
+# thing that changed ("/api/cases/create" is a Case, not a "Create").
+_NOT_A_NOUN = {
+    'create', 'update', 'delete', 'pay', 'restore', 'validate', 'download',
+    'upload', 'read', 'send', 'test', 'resend', 'search', 'my-cases',
+    'my-invoices', 'my-activities', 'bulk', 'export', 'import', 'api',
+}
+
+
+def _entity_label(path):
+    """The noun a request acted on - the last path segment that names a thing.
+
+    /api/workspace/cases/25/tags -> "tags"   (a tag, not "workspace")
+    /api/cases/create            -> "cases"
+    """
+    parts = [p for p in path.strip('/').split('/') if p]
+    for seg in reversed(parts):
+        if seg.isdigit() or seg.lower() in _NOT_A_NOUN:
+            continue
+        return seg.replace('-', ' ').replace('_', ' ')
+    return ''
 
 
 def _client_ip(request):
@@ -81,13 +105,22 @@ class AuditLogMiddleware:
         module = (_MODULE_RE.match(path).group(1).upper().replace('-', '_')
                   if _MODULE_RE.match(path) else 'API')
         entity = _ENTITY_RE.search(path)
-        action = VERB.get(request.method, request.method)
+        verb = VERB.get(request.method, request.method)
+        # "<MODULE>_<VERB>" rather than a bare verb: it makes the audit
+        # screen's actionType filter useful, and the activity feed derives its
+        # icon from the module prefix (CASE.../CLIENT.../INVOICE...).
+        action = f'{module}_{verb}'
+        noun = _entity_label(path)
+        past = PAST.get(verb, verb.title())
+        # "Created a tag" reads better than "Created in Workspace", which is
+        # all the URL prefix alone can tell you.
+        summary = f'{past} a {noun[:-1] if noun.endswith("s") else noun}' if noun             else f'{past} in {module.title().replace("_", " ")}'
         ok = 200 <= code < 400
         agent = (request.META.get('HTTP_USER_AGENT') or '')[:255]
 
         AuditLog.objects.create(
             action_type=action,
-            title=f'{action.title()} in {module.title()}',
+            title=summary,
             description=f'{request.method} {path} -> {code}'[:255],
             module=module,
             entity_type=module,
@@ -109,7 +142,7 @@ class AuditLogMiddleware:
         if ok:
             Activity.objects.create(
                 action_type=action,
-                description=f'{action.title()} in {module.title()}'[:255],
+                description=summary[:255],
                 timestamp=timezone.now(),
                 advocate_id=advocate_id,
             )

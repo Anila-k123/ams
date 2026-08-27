@@ -103,7 +103,8 @@ class Command(BaseCommand):
                 checked, case.case_number, forum['court_id'],
                 forum['state_code'], term))
             try:
-                rows = self._search(forum, term, o['all_benches'])
+                rows = self._search(forum, term, o['all_benches'],
+                                    disposal['judgment_date'])
             except Exception as exc:                       # noqa: BLE001
                 self.stderr.write(self.style.WARNING(
                     '      search failed: {}'.format(exc)))
@@ -158,20 +159,58 @@ class Command(BaseCommand):
         vt = q.get('view_token') or {}
         return vt.get('cino') or ''
 
-    def _search(self, forum, term, all_benches):
-        """Party-name search in the higher forum -> list of light rows."""
+    # An appeal is filed within months of the judgment, so these are the only
+    # registration years worth searching.
+    APPEAL_YEARS_AHEAD = 1
+    # One common surname can return thousands of rows; matching is cheap but
+    # there is no sense holding an unbounded list in memory.
+    MAX_ROWS_PER_SEARCH = 3000
+
+    def _appeal_years(self, judgment_date):
+        """Registration years an appeal against this judgment could carry."""
+        if not judgment_date:
+            return []
+        return [str(judgment_date.year + n)
+                for n in range(self.APPEAL_YEARS_AHEAD + 1)]
+
+    def _search(self, forum, term, all_benches, judgment_date=None):
+        """Party-name search in the higher forum -> list of light rows.
+
+        The High Court portal REQUIRES a registration year - omit it and it
+        answers ERROR_VAL rather than a result set - so this searches the
+        judgment year and the one after it. A 404 from either means simply
+        "no such case", which is the normal, expected answer.
+        """
+        years = self._appeal_years(judgment_date)
+        if not years:
+            return []              # no judgment year, nothing safe to search
+
         if forum['court_id'] == 'sci':
-            data = client.sci_search_party_name(term)
+            # The Supreme Court portal also demands a year ("Year is
+            # required"), so the same judgment-year window applies.
             out = []
-            for c in (data.get('cases') or []):
-                token = c.get('viewToken') or {}
-                out.append({
-                    'caseNumber': c.get('caseNumber'),
-                    'parties': '{} Vs {}'.format(c.get('petitioner', ''),
-                                                 c.get('respondent', '')),
-                    'cnr': token.get('diaryNo', ''),
-                    'forumLabel': 'Supreme Court of India',
-                })
+            for year in years:
+                try:
+                    # The Supreme Court portal requires a status as well, and
+                    # accepts only P/D (not the High Court's "Both"). Pending is
+                    # the actionable case: a live appeal against your client.
+                    # A disposed one is history, and a nightly sweep would have
+                    # caught it while it was pending.
+                    data = client.sci_search_party_name(
+                        term, year=year, status='P')
+                except client.ScraperError as exc:
+                    if exc.status == 404:
+                        continue   # nothing that year - expected
+                    raise
+                for c in (data.get('cases') or []):
+                    token = c.get('viewToken') or {}
+                    out.append({
+                        'caseNumber': c.get('caseNumber'),
+                        'parties': '{} Vs {}'.format(c.get('petitioner', ''),
+                                                     c.get('respondent', '')),
+                        'cnr': token.get('diaryNo', ''),
+                        'forumLabel': 'Supreme Court of India ({})'.format(year),
+                    })
             return out
 
         state = forum['state_code']
@@ -179,18 +218,28 @@ class Command(BaseCommand):
         items = list(benches.items())
         if not all_benches:
             items = items[:1]      # principal bench only unless asked
+
         out = []
         for label, court_complex in items:
-            data = client.hc_list_search(state, court_complex, 'party_name',
-                                         {'name': term, 'status': 'Both'})
-            for r in (data.get('rows') or []):
-                token = r.get('view_token') or {}
-                out.append({
-                    'caseNumber': r.get('case_number'),
-                    'parties': r.get('parties'),
-                    'cnr': token.get('cino', ''),
-                    'forumLabel': label,
-                })
+            for year in years:
+                if len(out) >= self.MAX_ROWS_PER_SEARCH:
+                    break
+                try:
+                    data = client.hc_list_search(
+                        state, court_complex, 'party_name',
+                        {'name': term, 'year': year, 'status': 'Both'})
+                except client.ScraperError as exc:
+                    if exc.status == 404:
+                        continue   # no case of that name that year - expected
+                    raise
+                for r in (data.get('rows') or []):
+                    token = r.get('view_token') or {}
+                    out.append({
+                        'caseNumber': r.get('case_number'),
+                        'parties': r.get('parties'),
+                        'cnr': token.get('cino', ''),
+                        'forumLabel': '{} ({})'.format(label, year),
+                    })
         return out
 
     def _notify(self, detections):

@@ -58,6 +58,10 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
+    # Records state-changing API calls into audit_log / activities. Last in the
+    # chain so it sees the final response status; it reads request.user, which
+    # DRF populates during view dispatch.
+    'core.audit_middleware.AuditLogMiddleware',
 ]
 
 ROOT_URLCONF = 'advocate_backend.urls'

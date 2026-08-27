@@ -5,6 +5,7 @@ from rest_framework.response import Response
 
 from core.models import AuditLog, Activity
 from core.pagination import SpringStylePagination
+from core.permissions import RequirePermission
 
 
 def _parse_dt(v):
@@ -32,6 +33,8 @@ def _audit_map(a):
 
 
 class AuditView(APIView):
+    permission_classes = [RequirePermission('AUDIT_VIEW')]
+
     def get(self, request):
         p = request.query_params
         qs = AuditLog.objects.filter(advocate_id=request.user.id)
@@ -63,6 +66,8 @@ def _activity_map(a):
 
 
 class ActivityListView(APIView):
+    permission_classes = [RequirePermission('AUDIT_VIEW')]
+
     def get(self, request):
         qs = Activity.objects.filter(advocate_id=request.user.id).order_by('-timestamp', '-id')
         paginator = SpringStylePagination()

@@ -8,9 +8,16 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from . import service
+from core.permissions import RequirePermission
+
+
+BACKUP_MANAGE = [RequirePermission('BACKUP_MANAGE')]
 
 
 class _CreateBackup(APIView):
+    # Backups are per-advocate, but creating/restoring/deleting them is still
+    # a privileged, destructive operation - not something every role should do.
+    permission_classes = BACKUP_MANAGE
     backup_type = 'FULL'
 
     def post(self, request):
@@ -43,6 +50,8 @@ class SettingsBackup(_CreateBackup):
 
 
 class ValidateView(APIView):
+    permission_classes = BACKUP_MANAGE
+
     def post(self, request):
         f = request.FILES.get('file')
         if f is None:
@@ -52,6 +61,8 @@ class ValidateView(APIView):
 
 
 class RestoreView(APIView):
+    permission_classes = BACKUP_MANAGE
+
     def post(self, request):
         f = request.FILES.get('file')
         if f is None:
@@ -62,6 +73,8 @@ class RestoreView(APIView):
 
 
 class HistoryView(APIView):
+    permission_classes = BACKUP_MANAGE
+
     def get(self, request):
         with connection.cursor() as cur:
             cur.execute(
@@ -79,6 +92,8 @@ class HistoryView(APIView):
 
 
 class StatsView(APIView):
+    permission_classes = BACKUP_MANAGE
+
     def get(self, request):
         with connection.cursor() as cur:
             cur.execute('SELECT count(*), COALESCE(sum(file_size),0) FROM backup_history '
@@ -96,6 +111,8 @@ class StatsView(APIView):
 
 
 class DownloadView(APIView):
+    permission_classes = BACKUP_MANAGE
+
     def get(self, request, pk):
         with connection.cursor() as cur:
             cur.execute('SELECT file_name FROM backup_history WHERE id = %s AND advocate_id = %s',
@@ -112,6 +129,8 @@ class DownloadView(APIView):
 
 
 class DeleteView(APIView):
+    permission_classes = BACKUP_MANAGE
+
     def delete(self, request, pk):
         with connection.cursor() as cur:
             cur.execute('SELECT file_name FROM backup_history WHERE id = %s AND advocate_id = %s',

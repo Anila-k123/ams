@@ -27,6 +27,34 @@ const JURISDICTIONS = [
   ["Tamil Nadu", "Tamil Nadu"],
 ];
 
+// What the search box should ask for, per chip. One generic "Search Bare Acts"
+// gave no clue that Act Year wants a year, so selecting that chip with a word
+// in the box returned nothing and looked broken.
+const FIELD_PLACEHOLDERS = {
+  all: "Search Bare Acts",
+  short_title: "Search the short title, e.g. Anna University Act",
+  long_title: "Search the long title",
+  department: "Search the department, e.g. Higher Education",
+  section_title: "Search section headings, e.g. Definitions",
+  section_contents: "Search inside section text, e.g. vice-chancellor",
+  act_number: "Search the act number, e.g. 26",
+  act_year: "Year (2015) or range (2010-2015)",
+};
+
+// Mirrors the backend's year parsing so the page can explain an unusable year
+// itself rather than showing an unexplained empty list.
+const YEAR_RE = /^\d{4}$/;
+const YEAR_RANGE_RE = /^(\d{4})\s*(?:-|–|to)\s*(\d{4})$/i;
+
+function yearQueryProblem(raw) {
+  const v = (raw || "").trim();
+  if (!v) return null;                       // empty is fine: shows everything
+  if (YEAR_RE.test(v) || YEAR_RANGE_RE.test(v)) return null;
+  return /^\d+$/.test(v)
+    ? `"${v}" is not a four-digit year.`
+    : `"${v}" is not a year.`;
+}
+
 function authHeaders() {
   const token = localStorage.getItem("token");
   return { headers: { Authorization: `Bearer ${token}` } };
@@ -58,6 +86,9 @@ export default function Acts() {
   // Section Contents searches ~28k section bodies, so a request per character
   // was both slow and prone to out-of-order replies.
   const debouncedQuery = useDebouncedValue(query, 300);
+  // Explained as soon as it is typed, not after the round trip: the request is
+  // debounced, so waiting for the response would leave the message lagging.
+  const yearProblem = field === "act_year" ? yearQueryProblem(query) : null;
   const [field, setField] = useState("all");
   const [jurisdiction, setJurisdiction] = useState("");
   const [acts, setActs] = useState([]);
@@ -97,7 +128,7 @@ export default function Acts() {
         <FiSearch className="acts-search-icon" />
         <input
           type="text"
-          placeholder="Search Bare Acts"
+          placeholder={FIELD_PLACEHOLDERS[field] || "Search Bare Acts"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -115,13 +146,47 @@ export default function Acts() {
         ))}
       </div>
 
+      {/* Shown while typing, so the year format is corrected before the user
+          waits for an empty result to explain it. */}
+      {yearProblem && (
+        <p className="acts-filter-warning">
+          {yearProblem} Enter a year like <code>2015</code> or a range like{" "}
+          <code>2010-2015</code>.
+        </p>
+      )}
+
       {error && <p className="error-message">{error}</p>}
 
       <div className="acts-list">
         {loading ? (
           <InlineLoader type="card" count={6} />
         ) : acts.length === 0 ? (
-          <p className="no-data">No acts found.</p>
+          <div className="acts-empty">
+            {yearProblem ? (
+              <>
+                <p className="no-data">{yearProblem}</p>
+                <p className="acts-empty-hint">
+                  The <strong>Act Year</strong> filter takes a four-digit year such
+                  as <code>2015</code>, or a range such as <code>2010-2015</code>.
+                  To search text instead, pick another filter above.
+                </p>
+              </>
+            ) : debouncedQuery.trim() ? (
+              <>
+                <p className="no-data">
+                  No acts match &ldquo;{debouncedQuery.trim()}&rdquo; in{" "}
+                  {(FIELD_CHIPS.find(([v]) => v === field) || [, "All"])[1]}
+                  {jurisdiction ? ` (${jurisdiction})` : ""}.
+                </p>
+                <p className="acts-empty-hint">
+                  Try a different filter above
+                  {jurisdiction ? ", or set the jurisdiction back to All" : ""}.
+                </p>
+              </>
+            ) : (
+              <p className="no-data">No acts found.</p>
+            )}
+          </div>
         ) : (
           acts.map((act) => (
             <div key={act.id} className="act-card" onClick={() => navigate(`/dashboard/acts/${act.id}`)}>

@@ -498,3 +498,37 @@
 .acts-container .close-btn:hover {
   color: var(--text-primary);
 }
+
+/* --- filter feedback ----------------------------------------------------- */
+/* Shown under the chips while an Act Year query cannot match anything. Amber,
+   not red: a half-typed year is a work in progress, not an error. */
+.acts-filter-warning {
+  margin: -4px 0 12px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+}
+
+.acts-filter-warning code,
+.acts-empty-hint code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.18);
+  font-size: 0.9em;
+}
+
+.acts-empty {
+  text-align: center;
+  padding: 28px 16px;
+}
+
+.acts-empty-hint {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-muted, var(--text-secondary));
+}

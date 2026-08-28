@@ -10,6 +10,17 @@ export default function NotificationBell({ onOpen }) {
   const bellRef = useRef(null);
   const { subscribe } = useWebSocketContext();
   const dropdownRef = useRef(null);
+  // Chime when the unread count rises. This used to live in Dashboard.jsx,
+  // which polled the same endpoint on its own 30s timer to drive a second
+  // bell; that bell is gone, so the sound moved here rather than being lost.
+  const audioRef = useRef(null);
+  const prevCount = useRef(null);
+
+  useEffect(() => {
+    try {
+      audioRef.current = new Audio("/notification.mp3");
+    } catch { /* no audio available; the badge still updates */ }
+  }, []);
 
   // The bell was WebSocket-only, and there is no /ws backend - so it always
   // read "No live notifications yet." Unread notifications are now loaded over
@@ -34,6 +45,13 @@ export default function NotificationBell({ onOpen }) {
       }));
       setAlerts(rows.slice(0, 50));
       setCount(rows.length);
+
+      // null on the first load: arriving to 13 unread is not 13 new arrivals,
+      // and chiming on page load would be wrong every time.
+      if (prevCount.current !== null && rows.length > prevCount.current) {
+        audioRef.current?.play().catch(() => {});
+      }
+      prevCount.current = rows.length;
     } catch {
       /* the dropdown's empty state covers it */
     }

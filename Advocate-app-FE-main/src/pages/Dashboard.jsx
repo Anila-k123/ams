@@ -5,7 +5,7 @@ import { useTheme } from "../contexts/ThemeContext.jsx";
 import { useLoading } from "../contexts/LoadingContext";
 import {
   FiBriefcase, FiFolder, FiUsers, FiCalendar, FiFileText,
-  FiTrendingUp, FiSettings, FiLogOut, FiSearch, FiBell,
+  FiTrendingUp, FiSettings, FiLogOut, FiSearch,
   FiCheckCircle, FiCheckSquare, FiAlertCircle, FiMessageSquare,
   FiActivity, FiChevronDown, FiDownload
 } from "react-icons/fi";
@@ -185,10 +185,6 @@ function DashboardShell() {
   const [recentDocs, setRecentDocs] = useState([]);
 
   // Notifications
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [newNotificationCount, setNewNotificationCount] = useState(0);
-  const notifRef = useRef(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   // Global Search
@@ -199,8 +195,6 @@ function DashboardShell() {
   const [casesOpen, setCasesOpen] = useState(true);
 
   // Audio Alerts
-  const audioRef = useRef(null);
-  const previousNotifications = useRef([]);
 
   const { isCollapsed, isMobile, toggleSidebar, closeSidebar, mobileOpen } = useSidebar();
   const location = useLocation();
@@ -368,45 +362,6 @@ function DashboardShell() {
     fetchDocData();
   }, [token]);
 
-  // Fetch notifications periodically
-  useEffect(() => {
-    if (!token) return;
-    const fetchNotifs = async () => {
-      try {
-        const res = await axios.get("/api/notifications/unread", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const unread = res.data || [];
-        setNotifications(unread);
-        if (previousNotifications.current.length > 0 && unread.length > previousNotifications.current.length) {
-          setNewNotificationCount(unread.length - previousNotifications.current.length);
-          if (audioRef.current) audioRef.current.play().catch(() => {});
-        }
-        previousNotifications.current = unread;
-      } catch (err) {
-        console.error("Error fetching notifications:", err);
-      }
-    };
-    fetchNotifs();
-    const interval = setInterval(fetchNotifs, 30000);
-    return () => clearInterval(interval);
-  }, [token]);
-
-  // Also fetch notifications on route change
-  useEffect(() => {
-    if (token && (location.pathname === "/dashboard" || location.pathname === "/dashboard/")) {
-      axios.get("/api/notifications/unread", {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then((res) => {
-          const unread = res.data || [];
-          setNotifications(unread);
-          previousNotifications.current = unread;
-        })
-        .catch(() => {});
-    }
-  }, [location.pathname, token]);
-
   // Chatbot events
   useEffect(() => {
     const h1 = () => {};
@@ -419,37 +374,6 @@ function DashboardShell() {
     };
   }, []);
 
-  // Close notifications on outside click
-  useEffect(() => {
-    if (!showNotifications) return;
-    const handleClickOutside = (e) => {
-      if (notifRef.current && !notifRef.current.contains(e.target)) {
-        setShowNotifications(false);
-      }
-    };
-    document.addEventListener("click", handleClickOutside);
-    return () => document.removeEventListener("click", handleClickOutside);
-  }, [showNotifications]);
-
-  const handleMarkNotifRead = async (id) => {
-    try {
-      await withLoading(
-        axios.put(`/api/notifications/read/${id}`, {}, {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        "Marking notification read..."
-      );
-      const res = await withLoading(
-        axios.get("/api/notifications/unread", {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        "Refreshing notifications..."
-      );
-      setNotifications(res.data || []);
-    } catch (err) {
-      console.error("Error marking notification read:", err);
-    }
-  };
 
   const handleToggleTask = async (id) => {
     try {
@@ -556,7 +480,6 @@ function DashboardShell() {
 
   return (
     <div className={`dashboard-root ${!isMobile && isCollapsed ? "sidebar-collapsed" : ""} ${isMobile && mobileOpen ? "sidebar-mobile-open" : ""}`}>
-      <audio ref={audioRef} src="/notification.mp3" preload="auto" />
 
       {/* Mobile overlay backdrop */}
       {isMobile && mobileOpen && <div className="sidebar-overlay" onClick={closeSidebar} />}
@@ -838,31 +761,6 @@ function DashboardShell() {
               <FiDownload />
             </button>
             <NotificationBell onOpen={(route) => navigate(route)} />
-            <div className="notif-wrapper" ref={notifRef}>
-              <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)}>
-                <FiBell style={{ opacity: 0.4 }} />
-              </button>
-              {showNotifications && (
-                <div className="notifications-dropdown">
-                  <header>
-                    <h4>Alert notifications</h4>
-                    <button className="clear-btn" onClick={() => setShowNotifications(false)}>Close</button>
-                  </header>
-                  <div className="notif-list-body">
-                    {notifications.length === 0 ? (
-                      <p className="no-data">No unread alerts.</p>
-                    ) : (
-                      notifications.map(n => (
-                        <div key={n.id} className="notification-item">
-                          <div className="notif-message">{n.message}</div>
-                          <button className="mark-read-btn" onClick={() => handleMarkNotifRead(n.id)}>Mark Read</button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
             <button className="icon-btn" onClick={handleToggleTheme}>
               {theme === "dark" ? "☀️" : "🌙"}
             </button>

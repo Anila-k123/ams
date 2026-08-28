@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { FiSearch } from "react-icons/fi";
 import Pagination from "../components/Pagination";
+import useDebouncedValue from "../hooks/useDebouncedValue";
 import usePagination from "../hooks/usePagination";
 import { InlineLoader } from "../components/Loader";
 import "../assets/styles/Acts.css";
@@ -53,6 +54,10 @@ function shortDescription(text, max = 140) {
 export default function Acts() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  // The input updates on every keystroke; the request waits until typing stops.
+  // Section Contents searches ~28k section bodies, so a request per character
+  // was both slow and prone to out-of-order replies.
+  const debouncedQuery = useDebouncedValue(query, 300);
   const [field, setField] = useState("all");
   const [jurisdiction, setJurisdiction] = useState("");
   const [acts, setActs] = useState([]);
@@ -61,14 +66,14 @@ export default function Acts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const { page, setPage, size, setSize } = usePagination({
-    defaultSize: 20, resetOn: [query, field, jurisdiction],
+    defaultSize: 20, resetOn: [debouncedQuery, field, jurisdiction],
   });
 
   const fetchActs = useCallback(async () => {
     setLoading(true);
     try {
       const params = { page, size, field };
-      if (query.trim()) params.q = query.trim();
+      if (debouncedQuery.trim()) params.q = debouncedQuery.trim();
       if (jurisdiction) params.jurisdiction = jurisdiction;
       const res = await axios.get("/api/acts", { ...authHeaders(), params });
       setActs(res.data.content || []);
@@ -80,7 +85,7 @@ export default function Acts() {
     } finally {
       setLoading(false);
     }
-  }, [page, size, query, field, jurisdiction]);
+  }, [page, size, debouncedQuery, field, jurisdiction]);
 
   useEffect(() => { fetchActs(); }, [fetchActs]);
 

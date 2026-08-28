@@ -1,3 +1,5 @@
+import re
+
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
@@ -21,14 +23,43 @@ FIELD_MAP = {
     'long_title': ['long_title'],
     'department': ['department_name'],
     'act_number': ['act_number'],
-    'act_year': ['act_year'],
 }
 ALL_FIELDS = ['title', 'long_title', 'department_name', 'act_number']
+
+# "1979", "1979-1985" or "1979 - 1985". Anything else is not a year query.
+_YEAR_RANGE = re.compile(r'^(\d{4})\s*[-–to]+\s*(\d{4})$')
+_YEAR = re.compile(r'^\d{4}$')
+
+
+def _year_filter(qs, keyword):
+    """Match act_year as a NUMBER, not as text.
+
+    act_year is an integer column, and the old code ran icontains on it. That
+    turned the year chip into a digit-substring search: "201" matched the whole
+    of 2010-2019, and "0" matched 454 acts - every year containing a zero. A
+    year box should answer "which acts are from this year".
+
+    A range is accepted too, because "everything between 1979 and 1985" is the
+    other question people actually ask of a year field.
+    """
+    m = _YEAR_RANGE.match(keyword)
+    if m:
+        lo, hi = int(m.group(1)), int(m.group(2))
+        if lo > hi:
+            lo, hi = hi, lo
+        return qs.filter(act_year__gte=lo, act_year__lte=hi)
+    if _YEAR.match(keyword):
+        return qs.filter(act_year=int(keyword))
+    # Not a usable year: return nothing rather than silently falling back to a
+    # different search, which would look like the filter had been ignored.
+    return qs.none()
 
 
 def _search(qs, field: str, keyword: str):
     if not keyword:
         return qs
+    if field == 'act_year':
+        return _year_filter(qs, keyword)
     if field == 'section_title':
         return qs.filter(sections__title__icontains=keyword).distinct()
     if field == 'section_contents':
@@ -37,6 +68,10 @@ def _search(qs, field: str, keyword: str):
     q = Q()
     for f in fields:
         q |= Q(**{f + '__icontains': keyword})
+    # A four-digit keyword in "All" is almost always a year, and the year lives
+    # in its own column rather than in the text fields.
+    if field not in FIELD_MAP and _YEAR.match(keyword):
+        q |= Q(act_year=int(keyword))
     return qs.filter(q)
 
 

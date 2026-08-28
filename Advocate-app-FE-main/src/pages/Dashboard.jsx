@@ -224,7 +224,7 @@ function DashboardShell() {
     "/dashboard/users": "User Management",
     "/dashboard/roles": "Role Management",
     "/dashboard/settings": "Settings",
-    "/dashboard/communication": "Communication",
+    "/dashboard/communication": "Communication Overview",
     "/dashboard/communication/settings": "Communication Settings",
     "/dashboard/communication/templates": "Notification Templates",
     "/dashboard/communication/history": "Communication History",
@@ -722,9 +722,11 @@ function DashboardShell() {
             </IfPermitted>
             <li className="nav-section-label">Communication</li>
             <li>
-                <NavLink to="/dashboard/communication" end className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Communication Dashboard">
+                <NavLink to="/dashboard/communication" end className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Communication Overview">
                   <span className="nav-icon">📨</span>
-                  <span className="nav-text">Dashboard</span>
+                  {/* Not "Dashboard": the sidebar already has one, and two
+                      entries with the same word is a coin toss for the user. */}
+                  <span className="nav-text">Overview</span>
                 </NavLink>
             </li>
             <li>

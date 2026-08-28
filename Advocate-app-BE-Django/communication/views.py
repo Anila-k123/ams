@@ -34,7 +34,12 @@ def _settings_map(s):
         'encryptedPassword': '',
         'whatsappPhoneNumberId': s.whatsapp_phone_number_id,
         'whatsappBusinessAccountId': s.whatsapp_business_account_id,
-        'whatsappAccessToken': s.whatsapp_access_token,
+        # Never send the token itself. The SMTP password was already blanked;
+        # this one was going to the browser in plaintext on every settings
+        # load. The client only needs to know whether one is stored.
+        'whatsappAccessToken': '',
+        'whatsappTokenSet': bool(s.whatsapp_access_token),
+        'smtpPasswordSet': bool(s.encrypted_password),
         'createdAt': _iso(s.created_at), 'updatedAt': _iso(s.updated_at),
     }
 
@@ -173,10 +178,15 @@ class HistoryView(APIView):
 
 class StatisticsView(APIView):
     def get(self, request):
-        aid = request.user.id
+        # Practice-wide, matching LogsView and the history endpoints. This used
+        # a local `aid = request.user.id`, so the sweep that widened everything
+        # else missed it - leaving this page counting only your own messages
+        # while the History page beside it counted the whole practice's. Two
+        # screens in one section disagreeing about the same number.
+        aid = practice_ids(request.user)
         today = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
-        H = NotificationHistory.objects.filter(advocate_id=aid)
-        Q = NotificationQueue.objects.filter(advocate_id=aid)
+        H = NotificationHistory.objects.filter(advocate_id__in=aid)
+        Q = NotificationQueue.objects.filter(advocate_id__in=aid)
         return Response({
             'totalSent': H.filter(status='SENT').count(),
             'failedTotal': H.filter(status='FAILED').count(),
@@ -188,7 +198,27 @@ class StatisticsView(APIView):
             'queuePending': Q.filter(status='PENDING').count(),
             'queueProcessing': Q.filter(status='PROCESSING').count(),
             'queueFailed': Q.filter(status='FAILED').count(),
+            # What the status cards should actually be driven by. The page was
+            # showing "Connected" purely from the emailEnabled / whatsappEnabled
+            # preference toggles, so email read Connected while its own subtitle
+            # said "No email configured" and every send failed 535.
+            'emailConfigured': _email_configured(request.user.id),
+            'whatsappConfigured': False,
+            'whatsappSupported': False,
+            'recentEmailFailures': H.filter(
+                channel='EMAIL', status='FAILED', sent_at__gte=today).count(),
         })
+
+
+def _email_configured(advocate_id):
+    """True only when there is enough to actually send: a host and a sender.
+
+    A toggle being on is an intention, not a capability.
+    """
+    s = CommunicationSettings.objects.filter(advocate_id=advocate_id).first()
+    if s is None or not s.email_enabled:
+        return False
+    return bool((s.smtp_host or '').strip() and (s.sender_email or '').strip())
 
 
 # ==================== LOGS ====================

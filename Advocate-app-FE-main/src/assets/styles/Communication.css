@@ -589,3 +589,9 @@
 .comm-spin {
   animation: spin 1s linear infinite;
 }
+
+/* A failing channel is neither connected-green nor off-grey: it is configured
+   and broken, which is the state that needs attention. */
+.comm-card-value.failing {
+  color: #d97706;
+}

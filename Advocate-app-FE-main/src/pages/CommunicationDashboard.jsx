@@ -35,6 +35,32 @@ export default function CommunicationDashboard() {
 
   const val = (v) => (statsError ? "--" : v ?? "--");
 
+  // Three states, not two. "Enabled but not configured" and "configured but
+  // every attempt today failed" are both real, and both were being painted as
+  // Connected before.
+  const emailState = (() => {
+    if (!settings?.emailEnabled) {
+      return { tone: "disabled", label: "Off", detail: "Email notifications are switched off" };
+    }
+    if (!stats?.emailConfigured) {
+      return {
+        tone: "disabled",
+        label: "Not configured",
+        detail: settings?.smtpHost
+          ? "No sender address set"
+          : "No SMTP server set - nothing can be sent",
+      };
+    }
+    if (stats?.recentEmailFailures > 0) {
+      return {
+        tone: "failing",
+        label: "Failing",
+        detail: `${stats.recentEmailFailures} attempt(s) failed today - check the password`,
+      };
+    }
+    return { tone: "connected", label: "Working", detail: settings?.senderEmail || "Configured" };
+  })();
+
   if (loading)
     return (
       <div className="comm-page">
@@ -48,7 +74,7 @@ export default function CommunicationDashboard() {
 
   return (
     <div className="comm-page">
-      <h2>Communication Dashboard</h2>
+      <h2>Communication Overview</h2>
 
       <div className="comm-stat-cards">
         <div className="comm-stat-card">
@@ -62,7 +88,7 @@ export default function CommunicationDashboard() {
         <div className="comm-stat-card">
           <div className="comm-stat-icon email"><FiMail /></div>
           <div className="comm-stat-body">
-            <span className="comm-stat-label">Emails Today</span>
+            <span className="comm-stat-label">Emails Attempted Today</span>
             <span className="comm-stat-value">{val(stats?.emailsToday)}</span>
           </div>
         </div>
@@ -97,10 +123,13 @@ export default function CommunicationDashboard() {
           <div className="comm-card-icon email"><FiMail /></div>
           <div className="comm-card-body">
             <span className="comm-card-label">Email</span>
-            <span className={`comm-card-value ${settings?.emailEnabled ? "connected" : "disabled"}`}>
-              {settings?.emailEnabled ? "Connected" : "Not Connected"}
-            </span>
-            <span className="comm-card-sub">{settings?.senderEmail || "No email configured"}</span>
+            {/* "Connected" used to come straight from the emailEnabled
+                preference, so this card read Connected in green while the line
+                underneath it said "No email configured" and every send failed.
+                The server now reports whether there is actually a host and a
+                sender, and whether today's attempts are failing. */}
+            <span className={`comm-card-value ${emailState.tone}`}>{emailState.label}</span>
+            <span className="comm-card-sub">{emailState.detail}</span>
           </div>
         </div>
 
@@ -108,10 +137,11 @@ export default function CommunicationDashboard() {
           <div className="comm-card-icon whatsapp"><FiMessageSquare /></div>
           <div className="comm-card-body">
             <span className="comm-card-label">WhatsApp</span>
-            <span className={`comm-card-value ${settings?.whatsappEnabled ? "connected" : "disabled"}`}>
-              {settings?.whatsappEnabled ? "Connected" : "Not Connected"}
-            </span>
-            <span className="comm-card-sub">Business API</span>
+            {/* WhatsApp delivery raises NotImplementedError in
+                process_notifications - there are no Meta credentials wired in.
+                The toggle could say Connected; the sender never could. */}
+            <span className="comm-card-value disabled">Not available</span>
+            <span className="comm-card-sub">Business API not connected yet</span>
           </div>
         </div>
 

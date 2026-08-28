@@ -424,3 +424,61 @@
   outline: 2px solid var(--primary, #2563eb);
   outline-offset: -2px;
 }
+
+/* --- dismiss ("got it") -------------------------------------------------- */
+.live-notif-item {
+  position: relative;
+}
+
+/* The x sits in the corner and only appears on hover, so a list of unread
+   items does not read as a row of buttons. */
+.live-notif-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  font-size: 15px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.live-notif-item:hover .live-notif-dismiss,
+.live-notif-dismiss:focus-visible {
+  opacity: 1;
+}
+
+.live-notif-dismiss:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--text-primary, #0f172a);
+}
+
+.live-notif-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Kept visible rather than hover-only: "Got it" is the action most people
+   want, and hiding it behind a hover makes it undiscoverable on touch. */
+.live-notif-gotit {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  cursor: pointer;
+}
+
+.live-notif-gotit:hover {
+  color: var(--text-primary, #0f172a);
+  text-decoration: underline;
+}

@@ -83,24 +83,47 @@ export default function NotificationBell({ onOpen }) {
     setShowDropdown((v) => !v);
   }, []);
 
+  // Marking read and going somewhere are separate actions. They used to be
+  // welded together, so the only way to clear a notification you had already
+  // dealt with was to let it navigate you away from whatever you were doing.
+  const markRead = useCallback(async (alert) => {
+    // Live WebSocket items have no server row yet, so there is nothing to mark;
+    // dropping them from the list is the whole of it.
+    if (!alert.id || String(alert.id).startsWith("live-")) {
+      setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+      setCount((c) => Math.max(0, c - 1));
+      return true;
+    }
+    try {
+      const token = localStorage.getItem("token");
+      await axios.put(`/api/notifications/${alert.id}/read`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+      setCount((c) => Math.max(0, c - 1));
+      // Keep the local count honest against the server rather than trusting
+      // the optimistic decrement.
+      prevCount.current = Math.max(0, (prevCount.current ?? 1) - 1);
+      return true;
+    } catch {
+      return false;   // leave it unread rather than lying about it
+    }
+  }, []);
+
+  // "Got it" - clear it and stay where you are. The dropdown stays open so a
+  // run of notifications can be cleared in one pass.
+  const handleDismiss = useCallback(async (e, alert) => {
+    e.stopPropagation();
+    await markRead(alert);
+  }, [markRead]);
+
+  // Open the record this notification is about.
   const handleNotificationClick = useCallback(async (alert) => {
+    if (!alert.route) return;      // nothing to open; use Dismiss instead
     setShowDropdown(false);
-    // Actually mark it read server-side; previously opening the dropdown just
-    // zeroed the badge locally and it came back on the next load.
-    if (alert.id && !String(alert.id).startsWith("live-")) {
-      try {
-        const token = localStorage.getItem("token");
-        await axios.put(`/api/notifications/${alert.id}/read`, {}, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
-        setCount((c) => Math.max(0, c - 1));
-      } catch { /* leave it unread rather than lying about it */ }
-    }
-    if (onOpen && alert.route) {
-      onOpen(alert.route);
-    }
-  }, [onOpen]);
+    await markRead(alert);
+    if (onOpen) onOpen(alert.route);
+  }, [markRead, onOpen]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -142,19 +165,40 @@ export default function NotificationBell({ onOpen }) {
                   className={`live-notif-item${a.route ? " clickable" : ""}`}
                   role={a.route ? "button" : undefined}
                   tabIndex={a.route ? 0 : undefined}
-                  title={a.route ? "Open" : "Mark as read"}
+                  title={a.route ? "Open" : undefined}
                   onClick={() => handleNotificationClick(a)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
+                    if (a.route && (e.key === "Enter" || e.key === " ")) {
                       e.preventDefault();
                       handleNotificationClick(a);
                     }
                   }}
                 >
+                  {/* Dismiss sits outside the row's click target and stops
+                      propagation, so "I have dealt with this" never navigates
+                      you away from what you were doing. */}
+                  <button
+                    type="button"
+                    className="live-notif-dismiss"
+                    title="Mark as read"
+                    aria-label={`Mark as read: ${a.message}`}
+                    onClick={(e) => handleDismiss(e, a)}
+                  >
+                    &times;
+                  </button>
                   <div className="live-notif-msg">{a.message}</div>
                   <div className="live-notif-row">
                     <span className="live-notif-time">{formatTime(a.timestamp)}</span>
-                    {a.route && <span className="live-notif-go">Open &rsaquo;</span>}
+                    <span className="live-notif-actions">
+                      <button
+                        type="button"
+                        className="live-notif-gotit"
+                        onClick={(e) => handleDismiss(e, a)}
+                      >
+                        Got it
+                      </button>
+                      {a.route && <span className="live-notif-go">Open &rsaquo;</span>}
+                    </span>
                   </div>
                 </div>
               ))

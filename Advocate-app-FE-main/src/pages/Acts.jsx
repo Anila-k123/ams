@@ -86,9 +86,6 @@ export default function Acts() {
   // Section Contents searches ~28k section bodies, so a request per character
   // was both slow and prone to out-of-order replies.
   const debouncedQuery = useDebouncedValue(query, 300);
-  // Explained as soon as it is typed, not after the round trip: the request is
-  // debounced, so waiting for the response would leave the message lagging.
-  const yearProblem = field === "act_year" ? yearQueryProblem(query) : null;
   const [field, setField] = useState("all");
   const [jurisdiction, setJurisdiction] = useState("");
   const [acts, setActs] = useState([]);
@@ -96,6 +93,11 @@ export default function Acts() {
   const [totalElements, setTotalElements] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // Declared after `field` and `query`: reading either above their useState
+  // calls is a temporal-dead-zone crash, not a lint nit.
+  // Explained as soon as it is typed, not after the round trip: the request is
+  // debounced, so waiting for the response would leave the message lagging.
+  const yearProblem = field === "act_year" ? yearQueryProblem(query) : null;
   const { page, setPage, size, setSize } = usePagination({
     defaultSize: 20, resetOn: [debouncedQuery, field, jurisdiction],
   });
@@ -175,7 +177,7 @@ export default function Acts() {
               <>
                 <p className="no-data">
                   No acts match &ldquo;{debouncedQuery.trim()}&rdquo; in{" "}
-                  {(FIELD_CHIPS.find(([v]) => v === field) || [, "All"])[1]}
+                  {(FIELD_CHIPS.find(([v]) => v === field) || ["", "All"])[1]}
                   {jurisdiction ? ` (${jurisdiction})` : ""}.
                 </p>
                 <p className="acts-empty-hint">

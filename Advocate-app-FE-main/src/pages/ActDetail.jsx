@@ -123,6 +123,35 @@ const TABS = [
   ["cases", "Cases Linked"],
 ];
 
+// India Code's "abstract" ranges from a one-line purpose statement to a full
+// multi-section AI summary. Whatever it is, it arrives as one unbroken blob
+// and buried the rest of the page.
+//
+// Most of these summaries open by restating the act's name - "Summary of The
+// Administrative Tribunals Act, 1985 Purpose ..." - directly under a heading
+// that already says it. When the whole summary is collapsed to one line, that
+// line has to carry something, so the restatement is dropped.
+function cleanSummary(text, title) {
+  if (!text) return "";
+  const out = String(text).replace(/\s+/g, " ").trim();
+  const t = (title || "").replace(/\s+/g, " ").trim();
+  if (t) {
+    // Plain prefix match rather than a regex built from the title: the title
+    // is arbitrary text full of regex metacharacters (brackets, dots, the
+    // occasional parenthesis), and escaping it buys nothing here.
+    const lower = out.toLowerCase();
+    for (const prefix of ["summary of the " + t.toLowerCase(),
+                          "summary of " + t.toLowerCase()]) {
+      if (lower.startsWith(prefix)) {
+        return out.slice(prefix.length).replace(/^[\s:,.-]+/, "").trim();
+      }
+    }
+  }
+  // Fallback for summaries that open with "Summary" / "Summary of ..." but
+  // do not restate this act's exact title.
+  return out.replace(/^summary(\s+of(\s+the)?)?[\s:,.-]+/i, "").trim();
+}
+
 export default function ActDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -130,6 +159,9 @@ export default function ActDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("sections");
+  // The summary is collapsed to a single line by default; it is often several
+  // hundred words and pushed the sections list off the screen.
+  const [descOpen, setDescOpen] = useState(false);
 
   // Cases Linked tab
   const [linkedCases, setLinkedCases] = useState(null); // null = not loaded yet
@@ -238,7 +270,28 @@ export default function ActDetail() {
         <div className="act-detail-body">
           <div>
             <h2 className="act-detail-title">{act.title}</h2>
-            {act.description && <p className="act-detail-desc">{act.description}</p>}
+            {act.description && (() => {
+              const summary = cleanSummary(act.description, act.title);
+              if (!summary) return null;
+              return (
+                <div className="act-detail-summary">
+                  <p className={`act-detail-desc${descOpen ? " open" : ""}`}>{summary}</p>
+                  {/* Only offer the toggle when there is more than a line to
+                      show. A "Show more" that reveals nothing is worse than
+                      no button at all. */}
+                  {summary.length > 120 && (
+                    <button
+                      type="button"
+                      className="act-detail-desc-toggle"
+                      aria-expanded={descOpen}
+                      onClick={() => setDescOpen((v) => !v)}
+                    >
+                      {descOpen ? "Show less" : "Show more"}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <div className="act-detail-meta">
             {act.department && <div><strong>Department</strong> : {act.department}</div>}

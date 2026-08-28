@@ -215,13 +215,6 @@
   font-size: 19px;
 }
 
-.act-detail-desc {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13.5px;
-  max-width: 560px;
-}
-
 .act-detail-meta {
   display: flex;
   flex-direction: column;
@@ -531,4 +524,51 @@
   font-size: 0.85rem;
   line-height: 1.6;
   color: var(--text-muted, var(--text-secondary));
+}
+
+/* --- act detail summary -------------------------------------------------- */
+.act-detail-summary {
+  max-width: 560px;
+}
+
+/* One line by default. line-clamp rather than nowrap+ellipsis so the expanded
+   state is the same element with the clamp lifted, and so the collapsed line
+   still wraps to the column width instead of overflowing it. */
+.act-detail-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  overflow: hidden;
+}
+
+.act-detail-desc.open {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+  /* These summaries run to several hundred words; give the expanded form its
+     own scroll rather than letting it push the page down again. */
+  max-height: 260px;
+  overflow-y: auto;
+  line-height: 1.6;
+  padding-right: 6px;
+}
+
+.act-detail-desc-toggle {
+  margin-top: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--primary, #2563eb);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.act-detail-desc-toggle:hover {
+  text-decoration: underline;
 }

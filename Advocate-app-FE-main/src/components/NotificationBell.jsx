@@ -25,6 +25,12 @@ export default function NotificationBell({ onOpen }) {
         id: n.id,
         message: n.message,
         timestamp: n.timestamp || n.createdAt,
+        // Where this notification points. The server resolves it, so the bell
+        // and the notifications page always agree. Null for rows written
+        // before notifications recorded what they were about - those stay
+        // read-only rather than guessing a destination.
+        route: n.route || null,
+        entityType: n.entityType || null,
       }));
       setAlerts(rows.slice(0, 50));
       setCount(rows.length);
@@ -113,10 +119,25 @@ export default function NotificationBell({ onOpen }) {
               <p className="no-data">Nothing unread.</p>
             ) : (
               alerts.map((a) => (
-                <div key={a.id} className="live-notif-item clickable" onClick={() => handleNotificationClick(a)}>
+                <div
+                  key={a.id}
+                  className={`live-notif-item${a.route ? " clickable" : ""}`}
+                  role={a.route ? "button" : undefined}
+                  tabIndex={a.route ? 0 : undefined}
+                  title={a.route ? "Open" : "Mark as read"}
+                  onClick={() => handleNotificationClick(a)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleNotificationClick(a);
+                    }
+                  }}
+                >
                   <div className="live-notif-msg">{a.message}</div>
-                  <div className="live-notif-time">{formatTime(a.timestamp)}</div>
-                  <div className="live-notif-type-badge">{a.type?.replace(/_/g, " ").toLowerCase()}</div>
+                  <div className="live-notif-row">
+                    <span className="live-notif-time">{formatTime(a.timestamp)}</span>
+                    {a.route && <span className="live-notif-go">Open &rsaquo;</span>}
+                  </div>
                 </div>
               ))
             )}

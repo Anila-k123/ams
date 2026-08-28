@@ -451,6 +451,13 @@ class Notification(models.Model):
     message = models.CharField(max_length=255)
     read_status = models.BooleanField(default=False)
     advocate_id = models.BigIntegerField()
+    # What this notification is about, so clicking it can go somewhere.
+    # Added by `manage.py add_notification_links`; null on rows written before
+    # that, which stay unlinked because there is no way to work out what they
+    # referred to after the fact.
+    entity_type = models.CharField(max_length=50, null=True, blank=True)
+    entity_id = models.BigIntegerField(null=True, blank=True)
+    case_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         managed = False

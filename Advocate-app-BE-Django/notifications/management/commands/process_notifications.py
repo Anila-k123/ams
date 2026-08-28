@@ -97,11 +97,17 @@ class Command(BaseCommand):
     def _deliver(self, row, payload, channel):
         """Send on one channel. Raises on failure; returns a provider note."""
         if channel == service.IN_APP:
+            # Carry the target through. notify() already knows what the
+            # notification is about; dropping it here was why clicking one in
+            # the bell could only mark it read - there was nowhere to go.
             Notification.objects.create(
                 created_at=timezone.now(),
                 message=(payload.get('subject') or payload.get('body') or '')[:255],
                 read_status=False,
                 advocate_id=row.advocate_id,
+                entity_type=(payload.get('entity') or '')[:50] or None,
+                entity_id=payload.get('entityId'),
+                case_id=payload.get('caseId'),
             )
             return 'in-app notification created'
 

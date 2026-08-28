@@ -13,6 +13,32 @@ from core.practice import practice_ids
 # the practice, because "was the client told?" is a practice question.
 
 
+# Where clicking a notification should take you. Kept here rather than in the
+# client so every consumer of the API - the bell, the notifications page - lands
+# in the same place, and so a notification about a hearing goes to the case it
+# belongs to rather than a generic list.
+#
+# Only the invoice list exists as a route; there is no invoice detail page, so
+# an invoice notification lands on the list. Better than refusing to navigate.
+def _route(n):
+    entity = (n.entity_type or '').lower()
+    if entity in ('caseevent', 'case_event', 'hearing') and n.case_id:
+        return '/dashboard/cases/{}'.format(n.case_id)
+    if entity == 'case' and (n.entity_id or n.case_id):
+        return '/dashboard/cases/{}'.format(n.entity_id or n.case_id)
+    if entity == 'invoice':
+        return '/dashboard/invoices'
+    if entity in ('casetask', 'case_task', 'task'):
+        return '/dashboard/tasks'
+    if entity in ('appealdetection', 'appeal_detection', 'appeal'):
+        return '/dashboard/appeal-alert'
+    # A notification that names a case but nothing more specific still has a
+    # useful destination.
+    if n.case_id:
+        return '/dashboard/cases/{}'.format(n.case_id)
+    return None
+
+
 def _serialize(n):
     return {
         'id': n.id,
@@ -20,6 +46,12 @@ def _serialize(n):
         'read': n.read_status,
         'timestamp': n.created_at.isoformat() if n.created_at else None,
         'createdAt': n.created_at.isoformat() if n.created_at else None,
+        'entityType': n.entity_type,
+        'entityId': n.entity_id,
+        'caseId': n.case_id,
+        # null for notifications written before the link columns existed; the
+        # client must treat a missing route as "not clickable through".
+        'route': _route(n),
     }
 
 

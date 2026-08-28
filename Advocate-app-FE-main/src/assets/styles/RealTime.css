@@ -384,3 +384,43 @@
   0% { background-color: rgba(var(--primary-rgb), 0.1); }
   100% { background-color: transparent; }
 }
+
+/* --- notification link affordance ---------------------------------------- */
+/* Time and the Open hint share a row so the hint sits with the metadata
+   rather than adding a third line to every item. */
+.live-notif-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* Only items with a destination get the pointer. An item that merely marks
+   itself read should not look like it navigates. */
+.live-notif-item.clickable {
+  cursor: pointer;
+}
+
+.live-notif-item:not(.clickable) {
+  cursor: default;
+}
+
+.live-notif-go {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary, #2563eb);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.live-notif-item.clickable:hover .live-notif-go,
+.live-notif-item.clickable:focus-visible .live-notif-go {
+  opacity: 1;
+}
+
+.live-notif-item.clickable:focus-visible {
+  outline: 2px solid var(--primary, #2563eb);
+  outline-offset: -2px;
+}

@@ -4,21 +4,6 @@
   margin: 0 auto;
 }
 
-.appeal-alert-card {
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  padding: 32px 40px 40px;
-}
-
-.appeal-alert-title {
-  text-align: center;
-  font-size: 20px;
-  font-weight: 600;
-  color: #1f2a44;
-  margin: 0 0 28px;
-}
-
 .appeal-form-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -153,9 +138,6 @@
 @media (max-width: 720px) {
   .appeal-form-grid {
     grid-template-columns: 1fr;
-  }
-  .appeal-alert-card {
-    padding: 24px 20px 28px;
   }
 }
 

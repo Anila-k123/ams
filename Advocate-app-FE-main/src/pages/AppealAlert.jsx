@@ -111,20 +111,6 @@ function AppealAlert() {
 
   return (
     <div className="appeal-alert-page">
-      <div className="appeal-alert-card">
-        <h2 className="appeal-alert-title">Appeal Alerts</h2>
-        <p className="appeal-detect-note">
-          Your decided cases are checked automatically against the higher court that
-          would hear an appeal — District Court cases against their High Court, and
-          High Court cases against the Supreme Court — matching on party names.
-          Anything found appears below and is emailed to you.
-          <br /><br />
-          Each entry is a <strong>candidate read from the court record</strong>, not a
-          confirmed appeal: please verify it before acting. No filing or limitation
-          deadline is calculated or implied.
-        </p>
-      </div>
-
       <div className="appeal-list-section">
         <h3>Detected Appeals</h3>
         {loading ? (
@@ -134,7 +120,18 @@ function AppealAlert() {
             No appeals detected against your decided cases.
           </div>
         ) : (
-          table(open)
+          <>
+            {/* The rest of the intro was removed as clutter; this line stays
+                because it is not an explanation, it is a caveat about the rows
+                directly beneath it - they are read from the court record by
+                party-name matching, so a match is a candidate, not a fact. It
+                only appears when there is something to qualify. */}
+            <p className="appeal-detect-note">
+              Candidates matched from the court record — verify before acting.
+              No filing or limitation deadline is calculated.
+            </p>
+            {table(open)}
+          </>
         )}
       </div>
 

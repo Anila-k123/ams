@@ -1,3 +1,5 @@
+from django.conf import settings
+
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -40,6 +42,14 @@ class SignupView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        # Closed unless explicitly enabled. See ALLOW_PUBLIC_SIGNUP in settings
+        # for why: an unauthenticated caller could create a working account, and
+        # accounts here are meant to come from User Management.
+        if not getattr(settings, 'ALLOW_PUBLIC_SIGNUP', False):
+            return Response(
+                {'error': 'Self-registration is closed. Ask your practice '
+                          'administrator to create an account for you.'},
+                status=status.HTTP_403_FORBIDDEN)
         s = SignupSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         d = s.validated_data
@@ -55,7 +65,11 @@ class SignupView(APIView):
             specialization=d.get('specialization') or None,
             experience=d.get('experience') or 0,
             address=d.get('address') or None,
-            role=d.get('role') or 'ADVOCATE',
+            # Not from the request body. A caller supplying role='Super
+            # Admin' was stored verbatim; it grants nothing (permissions come
+            # from advocate_roles) but it is not a client's field to set, and it
+            # displays wherever the role string is shown.
+            role='ADVOCATE',
             theme='light',
             whatsapp_enabled=False,
             email_notifications_enabled=True,

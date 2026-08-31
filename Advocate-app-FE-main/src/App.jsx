@@ -7,7 +7,6 @@ import { isTokenExpired, logoutAndRedirect } from "./utils/auth.jsx"; // ✅ tok
 // Lazy-loaded route-level pages
 const Homepage = lazy(() => import("./pages/Homepage.jsx"));
 const Login = lazy(() => import("./pages/Login.jsx"));
-const Signup = lazy(() => import("./pages/Signup.jsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
 const Cases = lazy(() => import("./pages/Cases.jsx"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword.jsx"));
@@ -42,7 +41,6 @@ function App() {
         {/* Public Routes */}
         <Route path="/" element={<Homepage />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/verify-otp" element={<VerifyOtp />} />
         <Route path="/reset-password" element={<ResetPassword />} />

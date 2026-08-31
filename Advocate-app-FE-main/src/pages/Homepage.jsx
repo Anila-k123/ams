@@ -28,8 +28,14 @@ return(
           <img src={hmlogo} alt="logo" />
           <h3 className="coder-text">CODER:CHILL-CODING</h3>
           <div className="premium-divider">────────◆────────</div>
-          <button id='signup'><Link to='signup'>Signup</Link></button><br />
-          <span>Already have an account?</span><span id='loginbtn'><Link to='login'>LOGIN</Link></span>
+          {/* Self-registration is closed - accounts are created by a practice
+              administrator in User Management. The backend refuses
+              /api/advocates/signup unless ALLOW_PUBLIC_SIGNUP is set, so
+              offering the form here would only lead to a 403. */}
+          <button id='loginbtn'><Link to='login'>LOGIN</Link></button><br />
+          <span className="homepage-note">
+            Accounts are created by your practice administrator.
+          </span>
           </div>
         </div>
     </div>

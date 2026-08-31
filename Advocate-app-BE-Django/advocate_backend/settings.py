@@ -159,6 +159,23 @@ DEFAULT_FROM_EMAIL = (
     + ' <' + (EMAIL_HOST_USER or 'no-reply@localhost') + '>')
 EMAIL_TIMEOUT = config('MAIL_TIMEOUT', default=15, cast=int)
 
+# --- Registration ---
+# Public self-signup, off by default.
+#
+# /api/advocates/signup was AllowAny with no authentication, so anyone on the
+# internet could create a working account. It got no roles and so could not read
+# cases or clients - but 66 endpoints are gated on "any signed-in advocate", and
+# those included the Acts corpus and the court-search proxy, which drives the
+# scraper against eCourts under this server's IP.
+#
+# With a User Management page, roles and shared practices, accounts are created
+# by an admin. Self-signup also produced accounts that could log in and see an
+# empty application, with nothing to explain why.
+#
+# Turning this on again needs email verification first, and signup must not
+# accept a `role` from the request body.
+ALLOW_PUBLIC_SIGNUP = config('ALLOW_PUBLIC_SIGNUP', default=False, cast=bool)
+
 # --- Tests ---
 # Most models are unmanaged (they map onto Spring-owned tables), so the default
 # runner would build a test database with those tables missing. See the module

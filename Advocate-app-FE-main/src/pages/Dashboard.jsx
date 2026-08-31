@@ -757,9 +757,14 @@ function DashboardShell() {
 
           {/* Right area */}
           <div className="top-right">
-            <button className="icon-btn" onClick={() => ReportService.downloadDashboard()} title="Export Dashboard PDF">
-              <FiDownload />
-            </button>
+            {/* Exports the DASHBOARD as a PDF, so it only belongs on the
+                dashboard. On Invoices or Cases it looked like it would export
+                that page and did not. Those pages have their own exports. */}
+            {isDashboardHome && (
+              <button className="icon-btn" onClick={() => ReportService.downloadDashboard()} title="Export Dashboard PDF">
+                <FiDownload />
+              </button>
+            )}
             <NotificationBell onOpen={(route) => navigate(route)} />
             <button className="icon-btn" onClick={handleToggleTheme}>
               {theme === "dark" ? "☀️" : "🌙"}

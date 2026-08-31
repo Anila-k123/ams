@@ -4,8 +4,6 @@ from . import views, whatsapp
 urlpatterns = [
     # /api/communication/*
     path('communication/settings', views.SettingsView.as_view()),
-    path('communication/templates', views.TemplatesView.as_view()),
-    path('communication/templates/<int:pk>', views.TemplateDetailView.as_view()),
     path('communication/history', views.HistoryView.as_view()),
     path('communication/statistics', views.StatisticsView.as_view()),
     path('communication/logs', views.LogsView.as_view()),

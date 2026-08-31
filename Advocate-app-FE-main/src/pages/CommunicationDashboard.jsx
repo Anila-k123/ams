@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
-  FiMail, FiMessageSquare, FiFileText, FiClock,
+  FiMail, FiMessageSquare, FiClock,
   FiCheckCircle, FiXCircle, FiSend, FiSettings,
   FiTrendingUp, FiAlertCircle
 } from "react-icons/fi";
@@ -145,15 +145,6 @@ export default function CommunicationDashboard() {
           </div>
         </div>
 
-        <div className="comm-card" onClick={() => navigate("/dashboard/communication/templates")}>
-          <div className="comm-card-icon templates"><FiFileText /></div>
-          <div className="comm-card-body">
-            <span className="comm-card-label">Templates</span>
-            <span className="comm-card-value">Manage</span>
-            <span className="comm-card-sub">Notification templates</span>
-          </div>
-        </div>
-
         <div className="comm-card" onClick={() => navigate("/dashboard/communication/history")}>
           <div className="comm-card-icon history"><FiClock /></div>
           <div className="comm-card-body">
@@ -172,9 +163,6 @@ export default function CommunicationDashboard() {
         <div className="comm-actions-row">
           <button className="comm-action-btn" onClick={() => navigate("/dashboard/communication/settings")}>
             <FiSettings /> Configure Settings
-          </button>
-          <button className="comm-action-btn" onClick={() => navigate("/dashboard/communication/templates")}>
-            <FiFileText /> Manage Templates
           </button>
           <button className="comm-action-btn" onClick={() => navigate("/dashboard/communication/history")}>
             <FiTrendingUp /> View History

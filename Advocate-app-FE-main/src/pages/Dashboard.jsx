@@ -61,7 +61,6 @@ const UserManagement = lazy(() => import("./UserManagement.jsx"));
 const RoleManagement = lazy(() => import("./RoleManagement.jsx"));
 const CommunicationDashboard = lazy(() => import("./CommunicationDashboard.jsx"));
 const CommunicationSettings = lazy(() => import("./CommunicationSettings.jsx"));
-const NotificationTemplates = lazy(() => import("./NotificationTemplates.jsx"));
 const CommunicationHistory = lazy(() => import("./CommunicationHistory.jsx"));
 const AppealAlert = lazy(() => import("./AppealAlert.jsx"));
 const Acts = lazy(() => import("./Acts.jsx"));
@@ -220,7 +219,6 @@ function DashboardShell() {
     "/dashboard/settings": "Settings",
     "/dashboard/communication": "Communication Overview",
     "/dashboard/communication/settings": "Communication Settings",
-    "/dashboard/communication/templates": "Notification Templates",
     "/dashboard/communication/history": "Communication History",
   };
 
@@ -656,12 +654,6 @@ function DashboardShell() {
                 <NavLink to="/dashboard/communication/settings" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Communication Settings">
                   <span className="nav-icon sub-nav-icon">⚙️</span>
                   <span className="nav-text">Settings</span>
-                </NavLink>
-            </li>
-            <li>
-                <NavLink to="/dashboard/communication/templates" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Notification Templates">
-                  <span className="nav-icon sub-nav-icon">📄</span>
-                  <span className="nav-text">Templates</span>
                 </NavLink>
             </li>
             <li>
@@ -1257,7 +1249,6 @@ function DashboardShell() {
             } />
             <Route path="/communication" element={<CommunicationDashboard />} />
             <Route path="/communication/settings" element={<CommunicationSettings />} />
-            <Route path="/communication/templates" element={<NotificationTemplates />} />
             <Route path="/communication/history" element={<CommunicationHistory />} />
           </Routes>
           </Suspense>

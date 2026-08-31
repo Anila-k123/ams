@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status as http
 
-from core.models import (CommunicationSettings, NotificationTemplate,
+from core.models import (CommunicationSettings,
                          NotificationHistory, NotificationLog, NotificationQueue)
 from core.pagination import SpringStylePagination
 from core.practice import practice_ids
@@ -88,52 +88,16 @@ class SettingsView(APIView):
 
 # ==================== TEMPLATES ====================
 
-def _template_map(t):
-    return {
-        'id': t.id, 'name': t.name, 'channel': t.channel, 'type': t.type,
-        'subjectTemplate': t.subject_template, 'bodyTemplate': t.body_template,
-        'active': t.active, 'createdAt': _iso(t.created_at), 'updatedAt': _iso(t.updated_at),
-    }
-
-
-class TemplatesView(APIView):
-    def get(self, request):
-        qs = NotificationTemplate.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('id')
-        return Response([_template_map(t) for t in qs])
-
-    def post(self, request):
-        d = request.data
-        now = _now()
-        t = NotificationTemplate.objects.create(
-            name=d.get('name') or 'Untitled', channel=d.get('channel') or 'EMAIL',
-            type=d.get('type') or 'CUSTOM', subject_template=d.get('subjectTemplate'),
-            body_template=d.get('bodyTemplate') or '', active=d.get('active', True),
-            created_at=now, updated_at=now, advocate_id=request.user.id)
-        return Response(_template_map(t))
-
-
-class TemplateDetailView(APIView):
-    def put(self, request, pk):
-        t = NotificationTemplate.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
-        if t is None:
-            return Response({'error': 'Template not found'}, status=http.HTTP_404_NOT_FOUND)
-        d = request.data
-        for attr, key in [('name', 'name'), ('channel', 'channel'), ('type', 'type'),
-                          ('subject_template', 'subjectTemplate'), ('body_template', 'bodyTemplate'),
-                          ('active', 'active')]:
-            if key in d:
-                setattr(t, attr, d[key])
-        t.updated_at = _now()
-        t.save()
-        return Response(_template_map(t))
-
-    def delete(self, request, pk):
-        t = NotificationTemplate.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
-        if t is None:
-            return Response({'error': 'Template not found'}, status=http.HTTP_404_NOT_FOUND)
-        t.delete()
-        return Response({'message': 'Template deleted successfully'})
-
+# Notification templates were removed. The page let you author a subject and
+# body per event type, and nothing that SENDS a message ever read one - every
+# notification is built from a hardcoded string in notifications/events.py and
+# appeals/scan_appeals.py. So an advocate could write a template, mark it
+# active, and every reminder still went out in the built-in wording.
+#
+# The `notification_templates` table is left in place (Spring-owned, 0 rows).
+# To bring this back, the missing half is a render(event_type, channel, context)
+# used by the producers, with a placeholder convention and a fallback to the
+# current text - see git history for the CRUD that existed here.
 
 # ==================== HISTORY ====================
 

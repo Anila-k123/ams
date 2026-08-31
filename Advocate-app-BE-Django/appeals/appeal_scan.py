@@ -199,6 +199,31 @@ def clean_party_name(raw):
     return text
 
 
+def portal_search_term(name):
+    """A party name reduced to what a court search box will accept.
+
+    Both eCourts portals validate this field. The Supreme Court answers
+    "Party Name - Please enter only alphabets" and the High Court rejects
+    punctuation the same way, so a name like "T.KANNAN" - initials with stops,
+    which is how a large share of South Indian names are written on the
+    register - was refused outright and the case never got searched at all.
+
+    Punctuation becomes a space rather than being deleted: "T.KANNAN" must not
+    collapse to "TKANNAN", which matches nothing. Single letters are then
+    dropped, because an initial on its own is not searchable and the registry
+    would not match it anyway - "T.KANNAN" searches as "KANNAN", which is the
+    part that identifies the person.
+
+    Returns '' when nothing substantive survives; the caller skips the case
+    rather than sending a query the portal will reject.
+    """
+    if not name:
+        return ''
+    letters_only = re.sub(r'[^A-Za-z ]+', ' ', str(name))
+    words = [w for w in letters_only.split() if len(w) > 1]
+    return ' '.join(words).strip()
+
+
 def searchable_names(names):
     """Party names ranked by how likely a court search box is to match them."""
     scored = []
@@ -227,6 +252,10 @@ def searchable_names(names):
         # Two or three distinctive words is the sweet spot: enough to identify,
         # short enough that the registry's LIKE match still hits.
         penalty = abs(len(distinctive) - 2)
-        scored.append((round(institutional, 2), penalty, len(name), name))
+        # Rank on the real name; hand back what the portal will accept.
+        term = portal_search_term(name)
+        if not term:
+            continue                                  # nothing left to search
+        scored.append((round(institutional, 2), penalty, len(name), term))
     scored.sort()
     return [n for _, _, _, n in scored]

@@ -159,6 +159,12 @@ DEFAULT_FROM_EMAIL = (
     + ' <' + (EMAIL_HOST_USER or 'no-reply@localhost') + '>')
 EMAIL_TIMEOUT = config('MAIL_TIMEOUT', default=15, cast=int)
 
+# --- Tests ---
+# Most models are unmanaged (they map onto Spring-owned tables), so the default
+# runner would build a test database with those tables missing. See the module
+# docstring for what that means and what it cannot cover.
+TEST_RUNNER = 'core.test_runner.ManagedModelTestRunner'
+
 # --- OTP ---
 # The literal that used to be here was committed, and a published salt defeats
 # the point of salting: an OTP is six digits, so an unsalted SHA-256 of one is

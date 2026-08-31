@@ -25,11 +25,66 @@ import zipfile
 from django.conf import settings
 from django.db import connection, transaction
 
-# Data tables to export/restore (all carry advocate_id). Order = FK-safe for insert.
+# Data tables to export/restore (all carry advocate_id). Parents first, so the
+# insert order reads sensibly even though restore disables FK triggers.
+#
+# This list used to include 'tasks' - the legacy Spring table that the dead
+# core.Task app mapped onto. It holds 0 rows; real tasks live in `case_task`.
+# So every "Full" backup exported an empty table and silently omitted the
+# advocate's actual tasks, along with case parties, timeline events and the
+# fetched court records: 190+ rows of real case data on this database alone.
+# A backup that quietly leaves things out is worse than one that fails.
 DATA_TABLES = [
-    'clients', 'cases', 'case_events', 'documents', 'expenses',
-    'invoices', 'client_payments', 'tasks', 'notifications', 'activities',
+    'clients',
+    'cases',
+    # Case children
+    'case_events',
+    'case_note',
+    'case_tag',
+    'case_party',
+    'case_related',
+    'case_timeline_event',
+    'case_task',
+    'case_task_document',        # references case_task, so after it
+    'documents',
+    # Money
+    'expenses',
+    'invoices',
+    'client_payments',
+    # Court records fetched for this advocate's cases
+    'courtsearch_imported_record',
+    # The advocate's own feed
+    'notifications',
+    'activities',
 ]
+
+# Deliberately NOT backed up, each for its own reason. Listed rather than simply
+# absent, so the next person does not have to guess whether it was an oversight.
+EXCLUDED_TABLES = {
+    # Restoring an audit trail would let someone rewrite the record of what
+    # they did. It is also the one thing that must survive a bad restore.
+    'audit_log',
+    # Permissions. A restore silently changing who can do what is not a
+    # restore, it is a privilege escalation with a friendly button.
+    'advocate_roles',
+    # Holds SMTP credentials and the WhatsApp token. The SETTINGS section
+    # already covers the advocate profile without the secrets.
+    'communication_settings',
+    # Short-lived secrets; meaningless once restored.
+    'password_reset_otp',
+    # Delivery operations, not records. Re-inserting a queue would re-send.
+    'notification_queue', 'notification_history', 'notification_logs',
+    'notification_templates',
+    # Self-referential: the list of backups is not part of a backup.
+    'backup_history',
+    # Derived - the nightly sweep regenerates it from the cases.
+    'appeal_detection',
+    # References the shared acts catalogue, which is imported separately and
+    # is not advocate-owned, so the links would dangle on another database.
+    'acts_actcaselink',
+    # Demo scaffolding.
+    'demo_workspace',
+}
 
 TYPE_SECTIONS = {
     'QUICK': {'DATABASE', 'JSON', 'DOCUMENTS'},
@@ -58,7 +113,25 @@ def _unique_name(directory, file_name):
     return '{}-{}{}'.format(stem, n, ext)
 
 
+def _table_exists(table):
+    with connection.cursor() as cur:
+        cur.execute("SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = %s", [table])
+        return cur.fetchone() is not None
+
+
 def _rows(table, advocate_id):
+    """Rows this advocate owns in one table, or None if the table is absent.
+
+    None rather than an empty list, so a missing table is distinguishable from
+    an empty one. `case_timeline_event` is Spring-era and has no Django model,
+    so it exists in production and not in a model-derived test database - and a
+    future migration could drop any of these. Either way one absent table must
+    not fail the whole backup, and must not vanish from it silently: the caller
+    records it as skipped.
+    """
+    if not _table_exists(table):
+        return None, None
     with connection.cursor() as cur:
         cur.execute(f'SELECT * FROM {table} WHERE advocate_id = %s', [advocate_id])
         cols = [c[0] for c in cur.description]
@@ -94,6 +167,7 @@ def create_backup(advocate, backup_type):
     buf = io.BytesIO()
     sections = []
     counts = {}
+    skipped = []
 
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
         # JSON + DATABASE sections
@@ -103,6 +177,10 @@ def create_backup(advocate, backup_type):
             try:
                 for t in DATA_TABLES:
                     cols, rows = _rows(t, advocate.id)
+                    if rows is None:
+                        # Absent table: record it rather than passing over it.
+                        skipped.append(t)
+                        continue
                     counts[t] = len(rows)
                     if 'JSON' in sections_wanted:
                         z.writestr(f'data/{t}.json', json.dumps(rows, default=str, indent=2))
@@ -122,7 +200,7 @@ def create_backup(advocate, backup_type):
             copied = 0
             try:
                 _, docs = _rows('documents', advocate.id)
-                for d in docs:
+                for d in (docs or []):
                     fp = d.get('file_path')
                     if fp and os.path.exists(fp):
                         z.write(fp, arcname=f"documents/{d.get('stored_name') or os.path.basename(fp)}")
@@ -166,6 +244,7 @@ def create_backup(advocate, backup_type):
             'numberOfNotifications': counts.get('notifications', 0),
             'numberOfActivities': counts.get('activities', 0),
             'durationSeconds': duration, 'healthScore': health, 'sections': sections,
+            'skippedTables': skipped,
         }
         z.writestr('metadata.json', json.dumps(metadata, indent=2))
 
@@ -199,7 +278,7 @@ def create_backup(advocate, backup_type):
         # with real timings. The page used to animate an invented stage list
         # instead; now it has the truth to display.
         'sections': sections, 'healthScore': health,
-        'recordCounts': counts,
+        'recordCounts': counts, 'skippedTables': skipped,
     }
 
 
@@ -291,9 +370,13 @@ def restore_backup(advocate, file_bytes, restore_type):
             cur.execute("SET session_replication_role = 'replica'")
             try:
                 with transaction.atomic():
-                    for t in reversed(DATA_TABLES):
+                    # Children first. A table that does not exist on this
+                    # database is skipped rather than failing the restore -
+                    # same reason as the export side.
+                    present = [t for t in DATA_TABLES if _table_exists(t)]
+                    for t in reversed(present):
                         cur.execute(f'DELETE FROM {t} WHERE advocate_id = %s', [advocate.id])
-                    for t in DATA_TABLES:
+                    for t in present:
                         entry = f'data/{t}.json'
                         if entry not in names:
                             continue

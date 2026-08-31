@@ -78,7 +78,7 @@ function StatCard({ icon, label, value, color, subtitle }) {
 // ──────────────────────────── Main Component ────────────────────────────
 export default function NotificationsCenter() {
   const { withLoading } = useLoading();
-  const { success, error, warning } = useToast();
+  const { success, error } = useToast();
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
   const [totalPages, setTotalPages] = useState(0);
@@ -91,10 +91,6 @@ export default function NotificationsCenter() {
   const [settings, setSettings] = useState({ whatsappEnabled: false, emailNotificationsEnabled: false });
 
   // Modals
-  const [showManualModal, setShowManualModal] = useState(false);
-  const [manualPhone, setManualPhone] = useState("");
-  const [manualMessage, setManualMessage] = useState("");
-  const [manualSending, setManualSending] = useState(false);
 
   // Filters
   const [page, setPage] = useState(0);
@@ -185,27 +181,6 @@ export default function NotificationsCenter() {
     }
   };
 
-  const handleSendManual = async () => {
-    if (!manualPhone || !manualMessage) { warning("Please fill all fields"); return; }
-    setManualSending(true);
-    try {
-      await axios.post(`${API_BASE}/whatsapp/send-manual`, {
-        phone: manualPhone,
-        message: manualMessage,
-        clientName: "Client"
-      }, { headers: authHeaders() });
-      success("Manual message dispatched!");
-      setShowManualModal(false);
-      setManualPhone("");
-      setManualMessage("");
-      fetchHistory();
-      fetchStats();
-    } catch (e) {
-      error("Failed to send message: " + (e.response?.data?.error || e.message));
-    } finally {
-      setManualSending(false);
-    }
-  };
 
   const handleTriggerCheck = async () => {
     setTriggeringCheck(true);
@@ -244,29 +219,17 @@ export default function NotificationsCenter() {
             📨 Notification Center
           </h1>
           <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: 14 }}>
-            Monitor emails, WhatsApp messages and notification history
+            Monitor email delivery and notification history
           </p>
         </div>
         <div style={{ display: "flex", gap: 16 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "var(--card-bg)", padding: "8px 16px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
-              <input type="checkbox" checked={settings.whatsappEnabled} onChange={() => toggleSetting('whatsappEnabled')} />
-              Auto WhatsApp Notifications
-            </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
               <input type="checkbox" checked={settings.emailNotificationsEnabled} onChange={() => toggleSetting('emailNotificationsEnabled')} />
               Auto Email Notifications
             </label>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <button
-              onClick={() => setShowManualModal(true)}
-              style={{
-                background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "#fff", border: "none", borderRadius: 10,
-                padding: "8px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer",
-              }}>
-              💬 Send Custom Message
-            </button>
             <button
               onClick={handleTriggerCheck}
               disabled={triggeringCheck}
@@ -501,47 +464,6 @@ export default function NotificationsCenter() {
         </div>
       )}
 
-      {/* ── Manual Message Modal ── */}
-      {showManualModal && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
-          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, padding: 24,
-        }} onClick={() => setShowManualModal(false)}>
-          <div style={{
-            background: "var(--card-bg)", border: "1px solid #22c55e55", borderRadius: 16, padding: 32,
-            maxWidth: 480, width: "100%",
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: "#22c55e" }}>💬 Send Custom WhatsApp</h2>
-              <button onClick={() => setShowManualModal(false)} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 20, cursor: "pointer" }}>✕</button>
-            </div>
-            
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", fontWeight: 700, marginBottom: 6 }}>Phone Number (with Country Code)</label>
-                <input type="text" placeholder="+919876543210" style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} 
-                  value={manualPhone} onChange={e => setManualPhone(e.target.value)} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", fontWeight: 700, marginBottom: 6 }}>Message</label>
-                <textarea rows="4" placeholder="Type your message here..." style={{ ...inputStyle, width: "100%", boxSizing: "border-box", resize: "vertical" }}
-                  value={manualMessage} onChange={e => setManualMessage(e.target.value)} />
-              </div>
-              
-              <button 
-                onClick={handleSendManual} 
-                disabled={manualSending}
-                style={{
-                  background: "linear-gradient(135deg,#22c55e,#16a34a)", color: "#fff", border: "none", borderRadius: 8,
-                  padding: "12px", fontWeight: 700, fontSize: 14, cursor: manualSending ? "not-allowed" : "pointer", opacity: manualSending ? 0.7 : 1,
-                  marginTop: 8
-                }}>
-                {manualSending ? "Sending..." : "Send Message"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

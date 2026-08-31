@@ -51,7 +51,15 @@ INSTALLED_APPS = [
     'acts',
 ]
 
-WHATSAPP_VERIFY_TOKEN = config('WHATSAPP_VERIFY_TOKEN', default='AdvocateApp2026SecureToken')
+# Webhook verification token. No default: it was a committed literal, and a
+# published verify token lets anyone complete Meta's webhook handshake.
+WHATSAPP_VERIFY_TOKEN = config('WHATSAPP_VERIFY_TOKEN', default='')
+
+# WhatsApp is off. There is no Meta integration behind it - the sender was a
+# mock that recorded 'SENT' without sending - so the channel is disabled
+# outright rather than left looking available. Flip this when the Business API
+# account and message templates are actually approved.
+WHATSAPP_ENABLED = config('WHATSAPP_ENABLED', default=False, cast=bool)
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -129,20 +137,35 @@ DOCUMENT_UPLOAD_DIR = config(
     default=str(BASE_DIR.parent / 'Advocate-app-BE-main' / 'uploads'),
 )
 
-# --- Email (SMTP) — used for password-reset OTP. Defaults to the project's Gmail. ---
-# If sending fails (e.g. bad creds / no network), the OTP flow still works: the OTP
-# is stored and also printed to the server console so dev testing isn't blocked.
+# --- Email (SMTP) ---
+# Every outbound message in the app goes through here: password-reset OTPs,
+# hearing and invoice reminders, appeal alerts, and the Communication test send.
+#
+# NO DEFAULT CREDENTIALS. A real Gmail address and app password used to sit in
+# this file as fallback values, which meant a live secret was committed to a
+# public repository from the first commit onward. Configure MAIL_USERNAME and
+# MAIL_PASSWORD in .env, which is gitignored, and nowhere else.
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = config('MAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = config('MAIL_PORT', default=587, cast=int)
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = config('MAIL_USERNAME', default='chilladvocate@gmail.com')
-EMAIL_HOST_PASSWORD = config('MAIL_PASSWORD', default='npqn ghoj xqmn swgf')
-DEFAULT_FROM_EMAIL = config('NOTIFICATION_SENDER_NAME', default='Advocate Case Management System') + ' <' + EMAIL_HOST_USER + '>'
-EMAIL_TIMEOUT = 8
+EMAIL_USE_TLS = config('MAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('MAIL_USERNAME', default='')
+EMAIL_HOST_PASSWORD = config('MAIL_PASSWORD', default='')
+# Blank host user means nothing can send. Fail on that explicitly rather than
+# letting every send attempt turn into an SMTP error nobody reads.
+EMAIL_CONFIGURED = bool(EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
+DEFAULT_FROM_EMAIL = (
+    config('NOTIFICATION_SENDER_NAME', default='Advocate Case Management System')
+    + ' <' + (EMAIL_HOST_USER or 'no-reply@localhost') + '>')
+EMAIL_TIMEOUT = config('MAIL_TIMEOUT', default=15, cast=int)
 
 # --- OTP ---
-OTP_SALT = config('OTP_SALT', default='Adv0c@t3ApP_OtpS#lt!2026')
+# The literal that used to be here was committed, and a published salt defeats
+# the point of salting: an OTP is six digits, so an unsalted SHA-256 of one is
+# reversible from a table of a million entries. Falls back to SECRET_KEY, which
+# is already required, already secret, and already per-deployment - so this is
+# never accidentally blank.
+OTP_SALT = config('OTP_SALT', default='') or SECRET_KEY
 OTP_EXPIRY_MINUTES = config('OTP_EXPIRY_MINUTES', default=10, cast=int)
 OTP_RATE_LIMIT = config('OTP_RATE_LIMIT', default=5, cast=int)
 

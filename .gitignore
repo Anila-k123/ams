@@ -68,3 +68,9 @@ recovery-codes.txt
 .claude/
 Advocate-app-FE-main/node_modules/
 Advocate-app-FE-main/dist/
+
+# Runtime storage: uploaded documents, branding images and backup archives.
+# Never source. A stray test upload got committed once because this was only
+# ignored in the frontend .gitignore, which does not cover the backend path.
+Advocate-app-BE-Django/uploads/
+Advocate-app-BE-Django/logs/

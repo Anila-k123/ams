@@ -1,13 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { FiUser, FiHome, FiImage, FiLock, FiSliders, FiUpload, FiSave, FiCamera, FiX, FiEye, FiEyeOff, FiCheck, FiDatabase, FiTrash2, FiRefreshCw } from "react-icons/fi";
+import { FiUser, FiHome, FiImage, FiLock, FiSliders, FiUpload, FiSave, FiCamera, FiEye, FiEyeOff, FiCheck } from "react-icons/fi";
 import { useTheme } from "../contexts/ThemeContext.jsx";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 import { useToast } from "../contexts/ToastContext.jsx";
-import { useDashboardFilter } from "../contexts/DashboardFilterContext.jsx";
 import "../assets/styles/SettingsPage.css";
 import "../assets/styles/ProfilePage.css";
-import "../assets/styles/DemoWorkspaceDialog.css";
 
 const API_BASE = `${import.meta.env.VITE_API_BASE || "http://localhost:8080"}/api`;
 const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d@#$%^&*!?_+=-]{8,32}$/;
@@ -18,7 +16,6 @@ const TABS = [
   { id: "branding", label: "Branding", icon: FiImage },
   { id: "security", label: "Security", icon: FiLock },
   { id: "preferences", label: "Preferences", icon: FiSliders },
-  { id: "demo", label: "Demo", icon: FiDatabase },
 ];
 
 export default function ProfilePage() {
@@ -27,7 +24,6 @@ export default function ProfilePage() {
   const toast = useToast();
   const token = localStorage.getItem("token");
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
-  const dashboardFilter = useDashboardFilter();
 
   const [activeTab, setActiveTab] = useState("general");
   const [loading, setLoading] = useState(true);
@@ -59,10 +55,6 @@ export default function ProfilePage() {
   const [showPwd, setShowPwd] = useState({ current: false, new: false, confirm: false });
   const [pwdErrors, setPwdErrors] = useState({});
   const [uploading, setUploading] = useState({ photo: false, logo: false, signature: false, seal: false });
-  const [demoStatus, setDemoStatus] = useState(null);
-  const [demoLoading, setDemoLoading] = useState(false);
-  const [demoError, setDemoError] = useState(null);
-  const [demoSuccess, setDemoSuccess] = useState(null);
 
   const fileInputRef = useRef(null);
   const [uploadTarget, setUploadTarget] = useState(null);
@@ -296,69 +288,6 @@ export default function ProfilePage() {
     }
   };
 
-  const fetchDemoStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE.replace("/api", "")}/api/demo/status`, authHeaders);
-      if (res.ok) {
-        setDemoStatus(await res.json());
-      }
-    } catch (e) {
-      // ignore
-    }
-  };
-
-  const handleLoadDemo = async () => {
-    setDemoLoading(true);
-    setDemoError(null);
-    setDemoSuccess(null);
-    try {
-      const res = await fetch(`${API_BASE.replace("/api", "")}/api/demo/load`, {
-        method: "POST", ...authHeaders,
-        headers: { ...authHeaders.headers, "Content-Type": "application/json" }
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to load demo data");
-      }
-      setDemoSuccess("Demo workspace loaded successfully!");
-      await fetchDemoStatus();
-      dashboardFilter.forceRefreshDashboard();
-    } catch (err) {
-      setDemoError(err.message);
-    } finally {
-      setDemoLoading(false);
-    }
-  };
-
-  const handleClearDemo = async () => {
-    setDemoLoading(true);
-    setDemoError(null);
-    setDemoSuccess(null);
-    try {
-      const res = await fetch(`${API_BASE.replace("/api", "")}/api/demo/clear`, {
-        method: "DELETE", ...authHeaders,
-        headers: { ...authHeaders.headers, "Content-Type": "application/json" }
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to clear demo data");
-      }
-      setDemoSuccess("Demo workspace cleared!");
-      await fetchDemoStatus();
-      dashboardFilter.forceRefreshDashboard();
-    } catch (err) {
-      setDemoError(err.message);
-    } finally {
-      setDemoLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === "demo") {
-      fetchDemoStatus();
-    }
-  }, [activeTab]);
-
   if (loading) {
     return (
       <div className="settings-container">
@@ -392,7 +321,6 @@ export default function ProfilePage() {
           {activeTab === "branding" && renderBranding()}
           {activeTab === "security" && renderSecurity()}
           {activeTab === "preferences" && renderPreferences()}
-          {activeTab === "demo" && renderDemoWorkspace()}
         </main>
       </div>
 
@@ -817,67 +745,6 @@ export default function ProfilePage() {
         <button className="save-settings-btn" onClick={handleSavePreferences} disabled={saving}>
           <FiSave size={15} /> {saving ? "Saving..." : "Save Preferences"}
         </button>
-      </div>
-    );
-  }
-
-  function renderDemoWorkspace() {
-    const counts = demoStatus?.recordCounts || {};
-
-    return (
-      <div className="settings-section">
-        <h3>Demo Workspace</h3>
-        <p className="section-desc">
-          Load sample data to explore the system, or clear all demo data from your workspace.
-        </p>
-
-        {demoError && (
-          <div className="demo-alert demo-alert-error" style={{ marginBottom: 16 }}>
-            <FiX size={16} />
-            <span>{demoError}</span>
-          </div>
-        )}
-        {demoSuccess && (
-          <div className="demo-alert demo-alert-success" style={{ marginBottom: 16 }}>
-            <FiCheck size={16} />
-            <span>{demoSuccess}</span>
-          </div>
-        )}
-
-        {demoStatus && (
-          <div className="demo-stats-grid" style={{ marginBottom: 20 }}>
-            {Object.entries(counts).map(([key, count]) => (
-              <div key={key} className="demo-stat-card" style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-color)", borderRadius: 10, padding: "10px 8px", textAlign: "center" }}>
-                <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-muted)" }}>{key}</span>
-                <span style={{ fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>{count}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {demoStatus?.hasDemoWorkspace && (
-          <div style={{ marginBottom: 16, padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 13, color: "#16a34a", display: "flex", alignItems: "center", gap: 8 }}>
-            <FiCheck size={16} />
-            <span>Demo workspace loaded on {new Date(demoStatus.generatedAt).toLocaleDateString()}</span>
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
-          {!demoStatus?.hasDemoWorkspace ? (
-            <button className="save-settings-btn" onClick={handleLoadDemo} disabled={demoLoading} style={{ background: "linear-gradient(135deg, #6366F1, #8B5CF6)", color: "#fff" }}>
-              <FiDatabase size={15} /> {demoLoading ? "Loading..." : "Load Demo Workspace"}
-            </button>
-          ) : (
-            <>
-              <button className="save-settings-btn" onClick={handleLoadDemo} disabled={demoLoading} style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}>
-                <FiRefreshCw size={15} /> {demoLoading ? "Reloading..." : "Reload Demo Data"}
-              </button>
-              <button className="save-settings-btn" onClick={handleClearDemo} disabled={demoLoading} style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }}>
-                <FiTrash2 size={15} /> {demoLoading ? "Clearing..." : "Clear Demo Data"}
-              </button>
-            </>
-          )}
-        </div>
       </div>
     );
   }

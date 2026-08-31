@@ -34,7 +34,6 @@ import NotificationBell from "../components/NotificationBell";
 import ActivityFeed from "../components/ActivityFeed";
 import HearingAlertPopup from "../components/HearingAlertPopup";
 import SearchModal from "../components/SearchModal";
-import DemoWorkspaceDialog from "../components/DemoWorkspaceDialog";
 import GlobalSearchModal from "../components/GlobalSearchModal";
 import { SearchProvider } from "../contexts/SearchContext";
 import {
@@ -169,8 +168,6 @@ function DashboardShell() {
   const [fullName, setFullName] = useState(localStorage.getItem("fullName") || "Advocate Y");
   const [email, setEmail] = useState(localStorage.getItem("email") || "advocate@example.com");
   const [role, setRole] = useState(localStorage.getItem("role") || "ADVOCATE");
-  const [showDemoDialog, setShowDemoDialog] = useState(false);
-  const [demoStatusChecked, setDemoStatusChecked] = useState(false);
 
   // Dashboard widgets state (atomic — updated by single setState call)
   const [dash, setDash] = useState({
@@ -252,29 +249,6 @@ function DashboardShell() {
     });
     return unsub;
   }, [wsSubscribe, filter]);
-
-  // Check demo workspace status on first load
-  useEffect(() => {
-    if (!token || demoStatusChecked) return;
-    const checkDemo = async () => {
-      try {
-        const res = await fetch(`${window.API_BASE || "http://localhost:8080"}/api/demo/status`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const status = await res.json();
-          if (status.workspaceEmpty && !status.hasDemoWorkspace) {
-            setShowDemoDialog(true);
-          }
-        }
-      } catch (e) {
-        // silently ignore - demo endpoints may not be available
-      } finally {
-        setDemoStatusChecked(true);
-      }
-    };
-    checkDemo();
-  }, [token, demoStatusChecked]);
 
   // Profile sync
   useEffect(() => {
@@ -1260,18 +1234,6 @@ function DashboardShell() {
         <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} onNavigate={handleSearchNavigate} onQuickAction={handleQuickAction} />
       </SearchProvider>
 
-      <DemoWorkspaceDialog
-        isOpen={showDemoDialog}
-        onClose={() => setShowDemoDialog(false)}
-        onComplete={() => {
-          setShowDemoDialog(false);
-          filter.forceRefreshDashboard();
-        }}
-        onClear={() => {
-          dashboardService.clearAllCache();
-          filter.forceRefreshDashboard();
-        }}
-      />
     </div>
   );
 }

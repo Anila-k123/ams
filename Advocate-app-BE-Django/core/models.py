@@ -110,7 +110,12 @@ class Client(models.Model):
 
 class Case(models.Model):
     id = models.BigAutoField(primary_key=True)
-    case_number = models.CharField(max_length=255, unique=True)
+    # Unique per ADVOCATE, not globally - see the constraint below and
+    # `manage.py scope_case_numbers`. A court case number is unique within a
+    # court, not nationally (123/2024 exists in hundreds of district courts),
+    # and two advocates on opposite sides of one matter are both entitled to
+    # track it.
+    case_number = models.CharField(max_length=255)
     case_title = models.CharField(max_length=255, null=True, blank=True)
     case_type = models.CharField(max_length=255, null=True, blank=True)
     court_level = models.CharField(max_length=255, null=True, blank=True)
@@ -131,6 +136,12 @@ class Case(models.Model):
     class Meta:
         managed = False
         db_table = 'cases'
+        constraints = [
+            # Mirrors the live constraint so the test database matches the real
+            # one. Named to match what scope_case_numbers creates.
+            models.UniqueConstraint(fields=['advocate', 'case_number'],
+                                    name='cases_advocate_case_number_key'),
+        ]
 
 
 class CaseEvent(models.Model):

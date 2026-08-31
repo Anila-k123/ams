@@ -96,29 +96,31 @@ class CreateCaseView(APIView):
         case_number = data.get('caseNumber')
         if not case_number:
             return Response({'error': 'caseNumber is required'}, status=status.HTTP_400_BAD_REQUEST)
-        # case_number carries a GLOBAL unique constraint in the schema
-        # (ukd2x5t06l1d3krie16abr38r0y), so this lookup cannot be scoped - the
-        # row may belong to another practice entirely and the insert would
-        # still collide.
-        existing = Case.objects.filter(case_number=case_number).first()
+        # Scoped to the practice, not global. cases.case_number used to carry a
+        # global UNIQUE, so this lookup could not be scoped and an advocate was
+        # refused a case number another practice happened to hold - for a case
+        # they could not see. The constraint is now UNIQUE (advocate_id,
+        # case_number) (see `manage.py scope_case_numbers`), so two chambers can
+        # track the same court case, which is what actually happens when they
+        # are on opposite sides of it.
+        #
+        # The DB constraint is per advocate; this check is per practice, which
+        # is stricter on purpose: two members of one chambers both adding the
+        # same number would list the case twice in every shared view.
+        existing = Case.objects.filter(
+            case_number=case_number,
+            advocate_id__in=practice_ids(request.user)).first()
         if existing is not None and not existing.deleted:
             return Response({'error': 'Case number already exists'}, status=status.HTTP_409_CONFLICT)
-        # An archived row is reused rather than re-inserted. Only reuse one this
-        # practice actually owns: reassigning advocate_id on someone else's row
-        # would hand their archived case, and its history, to whoever guessed
-        # the number.
-        if existing is not None and existing.advocate_id not in practice_ids(request.user):
-            return Response(
-                {'error': 'Case number already exists'},
-                status=status.HTTP_409_CONFLICT)
         client_id = _extract_client_id(data)
         client = None
         if client_id is not None:
             client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first()
         if existing is not None and existing.deleted:
-            # Re-adding a previously archived case: case_number is globally unique, so
-            # reuse the row — reset it to a fresh, active case for this advocate and
-            # clear the import-generated children so a re-import repopulates cleanly.
+            # Re-adding a case this practice archived: reuse the row rather
+            # than inserting a second one, reset it to a fresh active case, and
+            # clear the import-generated children so a re-import repopulates
+            # cleanly. The lookup above guarantees the row is ours.
             existing.case_title = data.get('caseTitle')
             existing.case_type = data.get('caseType')
             existing.court_level = data.get('courtLevel')

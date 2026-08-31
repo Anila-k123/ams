@@ -34,6 +34,13 @@ class AdvocateJWTAuthentication(authentication.BaseAuthentication):
             advocate = Advocate.objects.filter(email=email).first()
         if advocate is None:
             raise exceptions.AuthenticationFailed('Advocate not found')
+        # An advocate who has left a practice keeps their row - their work
+        # stays with the practice and stays reachable - but must not keep
+        # access. Checked here so every endpoint is covered by one gate, and
+        # any token issued before they left stops working immediately.
+        if getattr(advocate, 'left_on', None) is not None:
+            raise exceptions.AuthenticationFailed(
+                'This account is no longer active.')
 
         # Cache permissions/roles on the request to avoid recomputing per check.
         request._advocate_permissions = advocate.permission_codes()

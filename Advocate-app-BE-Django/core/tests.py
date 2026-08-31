@@ -167,3 +167,89 @@ class PermissionGateTest(TestCase):
     def test_audit_needs_its_own_permission(self):
         res = self.client.get('/api/audit', **auth(self.reader))
         self.assertEqual(res.status_code, 403)
+
+
+class DepartedMemberTest(TestCase):
+    """Work done in a practice stays with the practice after someone leaves.
+
+    Visibility is derived from who is currently in the practice, so removing a
+    member used to make every row they created invisible - the rows survived in
+    the database and nobody could reach them. A chambers losing its own case
+    files because a junior moved on is not an acceptable outcome.
+    """
+
+    def setUp(self):
+        self.owner = make_advocate('dep-owner@test.local', ALL_PERMISSIONS)
+        self.member = make_advocate('dep-member@test.local', ALL_PERMISSIONS,
+                                    parent_advocate_id=self.owner.id)
+        self.member_case = make_case(self.member,
+                                     make_client(self.member, 'Member Client'))
+
+    def _owner_sees_member_case(self):
+        from core.models import Advocate, Case
+        owner = Advocate.objects.get(id=self.owner.id)   # fresh, uncached
+        return Case.objects.filter(
+            id=self.member_case.id,
+            advocate_id__in=practice.practice_ids(owner)).exists()
+
+    def test_owner_sees_member_work_while_they_are_there(self):
+        self.assertTrue(self._owner_sees_member_case())
+
+    def test_owner_still_sees_member_work_after_they_leave(self):
+        practice.mark_left(self.member)
+        self.assertTrue(
+            self._owner_sees_member_case(),
+            'the case must stay with the practice after the member leaves')
+
+    def test_a_departed_member_cannot_sign_in(self):
+        from core.models import Advocate
+        practice.mark_left(self.member)
+        res = self.client.get('/api/cases', **auth(self.member))
+        self.assertIn(res.status_code, (401, 403),
+                      'a departed member must lose access, not keep it')
+        self.assertIsNotNone(Advocate.objects.get(id=self.member.id).left_on)
+
+
+class UserDeletionTest(TestCase):
+    """Removing a user must never take the practice's records with them."""
+
+    def setUp(self):
+        self.admin = make_advocate('del-admin@test.local', ALL_PERMISSIONS)
+        self.member = make_advocate('del-member@test.local', ALL_PERMISSIONS,
+                                    parent_advocate_id=self.admin.id)
+
+    def test_a_user_with_records_is_closed_not_deleted(self):
+        from core.models import Advocate
+        make_case(self.member, make_client(self.member, 'Kept Client'))
+        res = self.client.delete('/api/admin/users/%d' % self.member.id,
+                                 **auth(self.admin))
+        self.assertEqual(res.status_code, 200, res.content[:200])
+        self.assertTrue(res.json()['closed'])
+        self.assertFalse(res.json()['deleted'])
+        still_there = Advocate.objects.filter(id=self.member.id).first()
+        self.assertIsNotNone(still_there, 'the row must survive')
+        self.assertIsNotNone(still_there.left_on)
+        self.assertEqual(still_there.parent_advocate_id, self.admin.id,
+                         'membership is kept so their work stays reachable')
+
+    def test_an_empty_account_is_actually_deleted(self):
+        from core.models import Advocate
+        empty = make_advocate('empty@test.local')
+        res = self.client.delete('/api/admin/users/%d' % empty.id,
+                                 **auth(self.admin))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()['deleted'])
+        self.assertIsNone(Advocate.objects.filter(id=empty.id).first())
+
+    def test_a_practice_owner_with_members_is_refused(self):
+        res = self.client.delete('/api/admin/users/%d' % self.admin.id,
+                                 **auth(self.admin))
+        # Refused for owning a practice, or for being yourself - either way
+        # not destroyed.
+        self.assertIn(res.status_code, (400, 409))
+
+    def test_you_cannot_remove_your_own_account(self):
+        other = make_advocate('self-admin@test.local', ALL_PERMISSIONS)
+        res = self.client.delete('/api/admin/users/%d' % other.id,
+                                 **auth(other))
+        self.assertEqual(res.status_code, 400)

@@ -111,14 +111,25 @@ export default function UserManagement() {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Delete this user? This cannot be undone.")) return;
+  const handleDelete = async (user) => {
+    // The server decides which of these actually happens: an account that has
+    // created anything is closed, keeping its records with the practice; only
+    // an empty one is really deleted. Say which, rather than promising
+    // "cannot be undone" for an action that is usually reversible.
+    const prompt = user.sharesPractice
+      ? `Remove ${user.email} from the practice?
+
+They will no longer be able to sign in. The cases, clients and invoices they created stay with the practice.`
+      : `Delete ${user.email}?
+
+If they have created any records the account is closed instead, and those records are kept.`;
+    if (!window.confirm(prompt)) return;
     try {
-      await rbacService.deleteUser(id);
-      success("User deleted.");
+      const res = await rbacService.deleteUser(user.id);
+      success(res?.message || (res?.closed ? "Account closed." : "User deleted."));
       loadData();
     } catch (err) {
-      error(err.message || "Couldn't delete the user.");
+      error(err.message || "Couldn't remove the user.");
     }
   };
 
@@ -237,13 +248,15 @@ export default function UserManagement() {
               <td>{u.specialization}</td>
               <td>{(u.roles || []).join(", ")}</td>
               <td>
-                {u.sharesPractice
-                  ? <span className="am-practice-badge shared">Shared</span>
-                  : <span className="am-practice-badge solo">Separate</span>}
+                {u.active === false
+                  ? <span className="am-practice-badge left">Left</span>
+                  : u.sharesPractice
+                    ? <span className="am-practice-badge shared">Shared</span>
+                    : <span className="am-practice-badge solo">Separate</span>}
               </td>
               <td className="am-actions">
                 <button className="am-icon-btn" title="Edit" onClick={() => openEdit(u)}><FiEdit2 /></button>
-                <button className="am-icon-btn danger" title="Delete" onClick={() => handleDelete(u.id)}><FiTrash2 /></button>
+                <button className="am-icon-btn danger" title={u.sharesPractice ? "Remove from practice" : "Delete"} onClick={() => handleDelete(u)}><FiTrash2 /></button>
               </td>
             </tr>
           ))}

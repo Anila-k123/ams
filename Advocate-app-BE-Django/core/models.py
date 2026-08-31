@@ -54,6 +54,14 @@ class Advocate(models.Model):
     # Added by `manage.py enable_shared_practice` - the table is Spring-owned,
     # so there is no migration for it. See core/practice.py.
     parent_advocate_id = models.BigIntegerField(null=True, blank=True)
+    # The date this advocate left the practice, or NULL while they are active.
+    #
+    # Leaving does NOT clear parent_advocate_id. Visibility is derived from who
+    # is in the practice, so unlinking a departing member made every row they
+    # created unreachable - the chambers lost its own case files because a
+    # junior moved on. They stay a (former) member for data purposes and lose
+    # access instead. Added by `manage.py enable_shared_practice`.
+    left_on = models.DateField(null=True, blank=True)
 
     class Meta:
         managed = False

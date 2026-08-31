@@ -464,3 +464,11 @@
   background: rgba(148, 163, 184, 0.14);
   border-color: rgba(148, 163, 184, 0.3);
 }
+
+/* A closed account. Amber rather than red: the person has gone, but their
+   work is intact - this is a state, not a failure. */
+.am-practice-badge.left {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.32);
+}

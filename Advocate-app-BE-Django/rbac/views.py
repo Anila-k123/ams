@@ -5,6 +5,7 @@ from rest_framework import status
 from core.models import Role, Permission, RolePermission, Advocate, AdvocateRole
 from core.permissions import RequirePermission
 from core.passwords import hash_password
+from core import practice
 from core.practice import practice_root
 
 
@@ -130,8 +131,24 @@ def _user_map(adv):
         'barCouncilId': adv.bar_council_id, 'specialization': adv.specialization,
         'experience': adv.experience, 'role': adv.role, 'roles': role_names,
         'practiceOwnerId': adv.parent_advocate_id,
+        'leftOn': adv.left_on.isoformat() if adv.left_on else None,
+        'active': adv.left_on is None,
         'sharesPractice': adv.parent_advocate_id is not None,
     }
+
+def _has_history(advocate):
+    """Whether this advocate has created anything worth keeping.
+
+    Checked with exists() per table rather than a count: the answer is boolean
+    and the tables are indexed on advocate_id.
+    """
+    from core.models import (Case, Client, ClientPayment, Expense, Invoice,
+                             Document)
+    for model in (Client, Case, Invoice, Expense, ClientPayment, Document):
+        if model.objects.filter(advocate_id=advocate.id).exists():
+            return True
+    return False
+
 
 USER_MANAGE = [RequirePermission('USER_MANAGE')]
 
@@ -204,12 +221,48 @@ class UserDetailView(APIView):
         return Response(_user_map(adv))
 
     def delete(self, request, pk):
+        """Close an account. Only ever hard-deletes one that owns nothing.
+
+        This used to call adv.delete() unconditionally. Two ways that went
+        wrong: an advocate with any data hit a foreign-key violation and the
+        caller got an unhandled 500, and an advocate in a practice whose delete
+        DID succeed took their work out of the practice's reach with them -
+        every row they had created became unreachable while sitting in the
+        database.
+
+        So an account with history is marked as having left instead: the person
+        loses access, the practice keeps the cases, clients and invoices.
+        """
         adv = Advocate.objects.filter(id=pk).first()
         if adv is None:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+        if adv.id == request.user.id:
+            return Response({'error': 'You cannot remove your own account.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # An owner with members would leave those members practice-less, and
+        # their own rows unreachable. Move the people first.
+        members = list(Advocate.objects.filter(parent_advocate_id=adv.id)
+                       .values_list('email', flat=True))
+        if members:
+            return Response(
+                {'error': 'This user owns a practice with {} member(s) ({}). '
+                          'Move them to another practice first.'.format(
+                              len(members), ', '.join(members[:3]))},
+                status=status.HTTP_409_CONFLICT)
+
+        if _has_history(adv):
+            practice.mark_left(adv)
+            return Response({
+                'message': 'Account closed. {} can no longer sign in, and the '
+                           'records they created are kept.'.format(adv.email),
+                'closed': True, 'deleted': False,
+            })
+
         AdvocateRole.objects.filter(advocate_id=pk).delete()
         adv.delete()
-        return Response({'message': 'User deleted successfully.'})
+        return Response({'message': 'User deleted successfully.',
+                         'closed': False, 'deleted': True})
 
 
 class UserRolesView(APIView):

@@ -23,13 +23,14 @@ from core.models import Advocate
 from core import practice
 
 COLUMN = 'parent_advocate_id'
+LEFT_COLUMN = 'left_on'
 
 
-def column_exists():
+def column_exists(name=COLUMN):
     with connection.cursor() as cur:
         cur.execute("""SELECT 1 FROM information_schema.columns
                        WHERE table_name = 'advocate' AND column_name = %s""",
-                    [COLUMN])
+                    [name])
         return cur.fetchone() is not None
 
 
@@ -39,7 +40,10 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--add', type=int, help='Advocate id to add to a practice.')
         parser.add_argument('--to', type=int, help='Practice owner advocate id.')
-        parser.add_argument('--remove', type=int, help='Advocate id to make solo again.')
+        parser.add_argument('--remove', type=int,
+                            help='Advocate id who has left the practice (keeps their work).')
+        parser.add_argument('--reinstate', type=int,
+                            help='Advocate id to bring back into the practice.')
 
     def handle(self, *args, **o):
         self._ensure_column()
@@ -50,12 +54,15 @@ class Command(BaseCommand):
             self._add(o['add'], o['to'])
         elif o['remove'] is not None:
             self._remove(o['remove'])
+        elif o['reinstate'] is not None:
+            self._reinstate(o['reinstate'])
 
         self._report()
 
     # -- schema ------------------------------------------------------------
 
     def _ensure_column(self):
+        self._ensure_left_column()
         if column_exists():
             self.stdout.write('Column advocate.{} already present.'.format(COLUMN))
             return
@@ -70,6 +77,16 @@ class Command(BaseCommand):
             cur.execute('CREATE INDEX advocate_parent_idx ON advocate ({})'.format(COLUMN))
         self.stdout.write(self.style.SUCCESS(
             'Added advocate.{} (nullable, FK, indexed).'.format(COLUMN)))
+
+    def _ensure_left_column(self):
+        """advocate.left_on - when a member left, NULL while active."""
+        if column_exists(LEFT_COLUMN):
+            return
+        with connection.cursor() as cur:
+            cur.execute('ALTER TABLE advocate ADD COLUMN {} DATE NULL'
+                        .format(LEFT_COLUMN))
+        self.stdout.write(self.style.SUCCESS(
+            'Added advocate.{} (nullable).'.format(LEFT_COLUMN)))
 
     # -- membership --------------------------------------------------------
 
@@ -98,13 +115,36 @@ class Command(BaseCommand):
             '{} now shares the practice owned by {}.'.format(member.email, owner.email)))
 
     def _remove(self, member_id):
+        """Mark a member as having left, keeping their work with the practice.
+
+        This used to clear parent_advocate_id. Visibility is derived from who is
+        in the practice, so that made every row the member had created
+        unreachable - the chambers lost its own case files because a junior
+        moved on, while the rows sat in the database untouched.
+
+        So the membership stays and the account is closed instead: the practice
+        keeps the work, and the person keeps no access.
+        """
         member = Advocate.objects.filter(id=member_id).first()
         if member is None:
             raise CommandError('No advocate with id {}'.format(member_id))
-        Advocate.objects.filter(id=member_id).update(parent_advocate_id=None)
+        if member.parent_advocate_id is None:
+            raise CommandError(
+                'Advocate {} is not a member of any practice. Nothing to leave.'
+                .format(member_id))
+        practice.mark_left(member)
         self.stdout.write(self.style.SUCCESS(
-            '{} is solo again. Rows they created stay theirs and are no longer '
-            'visible to the practice.'.format(member.email)))
+            '{} has left the practice. Their account can no longer sign in; the '
+            'cases, clients and invoices they created stay with the practice.'
+            .format(member.email)))
+
+    def _reinstate(self, member_id):
+        member = Advocate.objects.filter(id=member_id).first()
+        if member is None:
+            raise CommandError('No advocate with id {}'.format(member_id))
+        practice.reinstate(member)
+        self.stdout.write(self.style.SUCCESS(
+            '{} is active again.'.format(member.email)))
 
     # -- reporting ---------------------------------------------------------
 

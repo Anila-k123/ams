@@ -53,6 +53,9 @@ def practice_ids(user):
     root = practice_root(user)
     ids = {root, user.id}
     try:
+        # Deliberately NOT filtered on left_on: a former member's work belongs
+        # to the practice, so their id stays in scope after they leave. They
+        # lose access at authentication, not by having their rows hidden.
         ids.update(
             Advocate.objects.filter(parent_advocate_id=root)
             .values_list('id', flat=True))
@@ -79,3 +82,45 @@ def members(root_id):
 
 def is_owner(user):
     return getattr(user, 'parent_advocate_id', None) is None
+
+
+def has_left(user):
+    """True when this advocate has left their practice and cannot sign in."""
+    return getattr(user, 'left_on', None) is not None
+
+
+def mark_left(advocate, on=None):
+    """Record that an advocate has left, WITHOUT unlinking them.
+
+    The membership is deliberately kept. practice_ids() is derived from who is
+    in the practice, so clearing parent_advocate_id made every row the member
+    had created unreachable - the practice lost its own case files while the
+    rows sat in the database untouched. Keeping the link means the work stays;
+    the account losing access is what actually ends their involvement.
+    """
+    import datetime
+
+    from core.models import Advocate
+    when = on or datetime.date.today()
+    Advocate.objects.filter(id=advocate.id).update(left_on=when)
+    advocate.left_on = when
+    # The cached scope may have been computed while they were active.
+    if hasattr(advocate, _CACHE_ATTR):
+        delattr(advocate, _CACHE_ATTR)
+    return when
+
+
+def reinstate(advocate):
+    """Undo mark_left. Their membership was never removed, so this is enough."""
+    from core.models import Advocate
+    Advocate.objects.filter(id=advocate.id).update(left_on=None)
+    advocate.left_on = None
+    if hasattr(advocate, _CACHE_ATTR):
+        delattr(advocate, _CACHE_ATTR)
+
+
+def active_members(root_id):
+    """Members who have not left - for showing a practice's current people."""
+    return list(Advocate.objects.filter(parent_advocate_id=root_id,
+                                        left_on__isnull=True)
+                .order_by('full_name'))

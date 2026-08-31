@@ -60,8 +60,40 @@
   transition: width 0.3s ease;
 }
 
+/* Half the window. This was 480px against a 440px default - a 40px change that
+   left long answers, case lists and tables of figures wrapping just as badly as
+   before, so the button appeared to do nothing. */
 .assistant-panel.maximized {
-  width: 480px;
+  width: 50vw;
+  min-width: 440px;
+}
+
+/* Drag the left edge to any width between MIN_WIDTH and the full window.
+   6px is wide enough to grab without being visible as a bar. */
+.assistant-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 2;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.assistant-resize-handle:hover,
+.assistant-resize-handle:active {
+  background: var(--btn-primary-bg, #3b82f6);
+  opacity: 0.35;
+}
+
+/* The panel animates width on the maximize toggle, but a drag sets width every
+   mousemove - transitioning that would make it lag behind the pointer. The
+   handle being active is not observable in CSS, so the transition is dropped
+   while the body has selection disabled, which only happens during a drag. */
+body[style*="user-select: none"] .assistant-panel {
+  transition: none;
 }
 
 @keyframes assistantSlideIn {
@@ -520,7 +552,14 @@
 
 @media (max-width: 640px) {
   .assistant-panel {
+    /* !important so it also beats the inline width a drag may have saved on a
+       larger screen - the same browser profile can be resized down. */
     width: 100vw !important;
+  }
+  /* Nothing to drag when the panel is already the whole screen, and an
+     edge handle on touch just swallows swipes. */
+  .assistant-resize-handle {
+    display: none;
   }
   .assistant-fab {
     bottom: 16px;

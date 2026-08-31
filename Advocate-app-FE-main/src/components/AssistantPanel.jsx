@@ -4,10 +4,55 @@ import { useAssistant } from "../contexts/AssistantContext";
 import AssistantMessage from "./AssistantMessage";
 import AssistantInput from "./AssistantInput";
 
+// Remembered across reloads so the panel opens at the width you chose.
+const WIDTH_KEY = "advocate-assistant-width";
+// Below this the message bubbles and quick-action chips start wrapping badly.
+const MIN_WIDTH = 360;
+
 export default function AssistantPanel() {
   const { isOpen, setIsOpen, messages, isProcessing, clearHistory, exportHistory } = useAssistant();
   const chatEndRef = useRef(null);
+  // Maximize used to go 440px -> 480px, a 40px change that left the content as
+  // cramped as before. It now takes half the window, which is the width at
+  // which a case list or a table of figures actually reads.
   const [isMaximized, setIsMaximized] = React.useState(false);
+  // ...and the edge can be dragged, so the width is ultimately the user's
+  // choice rather than one of two presets. Remembered per browser.
+  const [width, setWidth] = React.useState(() => {
+    const saved = Number(localStorage.getItem(WIDTH_KEY));
+    return saved >= MIN_WIDTH ? saved : null;
+  });
+  const draggingRef = useRef(false);
+
+  const startDrag = React.useCallback((e) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    // The panel is anchored right, so width is the distance from the pointer
+    // to the right edge of the window.
+    const onMove = (ev) => {
+      if (!draggingRef.current) return;
+      const next = Math.min(
+        Math.max(window.innerWidth - ev.clientX, MIN_WIDTH),
+        window.innerWidth);
+      setWidth(next);
+      // Dragging is an explicit width, so it takes over from Maximize.
+      setIsMaximized(false);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+    };
+    // Stop the drag selecting the chat text it passes over.
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
+  useEffect(() => {
+    if (width) localStorage.setItem(WIDTH_KEY, String(width));
+  }, [width]);
   // Clearing wipes the conversation (and its localStorage copy) irreversibly,
   // and the button sits right next to Close — so ask first.
   const [confirmClear, setConfirmClear] = React.useState(false);
@@ -45,7 +90,18 @@ export default function AssistantPanel() {
   }
 
   return (
-    <div className={`assistant-panel ${isMaximized ? "maximized" : ""}`}>
+    <div
+      className={`assistant-panel ${isMaximized ? "maximized" : ""}`}
+      style={width ? { width: `${width}px` } : undefined}
+    >
+      {/* Drag the left edge to any width. */}
+      <div
+        className="assistant-resize-handle"
+        onMouseDown={startDrag}
+        title="Drag to resize"
+        role="separator"
+        aria-orientation="vertical"
+      />
       {/* Header */}
       <div className="assistant-header">
         <div className="assistant-header-left">
@@ -58,7 +114,17 @@ export default function AssistantPanel() {
           </div>
         </div>
         <div className="assistant-header-actions">
-          <button className="header-icon-btn" onClick={() => setIsMaximized(!isMaximized)} title={isMaximized ? "Minimize" : "Maximize"}>
+          <button
+            className="header-icon-btn"
+            onClick={() => {
+              // Drop any dragged width: an inline style would otherwise
+              // override the maximized class and the button would do nothing.
+              setWidth(null);
+              localStorage.removeItem(WIDTH_KEY);
+              setIsMaximized((v) => !v);
+            }}
+            title={isMaximized ? "Restore size" : "Maximize to half the window"}
+          >
             {isMaximized ? <FiMinimize2 /> : <FiMaximize2 />}
           </button>
           <button className="header-icon-btn" onClick={exportHistory} title="Export History">

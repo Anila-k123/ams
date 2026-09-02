@@ -16,12 +16,13 @@ already renders: EMAIL / WHATSAPP / IN_APP, and SENT / FAILED / PENDING.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 
 from django.utils import timezone
 
-from core.models import NotificationQueue
+from core.models import CommunicationSettings, NotificationQueue
 
 log = logging.getLogger(__name__)
 
@@ -98,3 +99,82 @@ def notify(advocate_id, event_type, subject, body, channels=(IN_APP,),
         except Exception:                                   # noqa: BLE001
             log.exception('notify: could not queue %s/%s', event_type, channel)
     return queued
+
+
+# --- notifying the CLIENT -------------------------------------------------
+# Everything above addresses the ADVOCATE. notify_client() is the one way to
+# write to a client, and it exists separately for one reason: if
+# recipient_email is left empty, process_notifications falls back to the
+# advocate's own inbox. A client notification that quietly goes to the advocate
+# instead is worse than none, so the address is resolved here and the call is
+# abandoned when there isn't one.
+
+def client_email_enabled(advocate_id):
+    """Per-advocate kill switch, from communication_settings.email_enabled.
+
+    Absent settings means "not configured yet", which we treat as enabled so
+    the feature works out of the box; an explicit False turns it off.
+    """
+    row = (CommunicationSettings.objects
+           .filter(advocate_id=advocate_id)
+           .only('email_enabled').first())
+    return True if row is None else bool(row.email_enabled)
+
+
+def send_now(queued_ids):
+    """Deliver these queue rows immediately instead of waiting for the drain.
+
+    Reuses `process_notifications` rather than reimplementing delivery, so
+    retry/backoff, notification_history and the audit trail stay in exactly one
+    place. Anything that fails here is left PENDING, so the scheduled run picks
+    it up and retries with backoff - immediate delivery is an optimisation, not
+    a replacement for the queue.
+
+    Never raises: the request that triggered the notification must not fail
+    because SMTP was slow or down.
+    """
+    if not queued_ids:
+        return
+    try:
+        from django.core.management import call_command
+        buf = io.StringIO()          # keep command output out of the server log
+        call_command('process_notifications', ids=list(queued_ids),
+                     limit=len(queued_ids), stdout=buf, stderr=buf)
+    except Exception:                                       # noqa: BLE001
+        log.exception('send_now: inline delivery failed for %s; '
+                      'leaving it queued for the scheduled drain', queued_ids)
+
+
+def notify_client(advocate_id, client, event_type, subject, body,
+                  case_id=None, entity=None, entity_id=None,
+                  triggered_by='SYSTEM'):
+    """Queue one EMAIL addressed to `client`. Returns queued row ids.
+
+    Never raises: telling a client about an invoice must not be able to fail
+    the request that created the invoice.
+    """
+    try:
+        if client is None:
+            return []
+        email = (getattr(client, 'email', '') or '').strip()
+        if not email:
+            log.info('notify_client: client %s has no email on file, skipped',
+                     getattr(client, 'id', None))
+            return []
+        if not client_email_enabled(advocate_id):
+            log.info('notify_client: email disabled for advocate %s, skipped',
+                     advocate_id)
+            return []
+        queued = notify(advocate_id, event_type, subject, body,
+                        channels=(EMAIL,), case_id=case_id, client_id=client.id,
+                        recipient_name=getattr(client, 'name', None),
+                        recipient_email=email, entity=entity,
+                        entity_id=entity_id, triggered_by=triggered_by)
+        # Clients are told straight away - an invoice or a hearing date is not
+        # something to sit in a queue for five minutes. It is still queued
+        # first, so a failure here is retried rather than lost.
+        send_now(queued)
+        return queued
+    except Exception:                                       # noqa: BLE001
+        log.exception('notify_client: could not queue %s', event_type)
+        return []

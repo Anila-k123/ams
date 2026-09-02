@@ -44,12 +44,18 @@ class Command(BaseCommand):
                             help='Max queued rows to process (default 100).')
         parser.add_argument('--dry-run', action='store_true',
                             help='Show what would be sent; send nothing.')
+        parser.add_argument('--ids', nargs='+', type=int, default=None,
+                            help='Only these queue row ids. Used by '
+                                 'service.send_now() to deliver a just-queued '
+                                 'notification inline instead of waiting for '
+                                 'the next scheduled run.')
 
     def handle(self, *args, **o):
         now = timezone.now()
-        rows = list(NotificationQueue.objects
-                    .filter(status=service.QUEUED)
-                    .order_by('id')[:o['limit']])
+        qs = NotificationQueue.objects.filter(status=service.QUEUED)
+        if o.get('ids'):
+            qs = qs.filter(id__in=o['ids'])
+        rows = list(qs.order_by('id')[:o['limit']])
 
         sent = failed = waiting = 0
         for row in rows:

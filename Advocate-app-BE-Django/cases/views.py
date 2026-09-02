@@ -11,6 +11,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseSerializer
 from core.practice import practice_ids
+from notifications import client_events
 
 SORT_MAP = {'createdAt': 'created_at', 'caseNumber': 'case_number',
             'caseTitle': 'case_title', 'status': 'status', 'id': 'id'}
@@ -151,6 +152,7 @@ class CreateCaseView(APIView):
             advocate_id=request.user.id,
             client=client,
         )
+        client_events.case_created(request.user, client, case)
         return Response(CaseSerializer(case).data, status=status.HTTP_201_CREATED)
 
 

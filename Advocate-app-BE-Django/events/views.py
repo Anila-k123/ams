@@ -8,6 +8,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseEventSerializer
 from core.practice import practice_ids
+from notifications import client_events
 
 
 def _base(request):
@@ -72,6 +73,7 @@ class CreateEventView(APIView):
             case=case,
             advocate_id=request.user.id,
         )
+        client_events.hearing_scheduled(request.user, case.client, event, case)
         return Response(CaseEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
 

@@ -9,6 +9,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ClientPaymentSerializer
 from core.practice import practice_ids
+from notifications import client_events
 
 SORT_MAP = {'paymentDate': 'payment_date', 'amount': 'amount', 'id': 'id'}
 
@@ -88,4 +89,5 @@ class CreatePaymentView(APIView):
             case=case,
             client=case.client if case else None,
         )
+        client_events.payment_received(request.user, payment.client, payment, case)
         return Response(ClientPaymentSerializer(payment).data, status=status.HTTP_201_CREATED)

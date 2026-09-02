@@ -8,6 +8,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ClientSerializer, ClientRequestSerializer
 from core.practice import practice_ids
+from notifications import client_events
 
 SORT_MAP = {'createdAt': 'created_at', 'name': 'name', 'email': 'email', 'id': 'id'}
 
@@ -76,6 +77,7 @@ class CreateClientView(APIView):
             name=d['name'], email=d.get('email'), phone=d.get('phone'),
             address=d.get('address'), deleted=False, advocate_id=request.user.id,
         )
+        client_events.client_registered(request.user, client)
         return Response(ClientSerializer(client).data, status=status.HTTP_201_CREATED)
 
 

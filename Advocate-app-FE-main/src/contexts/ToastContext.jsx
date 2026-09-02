@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
 
 const ToastContext = createContext(null);
 
@@ -18,7 +18,9 @@ export function ToastProvider({ children }) {
 
   const addToast = useCallback((message, type = "info", duration) => {
     const id = ++toastIdCounter;
-    const durations = { success: 3500, error: 7000, warning: 5000, info: 4000 };
+    // Long enough to be read after the eye moves back from the form that was
+    // just submitted; errors stay longest. Any toast can be dismissed early.
+    const durations = { success: 7000, error: 14000, warning: 10000, info: 8000 };
     const ms = duration || durations[type] || 4000;
 
     setToasts((prev) => [...prev, { id, message, type }]);
@@ -35,6 +37,15 @@ export function ToastProvider({ children }) {
   const warning = useCallback((msg, duration) => addToast(msg, "warning", duration), [addToast]);
   const info = useCallback((msg, duration) => addToast(msg, "info", duration), [addToast]);
   const dismiss = useCallback((id) => removeToast(id), [removeToast]);
+
+  // Dev-only escape hatch: lets a toast be fired straight from the browser
+  // console (`__toast.success("hi")`), which separates "the toast system is
+  // broken" from "the handler never ran" without guessing.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    window.__toast = { success, error, warning, info };
+    return () => { delete window.__toast; };
+  }, [success, error, warning, info]);
 
   return (
     <ToastContext.Provider value={{ toasts, success, error, warning, info, dismiss }}>

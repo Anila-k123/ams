@@ -75,6 +75,24 @@ class CreateEventView(APIView):
         return Response(CaseEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
 
+class UpdateEventView(APIView):
+    permission_classes = [RequirePermission('EVENT_CREATE')]
+
+    def put(self, request, pk):
+        event = CaseEvent.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        if event is None:
+            return Response({'error': 'Event not found'}, status=status.HTTP_404_NOT_FOUND)
+        d = request.data
+        for attr, key in [('title', 'title'), ('event_type', 'eventType'),
+                          ('description', 'description'), ('date', 'date')]:
+            if key in d:
+                setattr(event, attr, d[key])
+        if 'time' in d:
+            event.time = d.get('time') or None
+        event.save()
+        return Response(CaseEventSerializer(event).data)
+
+
 class DeleteEventView(APIView):
     permission_classes = [RequirePermission('EVENT_DELETE')]
 

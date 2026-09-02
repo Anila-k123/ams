@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // host:true => bind 0.0.0.0 so other devices on the LAN can open the dev server.
+  server: {
+    host: true,
+    port: 5173,
+  },
   define: {
     global: 'globalThis',
   },

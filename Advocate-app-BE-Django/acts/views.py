@@ -11,7 +11,9 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 
 from .models import Act, Section, ActCaseLink
-from .serializers import ActListSerializer, ActDetailSerializer, SectionDetailSerializer
+from courtsearch.models import ImportedCaseRecord
+from .serializers import (ActListSerializer, ActDetailSerializer, SectionDetailSerializer,
+                          _jurisdiction_label)
 from core.practice import practice_ids
 
 # Provakil-style field-scoped search chips. "all" searches every act-level
@@ -164,3 +166,151 @@ class ActCaseUnlinkView(APIView):
     def delete(self, request, pk, case_id):
         ActCaseLink.objects.filter(act_id=pk, case_id=case_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def _linked_act_payload(link):
+    """One row for the case's "Acts" tab - act display fields come straight
+    from the joined Act; ActCaseLink only stores the ids (same reasoning as
+    ActCaseLinksView above)."""
+    return {
+        'id': link.id,
+        'actId': link.act_id,
+        'actTitle': link.act.title,
+        'actNumber': link.act.act_number,
+        'actYear': link.act.act_year,
+        'jurisdiction': _jurisdiction_label(link.act.source_state_name),
+        'linkedAt': link.linked_at,
+    }
+
+
+class CaseActLinksView(APIView):
+    """The reverse of ActCaseLinksView: the "Acts" tab on a case. GET the acts
+    linked to one of the advocate's own cases; POST to link an act to it. Only
+    the advocate's own cases are addressable, matching the act-side scoping."""
+    permission_classes = [RequirePermission()]
+
+    def _owned_case(self, request, case_id):
+        return Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
+
+    def get(self, request, case_id):
+        if not self._owned_case(request, case_id):
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
+        links = ActCaseLink.objects.filter(case_id=case_id).select_related('act').order_by('-linked_at')
+        return Response([_linked_act_payload(link) for link in links])
+
+    def post(self, request, case_id):
+        if not self._owned_case(request, case_id):
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
+        act_id = request.data.get('actId')
+        if not act_id:
+            return Response({'error': 'actId is required.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        act = Act.objects.filter(id=act_id).first()
+        if not act:
+            return Response({'error': 'Act not found.'}, status=status.HTTP_404_NOT_FOUND)
+        link, created = ActCaseLink.objects.get_or_create(
+            act=act, case_id=case_id, defaults={'advocate_id': request.user.id},
+        )
+        return Response(
+            _linked_act_payload(link),
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class CaseActUnlinkView(APIView):
+    permission_classes = [RequirePermission()]
+
+    def delete(self, request, case_id, act_id):
+        if not Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists():
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
+        ActCaseLink.objects.filter(act_id=act_id, case_id=case_id).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- Acts cited by the court (from the imported record) --------------------
+
+# Stopwords + year are dropped so matching ignores word order and connective
+# words: "Civil Procedure Code" ↔ "The Code of Civil Procedure, 1908".
+_ACT_STOPWORDS = {'the', 'of', 'and', 'for', 'a', 'an', 'to', 'in', 'on'}
+
+
+def _act_tokens(s):
+    """Significant-word set of an act title: lowercased, punctuation-split,
+    stopwords and 4-digit years removed. Order-independent by design."""
+    words = re.sub(r'[^a-z0-9]+', ' ', (s or '').lower()).split()
+    return {
+        w for w in words
+        if w not in _ACT_STOPWORDS and not re.fullmatch(r'(?:19|20)\d{2}', w)
+    }
+
+
+def _cited_acts_from_raw(raw):
+    """The acts a court cited, across record shapes. Only the eCourts shapes
+    (raw.cases[].detail.acts) carry a structured acts list; DC uses `section`,
+    HC uses `sections`."""
+    out = []
+    if isinstance(raw, dict) and raw.get('cases') is not None:
+        for c in raw.get('cases') or []:
+            for a in ((c.get('detail') or {}).get('acts') or []):
+                name = (a.get('act') or '').strip()
+                section = (a.get('section') or a.get('sections') or '').strip()
+                if name:
+                    out.append({'name': name, 'section': section})
+    return out
+
+
+class CaseCitedActsView(APIView):
+    """GET the acts the court cited on this case's imported record, each matched
+    to our Acts library where the title lines up (so the UI can link straight to
+    the act). Read-only: it does not create ActCaseLink rows."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request, case_id):
+        if not Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists():
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
+        rec = ImportedCaseRecord.objects.filter(case_id=case_id).order_by('-fetched_at').first()
+        cited = _cited_acts_from_raw(rec.raw) if rec else []
+        if not cited:
+            return Response([])
+        # Index the library once by token set: exact set match, plus a subset
+        # candidate list for the fallback pass.
+        exact, indexed = {}, []
+        for act in Act.objects.all().only('id', 'title'):
+            toks = _act_tokens(act.title)
+            if not toks:
+                continue
+            exact.setdefault(frozenset(toks), act)
+            indexed.append((toks, act))
+
+        def _match(name):
+            ct = _act_tokens(name)
+            if not ct:
+                return None
+            hit = exact.get(frozenset(ct))
+            if hit:
+                return hit
+            # Fallback: every cited token appears in the act (cited ⊆ act). Needs
+            # ≥2 tokens to avoid one common word matching everything; pick the
+            # most specific (smallest) matching title.
+            if len(ct) < 2:
+                return None
+            best = None
+            for toks, act in indexed:
+                if ct <= toks and (best is None or len(toks) < len(best[0])
+                                   or (len(toks) == len(best[0]) and act.id < best[1].id)):
+                    best = (toks, act)
+            return best[1] if best else None
+
+        out, seen = [], set()
+        for c in cited:
+            key = (c['name'].lower(), c['section'].lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            act = _match(c['name'])
+            out.append({
+                'name': c['name'],
+                'section': c['section'],
+                'actId': act.id if act else None,
+                'actTitle': act.title if act else None,
+            })
+        return Response(out)

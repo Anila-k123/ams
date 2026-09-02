@@ -7,5 +7,6 @@ urlpatterns = [
     path('events/today', views.TodayEventsView.as_view()),
     path('events/upcoming', views.UpcomingEventsView.as_view()),
     path('events/create', views.CreateEventView.as_view()),
+    path('events/update/<int:pk>', views.UpdateEventView.as_view()),
     path('events/delete/<int:pk>', views.DeleteEventView.as_view()),
 ]

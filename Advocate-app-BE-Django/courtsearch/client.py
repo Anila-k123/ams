@@ -295,6 +295,12 @@ def hc_cnr_search(cnr, timeout: int = SEARCH_TIMEOUT):
     return post_json('/courts/ecourts_hc/cnr:search', {'cnr': cnr}, timeout=timeout)
 
 
+def hc_hearing_business(business: dict, timeout: int = SEARCH_TIMEOUT):
+    """Fetch one HC hearing's Daily Status from a hearings[].business token.
+    Returns {court, parties, fields} (JSON, not a stream)."""
+    return post_json('/courts/ecourts_hc/hearings:business', {'business': business}, timeout=timeout)
+
+
 def hc_open_order_pdf(url: str, timeout: int = SEARCH_TIMEOUT):
     """Open a streaming POST for a HC order/judgement PDF (by its documents[].url).
     Returns the raw requests.Response (stream=True) for the view to pipe through."""

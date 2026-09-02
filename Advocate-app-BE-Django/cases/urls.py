@@ -9,4 +9,6 @@ urlpatterns = [
     path('cases/update/<int:pk>', views.UpdateCaseView.as_view()),
     path('cases/delete/<int:pk>', views.DeleteCaseView.as_view()),
     path('cases/restore/<int:pk>', views.RestoreCaseView.as_view()),
+    path('cases/transfer/<int:pk>', views.TransferCaseView.as_view()),
+    path('cases/<int:pk>/hearing-alert', views.HearingAlertView.as_view()),
 ]

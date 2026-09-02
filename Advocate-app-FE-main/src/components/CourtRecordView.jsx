@@ -31,6 +31,26 @@ function RowTable({ rows, columns }) {
   );
 }
 
+// A table for an array of uniform objects (objections, filed-documents index):
+// the union of keys becomes the columns.
+function ObjTable({ rows }) {
+  const columns = [];
+  (rows || []).forEach((r) => Object.keys(r || {}).forEach((k) => { if (!columns.includes(k)) columns.push(k); }));
+  if (!columns.length) return null;
+  return (
+    <div className="cr-table-wrap">
+      <table className="cr-table">
+        <thead><tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>{columns.map((c) => <td key={c}>{r?.[c] != null ? String(r[c]) : ""}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // eCourts table keys are portal CSS classes ("history_table table") — tidy for display.
 function prettyTableName(name) {
   return String(name)
@@ -52,7 +72,7 @@ function KV({ obj }) {
   );
 }
 
-function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
+function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey, compact }) {
   const cases = record.cases || [];
   const canFetch = typeof onFetchDoc === "function";
   return (
@@ -72,21 +92,21 @@ function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
               {c.case_number || `Case ${idx + 1}`}{c.parties ? ` — ${c.parties}` : ""}
             </div>
 
-            {Object.keys(d.case_details || {}).length > 0 && (
+            {!compact && Object.keys(d.case_details || {}).length > 0 && (
               <section className="cr-sec"><h4>Case Details</h4><KV obj={d.case_details} /></section>
             )}
-            {Object.keys(d.case_status || {}).length > 0 && (
+            {!compact && Object.keys(d.case_status || {}).length > 0 && (
               <section className="cr-sec"><h4>Case Status</h4><KV obj={d.case_status} /></section>
             )}
 
-            {pet.length > 0 && (
+            {!compact && pet.length > 0 && (
               <section className="cr-sec"><h4>Petitioner(s) &amp; Advocate</h4>
                 <ul className="cr-party">
                   {pet.map((p, i) => <li key={i}>{p.name}{p.advocate ? <span className="cr-adv"> — Adv: {p.advocate}</span> : null}</li>)}
                 </ul>
               </section>
             )}
-            {res.length > 0 && (
+            {!compact && res.length > 0 && (
               <section className="cr-sec"><h4>Respondent(s) &amp; Advocate</h4>
                 <ul className="cr-party">
                   {res.map((p, i) => <li key={i}>{p.name}{p.advocate ? <span className="cr-adv"> — Adv: {p.advocate}</span> : null}</li>)}
@@ -94,7 +114,7 @@ function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
               </section>
             )}
 
-            {acts.length > 0 && (
+            {!compact && acts.length > 0 && (
               <section className="cr-sec"><h4>Acts</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
                   <thead><tr><th>Act</th><th>Section</th></tr></thead>
@@ -102,7 +122,7 @@ function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
                 </table></div>
               </section>
             )}
-            {history.length > 0 && (
+            {!compact && history.length > 0 && (
               <section className="cr-sec"><h4>Case History</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
                   <thead><tr><th>Judge</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th><th></th></tr></thead>
@@ -122,7 +142,7 @@ function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
                 </table></div>
               </section>
             )}
-            {orders.length > 0 && (
+            {!compact && orders.length > 0 && (
               <section className="cr-sec"><h4>Orders / Judgements</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
                   <thead><tr><th>#</th><th>Order Date</th><th>Details</th><th></th></tr></thead>
@@ -163,7 +183,7 @@ function EcourtsRecord({ record, courtComplex, onFetchDoc, busyKey }) {
 // eCourts High Courts: { cases: [ { case_number, parties, detail:{ case_details,
 //   case_status, petitioners[], respondents[], acts[], category, hearings[],
 //   orders[{order_number, order_date, judge, pdf_url}] } } ] }.
-function HcRecord({ record }) {
+function HcRecord({ record, compact }) {
   const [busyKey, setBusyKey] = useState("");
   const [docError, setDocError] = useState("");
   const cases = record.cases || [];
@@ -191,21 +211,21 @@ function HcRecord({ record }) {
               {c.case_number || `Case ${idx + 1}`}{c.parties ? ` — ${c.parties}` : ""}
             </div>
 
-            {Object.keys(d.case_details || {}).length > 0 && (
+            {!compact && Object.keys(d.case_details || {}).length > 0 && (
               <section className="cr-sec"><h4>Case Details</h4><KV obj={d.case_details} /></section>
             )}
-            {Object.keys(d.case_status || {}).length > 0 && (
+            {!compact && Object.keys(d.case_status || {}).length > 0 && (
               <section className="cr-sec"><h4>Case Status</h4><KV obj={d.case_status} /></section>
             )}
 
-            {pet.length > 0 && (
+            {!compact && pet.length > 0 && (
               <section className="cr-sec"><h4>Petitioner(s) &amp; Advocate</h4>
                 <ul className="cr-party">
                   {pet.map((p, i) => <li key={i}>{p.name}{p.advocate ? <span className="cr-adv"> — Adv: {p.advocate}</span> : null}</li>)}
                 </ul>
               </section>
             )}
-            {res.length > 0 && (
+            {!compact && res.length > 0 && (
               <section className="cr-sec"><h4>Respondent(s) &amp; Advocate</h4>
                 <ul className="cr-party">
                   {res.map((p, i) => <li key={i}>{p.name}{p.advocate ? <span className="cr-adv"> — Adv: {p.advocate}</span> : null}</li>)}
@@ -213,7 +233,7 @@ function HcRecord({ record }) {
               </section>
             )}
 
-            {acts.length > 0 && (
+            {!compact && acts.length > 0 && (
               <section className="cr-sec"><h4>Acts</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
                   <thead><tr><th>Act</th><th>Section(s)</th></tr></thead>
@@ -221,10 +241,10 @@ function HcRecord({ record }) {
                 </table></div>
               </section>
             )}
-            {Object.keys(d.category || {}).length > 0 && (
+            {!compact && Object.keys(d.category || {}).length > 0 && (
               <section className="cr-sec"><h4>Category</h4><KV obj={d.category} /></section>
             )}
-            {hearings.length > 0 && (
+            {!compact && hearings.length > 0 && (
               <section className="cr-sec"><h4>Hearing History</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
                   <thead><tr><th>Cause List</th><th>Judge</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th></tr></thead>
@@ -234,7 +254,7 @@ function HcRecord({ record }) {
                 </table></div>
               </section>
             )}
-            {orders.length > 0 && (
+            {!compact && orders.length > 0 && (
               <section className="cr-sec"><h4>Orders / Judgements</h4>
                 <div className="cr-table-wrap"><table className="cr-table">
                   <thead><tr><th>#</th><th>Order Date</th><th>Judge</th><th></th></tr></thead>
@@ -254,6 +274,13 @@ function HcRecord({ record }) {
                 </table></div>
               </section>
             )}
+
+            {!compact && (d.objections || []).length > 0 && (
+              <section className="cr-sec"><h4>Objections</h4><ObjTable rows={d.objections} /></section>
+            )}
+            {!compact && (d.documents || []).length > 0 && (
+              <section className="cr-sec"><h4>Documents Filed</h4><ObjTable rows={d.documents} /></section>
+            )}
           </div>
         );
       })}
@@ -263,12 +290,12 @@ function HcRecord({ record }) {
 }
 
 // Madras HC: { fields, prayer, applications, connected_matters, hearing_history, lower_court, caveats, orders }
-function MadrasRecord({ record }) {
+function MadrasRecord({ record, compact }) {
   const f = record.fields || {};
   const fieldKeys = Object.keys(f);
   return (
     <div className="cr-record">
-      {fieldKeys.length > 0 && (
+      {!compact && fieldKeys.length > 0 && (
         <section className="cr-sec"><h4>Case Details</h4>
           <dl className="cr-kv">
             {fieldKeys.map((k) => (<div className="cr-kv-row" key={k}><dt>{k}</dt><dd>{f[k]}</dd></div>))}
@@ -286,7 +313,7 @@ function MadrasRecord({ record }) {
         <section className="cr-sec"><h4>Connected Matters</h4>
           <RowTable rows={record.connected_matters} columns={SECTION_COLUMNS.connected_matters} /></section>
       )}
-      {record.hearing_history?.length > 0 && (
+      {!compact && record.hearing_history?.length > 0 && (
         <section className="cr-sec"><h4>Hearing History</h4><RowTable rows={record.hearing_history} /></section>
       )}
       {record.lower_court?.length > 0 && (
@@ -295,7 +322,7 @@ function MadrasRecord({ record }) {
       {record.caveats?.length > 0 && (
         <section className="cr-sec"><h4>Caveats</h4><RowTable rows={record.caveats} /></section>
       )}
-      {record.orders?.length > 0 && (
+      {!compact && record.orders?.length > 0 && (
         <section className="cr-sec"><h4>Orders</h4>
           <div className="cr-table-wrap">
             <table className="cr-table">
@@ -321,7 +348,7 @@ function MadrasRecord({ record }) {
 // stored with their content when the case was imported (case-detail is
 // fetched with expand=true at save time); any that came back empty are just
 // named so it's clear the court had nothing there rather than that we missed it.
-function SciRecord({ record }) {
+function SciRecord({ record, compact }) {
   const f = record.fields || {};
   const fieldKeys = Object.keys(f);
   const sections = record.sections || [];
@@ -329,13 +356,13 @@ function SciRecord({ record }) {
   const withoutData = sections.filter((s) => !(s.rows?.length || s.links?.length));
   return (
     <div className="cr-record">
-      {(record.diaryNo || record.parties) && (
+      {!compact && (record.diaryNo || record.parties) && (
         <section className="cr-sec">
           {record.diaryNo && <h4>Diary No. {record.diaryNo}</h4>}
           {record.parties && <p className="cr-prayer">{record.parties}</p>}
         </section>
       )}
-      {fieldKeys.length > 0 && (
+      {!compact && fieldKeys.length > 0 && (
         <section className="cr-sec"><h4>Case Details</h4>
           <dl className="cr-kv">
             {fieldKeys.map((k) => (<div className="cr-kv-row" key={k}><dt>{k}</dt><dd>{String(f[k])}</dd></div>))}
@@ -367,9 +394,30 @@ function SciRecord({ record }) {
   );
 }
 
+// Does the COMPACT view have anything left to render for this record? Mirrors
+// what each compact renderer keeps: SCI → data sections; eCourts HC → nothing
+// (identity, category, parties, hearings, orders all live elsewhere); eCourts DC
+// → generic "extra" tables; Madras → prayer/applications/etc.
+function _compactHasContent(record, courtId) {
+  if (!record) return false;
+  if (courtId === "sci" || record.diaryNo !== undefined) {
+    return (record.sections || []).some((s) => (s.rows?.length || s.links?.length));
+  }
+  if (courtId === "ecourts_hc") return false;
+  if (record.cases !== undefined) {
+    return (record.cases || []).some((c) => ((c.detail?.extra) || []).some((sec) => sec.rows?.length));
+  }
+  return !!(record.prayer || record.applications?.length || record.connected_matters?.length
+            || record.lower_court?.length || record.caveats?.length);
+}
+
 // Renders a stored/scraped court record for either court shape (raw, unstructured).
 // `courtComplex` (the value used for the search) is required to fetch eCourts documents.
-export default function CourtRecordView({ record, courtComplex, courtId }) {
+// `compact` hides sections that have their own dedicated tabs on the case page
+// (identity fields, category, parties, hearings/history, orders) — used by the
+// case's trimmed "Extra Details" tab. AddCase's validation view leaves it off to
+// show the full record.
+export default function CourtRecordView({ record, courtComplex, courtId, compact = false }) {
   const [busyKey, setBusyKey] = useState("");
   const [modal, setModal] = useState(null);
   const [docError, setDocError] = useState("");
@@ -394,15 +442,23 @@ export default function CourtRecordView({ record, courtComplex, courtId }) {
   };
 
   if (!record) return null;
+
+  // In compact mode almost everything has moved to the header/other tabs, so a
+  // record can have nothing left to show here. Detect that and show a note
+  // instead of an empty panel. Mirrors what each compact renderer keeps.
+  if (compact && !_compactHasContent(record, courtId)) {
+    return <p className="cr-note">No further details — everything from the court record is shown in the header and the other tabs.</p>;
+  }
+
   let body;
   if (courtId === "sci" || record.diaryNo !== undefined) {
-    body = <SciRecord record={record} />;
+    body = <SciRecord record={record} compact={compact} />;
   } else if (courtId === "ecourts_hc") {
-    body = <HcRecord record={record} />;
+    body = <HcRecord record={record} compact={compact} />;
   } else if (record.cases !== undefined) {
-    body = <EcourtsRecord record={record} courtComplex={courtComplex} onFetchDoc={fetchDoc} busyKey={busyKey} />;
+    body = <EcourtsRecord record={record} courtComplex={courtComplex} onFetchDoc={fetchDoc} busyKey={busyKey} compact={compact} />;
   } else {
-    body = <MadrasRecord record={record} />;
+    body = <MadrasRecord record={record} compact={compact} />;
   }
 
   return (

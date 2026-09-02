@@ -137,6 +137,14 @@ DOCUMENT_UPLOAD_DIR = config(
     default=str(BASE_DIR.parent / 'Advocate-app-BE-main' / 'uploads'),
 )
 
+# --- Court PDF cache: order/judgement PDFs a user has already fetched are saved
+# here (content-addressed), so re-opening one serves from disk instead of
+# re-scraping the portal. A court order is immutable once issued, so this is safe. ---
+COURT_PDF_CACHE_DIR = config(
+    'COURT_PDF_CACHE_DIR',
+    default=str(BASE_DIR / 'court_pdf_cache'),
+)
+
 # --- Email (SMTP) ---
 # Every outbound message in the app goes through here: password-reset OTPs,
 # hearing and invoice reminders, appeal alerts, and the Communication test send.
@@ -145,15 +153,20 @@ DOCUMENT_UPLOAD_DIR = config(
 # this file as fallback values, which meant a live secret was committed to a
 # public repository from the first commit onward. Configure MAIL_USERNAME and
 # MAIL_PASSWORD in .env, which is gitignored, and nowhere else.
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# Backend is selectable via MAIL_BACKEND. Default is real SMTP; set it to
+# 'django.core.mail.backends.console.EmailBackend' for local testing, which
+# prints each message to the server console instead of sending it.
+EMAIL_BACKEND = config('MAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
 EMAIL_HOST = config('MAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = config('MAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('MAIL_USE_TLS', default=True, cast=bool)
 EMAIL_HOST_USER = config('MAIL_USERNAME', default='')
 EMAIL_HOST_PASSWORD = config('MAIL_PASSWORD', default='')
 # Blank host user means nothing can send. Fail on that explicitly rather than
-# letting every send attempt turn into an SMTP error nobody reads.
-EMAIL_CONFIGURED = bool(EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
+# letting every send attempt turn into an SMTP error nobody reads. The console
+# backend needs no credentials, so it always counts as configured.
+_USING_CONSOLE_MAIL = 'console' in EMAIL_BACKEND or 'filebased' in EMAIL_BACKEND
+EMAIL_CONFIGURED = _USING_CONSOLE_MAIL or bool(EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
 DEFAULT_FROM_EMAIL = (
     config('NOTIFICATION_SENDER_NAME', default='Advocate Case Management System')
     + ' <' + (EMAIL_HOST_USER or 'no-reply@localhost') + '>')

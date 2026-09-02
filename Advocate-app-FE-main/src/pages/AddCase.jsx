@@ -1236,8 +1236,12 @@ export default function AddCase() {
             }, authHeaders);
           } catch { /* best-effort */ }
         }
-        // Populate Hearings as dated case events (orders handled by a dedicated section later).
-        for (const ev of buildEvents(courtRecord, selectedCourt?.id)) {
+        // Populate only UPCOMING hearings as case events (so "Next Hearing" works).
+        // Past court hearings are NOT imported as events — they live, in full, in
+        // the case's read-only Court Hearing History, so importing them here would
+        // just duplicate that with messier calendar rows.
+        const _todayISO = new Date().toISOString().slice(0, 10);
+        for (const ev of buildEvents(courtRecord, selectedCourt?.id).filter((ev) => ev.date && ev.date >= _todayISO)) {
           try {
             await axios.post("/api/events/create", {
               caseId, title: ev.title, eventType: ev.eventType, description: ev.description, date: ev.date,
@@ -1414,7 +1418,7 @@ export default function AddCase() {
             <button className="ac-search-btn"
                     onClick={runSearch}
                     disabled={searching || !lkType || !lkNumber.trim() || !lkYear}>
-              <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
+              <FiSearch /> {searching ? "Searching case…" : "Search For Case"}
             </button>
           </div>
         </div>
@@ -1493,7 +1497,7 @@ export default function AddCase() {
           )}
           <div className="ac-actions">
             <button className="ac-search-btn" onClick={onSciSearch} disabled={searching || !sciSearchEnabled}>
-              <FiSearch /> {searching ? "Searching… (solving CAPTCHA, up to 2 min)" : "Search For Case"}
+              <FiSearch /> {searching ? "Searching case…" : "Search For Case"}
             </button>
           </div>
 
@@ -1631,7 +1635,7 @@ export default function AddCase() {
 
           <div className="ac-actions">
             <button className="ac-search-btn" onClick={onEcSearch} disabled={searching || !ecSearchEnabled}>
-              <FiSearch /> {searching ? "Searching… (up to 30s)" : "Search For Case"}
+              <FiSearch /> {searching ? "Searching case…" : "Search For Case"}
             </button>
           </div>
 
@@ -1748,7 +1752,7 @@ export default function AddCase() {
 
           <div className="ac-actions">
             <button className="ac-search-btn" onClick={onEcSearch} disabled={searching || !ecSearchEnabled}>
-              <FiSearch /> {searching ? "Searching… (solving CAPTCHA, up to 60s)" : "Search For Case"}
+              <FiSearch /> {searching ? "Searching case…" : "Search For Case"}
             </button>
           </div>
 
@@ -1940,7 +1944,7 @@ export default function AddCase() {
           </div>
           <div className="ac-actions">
             <button className="ac-search-btn" onClick={runSearchCnr} disabled={searching || !cnrInput.trim()}>
-              <FiSearch /> {searching ? "Searching… (checking District & High Court records, up to 60s)" : "Search For Case"}
+              <FiSearch /> {searching ? "Searching case…" : "Search For Case"}
             </button>
           </div>
           {searchError && <p className="ac-error">{searchError}</p>}

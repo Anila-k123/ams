@@ -10,7 +10,7 @@ import datetime
 import logging
 
 from django.core.cache import cache
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, HttpResponse
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -18,6 +18,7 @@ from rest_framework import status
 
 from core.permissions import RequirePermission
 from . import client
+from . import pdf_cache
 from .models import CourtCaseTypes, ImportedCaseRecord
 from core.practice import practice_ids
 
@@ -405,6 +406,32 @@ class EcourtsDocumentView(APIView):
             'kind': kind,
             'token': d.get('token'),
         }
+
+        # Order PDFs are immutable — cache them so a re-open serves from disk
+        # instead of re-scraping. (hearing_business is JSON and stays streamed.)
+        if kind == 'order_pdf':
+            key = pdf_cache.key_for(d.get('token'))
+            cached = pdf_cache.get(key)
+            if cached is not None:
+                resp = HttpResponse(cached, content_type='application/pdf')
+                resp['Content-Disposition'] = 'attachment; filename="order.pdf"'
+                return resp
+            try:
+                upstream = client.open_document_stream(body)
+            except client.ScraperUnavailable:
+                return _unavailable()
+            data = upstream.content  # buffer so we can cache and serve
+            if upstream.status_code == 200 and data[:4] == b'%PDF':
+                pdf_cache.put(key, data)
+            resp = HttpResponse(
+                data, status=upstream.status_code,
+                content_type=upstream.headers.get('Content-Type', 'application/pdf'),
+            )
+            disposition = upstream.headers.get('Content-Disposition')
+            if disposition:
+                resp['Content-Disposition'] = disposition
+            return resp
+
         try:
             upstream = client.open_document_stream(body)
         except client.ScraperUnavailable:
@@ -980,6 +1007,26 @@ class HcCaseDetailView(APIView):
         return Response(data)
 
 
+class HcHearingBusinessView(APIView):
+    """POST /api/courtsearch/hc/hearing-business — one HC hearing's Daily Status.
+    Body: { business } — the token from a stored record's hearings[].business.
+    Returns { court, parties, fields } (JSON); nothing stored."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request):
+        business = request.data.get('business')
+        if not business:
+            return Response({'error': 'business token is required.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            data = client.hc_hearing_business(business)
+        except client.ScraperUnavailable:
+            return _unavailable()
+        except client.ScraperError as exc:
+            return _mapped(exc)
+        return Response(data)
+
+
 class HcCnrView(APIView):
     """POST /api/courtsearch/hc/cnr — fetch a High Court case by 16-char CNR.
     No bench/case-type selection needed; returns the same {cases:[...]} shape
@@ -1013,19 +1060,105 @@ class HcOrderPdfView(APIView):
         if not url:
             return Response({'error': 'url is required.'},
                             status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        # Serve from cache if this order was fetched before — no re-scrape.
+        key = pdf_cache.key_for(url)
+        cached = pdf_cache.get(key)
+        if cached is not None:
+            resp = HttpResponse(cached, content_type='application/pdf')
+            resp['Content-Disposition'] = 'attachment; filename="order.pdf"'
+            return resp
         try:
             upstream = client.hc_open_order_pdf(url)
         except client.ScraperUnavailable:
             return _unavailable()
-        resp = StreamingHttpResponse(
-            upstream.iter_content(chunk_size=8192),
-            status=upstream.status_code,
-            content_type=upstream.headers.get('Content-Type', 'application/octet-stream'),
+        data = upstream.content  # buffer so we can cache and serve
+        if upstream.status_code == 200 and data[:4] == b'%PDF':
+            pdf_cache.put(key, data)
+        resp = HttpResponse(
+            data, status=upstream.status_code,
+            content_type=upstream.headers.get('Content-Type', 'application/pdf'),
         )
         disposition = upstream.headers.get('Content-Disposition')
         if disposition:
             resp['Content-Disposition'] = disposition
         return resp
+
+
+def _bust_order_cache(raw):
+    """Drop cached order PDFs for a record (its identifiers may change on refresh)."""
+    if not isinstance(raw, dict):
+        return
+    for c in raw.get('cases', []) or []:
+        for o in ((c.get('detail') or {}).get('orders') or []):
+            if o.get('pdf_url'):
+                pdf_cache.delete(pdf_cache.key_for(o['pdf_url']))
+            if o.get('pdf'):
+                pdf_cache.delete(pdf_cache.key_for(o['pdf']))
+
+
+# A full refresh can re-fetch a long hearing history's daily statuses, so give it
+# plenty of room.
+REFRESH_TIMEOUT = 240
+
+
+class RefreshCourtRecordView(APIView):
+    """POST /api/courtsearch/cases/<case_id>/refresh — re-scrape this case's court
+    record and replace the stored copy. For when the court has moved on (a new
+    hearing/order/disposal) or a scrape was wrong: it fetches fresh detail (incl.
+    hearings, orders and — for eCourts HC — the daily statuses) and busts any
+    cached order PDFs so re-opening one fetches the current file."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request, case_id):
+        rec = (ImportedCaseRecord.objects
+               .filter(case_id=case_id, advocate_id__in=practice_ids(request.user))
+               .order_by('-id').first())
+        if rec is None:
+            return Response({'error': 'No imported court record for this case.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        court_id = rec.court_id
+        old_raw = rec.raw or {}
+        query = rec.query or {}
+        try:
+            if court_id == 'sci':
+                new_raw = client.sci_case_detail(
+                    query.get('diary_no'), query.get('diary_year'),
+                    expand=True, timeout=REFRESH_TIMEOUT)
+            elif court_id in ('ecourts_hc', 'ecourts_dc'):
+                fresh_cases = []
+                for c in old_raw.get('cases', []) or []:
+                    vt = c.get('view_token')
+                    if not vt:
+                        fresh_cases.append(c)
+                        continue
+                    if court_id == 'ecourts_hc':
+                        resp = client.hc_case_detail(vt, timeout=REFRESH_TIMEOUT)
+                    else:
+                        resp = client.post_json(
+                            '/courts/ecourts_dc/case:detail',
+                            {'court_complex': query.get('court_complex', ''), 'view_token': vt},
+                            timeout=REFRESH_TIMEOUT)
+                    got = (resp.get('cases') if isinstance(resp, dict) else None) or []
+                    fresh_cases.extend(got if got else [c])
+                new_raw = {'cases': fresh_cases}
+            else:
+                return Response({'error': f'Refresh is not available for {court_id}.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+        except client.ScraperUnavailable:
+            return _unavailable()
+        except client.ScraperError as exc:
+            return _mapped(exc)
+
+        _bust_order_cache(old_raw)
+        _bust_order_cache(new_raw)
+        rec.raw = new_raw
+        rec.fetched_at = datetime.datetime.now()
+        rec.save(update_fields=['raw', 'fetched_at'])
+        return Response({
+            'ok': True, 'caseId': case_id, 'courtId': court_id,
+            'raw': new_raw,
+            'fetchedAt': rec.fetched_at.isoformat() if rec.fetched_at else None,
+        })
 
 
 class ImportedRecordView(APIView):

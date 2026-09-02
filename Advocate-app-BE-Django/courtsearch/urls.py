@@ -44,7 +44,9 @@ urlpatterns = [
     path('courtsearch/hc/case-detail', views.HcCaseDetailView.as_view()),
     path('courtsearch/hc/cnr', views.HcCnrView.as_view()),
     path('courtsearch/hc/order-pdf', views.HcOrderPdfView.as_view()),
+    path('courtsearch/hc/hearing-business', views.HcHearingBusinessView.as_view()),
 
     # Persisted full court-API record for an imported case
     path('courtsearch/imported-records', views.ImportedRecordView.as_view()),
+    path('courtsearch/cases/<int:case_id>/refresh', views.RefreshCourtRecordView.as_view()),
 ]

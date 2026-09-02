@@ -1,10 +1,12 @@
 import datetime
 from django.db.models import Q
+from django.conf import settings
+from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from core.models import Case, Client
+from core.models import Case, Client, Advocate, NotificationHistory
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseSerializer
@@ -200,3 +202,90 @@ class RestoreCaseView(APIView):
         case.deleted = False
         case.save(update_fields=['deleted'])
         return Response('Case restored successfully')
+
+
+class HearingAlertView(APIView):
+    """POST /api/cases/<pk>/hearing-alert — email the case's client about a
+    hearing. Body: { date, purpose, bench, note? }. Sends inline (immediate
+    feedback) and records a NotificationHistory row. Email only for now."""
+    permission_classes = [RequirePermission()]
+
+    def post(self, request, pk):
+        case = _owned(request, pk)
+        if case is None:
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        client = case.client
+        if client is None or not (client.email or '').strip():
+            return Response({'error': 'No client email on file for this case.'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        if not getattr(settings, 'EMAIL_CONFIGURED', False):
+            return Response({'error': 'Email is not configured on the server.'},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        d = request.data
+        date = (d.get('date') or '').strip()
+        purpose = (d.get('purpose') or '').strip()
+        bench = (d.get('bench') or '').strip()
+        note = (d.get('note') or '').strip()
+        case_label = case.case_number or case.case_title or f'Case #{case.id}'
+        subject = f'Hearing update — {case_label}'
+        lines = [f'Dear {client.name or "Client"},', '',
+                 f'This is an update regarding your case {case_label}'
+                 + (f' ({case.case_title})' if case.case_title and case.case_title != case_label else '') + '.', '']
+        if date:
+            lines.append(f'Hearing date : {date}')
+        if purpose:
+            lines.append(f'Purpose      : {purpose}')
+        if bench:
+            lines.append(f'Before       : {bench}')
+        if note:
+            lines += ['', note]
+        lines += ['', 'Regards,', request.user.full_name or 'Your Advocate']
+        body = '\n'.join(lines)
+
+        ok, err, provider = True, None, None
+        try:
+            send_mail(subject=subject, message=body,
+                      from_email=settings.DEFAULT_FROM_EMAIL,
+                      recipient_list=[client.email.strip()], fail_silently=False)
+            provider = 'Email sent'
+        except Exception as e:  # noqa: BLE001
+            ok, err = False, str(e)
+
+        now = datetime.datetime.now()
+        NotificationHistory.objects.create(
+            type='HEARING_REMINDER', channel='EMAIL',
+            status='SENT' if ok else 'FAILED',
+            recipient=client.email.strip(), recipient_name=client.name,
+            recipient_email=client.email.strip(), subject=subject,
+            message=body, body=body, event_type='HEARING_ALERT',
+            triggered_by='MANUAL', provider_response=provider,
+            error_message=err, failure_reason=err, retry_count=0,
+            sent_at=now, failed_at=None if ok else now, created_at=now,
+            advocate_id=request.user.id, case_id=case.id, client_id=client.id)
+        return Response({'success': ok, 'errorMessage': err,
+                         'recipient': client.email.strip()},
+                        status=status.HTTP_200_OK if ok else status.HTTP_502_BAD_GATEWAY)
+
+
+class TransferCaseView(APIView):
+    """Reassign a case to another advocate. The requester must be able to reach
+    the case (own it / share the practice); the target can be any advocate."""
+    permission_classes = [RequirePermission('CASE_EDIT')]
+
+    def put(self, request, pk):
+        case = _owned(request, pk)
+        if case is None:
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        advocate_id = request.data.get('advocateId') or request.data.get('advocate_id')
+        if not advocate_id:
+            return Response({'error': 'advocateId is required'},
+                            status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        target = Advocate.objects.filter(id=advocate_id).first()
+        if not target:
+            return Response({'error': 'Target advocate not found'},
+                            status=status.HTTP_404_NOT_FOUND)
+        case.advocate_id = target.id
+        case.save(update_fields=['advocate_id'])
+        return Response({'message': 'Case transferred successfully',
+                         'advocateId': target.id, 'advocateName': target.full_name})

@@ -15,18 +15,12 @@ return(
               <span className="navbar-app-sub">Practice Manager</span>
             </div>
           </div>
-          <div className="navbar-links">
-            <button className='btn btn-outline-secondary border'><Link to="/" className='navbar-brand'>HOME</Link></button>
-            <button className="btn btn-outline-secondary border"><Link to="/login" className='navbar-brand'>Login</Link></button>
-            <button className="btn btn-outline-secondary border"><Link to="/dashboard" className='navbar-brand'>Dashboard</Link></button>
-          </div>
         </div>
         <div id='welcomebox' className="container-xl d-flex justify-content-center rounded text-center">
           <div>
           <h1 className="welcome-title">WELCOME</h1>
           <h1 className="main-title">ADVOCATE CASE MANAGEMENT SYSTEM</h1>
           <img src={hmlogo} alt="logo" />
-          <h3 className="coder-text">CODER:CHILL-CODING</h3>
           <div className="premium-divider">────────◆────────</div>
           {/* Self-registration is closed - accounts are created by a practice
               administrator in User Management. The backend refuses

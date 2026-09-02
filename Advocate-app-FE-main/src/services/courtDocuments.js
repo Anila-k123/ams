@@ -34,6 +34,27 @@ export async function fetchCourtDocument({ courtComplex, viewToken, kind, token,
   return data.business || data;
 }
 
+// Fetch a High Court hearing's Daily Status from its `business` token, via the
+// AMS proxy. Returns the parsed { court, parties, fields } for the modal.
+// Throws Error (with .status) on failure.
+export async function fetchHcBusiness(business) {
+  const jwt = localStorage.getItem("token");
+  const res = await fetch(apiUrl("/api/courtsearch/hc/hearing-business"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+    body: JSON.stringify({ business }),
+  });
+  if (!res.ok) {
+    const err = new Error(res.status === 404
+      ? "No daily status was found for this hearing."
+      : "Couldn’t fetch the daily status. Please try again.");
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  return data.business || data;
+}
+
 // Download a High Court order/judgement PDF by its (absolute) URL, via the AMS
 // streaming proxy. Saves the file to the user's device; returns null.
 // Throws Error (with .status) on failure.

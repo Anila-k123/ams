@@ -1,21 +1,99 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
+import AsyncSelect from "react-select/async";
 import {
   FiArrowLeft, FiCalendar, FiFolder, FiEye, FiDownload, FiUpload, FiTrash2,
   FiPlus, FiClock, FiTag, FiCheckCircle, FiCircle, FiFileText, FiDollarSign,
-  FiUsers, FiLink, FiPaperclip
+  FiUsers, FiLink, FiPaperclip, FiBook, FiEdit2, FiSave, FiX
 } from "react-icons/fi";
 import CaseTimeline from "../components/CaseTimeline.jsx";
-import CourtRecordView from "../components/CourtRecordView.jsx";
-import { fetchCourtDocument } from "../services/courtDocuments";
+import CaseExtraDetails from "../components/CaseExtraDetails.jsx";
+import { fetchCourtDocument, downloadHcOrderPdf, fetchHcBusiness } from "../services/courtDocuments";
 import { useToast } from "../contexts/ToastContext.jsx";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 import { formatCurrency } from "../utils/formatCurrency";
 import { InlineLoader } from "../components/Loader";
 import "../assets/styles/CaseDetail.css";
 
-const TABS = ["Overview", "Expenses", "Payments", "Invoices", "Hearings", "Documents", "Notes", "Tasks", "Orders", "Court Record", "Timeline"];
+const TABS = ["Parties", "Related Cases", "Acts", "Expenses", "Payments", "Invoices", "Hearings", "Documents", "Notes", "Tasks", "Orders", "Extra Details", "Timeline"];
+const STATUS_SELECT = [
+  { value: "", label: "—" },
+  { value: "Active", label: "Active" },
+  { value: "Pending", label: "Pending" },
+  { value: "Closed", label: "Closed" },
+];
+// Predefined tag choices — tags are picked from this list, not typed freehand.
+const TAG_OPTIONS = [
+  "High Priority", "Urgent", "Follow Up", "On Hold", "Important",
+  "Awaiting Documents", "For Argument", "Reserved", "For Orders", "Appeal",
+];
+
+// One field's pencil-edit affordance: shows the value + a pencil; clicking turns
+// it into an input/select with save/cancel. `onSave(newValue)` should throw to
+// keep the field open on failure. `hideValue` shows only the pencil (e.g. next
+// to a badge that already renders the value).
+function InlineEdit({ value, display, type = "text", options, onSave, onStart, hideValue }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
+  const [saving, setSaving] = useState(false);
+  const start = () => { setVal(value == null ? "" : String(value)); if (onStart) onStart(); setEditing(true); };
+  const commit = async () => {
+    setSaving(true);
+    try { await onSave(val); setEditing(false); } catch { /* stay open */ } finally { setSaving(false); }
+  };
+  if (!editing) {
+    return (
+      <span className="cd-inline">
+        {!hideValue && <span className="cd-inline-val">{display ?? (value || "—")}</span>}
+        <button className="cd-pencil" onClick={start} title="Edit"><FiEdit2 /></button>
+      </span>
+    );
+  }
+  return (
+    <span className="cd-inline editing">
+      {type === "select" ? (
+        <select autoFocus value={val} onChange={(e) => setVal(e.target.value)}>
+          {(options || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      ) : (
+        <input autoFocus type={type} value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }} />
+      )}
+      <button className="cd-pencil ok" onClick={commit} disabled={saving} title="Save"><FiSave /></button>
+      <button className="cd-pencil no" onClick={() => setEditing(false)} title="Cancel"><FiX /></button>
+    </span>
+  );
+}
+
+// react-select dark theme, matching ActDetail's picker.
+const customSelectStyles = {
+  control: (base, state) => ({
+    ...base,
+    backgroundColor: "var(--bg-primary)",
+    borderColor: state.isFocused ? "var(--accent)" : "var(--border-color)",
+    color: "var(--text-primary)",
+    borderRadius: "8px",
+    boxShadow: "none",
+  }),
+  menu: (base) => ({
+    ...base,
+    backgroundColor: "var(--bg-secondary)",
+    border: "1px solid var(--border-color)",
+    zIndex: 9999,
+  }),
+  option: (base, state) => ({
+    ...base,
+    backgroundColor: state.isSelected ? "var(--accent)" : state.isFocused ? "var(--border-color)" : "transparent",
+    color: state.isSelected ? "#fff" : "var(--text-primary)",
+    cursor: "pointer",
+  }),
+  singleValue: (base) => ({ ...base, color: "var(--text-primary)" }),
+  placeholder: (base) => ({ ...base, color: "var(--text-muted)" }),
+  input: (base) => ({ ...base, color: "var(--text-primary)" }),
+};
 
 // Parse the portal's mixed date formats into ISO (yyyy-mm-dd); "" if unparseable.
 const _CD_MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
@@ -38,13 +116,102 @@ function extractOrders(record) {
   if (record.cases !== undefined) {
     const out = [];
     (record.cases || []).forEach((c) => (c.detail?.orders || []).forEach((o) =>
-      out.push({ number: o.order_number || "", date: o.order_date || "", details: o.order_details || "", judge: "",
-                 pdf: o.pdf || null, viewToken: c.view_token })));
+      out.push({ number: o.order_number || "", date: o.order_date || "", details: o.order_details || "", judge: o.judge || "",
+                 pdf: o.pdf || null, pdfUrl: o.pdf_url || "", viewToken: c.view_token })));
     return out;
   }
   return (record.orders || []).map((o) => ({
-    number: o.sl_no || "", date: o.order_date || "", details: o.case_details || "", judge: o.judge || "", pdf: null,
+    number: o.sl_no || "", date: o.order_date || "", details: o.case_details || "", judge: o.judge || "",
+    pdf: null, pdfUrl: o.pdf_url || "",
   }));
+}
+
+// The court's full hearing/listing history (Provakil's "Listings"). HC stores it
+// under detail.hearings, DC under detail.history (whose rows carry a `business`
+// token that fetches that day's Daily Status). eCourts shapes only.
+function extractHearingHistory(record) {
+  if (!record?.cases) return [];
+  const out = [];
+  record.cases.forEach((c) => {
+    const d = c.detail || {};
+    (d.hearings || []).forEach((h) => out.push({
+      causeList: h.cause_list_type || "", judge: h.judge || "",
+      businessDate: h.business_on_date || "", hearingDate: h.hearing_date || "",
+      // business_detail is the Daily Status pre-fetched & stored at import — shown
+      // instantly, no re-scrape. `business` is the token for the live fallback.
+      purpose: h.purpose || "", business: h.business || null,
+      businessDetail: h.business_detail || null, viewToken: c.view_token,
+    }));
+    (d.history || []).forEach((h) => out.push({
+      causeList: "", judge: h.judge || "",
+      businessDate: h.business_date || "", hearingDate: h.hearing_date || "",
+      purpose: h.purpose || "", business: h.business || null,
+      businessDetail: h.business_detail || null, viewToken: c.view_token,
+    }));
+  });
+  return out;
+}
+
+// Curated identity fields for the header strip, in display order. Each entry
+// matches a source key by case-insensitive substring, so slightly different
+// labels across courts (eCourts / SCI / Madras) still resolve. Unknown keys are
+// left for the Extra Details tab.
+const _IDENTITY_FIELDS = [
+  { label: "Diary No", match: "diary" },
+  { label: "CNR", match: "cnr" },
+  { label: "Case Type", match: "case type" },
+  { label: "Filing No", match: "filing number" },
+  { label: "Filing Date", match: "filing date" },
+  { label: "Registration No", match: "registration number" },
+  { label: "Registration Date", match: "registration date" },
+  { label: "Stage", match: "stage" },
+  { label: "Status", match: "case status" },
+  { label: "State", match: "state" },
+  { label: "District", match: "district" },
+  { label: "Bench", match: "bench type" },
+  { label: "Coram", match: "coram" },
+  { label: "First Hearing", match: "first hearing" },
+  { label: "Decision Date", match: "decision date" },
+  { label: "Nature of Disposal", match: "nature of disposal" },
+  // Court registry classification. Exact-keyed so the three overlapping labels
+  // ("category" ⊂ "sub category" ⊂ "sub sub category") each bind to their own key.
+  { label: "Category", match: "category", exact: true },
+  { label: "Sub Category", match: "sub category", exact: true },
+  { label: "Sub Sub Category", match: "sub sub category", exact: true },
+];
+
+// Pull the header's structured identity fields out of a stored court record.
+// Returns an ordered [{label, value}] of whichever curated fields are present.
+// Same court-shape detection CourtRecordView uses.
+function extractCaseIdentity(record, courtId) {
+  if (!record) return [];
+  // Flatten the source into one { key: value } bag per court shape.
+  let bag = {};
+  if (courtId === "sci" || record.diaryNo !== undefined) {
+    bag = { ...(record.fields || {}) };
+    if (record.diaryNo) bag["Diary Number"] = record.diaryNo;
+  } else if (record.cases !== undefined) {
+    const d = (record.cases[0] || {}).detail || {};
+    bag = { ...(d.case_details || {}), ...(d.case_status || {}), ...(d.category || {}) };
+  } else {
+    bag = { ...(record.fields || {}) };
+  }
+  const entries = Object.entries(bag);
+  const out = [];
+  const usedKeys = new Set();
+  for (const field of _IDENTITY_FIELDS) {
+    const hit = entries.find(([k]) => {
+      if (usedKeys.has(k)) return false;
+      const kl = String(k).toLowerCase().trim();
+      // `exact` avoids substring collisions (e.g. "category" ⊂ "sub category").
+      return field.exact ? kl === field.match : kl.includes(field.match);
+    });
+    if (hit && hit[1] != null && String(hit[1]).trim() !== "") {
+      usedKeys.add(hit[0]);
+      out.push({ label: field.label, value: String(hit[1]).trim() });
+    }
+  }
+  return out;
 }
 
 const PARTY_ROLES = ["Petitioner", "Respondent", "Appellant", "Complainant", "Accused", "Plaintiff", "Defendant", "Third Party", "Witness"];
@@ -67,15 +234,26 @@ export default function CaseDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { success, error } = useToast();
+  const { hasPermission } = usePermission();
   const { withLoading } = useLoading();
 
   const token = localStorage.getItem("token");
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
 
-  const [tab, setTab] = useState("Overview");
+  const [tab, setTab] = useState("Parties");
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showTimeline, setShowTimeline] = useState(false);
+
+  // Inline edit of the case's own (app-owned) fields. Clients power the client picker.
+  const [clients, setClients] = useState([]);
+  // Header Actions menu + transfer modal.
+  const [showActions, setShowActions] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [advocates, setAdvocates] = useState([]);
+  const [transferTo, setTransferTo] = useState("");
+  const [transferring, setTransferring] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Tab data
   const [events, setEvents] = useState([]);
@@ -85,6 +263,10 @@ export default function CaseDetail() {
   const [financials, setFinancials] = useState(null);
   const [parties, setParties] = useState([]);
   const [related, setRelated] = useState([]);
+  const [linkedActs, setLinkedActs] = useState([]);
+  const [selectedAct, setSelectedAct] = useState(null);
+  const [linkingAct, setLinkingAct] = useState(false);
+  const [citedActs, setCitedActs] = useState([]);
   const [linkableCases, setLinkableCases] = useState([]);
 
   // Court record (imported from the court API)
@@ -108,6 +290,19 @@ export default function CaseDetail() {
         token: order.pdf,
         label: `Order ${order.number || ""} ${order.date || ""}`.trim(),
       });
+    } catch (e) {
+      error && error(e?.message || "Couldn’t download the order PDF.");
+    } finally {
+      setOrderDlBusy(-1);
+    }
+  };
+
+  // High Court orders carry an absolute pdf_url instead of a DC-style pdf token;
+  // stream it through the same AMS proxy (mirrors CourtRecordView).
+  const downloadOrderPdfByUrl = async (order, i) => {
+    setOrderDlBusy(i);
+    try {
+      await downloadHcOrderPdf(order.pdfUrl, `Order ${order.number || ""} ${order.date || ""}`.trim());
     } catch (e) {
       error && error(e?.message || "Couldn’t download the order PDF.");
     } finally {
@@ -144,12 +339,41 @@ export default function CaseDetail() {
     }
   };
 
+  // Show a court-history row's Daily Status. Prefer the copy stored at import
+  // (business_detail) — instant, no scrape. Only if it's missing (older records
+  // / DC) do we fetch live: HC and DC use different portals/endpoints.
+  const viewHistoryBusiness = async (row, i) => {
+    if (row.businessDetail && Object.keys(row.businessDetail.fields || {}).length) {
+      setHearingBizModal(row.businessDetail);
+      return;
+    }
+    if (!row.business) return;
+    setHearingViewBusy(`h${i}`);
+    try {
+      const biz = courtRecordCourtId === "ecourts_hc"
+        ? await fetchHcBusiness(row.business)
+        : await fetchCourtDocument({
+            courtComplex: courtRecordComplex, viewToken: row.viewToken,
+            kind: "hearing_business", token: row.business, label: `Business ${row.businessDate || ""}`,
+          });
+      if (biz) setHearingBizModal(biz);
+    } catch (e) {
+      error && error(e?.message || "Couldn’t fetch the hearing status.");
+    } finally {
+      setHearingViewBusy(null);
+    }
+  };
+
   // Inputs
   const [newTag, setNewTag] = useState("");
   const [newNote, setNewNote] = useState("");
   const [newTask, setNewTask] = useState({ title: "", priority: "MEDIUM", deadline: "" });
   const [taskFiles, setTaskFiles] = useState([]);
   const [uploadFile, setUploadFile] = useState(null);
+  // Upload Order modal
+  const [showUploadOrder, setShowUploadOrder] = useState(false);
+  const [uploadingOrder, setUploadingOrder] = useState(false);
+  const [orderForm, setOrderForm] = useState({ documentName: "", orderDate: "", description: "", file: null });
 
   // Add expense / invoice / payment / hearing modals
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -160,6 +384,8 @@ export default function CaseDetail() {
   const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: "", amount: "", invoiceDate: "", dueDate: "" });
   const [paymentForm, setPaymentForm] = useState({ amount: "", paymentMode: "", referenceNumber: "", paymentDate: "", description: "" });
   const [hearingForm, setHearingForm] = useState({ title: "", eventType: "HEARING", date: "", time: "" });
+  const [editingEventId, setEditingEventId] = useState(null);
+  const [alertBusy, setAlertBusy] = useState(null);
   const [savingFin, setSavingFin] = useState(false);
 
   // Parties + related inline forms
@@ -179,6 +405,90 @@ export default function CaseDetail() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, token]);
+
+  // ---------- Inline edit (app-owned case fields) ----------
+  // Partial update — UpdateCaseView only writes the keys present, so each
+  // per-field pencil can PUT just its own field. Throws so the field stays open on error.
+  const patchCase = async (payload) => {
+    try {
+      await axios.put(`/api/cases/update/${id}`, payload, authHeaders);
+      await fetchSummary();
+      success("Case updated.");
+    } catch (err) {
+      error(err.response?.data?.error || "Failed to update case.");
+      throw err;
+    }
+  };
+
+  // ---------- Header actions: archive / transfer ----------
+  const archiveCase = async () => {
+    setShowActions(false);
+    if (!window.confirm("Archive this case? It will be hidden from the workspace (you can restore it from the Cases list).")) return;
+    try {
+      await axios.delete(`/api/cases/delete/${id}`, authHeaders);
+      success("Case archived.");
+      navigate("/dashboard/cases");
+    } catch (err) {
+      error(err.response?.data?.error || "Failed to archive case.");
+    }
+  };
+
+  const openTransfer = async () => {
+    setShowActions(false);
+    setShowTransfer(true);
+    if (advocates.length === 0) {
+      try {
+        const res = await axios.get("/api/admin/users", authHeaders);
+        setAdvocates((res.data || []).filter((a) => a.active !== false));
+      } catch {
+        error("Couldn't load advocates (admin permission required).");
+      }
+    }
+  };
+
+  const doTransfer = async () => {
+    if (!transferTo) { error("Select an advocate to transfer to."); return; }
+    setTransferring(true);
+    try {
+      await axios.put(`/api/cases/transfer/${id}`, { advocateId: Number(transferTo) }, authHeaders);
+      success("Case transferred.");
+      setShowTransfer(false);
+      navigate("/dashboard/cases");   // it may no longer be in this advocate's list
+    } catch (err) {
+      error(err.response?.data?.error || "Failed to transfer case.");
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  // Re-scrape the court record and refresh the stored copy (new hearings/orders/
+  // disposal, or a wrong scrape). Can take a while — it re-fetches full detail.
+  const refreshCourtData = async () => {
+    setShowActions(false);
+    setRefreshing(true);
+    try {
+      const res = await axios.post(`/api/courtsearch/cases/${id}/refresh`, {}, { ...authHeaders, timeout: 240000 });
+      if (res.data?.raw) {
+        setCourtRecord(res.data.raw);
+        setCourtRecordLoaded(true);
+      }
+      success("Court record refreshed.");
+    } catch (err) {
+      error(err.response?.data?.error || "Couldn’t refresh the court record.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Loaded lazily the first time the client field is edited.
+  const fetchClients = useCallback(async () => {
+    if (clients.length) return;
+    try {
+      const res = await axios.get("/api/clients/my-clients", authHeaders);
+      setClients(res.data || []);
+    } catch { /* picker falls back to the current client only */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clients.length, token]);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -327,26 +637,81 @@ export default function CaseDetail() {
   const addHearing = async () => {
     if (!hearingForm.title.trim() || !hearingForm.date) { error("Title and date are required."); return; }
     setSavingFin(true);
+    const payload = {
+      title: hearingForm.title.trim(),
+      eventType: hearingForm.eventType,
+      date: hearingForm.date,
+      time: hearingForm.time || null,
+    };
     try {
-      await withLoading(
-        axios.post("/api/events/create", {
-          title: hearingForm.title.trim(),
-          eventType: hearingForm.eventType,
-          date: hearingForm.date,
-          time: hearingForm.time || null,
-          caseEntity: { id: Number(id) },
-        }, authHeaders),
-        "Adding hearing..."
-      );
+      if (editingEventId) {
+        await withLoading(axios.put(`/api/events/update/${editingEventId}`, payload, authHeaders), "Saving hearing...");
+      } else {
+        await withLoading(axios.post("/api/events/create", { ...payload, caseEntity: { id: Number(id) } }, authHeaders), "Adding hearing...");
+      }
       setShowHearingModal(false);
+      setEditingEventId(null);
       setHearingForm({ title: "", eventType: "HEARING", date: "", time: "" });
       fetchEvents();
       fetchSummary();
-      success("Hearing added to this case.");
+      success(editingEventId ? "Hearing updated." : "Hearing added to this case.");
     } catch (err) {
-      error(err.response?.data?.error || "Failed to add hearing.");
+      error(err.response?.data?.error || "Failed to save hearing.");
     } finally {
       setSavingFin(false);
+    }
+  };
+
+  const editHearing = (ev) => {
+    setEditingEventId(ev.id);
+    setHearingForm({
+      title: ev.title || "",
+      eventType: ev.eventType || "HEARING",
+      date: ev.date || "",
+      time: ev.time ? ev.time.slice(0, 5) : "",
+    });
+    setShowHearingModal(true);
+  };
+
+  const deleteHearingEvent = async (evId) => {
+    if (!window.confirm("Delete this hearing/reminder?")) return;
+    try {
+      await axios.delete(`/api/events/delete/${evId}`, authHeaders);
+      fetchEvents();
+      fetchSummary();
+      success("Hearing removed.");
+    } catch { error("Failed to delete hearing."); }
+  };
+
+  // ---------- Listing row actions (Court Hearing History) ----------
+  const copyHearing = async (row) => {
+    const parts = [
+      summary.caseNumber || summary.caseTitle || "",
+      row.hearingDate ? `Hearing: ${row.hearingDate}` : (row.businessDate ? `Business: ${row.businessDate}` : ""),
+      row.purpose ? `Purpose: ${row.purpose}` : "",
+      row.judge ? `Before: ${row.judge}` : "",
+      row.causeList ? `List: ${row.causeList}` : "",
+    ].filter(Boolean);
+    try {
+      await navigator.clipboard.writeText(parts.join("\n"));
+      success("Listing copied to clipboard.");
+    } catch { error("Couldn't copy to clipboard."); }
+  };
+
+  const alertClient = async (row, i) => {
+    setAlertBusy(`a${i}`);
+    try {
+      const res = await axios.post(`/api/cases/${id}/hearing-alert`, {
+        date: row.hearingDate || row.businessDate || "",
+        purpose: row.purpose || "",
+        bench: row.judge || "",
+      }, authHeaders);
+      if (res.data?.success) success(`Alert sent to client (${res.data.recipient}).`);
+      else error(res.data?.errorMessage || "Alert could not be sent.");
+    } catch (err) {
+      error(err.response?.data?.error || err.response?.data?.errorMessage || "Failed to send alert.");
+    } finally {
+      setAlertBusy(null);
     }
   };
 
@@ -396,6 +761,72 @@ export default function CaseDetail() {
     } catch { error("Failed to remove link."); }
   };
 
+  // ---------- Acts ----------
+  const fetchLinkedActs = useCallback(async () => {
+    try {
+      const res = await axios.get(`/api/cases/${id}/acts`, authHeaders);
+      setLinkedActs(res.data || []);
+    } catch { setLinkedActs([]); }
+  }, [id, token]);
+
+  // Acts the court cited on the imported record, matched to our library server-side.
+  const fetchCitedActs = useCallback(async () => {
+    try {
+      const res = await axios.get(`/api/cases/${id}/cited-acts`, authHeaders);
+      setCitedActs(res.data || []);
+    } catch { setCitedActs([]); }
+  }, [id, token]);
+
+  // Server-side search for the picker — 1250+ acts, so query as the user types
+  // instead of loading them all (reuses the Acts page's /api/acts search).
+  const loadActOptions = useCallback(async (input) => {
+    try {
+      const res = await axios.get(`/api/acts`, { ...authHeaders, params: { q: input, field: "all" } });
+      const rows = res.data?.content || [];
+      const linkedIds = new Set(linkedActs.map((a) => a.actId));
+      return rows
+        .filter((a) => !linkedIds.has(a.id))   // hide already-linked acts
+        .map((a) => ({
+          value: a.id,
+          label: `${a.title}${a.actYear ? ` (${a.actYear})` : ""}${a.jurisdiction ? ` · ${a.jurisdiction}` : ""}`,
+        }));
+    } catch { return []; }
+  }, [token, linkedActs]);
+
+  const addAct = async () => {
+    if (!selectedAct) { error("Select an act to link."); return; }
+    setLinkingAct(true);
+    try {
+      await axios.post(`/api/cases/${id}/acts`, { actId: selectedAct.value }, authHeaders);
+      setSelectedAct(null);
+      fetchLinkedActs();
+      success("Act linked.");
+    } catch (err) {
+      error(err.response?.data?.error || "Failed to link act.");
+    } finally {
+      setLinkingAct(false);
+    }
+  };
+
+  const deleteAct = async (actId) => {
+    try {
+      await axios.delete(`/api/cases/${id}/acts/${actId}`, authHeaders);
+      fetchLinkedActs();
+    } catch { error("Failed to unlink act."); }
+  };
+
+  // One-click add a court-cited act (that we matched to the library) into the
+  // case's Linked Acts, reusing the same link endpoint.
+  const linkCitedAct = async (actId) => {
+    try {
+      await axios.post(`/api/cases/${id}/acts`, { actId }, authHeaders);
+      fetchLinkedActs();
+      success("Act linked.");
+    } catch (err) {
+      error(err.response?.data?.error || "Failed to link act.");
+    }
+  };
+
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
   const fetchCourtRecord = useCallback(async () => {
@@ -413,26 +844,33 @@ export default function CaseDetail() {
     }
   }, [id]);
 
+  // Load the court record up front — it feeds the header's structured identity
+  // strip, so it can't wait for a tab to open. Defined here (after
+  // fetchCourtRecord) to avoid a temporal-dead-zone reference.
+  useEffect(() => { fetchCourtRecord(); }, [fetchCourtRecord]);
+
   // Lazily load tab data on demand
   useEffect(() => {
-    if (tab === "Overview") { fetchParties(); fetchRelated(); fetchLinkableCases(); }
+    if (tab === "Parties") fetchParties();
+    if (tab === "Related Cases") { fetchRelated(); fetchLinkableCases(); }
+    if (tab === "Acts") { fetchLinkedActs(); fetchCitedActs(); }
     if (tab === "Expenses" || tab === "Invoices" || tab === "Payments") fetchFinancials();
     if (tab === "Hearings") fetchEvents();
-    if (tab === "Documents") fetchDocs();
+    if (tab === "Documents" || tab === "Orders") fetchDocs();
     if (tab === "Notes") fetchNotes();
     if (tab === "Tasks") fetchTasks();
-    if ((tab === "Court Record" || tab === "Orders" || tab === "Hearings") && !courtRecordLoaded) fetchCourtRecord();
-  }, [tab, fetchFinancials, fetchEvents, fetchDocs, fetchNotes, fetchTasks, fetchParties, fetchRelated, fetchLinkableCases, fetchCourtRecord, courtRecordLoaded]);
+    if ((tab === "Extra Details" || tab === "Orders" || tab === "Hearings") && !courtRecordLoaded) fetchCourtRecord();
+  }, [tab, fetchFinancials, fetchEvents, fetchDocs, fetchNotes, fetchTasks, fetchParties, fetchRelated, fetchLinkableCases, fetchLinkedActs, fetchCitedActs, fetchCourtRecord, courtRecordLoaded]);
 
   // ---------- Tags ----------
-  const addTag = async () => {
-    const label = newTag.trim();
+  const addTag = async (explicit) => {
+    const label = (explicit ?? newTag).trim();
     if (!label) return;
     try {
       await axios.post(`/api/workspace/cases/${id}/tags`, { label }, authHeaders);
       setNewTag("");
       fetchSummary();
-    } catch (err) { error("Failed to add tag."); }
+    } catch { error("Failed to add tag."); }
   };
 
   const removeTag = async (tagId) => {
@@ -539,6 +977,30 @@ export default function CaseDetail() {
     } catch { error("Upload failed."); }
   };
 
+  // Upload an order document — stored as a normal case document tagged category "Order".
+  const uploadOrder = async () => {
+    if (!orderForm.file) { error("Choose a file to upload."); return; }
+    setUploadingOrder(true);
+    const fd = new FormData();
+    fd.append("file", orderForm.file);
+    fd.append("caseId", id);
+    fd.append("category", "Order");
+    if (orderForm.documentName.trim()) fd.append("documentName", orderForm.documentName.trim());
+    const desc = [orderForm.orderDate ? `Order dated ${orderForm.orderDate}` : "", orderForm.description.trim()].filter(Boolean).join(" — ");
+    if (desc) fd.append("description", desc);
+    try {
+      await axios.post("/api/documents/upload", fd, authHeaders);
+      setShowUploadOrder(false);
+      setOrderForm({ documentName: "", orderDate: "", description: "", file: null });
+      fetchDocs();
+      success("Order uploaded.");
+    } catch (err) {
+      error(err.response?.data?.error || "Failed to upload order.");
+    } finally {
+      setUploadingOrder(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="case-detail">
@@ -558,7 +1020,15 @@ export default function CaseDetail() {
     );
   }
 
-  const f = summary.financials || {};
+  const caseIdentity = extractCaseIdentity(courtRecord, courtRecordCourtId);
+  const hearingHistory = extractHearingHistory(courtRecord);
+  // The top list is the advocate's calendar: upcoming hearings + any non-hearing
+  // events (meetings, reminders). Past HEARING events are the court hearings that
+  // import copied in — those live, in full, under Court Hearing History below, so
+  // we hide them here to avoid the duplicate. Nothing is deleted.
+  const _todayISO = new Date().toISOString().slice(0, 10);
+  const myHearings = (events || []).filter(
+    (ev) => (ev.date && ev.date >= _todayISO) || ev.eventType !== "HEARING");
 
   return (
     <div className="case-detail">
@@ -570,17 +1040,94 @@ export default function CaseDetail() {
       <div className="cd-header">
         <div className="cd-header-main">
           <div className="cd-title-row">
-            <h2>{summary.caseTitle || summary.caseNumber}</h2>
+            <h2>
+              <InlineEdit value={summary.caseTitle} display={summary.caseTitle || summary.caseNumber}
+                onSave={(v) => patchCase({ caseTitle: v })} />
+            </h2>
             <span className={`status ${(summary.status || "").toLowerCase()}`}>{summary.status || "—"}</span>
+            <InlineEdit value={summary.status} type="select" options={STATUS_SELECT} hideValue
+              onSave={(v) => patchCase({ status: v })} />
           </div>
           <div className="cd-meta">
             <span><strong>Case No:</strong> {summary.caseNumber}</span>
-            <span><strong>Type:</strong> {summary.caseType || "—"}</span>
-            <span><strong>Court:</strong> {summary.courtLevel || "—"}</span>
-            <span><strong>Client:</strong> {summary.clientName || "—"}</span>
+            <span><strong>Type:</strong>{" "}
+              <InlineEdit value={summary.caseType} display={summary.caseType || "—"}
+                onSave={(v) => patchCase({ caseType: v })} />
+            </span>
+            <span><strong>Court:</strong>{" "}
+              <InlineEdit value={summary.courtLevel} display={summary.courtLevel || "—"}
+                onSave={(v) => patchCase({ courtLevel: v })} />
+            </span>
+            <span><strong>Client:</strong>{" "}
+              <InlineEdit value={summary.clientId ?? ""} display={summary.clientName || "—"}
+                type="select" onStart={fetchClients}
+                options={[{ value: "", label: "— None —" },
+                  ...(summary.clientId && !clients.some((c) => c.id === summary.clientId)
+                    ? [{ value: String(summary.clientId), label: summary.clientName || `Client #${summary.clientId}` }] : []),
+                  ...clients.map((c) => ({ value: String(c.id), label: c.name }))]}
+                onSave={(v) => patchCase({ clientId: v === "" ? null : Number(v) })} />
+            </span>
+            <span><strong>Amount:</strong>{" "}
+              <InlineEdit value={summary.amount ?? ""} display={formatCurrency(summary.amount || 0)} type="number"
+                onSave={(v) => patchCase({ amount: v === "" ? null : Number(v) })} />
+            </span>
+          </div>
+
+          {caseIdentity.length > 0 && (
+            <div className="cd-court-strip">
+              {caseIdentity.map((it) => (
+                <div className="cd-cs-item" key={it.label}>
+                  <span className="cd-cs-k">{it.label}</span>
+                  <span className="cd-cs-v">{it.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="cd-header-tags">
+            <FiTag className="cd-ht-icon" />
+            {(summary.tags || []).map((t) => (
+              <span key={t.id} className="cd-tag-chip">
+                {t.label}
+                <button onClick={() => removeTag(t.id)} title="Remove">×</button>
+              </span>
+            ))}
+            <select className="cd-tag-select" value="" onChange={(e) => { if (e.target.value) addTag(e.target.value); }}>
+              <option value="">+ tag</option>
+              {TAG_OPTIONS.filter((t) => !(summary.tags || []).some((x) => x.label === t))
+                .map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
           </div>
         </div>
         <div className="cd-header-side">
+          <div className="cd-header-actions">
+            <button className="cd-raise-invoice" onClick={() => setShowInvoiceModal(true)}>
+              <FiDollarSign /> Raise Invoice
+            </button>
+            {(courtRecord || hasPermission("CASE_DELETE") || hasPermission("USER_MANAGE")) && (
+              <div className="cd-actions-wrap">
+                <button className="cd-actions-btn" onClick={() => setShowActions((s) => !s)} disabled={refreshing}>
+                  {refreshing ? "Refreshing…" : "Actions ▾"}
+                </button>
+                {showActions && (
+                  <>
+                    <div className="cd-actions-backdrop" onClick={() => setShowActions(false)} />
+                    <div className="cd-actions-menu">
+                      {courtRecord && (
+                        <button onClick={refreshCourtData}><FiClock /> Refresh court data</button>
+                      )}
+                      {hasPermission("USER_MANAGE") && (
+                        <button onClick={openTransfer}><FiUsers /> Transfer case…</button>
+                      )}
+                      {hasPermission("CASE_DELETE") && (
+                        <button className="danger" onClick={archiveCase}><FiTrash2 /> Archive case</button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
           {summary.nextHearing ? (
             <div className="cd-next-hearing">
               <FiCalendar />
@@ -611,58 +1158,9 @@ export default function CaseDetail() {
       </div>
 
       <div className="cd-panel">
-        {/* OVERVIEW */}
-        {tab === "Overview" && (
+        {/* PARTIES */}
+        {tab === "Parties" && (
           <div className="cd-overview">
-            <div className="cd-card">
-              <h4>Description</h4>
-              <p>{summary.description || "No description."}</p>
-            </div>
-
-            <div className="cd-card">
-              <div className="cd-card-head">
-                <h4><FiTag /> Tags</h4>
-              </div>
-              <div className="cd-tags">
-                {(summary.tags || []).length === 0 && <span className="cd-muted">No tags yet.</span>}
-                {(summary.tags || []).map((t) => (
-                  <span key={t.id} className="cd-tag-chip">
-                    {t.label}
-                    <button onClick={() => removeTag(t.id)} title="Remove">×</button>
-                  </span>
-                ))}
-              </div>
-              <div className="cd-inline-add">
-                <input
-                  type="text" placeholder="Add a tag (e.g. High Risk)"
-                  value={newTag}
-                  onChange={(e) => setNewTag(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addTag()}
-                />
-                <button onClick={addTag}><FiPlus /> Add</button>
-              </div>
-            </div>
-
-            <div className="cd-quick-stats">
-              <div className="cd-quick">
-                <span className="cd-quick-val">{summary.taskCounts?.open ?? 0}</span>
-                <span className="cd-quick-lbl">Open Tasks</span>
-              </div>
-              <div className="cd-quick">
-                <span className="cd-quick-val">{summary.taskCounts?.done ?? 0}</span>
-                <span className="cd-quick-lbl">Done Tasks</span>
-              </div>
-              <div className="cd-quick">
-                <span className="cd-quick-val">{summary.noteCount ?? 0}</span>
-                <span className="cd-quick-lbl">Notes</span>
-              </div>
-              <div className="cd-quick">
-                <span className="cd-quick-val">{formatCurrency(f.pendingFromClient || 0)}</span>
-                <span className="cd-quick-lbl">Pending Dues</span>
-              </div>
-            </div>
-
-            {/* Parties / opponents */}
             <div className="cd-card">
               <div className="cd-card-head">
                 <h4><FiUsers /> Parties</h4>
@@ -703,8 +1201,12 @@ export default function CaseDetail() {
                 <button onClick={addParty}><FiPlus /> Add</button>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Related cases */}
+        {/* RELATED CASES */}
+        {tab === "Related Cases" && (
+          <div className="cd-overview">
             <div className="cd-card">
               <div className="cd-card-head">
                 <h4><FiLink /> Related Cases</h4>
@@ -743,6 +1245,93 @@ export default function CaseDetail() {
                 <button onClick={addRelated}><FiPlus /> Link</button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ACTS — statutes linked to this case (for validation / reference) */}
+        {tab === "Acts" && (
+          <div className="cd-overview">
+            <div className="cd-card">
+              <div className="cd-card-head">
+                <h4><FiBook /> Linked Acts</h4>
+              </div>
+              {linkedActs.length === 0 && <span className="cd-muted">No acts linked to this case yet.</span>}
+              <div className="cd-list">
+                {linkedActs.map((a) => (
+                  <div className="cd-list-item" key={a.id}>
+                    <div className="cd-li-icon"><FiBook /></div>
+                    <div className="cd-li-body">
+                      <span className="cd-li-title cd-link-case" onClick={() => navigate(`/dashboard/acts/${a.actId}`)}>
+                        {a.actTitle || `Act #${a.actId}`}
+                        {a.actNumber && <span className="cd-li-type">No. {a.actNumber}</span>}
+                      </span>
+                      <span className="cd-li-desc">
+                        {[a.actYear, a.jurisdiction].filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                    <button className="cd-row-del" onClick={() => deleteAct(a.actId)} title="Unlink act"><FiTrash2 /></button>
+                  </div>
+                ))}
+              </div>
+              <div className="cd-party-add">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <AsyncSelect
+                    cacheOptions
+                    defaultOptions
+                    loadOptions={loadActOptions}
+                    value={selectedAct}
+                    onChange={setSelectedAct}
+                    placeholder="Search acts to link…"
+                    noOptionsMessage={() => "Type to search acts"}
+                    styles={customSelectStyles}
+                    isClearable
+                  />
+                </div>
+                <button onClick={addAct} disabled={!selectedAct || linkingAct}>
+                  <FiPlus /> {linkingAct ? "Linking…" : "Link"}
+                </button>
+              </div>
+            </div>
+
+            {/* Acts cited by the court on the imported record. Matched ones link
+                to our library and can be added to Linked Acts in one click. */}
+            {citedActs.length > 0 && (
+              <div className="cd-card">
+                <div className="cd-card-head">
+                  <h4><FiBook /> Cited by the court</h4>
+                </div>
+                <div className="cd-list">
+                  {citedActs.map((a, i) => {
+                    const alreadyLinked = a.actId && linkedActs.some((l) => l.actId === a.actId);
+                    return (
+                      <div className="cd-list-item" key={i}>
+                        <div className="cd-li-icon"><FiBook /></div>
+                        <div className="cd-li-body">
+                          {a.actId ? (
+                            <span className="cd-li-title cd-link-case" onClick={() => navigate(`/dashboard/acts/${a.actId}`)}>
+                              {a.actTitle}
+                            </span>
+                          ) : (
+                            <span className="cd-li-title">
+                              {a.name} <span className="cd-li-type">not in library</span>
+                            </span>
+                          )}
+                          <span className="cd-li-desc">
+                            {a.section ? `Section ${a.section}` : ""}
+                            {a.actId && a.name !== a.actTitle ? `${a.section ? " · " : ""}cited as “${a.name}”` : ""}
+                          </span>
+                        </div>
+                        {a.actId && (
+                          alreadyLinked
+                            ? <span className="cd-li-type" title="Already in Linked Acts">✓ Linked</span>
+                            : <button className="cd-order-dl" onClick={() => linkCitedAct(a.actId)} title="Add to Linked Acts"><FiPlus /> Link</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -888,13 +1477,13 @@ export default function CaseDetail() {
         {tab === "Hearings" && (
           <div>
             <div className="cd-fin-section-head">
-              <h4><FiCalendar /> Hearings & Events ({events.length})</h4>
-              <button className="cd-fin-add-btn" onClick={() => setShowHearingModal(true)}><FiPlus /> Add Hearing</button>
+              <h4><FiCalendar /> Upcoming & My Hearings ({myHearings.length})</h4>
+              <button className="cd-fin-add-btn" onClick={() => { setEditingEventId(null); setHearingForm({ title: "", eventType: "HEARING", date: "", time: "" }); setShowHearingModal(true); }}><FiPlus /> Add Hearing</button>
             </div>
             <div className="cd-list">
-            {events.length === 0 ? (
-              <p className="cd-muted">No hearings or events for this case yet. Add one here — it also appears in the Hearings section.</p>
-            ) : events.map((ev) => (
+            {myHearings.length === 0 ? (
+              <p className="cd-muted">No upcoming hearings or reminders. Add one here — past court hearings appear under Court Hearing History below.</p>
+            ) : myHearings.map((ev) => (
               <div className="cd-list-item" key={ev.id}>
                 <div className="cd-li-icon"><FiCalendar /></div>
                 <div className="cd-li-body">
@@ -905,12 +1494,57 @@ export default function CaseDetail() {
                 {hearingBizByDate.has(ev.date) && (
                   <button className="cd-order-dl" style={{ marginLeft: 10 }} disabled={hearingViewBusy === ev.id}
                     onClick={() => viewHearingBusiness(ev)}>
-                    {hearingViewBusy === ev.id ? "…" : "👁 View"}
+                    {hearingViewBusy === ev.id ? "…" : "View"}
                   </button>
                 )}
+                <button className="cd-row-icon" title="Edit hearing" onClick={() => editHearing(ev)}>Edit</button>
+                <button className="cd-row-del-labeled" title="Delete hearing" onClick={() => deleteHearingEvent(ev.id)}>Delete</button>
               </div>
             ))}
             </div>
+
+            {/* Court hearing/listing history from the imported record (Provakil "Listings"). */}
+            {hearingHistory.length > 0 && (
+              <div style={{ marginTop: 22 }}>
+                <div className="cd-fin-section-head">
+                  <h4><FiCalendar /> Court Hearing History ({hearingHistory.length})</h4>
+                </div>
+                <div className="cd-orders-wrap">
+                  <table className="cd-orders-table">
+                    <thead><tr><th>Cause List</th><th>Judge / Bench</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th><th>Daily Status</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {hearingHistory.map((h, i) => (
+                        <tr key={i}>
+                          <td>{h.causeList || "—"}</td>
+                          <td>{h.judge || "—"}</td>
+                          <td>{h.businessDate || "—"}</td>
+                          <td>{h.hearingDate || "—"}</td>
+                          <td>{h.purpose || "—"}</td>
+                          <td>
+                            {(h.businessDetail && Object.keys(h.businessDetail.fields || {}).length) || (h.business && h.businessDate) ? (
+                              <button type="button" className="cd-order-dl" disabled={hearingViewBusy === `h${i}`}
+                                onClick={() => viewHistoryBusiness(h, i)}>
+                                {hearingViewBusy === `h${i}` ? "…" : "View"}
+                              </button>
+                            ) : <span className="cd-order-muted">—</span>}
+                          </td>
+                          <td>
+                            <div className="cd-listing-actions">
+                              <button type="button" onClick={() => copyHearing(h)}>Copy</button>
+                              <button type="button" title={summary.clientId ? "Email this hearing to the client" : "No client email on this case"}
+                                disabled={!summary.clientId || alertBusy === `a${i}`} onClick={() => alertClient(h, i)}>
+                                {alertBusy === `a${i}` ? "Sending…" : "Send Alert to Client"}
+                              </button>
+                              <button type="button" onClick={() => setShowInvoiceModal(true)}>Raise Invoice</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1031,6 +1665,12 @@ export default function CaseDetail() {
         {/* TIMELINE */}
         {tab === "Orders" && (
           <div className="cd-orders">
+            <div className="cd-fin-section-head">
+              <h4><FiFileText /> Orders</h4>
+              <button className="cd-fin-add-btn" onClick={() => setShowUploadOrder(true)}><FiUpload /> Upload Order</button>
+            </div>
+
+            {/* Court-record orders (scraped, downloaded live) */}
             {courtRecordLoading && <InlineLoader />}
             {!courtRecordLoading && (() => {
               const orders = extractOrders(courtRecord);
@@ -1052,7 +1692,12 @@ export default function CaseDetail() {
                               {o.pdf && o.pdf.filename ? (
                                 <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
                                   onClick={() => downloadOrderPdf(o, i)}>
-                                  {orderDlBusy === i ? "Fetching…" : "⬇ Download PDF"}
+                                  {orderDlBusy === i ? "Fetching…" : "Download PDF"}
+                                </button>
+                              ) : o.pdfUrl ? (
+                                <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
+                                  onClick={() => downloadOrderPdfByUrl(o, i)}>
+                                  {orderDlBusy === i ? "Fetching…" : "Download PDF"}
                                 </button>
                               ) : <span className="cd-order-muted">—</span>}
                             </td>
@@ -1061,20 +1706,44 @@ export default function CaseDetail() {
                       </tbody>
                     </table>
                   </div>
-                  <p className="cd-muted cd-orders-note">PDFs are fetched live from the court and downloaded to your device; nothing is stored on our servers.</p>
+                  <p className="cd-muted cd-orders-note">Court PDFs are fetched live from the court and downloaded to your device.</p>
                 </>
+              );
+            })()}
+
+            {/* Orders you've uploaded (stored documents tagged as "Order") */}
+            {(() => {
+              const uploaded = (docs || []).filter((d) => (d.category || "").toLowerCase() === "order");
+              if (!uploaded.length) return null;
+              return (
+                <div style={{ marginTop: 22 }}>
+                  <div className="cd-fin-section-head"><h4><FiFileText /> Uploaded Orders ({uploaded.length})</h4></div>
+                  <div className="cd-list">
+                    {uploaded.map((d) => (
+                      <div className="cd-list-item" key={d.id}>
+                        <div className="cd-li-icon"><FiFileText /></div>
+                        <div className="cd-li-body">
+                          <span className="cd-li-title">{d.documentName}</span>
+                          <span className="cd-li-desc">{d.description || "Order"}{d.uploadDate ? ` · ${fmtDate(d.uploadDate)}` : ""}</span>
+                        </div>
+                        <button className="cd-order-dl" onClick={() => previewDoc(d.id)}>Preview</button>
+                        <button className="cd-order-dl" style={{ marginLeft: 6 }} onClick={() => downloadDoc(d.id, d.documentName)}>Download</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               );
             })()}
           </div>
         )}
 
-        {tab === "Court Record" && (
+        {tab === "Extra Details" && (
           <div className="cd-court-record">
             {courtRecordLoading && <InlineLoader />}
             {!courtRecordLoading && courtRecord && (
               <>
-                <p className="cd-muted">The official court record captured when this case was imported. Shown as fetched — structured views will come later.</p>
-                <CourtRecordView record={courtRecord} courtComplex={courtRecordComplex} courtId={courtRecordCourtId} />
+                <p className="cd-muted">Additional details from the imported court record. The key fields (CNR, filing, status, jurisdiction, category, dates) are in the header; parties, hearings and orders — and the acts cited by the court — have their own tabs. This holds any other fields the court captured.</p>
+                <CaseExtraDetails record={courtRecord} courtId={courtRecordCourtId} />
               </>
             )}
             {!courtRecordLoading && courtRecordLoaded && !courtRecord && (
@@ -1099,6 +1768,33 @@ export default function CaseDetail() {
           caseNumber={summary.caseNumber}
           onClose={() => setShowTimeline(false)}
         />
+      )}
+
+      {showTransfer && (
+        <div className="cr-modal-overlay" onClick={() => setShowTransfer(false)}>
+          <div className="cr-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cr-modal-head">
+              <span>Transfer case</span>
+              <button type="button" className="cr-modal-x" onClick={() => setShowTransfer(false)}>×</button>
+            </div>
+            <p className="cd-muted" style={{ margin: "8px 0 12px" }}>
+              Reassign this case to another advocate. It will move out of your workspace into theirs.
+            </p>
+            <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8 }}>
+              <option value="">Select an advocate…</option>
+              {advocates.map((a) => (
+                <option key={a.id} value={a.id}>{a.fullName || a.email}{a.email ? ` — ${a.email}` : ""}</option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <button className="cd-actions-btn" onClick={doTransfer} disabled={!transferTo || transferring}>
+                {transferring ? "Transferring…" : "Transfer"}
+              </button>
+              <button className="cd-edit-cancel" onClick={() => setShowTransfer(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {hearingBizModal && (
@@ -1210,11 +1906,39 @@ export default function CaseDetail() {
         </div>
       )}
 
-      {/* Add Hearing modal */}
-      {showHearingModal && (
-        <div className="cd-modal-overlay" onClick={() => setShowHearingModal(false)}>
+      {/* Upload Order modal */}
+      {showUploadOrder && (
+        <div className="cd-modal-overlay" onClick={() => setShowUploadOrder(false)}>
           <div className="cd-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Add Hearing — {summary.caseNumber}</h3>
+            <h3>Upload Order — {summary.caseNumber}</h3>
+            <div className="cd-modal-form">
+              <label className="cd-modal-label">Document name</label>
+              <input type="text" placeholder="e.g. Interim Order 21-01-2025" value={orderForm.documentName}
+                onChange={(e) => setOrderForm({ ...orderForm, documentName: e.target.value })} />
+              <label className="cd-modal-label">Order date</label>
+              <input type="date" value={orderForm.orderDate}
+                onChange={(e) => setOrderForm({ ...orderForm, orderDate: e.target.value })} />
+              <label className="cd-modal-label">Description (optional)</label>
+              <input type="text" placeholder="Notes about this order" value={orderForm.description}
+                onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
+              <label className="cd-modal-label">File *</label>
+              <input type="file" onChange={(e) => setOrderForm({ ...orderForm, file: e.target.files[0] })} />
+              <div className="cd-modal-actions">
+                <button className="cd-modal-save" onClick={uploadOrder} disabled={uploadingOrder || !orderForm.file}>
+                  {uploadingOrder ? "Uploading…" : "Upload Order"}
+                </button>
+                <button className="cd-modal-cancel" onClick={() => setShowUploadOrder(false)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add / Edit Hearing modal */}
+      {showHearingModal && (
+        <div className="cd-modal-overlay" onClick={() => { setShowHearingModal(false); setEditingEventId(null); }}>
+          <div className="cd-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{editingEventId ? "Edit Hearing" : "Add Hearing"} — {summary.caseNumber}</h3>
             <div className="cd-modal-form">
               <input type="text" placeholder="Title *" value={hearingForm.title}
                 onChange={(e) => setHearingForm({ ...hearingForm, title: e.target.value })} />
@@ -1230,9 +1954,9 @@ export default function CaseDetail() {
                 onChange={(e) => setHearingForm({ ...hearingForm, time: e.target.value })} />
               <div className="cd-modal-actions">
                 <button className="cd-modal-save" onClick={addHearing} disabled={savingFin}>
-                  {savingFin ? "Saving..." : "Add Hearing"}
+                  {savingFin ? "Saving..." : (editingEventId ? "Save Hearing" : "Add Hearing")}
                 </button>
-                <button className="cd-modal-cancel" onClick={() => setShowHearingModal(false)}>Cancel</button>
+                <button className="cd-modal-cancel" onClick={() => { setShowHearingModal(false); setEditingEventId(null); }}>Cancel</button>
               </div>
             </div>
           </div>

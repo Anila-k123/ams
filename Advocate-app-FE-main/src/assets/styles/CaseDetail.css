@@ -50,6 +50,282 @@
 }
 .cd-meta strong { color: var(--text-muted); font-weight: 600; margin-right: 4px; }
 
+/* Structured court-record identity strip under the header meta (Provakil-style). */
+.cd-court-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 24px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+.cd-cs-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cd-cs-k {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.cd-cs-v {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+/* Inline edit */
+.cd-edit-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cd-edit-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+.cd-edit-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px 16px;
+  align-items: end;
+}
+.cd-edit-form label { display: flex; flex-direction: column; gap: 4px; }
+.cd-edit-form label.cd-ef-full { grid-column: 1 / -1; }
+.cd-edit-form label > span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+}
+.cd-edit-form input,
+.cd-edit-form select {
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+.cd-edit-actions { grid-column: 1 / -1; display: flex; gap: 10px; }
+.cd-edit-actions button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 18px; font-weight: 600; font-size: 13px;
+  border-radius: 8px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #6C63FF, #8B5CF6); color: #fff;
+}
+.cd-edit-actions .cd-edit-cancel {
+  background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);
+}
+.cd-edit-actions button:disabled { opacity: 0.6; cursor: default; }
+
+/* Tags row in the header */
+.cd-header-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.cd-header-tags .cd-ht-icon { color: var(--text-muted); flex-shrink: 0; }
+.cd-tag-input {
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  width: 90px;
+}
+.cd-tag-select {
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+/* Extra Details sub-tabs (Provakil-style) */
+.cd-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 16px;
+}
+.cd-subtab {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cd-subtab:hover { color: var(--text-primary); }
+.cd-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.cd-extra-body { overflow-x: auto; }
+
+/* Per-listing row actions (Court Hearing History) */
+.cd-listing-actions { display: inline-flex; gap: 4px; }
+.cd-listing-actions button {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+.cd-listing-actions button:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.cd-listing-actions button:disabled { opacity: 0.4; cursor: default; }
+.cd-row-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 5px 10px;
+  margin-left: 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.cd-row-icon:hover { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Delete button with a text label (vs the plain icon-only cd-row-del) */
+.cd-row-del-labeled {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-color);
+  padding: 5px 10px;
+  margin-left: 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.cd-row-del-labeled:hover { color: #e04f5f; border-color: #e04f5f; background: color-mix(in srgb, #e04f5f 12%, transparent); }
+
+/* Header actions cluster (Raise Invoice + Actions menu) */
+.cd-header-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.cd-raise-invoice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #6C63FF, #8B5CF6);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.cd-raise-invoice:hover { filter: brightness(1.06); }
+.cd-actions-wrap { position: relative; }
+.cd-actions-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.cd-actions-btn:hover { border-color: var(--accent); color: var(--accent); }
+.cd-actions-btn:disabled { opacity: 0.6; cursor: default; }
+.cd-actions-backdrop { position: fixed; inset: 0; z-index: 40; }
+.cd-actions-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 41;
+  min-width: 190px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.25);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cd-actions-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+}
+.cd-actions-menu button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.cd-actions-menu button.danger { color: #e04f5f; }
+.cd-actions-menu button.danger:hover { background: color-mix(in srgb, #e04f5f 12%, transparent); }
+
+/* Per-field inline edit (pencil) */
+.cd-inline { display: inline-flex; align-items: center; gap: 6px; }
+.cd-inline-val { }
+.cd-pencil {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  opacity: 0.55;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.cd-pencil:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.cd-pencil.ok:hover { color: #16a34a; background: color-mix(in srgb, #16a34a 14%, transparent); }
+.cd-pencil.no:hover { color: #e04f5f; background: color-mix(in srgb, #e04f5f 14%, transparent); }
+.cd-inline.editing input,
+.cd-inline.editing select {
+  padding: 4px 8px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  max-width: 320px;
+}
+/* Title pencil sits inline with the big heading but stays small */
+.cd-title-row h2 .cd-pencil { font-size: 15px; }
+.cd-title-row h2 .cd-inline.editing input { font-size: 20px; font-weight: 700; min-width: 320px; }
+
 .cd-next-hearing {
   display: flex;
   align-items: center;

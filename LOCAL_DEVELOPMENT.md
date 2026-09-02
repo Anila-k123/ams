@@ -246,6 +246,14 @@ cd Advocate-app-FE-main && npm run lint
 
 ---
 
+## Outstanding work
+
+`NEXT_STEPS.md` lists what is pending and why, including the one thing that must
+be set up before the cause-list features have any data: **`sync_causelist` is not
+yet scheduled.**
+
+---
+
 ## Project layout
 
 ```

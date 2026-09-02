@@ -93,6 +93,7 @@ Kerala 2/2 exact agreement between a cause-list item number and the board's.
 - **Slow: ~47s** (several multi-MB PDFs). Never call it from a request;
   `COURT_API_CAUSELIST_TIMEOUT` defaults to 300s for this reason.
 - **Not yet on a schedule** — needs a morning task, after the court publishes.
+  See `NEXT_STEPS.md` §1.1; without it these features have no data.
 
 ### Storage — `causelist_item` (Django-managed, `courtsearch/0003`)
 

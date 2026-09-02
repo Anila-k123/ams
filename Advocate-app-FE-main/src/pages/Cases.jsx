@@ -130,7 +130,7 @@ function Cases() {
   const token = localStorage.getItem("token");
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
   const { withLoading } = useLoading();
-  const { success, error, warning, info } = useToast();
+  const { success, error } = useToast();
   const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived, filterStatus, filterCourt, sort] });
   const [pageLoading, setPageLoading] = useState(true);
   const searchedFromGlobalNav = useRef(!!location.state?.search);
@@ -380,17 +380,18 @@ function Cases() {
       fetchCases();
       fetchWorkspaceMeta();
       setErrorMessage("");
+      success(editCaseId ? "Case updated." : "Case created.");
     } catch (err) {
       console.error("Error saving case:", err);
       if (err.response?.status === 409) {
         setCaseNumberError("Case number already exists.");
         error("Case number already exists.");
       } else {
-        setErrorMessage(
-          typeof err.response?.data?.message === "string"
-            ? err.response.data.message
-            : "Failed to save case."
-        );
+        const msg = typeof err.response?.data?.message === "string"
+          ? err.response.data.message
+          : "Failed to save case.";
+        setErrorMessage(msg);
+        error(msg);
       }
     }
   };
@@ -489,7 +490,11 @@ function Cases() {
       );
       setUploadDocFile(null);
       openCaseDocs(docCase);
-    } catch (err) { console.error("Upload error:", err); }
+      success("Document uploaded.");
+    } catch (err) {
+      console.error("Upload error:", err);
+      error(err.response?.data?.error || "Failed to upload the document.");
+    }
   };
 
   const goToCase = (id) => navigate(`/dashboard/cases/${id}`);

@@ -170,6 +170,7 @@ export default function InvoicesPanel() {
       handleClose();
       fetchInvoices();
       fetchSummary();
+      success("Invoice created.");
     } catch (err) {
       setSubmitting(false);
       console.error("Error creating invoice:", err);

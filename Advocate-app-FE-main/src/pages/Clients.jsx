@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
+import { useToast } from "../contexts/ToastContext.jsx";
 import { FiFolder, FiEye, FiDownload, FiX, FiUpload, FiFile } from "react-icons/fi";
 import ReportService from "../services/ReportService";
 import Pagination from "../components/Pagination";
@@ -40,6 +41,7 @@ function Clients() {
   const location = useLocation();
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
+  const { success, error } = useToast();
   const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived] });
   const searchedFromGlobalNav = useRef(!!location.state?.search);
 
@@ -156,10 +158,13 @@ function Clients() {
       setNewClient(emptyClient);
       setShowModal(false);
       fetchClients();
-    } catch (error) {
-      console.error("Error saving client:", error);
-      const errData = error.response?.data;
-      setErrorMessage(typeof errData === "string" ? errData : (errData?.message || "Failed to save client."));
+      success(editClientId ? "Client updated." : "Client created.");
+    } catch (err) {
+      console.error("Error saving client:", err);
+      const errData = err.response?.data;
+      const msg = typeof errData === "string" ? errData : (errData?.message || "Failed to save client.");
+      setErrorMessage(msg);
+      error(msg);
     }
   };
 
@@ -254,8 +259,10 @@ function Clients() {
       );
       setUploadClientDocFile(null);
       openClientDocs(docClient);
+      success("Document uploaded.");
     } catch (err) {
       console.error("Upload error:", err);
+      error(err.response?.data?.error || "Failed to upload the document.");
     }
   };
 

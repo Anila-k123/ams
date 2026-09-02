@@ -4,6 +4,7 @@ import axios from "axios";
 import Select from "react-select";
 import { FiChevronLeft, FiX, FiTrash2 } from "react-icons/fi";
 import { InlineLoader } from "../components/Loader";
+import { useToast } from "../contexts/ToastContext.jsx";
 import "../assets/styles/Acts.css";
 
 function authHeaders() {
@@ -155,6 +156,9 @@ function cleanSummary(text, title) {
 export default function ActDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Only `success` - this component already has an `error` state of its own,
+  // and link failures surface inline in the modal via setLinkError.
+  const { success } = useToast();
   const [act, setAct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -232,6 +236,7 @@ export default function ActDetail() {
       await axios.post(`/api/acts/${id}/cases`, { caseId: selectedCase.value }, authHeaders());
       setShowLinkModal(false);
       await Promise.all([fetchAct(), loadLinkedCases()]);
+      success("Case linked to this Act.");
     } catch (err) {
       setLinkError(err?.response?.data?.error || "Couldn't link this case.");
     } finally {

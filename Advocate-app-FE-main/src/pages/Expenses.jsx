@@ -35,7 +35,7 @@ function Expenses() {
 
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
-  const { error } = useToast();
+  const { success, error } = useToast();
 
   // ----------------- FORMS -----------------
   const [newExpense, setNewExpense] = useState({
@@ -198,6 +198,7 @@ function Expenses() {
           "Updating Expense..."
         );
         setSuccessMessage("Expense updated.");
+        success("Expense updated.");
       } else {
         await withLoading(
           axios.post("/api/expenses/create", expenseToSend, {
@@ -206,6 +207,7 @@ function Expenses() {
           "Saving Expense..."
         );
         setSuccessMessage("Expense created.");
+        success("Expense created.");
       }
       setShowAddModal(false);
       // refresh case view and totals
@@ -214,7 +216,9 @@ function Expenses() {
     } catch (err) {
       console.error("Error saving expense:", err);
       const errData = err.response?.data;
-      setErrorMessage(typeof errData === "string" ? errData : (errData?.message || "Failed to save expense."));
+      const msg = typeof errData === "string" ? errData : (errData?.message || "Failed to save expense.");
+      setErrorMessage(msg);
+      error(msg);
     }
   };
 
@@ -291,6 +295,7 @@ function Expenses() {
         "Saving Payment..."
       );
       setSuccessMessage("Payment recorded successfully!");
+      success("Payment recorded.");
       setShowPaymentModal(false);
       // refresh
       fetchExpensesAndPayments(newPayment.caseId);
@@ -298,6 +303,7 @@ function Expenses() {
     } catch (err) {
       console.error("Error saving payment:", err);
       setErrorMessage("Failed to record payment.");
+      error("Failed to record payment.");
     }
   };
 

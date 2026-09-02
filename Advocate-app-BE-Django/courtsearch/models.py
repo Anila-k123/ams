@@ -41,3 +41,55 @@ class ImportedCaseRecord(models.Model):
 
     def __str__(self):
         return f'ImportedCaseRecord(case={self.case_id}, court={self.court_id})'
+
+
+class CauseListItem(models.Model):
+    """One case's position in a court's published order of business for one day.
+
+    This is what a display board cannot tell you. The board reports the item a
+    courtroom is calling right now - one row per room; the cause list is the
+    whole day's order, so it is the only source for "your matter is item 40".
+    Both are needed to say how far away a hearing is.
+
+    Rows are replaced wholesale per (court, list_date) on each sync rather than
+    upserted: the court can revise a list during the day, and a stale row that
+    quietly survived a re-fetch would put a client in the wrong place in the
+    queue. Replacing is also idempotent, so re-running the sync is always safe.
+
+    Only DAILY rows are stored by default. The Supreme Court also publishes an
+    ADVANCE list, but it is explicitly a forecast ("matters which are LIKELY to
+    be listed"), and an item number from it may not hold.
+    """
+    court = models.CharField(max_length=32)              # provider key, e.g. 'sci'
+    list_date = models.DateField()
+    court_number = models.CharField(max_length=16)       # '1'..'16', or 'R1'
+    item_number = models.CharField(max_length=32)        # '35', '35.1'
+    case_string = models.CharField(max_length=255)       # as printed by the court
+
+    # The join key. Registration numbers, display-board strings and cause-list
+    # entries all write the same case differently, so every side is reduced to
+    # (type, number, year) - with 'DIARY' as the type for diary-numbered
+    # matters, which is how most fresh Supreme Court cases are listed.
+    case_type = models.CharField(max_length=32, blank=True)
+    case_no = models.CharField(max_length=32, blank=True)
+    case_year = models.CharField(max_length=8, blank=True)
+
+    diary_number = models.CharField(max_length=64, blank=True)
+    list_type = models.CharField(max_length=16, default='DAILY')
+    source = models.CharField(max_length=128, blank=True)   # originating PDF
+    fetched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'causelist_item'
+        indexes = [
+            models.Index(fields=['court', 'list_date']),
+            # The lookup the "Your Item" join makes, once per case.
+            models.Index(fields=['court', 'list_date', 'case_type',
+                                 'case_no', 'case_year'],
+                         name='causelist_join_idx'),
+        ]
+
+    def __str__(self):
+        return '{} {} court {} item {}: {}'.format(
+            self.court, self.list_date, self.court_number,
+            self.item_number, self.case_string)

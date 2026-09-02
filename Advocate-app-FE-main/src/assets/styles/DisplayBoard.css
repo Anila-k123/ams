@@ -127,6 +127,14 @@
 
 .board-vc:hover { text-decoration: underline; }
 
+/* Your own matter's position in that courtroom's list. Emphasised because it
+   is the one value on a public board that is specific to this practice - the
+   whole reason to be looking at the board on a hearing morning. */
+.board-your-item {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .board-meta {
   display: flex;
   gap: 20px;
@@ -240,4 +248,113 @@
   .board-container { padding: 16px; }
   .board-header { flex-direction: column; }
   .board-controls { width: 100%; }
+}
+
+
+/* ─── Your matters today ───────────────────────────────────────────────────
+   The one part of this page that is specific to the practice, so it is the
+   part that reads first. Rows are buttons: clicking one jumps to that court's
+   board, which is what you want next after seeing you are listed. */
+.listed-today {
+  background: var(--card-bg);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border: 1px solid var(--card-border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 18px;
+}
+
+.listed-today h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.listed-today-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.listed-today-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) auto auto minmax(120px, 1.6fr);
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+
+.listed-today-row:hover { border-color: var(--accent); }
+
+.lt-court { font-weight: 600; }
+.lt-room  { color: var(--text-secondary); white-space: nowrap; }
+/* The number the whole feature exists to show. */
+.lt-item  { font-weight: 700; color: var(--accent); white-space: nowrap; }
+.lt-case  { color: var(--text-secondary); }
+
+/* Absence is information too: "nothing listed" and "we have no cause list for
+   this court" mean different things, and the copy distinguishes them. */
+.listed-today-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left-color: var(--card-border);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+/* ─── My Forums / All Forums ─── */
+.board-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.board-tabs button {
+  padding: 9px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.board-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.board-tabs button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.board-empty-note {
+  padding: 18px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 720px) {
+  .listed-today-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
 }

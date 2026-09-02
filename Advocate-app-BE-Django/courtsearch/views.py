@@ -19,7 +19,8 @@ from rest_framework import status
 from core.permissions import RequirePermission
 from . import client
 from . import pdf_cache
-from .models import CourtCaseTypes, ImportedCaseRecord
+from .models import CauseListItem, CourtCaseTypes, ImportedCaseRecord
+from . import matching
 from core.practice import practice_ids
 
 log = logging.getLogger(__name__)
@@ -1195,4 +1196,70 @@ class ImportedRecordView(APIView):
             'id': rec.id, 'caseId': rec.case_id, 'courtId': rec.court_id,
             'query': rec.query, 'raw': rec.raw,
             'fetchedAt': rec.fetched_at.isoformat() if rec.fetched_at else None,
+        })
+
+
+# --- Cause lists: where the practice's own matters sit in today's order ------
+# Both views read ONLY the stored cause list. They never call the scraper, so
+# they answer in milliseconds and work even when the scraper is down - which
+# matters, because they are what an advocate opens on a hearing morning.
+
+def _court_labels():
+    """Provider key -> display name, from the display-board court list."""
+    courts = cache.get('court_display_courts')
+    if courts is None:
+        try:
+            courts = client.get_display_courts()
+            cache.set('court_display_courts', courts, 3600)
+        except (client.ScraperUnavailable, client.ScraperError):
+            courts = []                    # fall back to the raw key below
+    return {c.get('value'): c.get('label') for c in (courts or [])}
+
+
+class MyForumsView(APIView):
+    """GET /api/causelist/my-forums — the courts this practice has cases in.
+
+    Derived from each case's CNR, so there is nothing to configure. Drives the
+    "My Forums" tab: four relevant courts instead of scrolling twenty-six.
+    """
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        counts = matching.my_forums(request.user)
+        labels = _court_labels()
+        return Response({'courts': [
+            {'value': key, 'label': labels.get(key, key), 'caseCount': n}
+            for key, n in sorted(counts.items(), key=lambda kv: -kv[1])
+        ]})
+
+
+class MyListingsView(APIView):
+    """GET /api/causelist/my-listings?date=yyyy-mm-dd — this practice's matters
+    listed that day, across every court, with the item number each sits at."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        raw = request.query_params.get('date')
+        try:
+            on = (datetime.datetime.strptime(raw, '%Y-%m-%d').date()
+                  if raw else datetime.date.today())
+        except ValueError:
+            return Response({'error': 'date must be yyyy-mm-dd'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        listings = matching.my_listings(request.user, on)
+        labels = _court_labels()
+        for entry in listings:
+            entry['courtLabel'] = labels.get(entry['court'], entry['court'])
+
+        # Which courts have a cause list stored at all for that day. Without
+        # this the UI cannot tell "nothing of yours is listed" from "we have no
+        # cause list for this court yet", and those need different wording.
+        covered = sorted(CauseListItem.objects.filter(list_date=on)
+                         .values_list('court', flat=True).distinct())
+        return Response({
+            'date': on.isoformat(),
+            'count': len(listings),
+            'listings': listings,
+            'coveredCourts': covered,
         })

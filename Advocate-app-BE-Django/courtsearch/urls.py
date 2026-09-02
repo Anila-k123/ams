@@ -2,6 +2,11 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Cause lists — this practice's own listings. Read from the stored cause
+    # list only, so they are instant and independent of the scraper.
+    path('causelist/my-forums', views.MyForumsView.as_view()),
+    path('causelist/my-listings', views.MyListingsView.as_view()),
+
     path('courtsearch/courts', views.CourtsView.as_view()),
     path('courtsearch/courts/<str:court_id>/case-types', views.CaseTypesView.as_view()),
     path('courtsearch/search', views.SearchView.as_view()),

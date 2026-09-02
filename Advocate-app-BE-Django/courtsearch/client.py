@@ -21,6 +21,10 @@ COURT_API_BASE = config('COURT_API_BASE', default='http://localhost:8000')
 # A search does live scraping + throttling + OCR retries and can take ~5-30s.
 SEARCH_TIMEOUT = config('COURT_API_SEARCH_TIMEOUT', default=60, cast=int)
 LIST_TIMEOUT = config('COURT_API_LIST_TIMEOUT', default=30, cast=int)
+# Cause lists mean fetching and parsing several large PDFs upstream, which is an
+# order of magnitude slower than a page scrape - the Supreme Court's takes ~47s.
+# Only the once-a-day sync command waits on this.
+CAUSELIST_TIMEOUT = config('COURT_API_CAUSELIST_TIMEOUT', default=300, cast=int)
 
 # Transient upstream failures that MUST be retried: 502 (portal/parse error),
 # 503 (CAPTCHA not solved this attempt), 504 (portal timeout). 400/404/422 are
@@ -231,6 +235,27 @@ def get_display_board(court: str, timeout: int = SEARCH_TIMEOUT):
     while, so use the longer search timeout. Returns the scraper's envelope:
     {court, boardDate, fetchedAt, count, rows[], courts[]}."""
     return get_json('/display-board', {'court': court}, timeout=timeout)
+
+
+def get_causelist_courts(timeout: int = LIST_TIMEOUT):
+    """Courts whose cause lists the scraper can fetch. Cheap — no scraping."""
+    return get_json('/causelist/courts', timeout=timeout)
+
+
+def get_causelist(court: str, on=None, timeout: int = CAUSELIST_TIMEOUT):
+    """A court's published cause list for one day.
+
+    Slow on purpose to allow for: the scraper downloads and parses several
+    multi-megabyte PDFs (~47s for the Supreme Court), so this must never sit in
+    a page load. `manage.py sync_causelist` calls it once a day and stores the
+    rows; everything user-facing reads the table.
+
+    Returns {court, listDate, fetchedAt, count, courtrooms[], rows[], courts[]}.
+    """
+    params = {'court': court}
+    if on is not None:
+        params['date'] = on.isoformat() if hasattr(on, 'isoformat') else str(on)
+    return get_json('/causelist', params, timeout=timeout)
 
 
 # --- eCourts High Court Services (stateful cascade + OCR-CAPTCHA search) ------

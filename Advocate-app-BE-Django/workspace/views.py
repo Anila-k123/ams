@@ -480,6 +480,7 @@ class DeleteRelatedCaseView(APIView):
 log = logging.getLogger(__name__)
 
 from courtsearch import client as court_client
+from courtsearch import matching
 from core.practice import practice_ids
 
 # Cached once an hour per court so page loads are fast and the courts' servers
@@ -543,4 +544,38 @@ class DisplayBoardView(APIView):
             }
             cache.set(cache_key, payload, BOARD_CACHE_TTL)
 
-        return Response(payload)
+        return Response(_with_your_items(request.user, court, payload))
+
+
+def _with_your_items(advocate, court, payload):
+    """Add each row's `yourItem` - where THIS advocate's case sits in that
+    courtroom's list today.
+
+    The board itself is public and cached per court, shared by every user. This
+    overlay is per practice, so it is applied AFTER the cache is read and the
+    merged result is never written back - caching it would show one practice
+    another practice's listings. The payload is copied for the same reason: the
+    cached dict and its row dicts must not be mutated in place.
+
+    A board says only what a courtroom is calling right now; `yourItem` comes
+    from the stored cause list, which is the day's full order. Together they
+    answer "the court is on item 29, you are item 40".
+    """
+    import datetime
+
+    rows = payload.get('rows') or []
+    try:
+        mine = matching.your_items_by_courtroom(
+            advocate, court, datetime.date.today())
+    except Exception:                                   # noqa: BLE001
+        # An overlay problem must not take the board down with it.
+        log.exception('display board: could not resolve your-items for %s', court)
+        return payload
+    if not mine:
+        return payload
+
+    merged = dict(payload)
+    merged['rows'] = [
+        dict(r, yourItem=mine.get(r.get('courtNumber'), '')) for r in rows
+    ]
+    return merged

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { FiAlertCircle, FiChevronDown, FiRefreshCw } from "react-icons/fi";
+import { FiAlertCircle, FiChevronDown, FiRefreshCw, FiList } from "react-icons/fi";
 import "../assets/styles/DisplayBoard.css";
 
 // Fallback list until the courts endpoint responds.
@@ -83,6 +83,16 @@ async function fetchBenches(benchValues) {
 // else. Never hardcode a specific court's column set; the data decides.
 const FIELD_CATALOG = [
   { key: "itemNumber", label: "Item", has: (r) => !!r.itemNumber, render: (r) => r.itemNumber },
+  // Where YOUR case sits in this courtroom's list today, from the stored cause
+  // list — the board itself only knows the item being called right now. Sits
+  // next to "Item" so the two can be read against each other: court on 6,
+  // yours at 19 means roughly thirteen matters to go. The column appears only
+  // when something of yours is actually listed.
+  {
+    key: "yourItem", label: "Your Item",
+    has: (r) => !!r.yourItem,
+    render: (r) => <strong className="board-your-item">{r.yourItem}</strong>,
+  },
   { key: "listType", label: "List", has: (r) => !!r.listType, render: (r) => r.listType },
   { key: "caseString", label: "Case No.", has: (r) => !!r.caseString, render: (r) => r.caseString },
   { key: "title", label: "Title", has: (r) => !!r.title, render: (r) => r.title },
@@ -226,9 +236,58 @@ function CourtPanel({ court, isOpen, onToggle }) {
   );
 }
 
+// The practice's own matters listed today, across every court. Comes from the
+// stored cause list, so it lands immediately — unlike a board, which is a live
+// scrape per court. This is the answer to the question an advocate actually
+// arrives with ("where am I today?"), so it goes above everything else rather
+// than being buried inside one of twenty-six collapsed panels.
+function ListedToday({ listings, covered, courts, onOpen }) {
+  if (!listings.length) {
+    return (
+      <div className="listed-today listed-today-empty">
+        <FiList />
+        <span>
+          Nothing of yours is listed today
+          {covered.length
+            ? ` in ${covered.length === 1 ? "the court" : "the courts"} we hold a cause list for.`
+            : " — no cause list has been collected yet."}
+        </span>
+      </div>
+    );
+  }
+  const labelFor = (v) => courts.find((c) => c.value === v)?.label || v;
+  return (
+    <div className="listed-today">
+      <h3><FiList /> Your matters today ({listings.length})</h3>
+      <div className="listed-today-rows">
+        {listings.map((l) => (
+          <button
+            type="button"
+            className="listed-today-row"
+            key={`${l.caseId}-${l.court}-${l.courtNumber}-${l.itemNumber}`}
+            onClick={() => onOpen(l.court)}
+            title="Open this court's display board"
+          >
+            <span className="lt-court">{labelFor(l.court)}</span>
+            <span className="lt-room">Court {l.courtNumber || "—"}</span>
+            <span className="lt-item">Item {l.itemNumber}</span>
+            <span className="lt-case">{l.caseString || l.caseNumber}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function DisplayBoard() {
   const [courts, setCourts] = useState(FALLBACK_COURTS);
   const [openKey, setOpenKey] = useState(null);
+  const [myForums, setMyForums] = useState([]);
+  const [listings, setListings] = useState([]);
+  const [covered, setCovered] = useState([]);
+  // Default to All Forums and switch once we know the practice has courts of
+  // its own, so the page is never briefly empty on first paint.
+  const [tab, setTab] = useState("all");
 
   useEffect(() => {
     (async () => {
@@ -241,6 +300,38 @@ export default function DisplayBoard() {
     })();
   }, []);
 
+  // My Forums and today's listings are cheap (stored data, no scraping), so
+  // both load up front rather than on demand.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await axios.get("/api/causelist/my-forums", authHeaders());
+        const mine = res.data?.courts || [];
+        setMyForums(mine);
+        if (mine.length) setTab("mine");
+      } catch { /* leave My Forums empty; All Forums still works */ }
+    })();
+    (async () => {
+      try {
+        const res = await axios.get("/api/causelist/my-listings", authHeaders());
+        setListings(res.data?.listings || []);
+        setCovered(res.data?.coveredCourts || []);
+      } catch { /* the banner simply stays quiet */ }
+    })();
+  }, []);
+
+  // SCI is shown as one entry but is two provider keys (sci / sci_vc); a case
+  // resolves to "sci", so match on the merged entry's own value.
+  const mineKeys = new Set(myForums.map((c) => c.value));
+  const shown = tab === "mine"
+    ? courts.filter((c) => mineKeys.has(c.value))
+    : courts;
+
+  const openCourt = (value) => {
+    setTab("all");
+    setOpenKey(value);
+  };
+
   return (
     <div className="board-container">
       <div className="board-header">
@@ -250,8 +341,38 @@ export default function DisplayBoard() {
         </div>
       </div>
 
+      <ListedToday
+        listings={listings}
+        covered={covered}
+        courts={courts}
+        onOpen={openCourt}
+      />
+
+      <div className="board-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "mine"}
+          className={tab === "mine" ? "active" : ""}
+          onClick={() => setTab("mine")}
+          disabled={!myForums.length}
+          title={myForums.length ? "" : "No cases mapped to a court yet"}
+        >
+          My Forums{myForums.length ? ` (${myForums.length})` : ""}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "all"}
+          className={tab === "all" ? "active" : ""}
+          onClick={() => setTab("all")}
+        >
+          All Forums ({courts.length})
+        </button>
+      </div>
+
       <div className="court-accordion">
-        {courts.map((c) => (
+        {shown.map((c) => (
           <CourtPanel
             key={c.value}
             court={c}
@@ -259,6 +380,12 @@ export default function DisplayBoard() {
             onToggle={() => setOpenKey((k) => (k === c.value ? null : c.value))}
           />
         ))}
+        {tab === "mine" && !shown.length && (
+          <p className="board-empty-note">
+            None of your cases could be matched to a court yet. Import a case
+            from the court record to link it, or use All Forums.
+          </p>
+        )}
       </div>
     </div>
   );

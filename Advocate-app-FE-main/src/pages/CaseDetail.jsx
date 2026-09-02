@@ -17,7 +17,7 @@ import { formatCurrency } from "../utils/formatCurrency";
 import { InlineLoader } from "../components/Loader";
 import "../assets/styles/CaseDetail.css";
 
-const TABS = ["Parties", "Related Cases", "Acts", "Expenses", "Payments", "Invoices", "Hearings", "Documents", "Notes", "Tasks", "Orders", "Extra Details", "Timeline"];
+const TABS = ["Parties", "Hearings", "Orders", "Expenses", "Invoices", "Tasks", "Notes", "Documents", "Related Cases", "Acts", "Extra Details", "Timeline"];
 const STATUS_SELECT = [
   { value: "", label: "—" },
   { value: "Active", label: "Active" },
@@ -322,6 +322,13 @@ export default function CaseDetail() {
     return m;
   }, [courtRecord]);
 
+  // The court answers 200 with an empty {court, parties, fields} when it holds
+  // no Daily Status for that date (common where the row's businessDate is
+  // blank). That object is truthy, so without this check the modal opened
+  // empty and looked broken.
+  const hasBusinessContent = (biz) =>
+    !!biz && (biz.court || biz.parties || Object.keys(biz.fields || {}).length > 0);
+
   const viewHearingBusiness = async (ev) => {
     const match = hearingBizByDate.get(ev.date);
     if (!match) return;
@@ -331,7 +338,8 @@ export default function CaseDetail() {
         courtComplex: courtRecordComplex, viewToken: match.viewToken,
         kind: "hearing_business", token: match.business, label: match.label,
       });
-      if (biz) setHearingBizModal(biz);
+      if (hasBusinessContent(biz)) setHearingBizModal(biz);
+      else error("The court has no daily status recorded for this hearing.");
     } catch (e) {
       error && error(e?.message || "Couldn’t fetch the hearing status.");
     } finally {
@@ -356,7 +364,8 @@ export default function CaseDetail() {
             courtComplex: courtRecordComplex, viewToken: row.viewToken,
             kind: "hearing_business", token: row.business, label: `Business ${row.businessDate || ""}`,
           });
-      if (biz) setHearingBizModal(biz);
+      if (hasBusinessContent(biz)) setHearingBizModal(biz);
+      else error("The court has no daily status recorded for this hearing.");
     } catch (e) {
       error && error(e?.message || "Couldn’t fetch the hearing status.");
     } finally {
@@ -375,14 +384,12 @@ export default function CaseDetail() {
   const [uploadingOrder, setUploadingOrder] = useState(false);
   const [orderForm, setOrderForm] = useState({ documentName: "", orderDate: "", description: "", file: null });
 
-  // Add expense / invoice / payment / hearing modals
+  // Add expense / invoice / hearing modals
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showHearingModal, setShowHearingModal] = useState(false);
   const [expenseForm, setExpenseForm] = useState({ title: "", amount: "", category: "", paymentDate: "", paymentStatus: "" });
   const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: "", amount: "", invoiceDate: "", dueDate: "" });
-  const [paymentForm, setPaymentForm] = useState({ amount: "", paymentMode: "", referenceNumber: "", paymentDate: "", description: "" });
   const [hearingForm, setHearingForm] = useState({ title: "", eventType: "HEARING", date: "", time: "" });
   const [editingEventId, setEditingEventId] = useState(null);
   const [alertBusy, setAlertBusy] = useState(null);
@@ -602,33 +609,6 @@ export default function CaseDetail() {
       success("Invoice added to this case.");
     } catch (err) {
       error(err.response?.data?.error || "Failed to add invoice.");
-    } finally {
-      setSavingFin(false);
-    }
-  };
-
-  const addPayment = async () => {
-    if (!paymentForm.amount) { error("Payment amount is required."); return; }
-    setSavingFin(true);
-    try {
-      await withLoading(
-        axios.post("/api/payments/create", {
-          amount: parseFloat(paymentForm.amount),
-          paymentMode: paymentForm.paymentMode || null,
-          referenceNumber: paymentForm.referenceNumber || null,
-          paymentDate: paymentForm.paymentDate || null,
-          description: paymentForm.description || null,
-          caseEntity: { id: Number(id) },
-        }, authHeaders),
-        "Recording payment..."
-      );
-      setShowPaymentModal(false);
-      setPaymentForm({ amount: "", paymentMode: "", referenceNumber: "", paymentDate: "", description: "" });
-      fetchFinancials();
-      fetchSummary();
-      success("Payment recorded for this case.");
-    } catch (err) {
-      error(err.response?.data?.error || "Failed to record payment.");
     } finally {
       setSavingFin(false);
     }
@@ -854,7 +834,7 @@ export default function CaseDetail() {
     if (tab === "Parties") fetchParties();
     if (tab === "Related Cases") { fetchRelated(); fetchLinkableCases(); }
     if (tab === "Acts") { fetchLinkedActs(); fetchCitedActs(); }
-    if (tab === "Expenses" || tab === "Invoices" || tab === "Payments") fetchFinancials();
+    if (tab === "Expenses" || tab === "Invoices") fetchFinancials();
     if (tab === "Hearings") fetchEvents();
     if (tab === "Documents" || tab === "Orders") fetchDocs();
     if (tab === "Notes") fetchNotes();
@@ -870,6 +850,7 @@ export default function CaseDetail() {
       await axios.post(`/api/workspace/cases/${id}/tags`, { label }, authHeaders);
       setNewTag("");
       fetchSummary();
+      success("Tag added.");
     } catch { error("Failed to add tag."); }
   };
 
@@ -1204,6 +1185,365 @@ export default function CaseDetail() {
           </div>
         )}
 
+        {/* HEARINGS */}
+        {tab === "Hearings" && (
+          <div>
+            <div className="cd-fin-section-head">
+              <h4><FiCalendar /> Upcoming & My Hearings ({myHearings.length})</h4>
+              <button className="cd-fin-add-btn" onClick={() => { setEditingEventId(null); setHearingForm({ title: "", eventType: "HEARING", date: "", time: "" }); setShowHearingModal(true); }}><FiPlus /> Add Hearing</button>
+            </div>
+            <div className="cd-list">
+            {myHearings.length === 0 ? (
+              <p className="cd-muted">No upcoming hearings or reminders. Add one here — past court hearings appear under Court Hearing History below.</p>
+            ) : myHearings.map((ev) => (
+              <div className="cd-list-item" key={ev.id}>
+                <div className="cd-li-icon"><FiCalendar /></div>
+                <div className="cd-li-body">
+                  <span className="cd-li-title">{ev.title} <span className="cd-li-type">{ev.eventType}</span></span>
+                  {ev.description && <span className="cd-li-desc">{ev.description}</span>}
+                </div>
+                <span className="cd-li-date">{fmtDate(ev.date)}{ev.time ? ` · ${ev.time.slice(0, 5)}` : ""}</span>
+                {hearingBizByDate.has(ev.date) && (
+                  <button className="cd-order-dl" style={{ marginLeft: 10 }} disabled={hearingViewBusy === ev.id}
+                    onClick={() => viewHearingBusiness(ev)}>
+                    {hearingViewBusy === ev.id ? "…" : "View"}
+                  </button>
+                )}
+                <button className="cd-row-icon" title="Edit hearing" onClick={() => editHearing(ev)}>Edit</button>
+                <button className="cd-row-del-labeled" title="Delete hearing" onClick={() => deleteHearingEvent(ev.id)}>Delete</button>
+              </div>
+            ))}
+            </div>
+
+            {/* Court hearing/listing history from the imported record (Provakil "Listings"). */}
+            {hearingHistory.length > 0 && (
+              <div style={{ marginTop: 22 }}>
+                <div className="cd-fin-section-head">
+                  <h4><FiCalendar /> Court Hearing History ({hearingHistory.length})</h4>
+                </div>
+                <div className="cd-orders-wrap">
+                  <table className="cd-orders-table">
+                    <thead><tr><th>Cause List</th><th>Judge / Bench</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th><th>Daily Status</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {hearingHistory.map((h, i) => (
+                        <tr key={i}>
+                          <td>{h.causeList || "—"}</td>
+                          <td>{h.judge || "—"}</td>
+                          <td>{h.businessDate || "—"}</td>
+                          <td>{h.hearingDate || "—"}</td>
+                          <td>{h.purpose || "—"}</td>
+                          <td>
+                            {(h.businessDetail && Object.keys(h.businessDetail.fields || {}).length) || (h.business && h.businessDate) ? (
+                              <button type="button" className="cd-order-dl" disabled={hearingViewBusy === `h${i}`}
+                                onClick={() => viewHistoryBusiness(h, i)}>
+                                {hearingViewBusy === `h${i}` ? "…" : "View"}
+                              </button>
+                            ) : <span className="cd-order-muted">—</span>}
+                          </td>
+                          <td>
+                            <div className="cd-listing-actions">
+                              <button type="button" onClick={() => copyHearing(h)}>Copy</button>
+                              <button type="button" title={summary.clientId ? "Email this hearing to the client" : "No client email on this case"}
+                                disabled={!summary.clientId || alertBusy === `a${i}`} onClick={() => alertClient(h, i)}>
+                                {alertBusy === `a${i}` ? "Sending…" : "Send Alert to Client"}
+                              </button>
+                              <button type="button" onClick={() => setShowInvoiceModal(true)}>Raise Invoice</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TIMELINE */}
+        {tab === "Orders" && (
+          <div className="cd-orders">
+            <div className="cd-fin-section-head">
+              <h4><FiFileText /> Orders</h4>
+              <button className="cd-fin-add-btn" onClick={() => setShowUploadOrder(true)}><FiUpload /> Upload Order</button>
+            </div>
+
+            {/* Court-record orders (scraped, downloaded live) */}
+            {courtRecordLoading && <InlineLoader />}
+            {!courtRecordLoading && (() => {
+              const orders = extractOrders(courtRecord);
+              if (orders.length === 0) {
+                return courtRecordLoaded
+                  ? <p className="cd-muted">No orders found on the court record for this case.</p>
+                  : null;
+              }
+              return (
+                <>
+                  <div className="cd-orders-wrap">
+                    <table className="cd-orders-table">
+                      <thead><tr><th>#</th><th>Order Date</th><th>Details</th><th>Judge</th><th>Document</th></tr></thead>
+                      <tbody>
+                        {orders.map((o, i) => (
+                          <tr key={i}>
+                            <td>{o.number || i + 1}</td><td>{o.date}</td><td>{o.details}</td><td>{o.judge}</td>
+                            <td>
+                              {o.pdf && o.pdf.filename ? (
+                                <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
+                                  onClick={() => downloadOrderPdf(o, i)}>
+                                  {orderDlBusy === i ? "Fetching…" : "Download PDF"}
+                                </button>
+                              ) : o.pdfUrl ? (
+                                <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
+                                  onClick={() => downloadOrderPdfByUrl(o, i)}>
+                                  {orderDlBusy === i ? "Fetching…" : "Download PDF"}
+                                </button>
+                              ) : <span className="cd-order-muted">—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="cd-muted cd-orders-note">Court PDFs are fetched live from the court and downloaded to your device.</p>
+                </>
+              );
+            })()}
+
+            {/* Orders you've uploaded (stored documents tagged as "Order") */}
+            {(() => {
+              const uploaded = (docs || []).filter((d) => (d.category || "").toLowerCase() === "order");
+              if (!uploaded.length) return null;
+              return (
+                <div style={{ marginTop: 22 }}>
+                  <div className="cd-fin-section-head"><h4><FiFileText /> Uploaded Orders ({uploaded.length})</h4></div>
+                  <div className="cd-list">
+                    {uploaded.map((d) => (
+                      <div className="cd-list-item" key={d.id}>
+                        <div className="cd-li-icon"><FiFileText /></div>
+                        <div className="cd-li-body">
+                          <span className="cd-li-title">{d.documentName}</span>
+                          <span className="cd-li-desc">{d.description || "Order"}{d.uploadDate ? ` · ${fmtDate(d.uploadDate)}` : ""}</span>
+                        </div>
+                        <button className="cd-order-dl" onClick={() => previewDoc(d.id)}>Preview</button>
+                        <button className="cd-order-dl" style={{ marginLeft: 6 }} onClick={() => downloadDoc(d.id, d.documentName)}>Download</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* EXPENSES — live expenses for this case */}
+        {tab === "Expenses" && (
+          <div className="cd-financials-tab">
+            <div className="cd-financials">
+              <div className="cd-fin-card">
+                <span className="cd-fin-label">Total Expenses</span>
+                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalExpenses || 0)}</span>
+              </div>
+              <div className="cd-fin-card">
+                <span className="cd-fin-label">No. of Expenses</span>
+                <span className="cd-fin-value">{financials?.totals?.expenseCount ?? 0}</span>
+              </div>
+            </div>
+
+            <div className="cd-fin-section">
+              <div className="cd-fin-section-head">
+                <h4><FiDollarSign /> Expenses {financials ? `(${financials.totals.expenseCount})` : ""}</h4>
+                <button className="cd-fin-add-btn" onClick={() => setShowExpenseModal(true)}><FiPlus /> Add Expense</button>
+              </div>
+              {!financials ? (
+                <p className="cd-muted">Loading…</p>
+              ) : financials.expenses.length === 0 ? (
+                <p className="cd-muted">No expenses for this case yet. Add one here or from the Expenses section — it maps to this case automatically.</p>
+              ) : (
+                <div className="cd-list">
+                  {financials.expenses.map((exp) => (
+                    <div className="cd-list-item" key={exp.id}>
+                      <div className="cd-li-icon"><FiDollarSign /></div>
+                      <div className="cd-li-body">
+                        <span className="cd-li-title">{exp.title}
+                          {exp.category && <span className="cd-li-type">{exp.category}</span>}
+                        </span>
+                        <span className="cd-li-desc">
+                          {fmtDate(exp.paymentDate)}{exp.paymentStatus ? ` · ${exp.paymentStatus}` : ""}
+                        </span>
+                      </div>
+                      <span className="cd-li-date">{formatCurrency(exp.amount || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* INVOICES — live invoices for this case */}
+        {tab === "Invoices" && (
+          <div className="cd-financials-tab">
+            <div className="cd-financials">
+              <div className="cd-fin-card">
+                <span className="cd-fin-label">Total Invoiced</span>
+                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalInvoiced || 0)}</span>
+              </div>
+              <div className="cd-fin-card">
+                <span className="cd-fin-label">Paid</span>
+                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalPaid || 0)}</span>
+              </div>
+              <div className="cd-fin-card">
+                <span className="cd-fin-label">Unpaid</span>
+                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalUnpaid || 0)}</span>
+              </div>
+              <div className="cd-fin-card">
+                <span className="cd-fin-label">No. of Invoices</span>
+                <span className="cd-fin-value">{financials?.totals?.invoiceCount ?? 0}</span>
+              </div>
+            </div>
+
+            <div className="cd-fin-section">
+              <div className="cd-fin-section-head">
+                <h4><FiFileText /> Invoices {financials ? `(${financials.totals.invoiceCount})` : ""}</h4>
+                <button className="cd-fin-add-btn" onClick={() => setShowInvoiceModal(true)}><FiPlus /> Add Invoice</button>
+              </div>
+              {!financials ? (
+                <p className="cd-muted">Loading…</p>
+              ) : financials.invoices.length === 0 ? (
+                <p className="cd-muted">No invoices for this case yet. Add one here or from the Invoices section — it maps to this case automatically.</p>
+              ) : (
+                <div className="cd-list">
+                  {financials.invoices.map((inv) => (
+                    <div className="cd-list-item" key={inv.id}>
+                      <div className="cd-li-icon"><FiFileText /></div>
+                      <div className="cd-li-body">
+                        <span className="cd-li-title">{inv.invoiceNumber}</span>
+                        <span className="cd-li-desc">Issued {fmtDate(inv.invoiceDate)} · Due {fmtDate(inv.dueDate)}</span>
+                      </div>
+                      <span className={`cd-inv-status st-${(inv.status || "").toLowerCase()}`}>{inv.status}</span>
+                      <span className="cd-li-date">{formatCurrency(inv.amount || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TASKS */}
+        {tab === "Tasks" && (
+          <div className="cd-tasks">
+            <div className="cd-task-add">
+              <div className="cd-task-field cd-task-field-title">
+                <label>Task</label>
+                <input
+                  type="text" placeholder="Task title"
+                  value={newTask.title}
+                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
+                />
+              </div>
+              <div className="cd-task-field">
+                <label>Priority</label>
+                <select value={newTask.priority} onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}>
+                  <option value="LOW">Low</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HIGH">High</option>
+                </select>
+              </div>
+              <div className="cd-task-field">
+                <label>Deadline</label>
+                <input type="date" value={newTask.deadline} onChange={(e) => setNewTask({ ...newTask, deadline: e.target.value })} />
+              </div>
+              <div className="cd-task-field">
+                <label>Documents</label>
+                <label className="cd-task-attach" title="Attach documents">
+                  <FiPaperclip />
+                  <span>{taskFiles.length ? `${taskFiles.length} file(s)` : "Attach files"}</span>
+                  <input type="file" multiple style={{ display: "none" }}
+                    onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />
+                </label>
+              </div>
+              <div className="cd-task-field cd-task-field-submit">
+                <button onClick={addTask}><FiPlus /> Add</button>
+              </div>
+            </div>
+            {tasks.length === 0 ? (
+              <p className="cd-muted">No tasks for this case.</p>
+            ) : tasks.map((t) => (
+              <div className={`cd-task ${t.completed ? "done" : ""}`} key={t.id}>
+                <button className="cd-task-check" onClick={() => toggleTask(t.id)} title="Toggle">
+                  {t.completed ? <FiCheckCircle /> : <FiCircle />}
+                </button>
+                <div className="cd-task-main">
+                  <span className="cd-task-title">{t.title}</span>
+                  {t.documents?.length > 0 && (
+                    <div className="cd-task-docs">
+                      {t.documents.map((d) => (
+                        <span key={d.id} className="cd-task-doc" onClick={() => previewDoc(d.id)} title={`View ${d.name}`}>
+                          <FiEye size={11} /> {d.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <span className={`cd-task-prio prio-${(t.priority || "medium").toLowerCase()}`}>{t.priority}</span>
+                {t.deadline && <span className="cd-task-deadline"><FiClock size={11} /> {fmtDate(t.deadline)}</span>}
+                <button className="cd-task-del" onClick={() => deleteTask(t.id)} title="Delete"><FiTrash2 /></button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* NOTES */}
+        {tab === "Notes" && (
+          <div className="cd-notes">
+            <div className="cd-note-add">
+              <textarea
+                placeholder="Write a case note (diary entry)..."
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+              />
+              <button onClick={addNote}><FiPlus /> Add Note</button>
+            </div>
+            {notes.length === 0 ? (
+              <p className="cd-muted">No notes yet.</p>
+            ) : notes.map((n) => (
+              <div className="cd-note" key={n.id}>
+                <div className="cd-note-body">{n.body}</div>
+                <div className="cd-note-foot">
+                  <span>{new Date(n.createdAt).toLocaleString("en-IN")}</span>
+                  <button onClick={() => deleteNote(n.id)} title="Delete"><FiTrash2 /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* DOCUMENTS */}
+        {tab === "Documents" && (
+          <div className="cd-docs">
+            <div className="cd-doc-upload">
+              <input type="file" onChange={(e) => setUploadFile(e.target.files[0])} />
+              <button onClick={uploadDoc} disabled={!uploadFile}><FiUpload /> Upload</button>
+            </div>
+            {docs.length === 0 ? (
+              <p className="cd-muted">No documents linked to this case.</p>
+            ) : docs.map((d) => (
+              <div className="cd-list-item" key={d.id}>
+                <div className="cd-li-icon"><FiFolder /></div>
+                <div className="cd-li-body">
+                  <span className="cd-li-title">{d.documentName}</span>
+                  <span className="cd-li-desc">{d.category || "Other"} · {d.version > 1 ? `v${d.version}` : "v1"}</span>
+                </div>
+                <div className="cd-li-actions">
+                  <button onClick={() => previewDoc(d.id)} title="Preview"><FiEye /></button>
+                  <button onClick={() => downloadDoc(d.id, d.originalName || d.documentName)} title="Download"><FiDownload /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* RELATED CASES */}
         {tab === "Related Cases" && (
           <div className="cd-overview">
@@ -1332,408 +1672,6 @@ export default function CaseDetail() {
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* EXPENSES — live expenses for this case */}
-        {tab === "Expenses" && (
-          <div className="cd-financials-tab">
-            <div className="cd-financials">
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Total Expenses</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalExpenses || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">No. of Expenses</span>
-                <span className="cd-fin-value">{financials?.totals?.expenseCount ?? 0}</span>
-              </div>
-            </div>
-
-            <div className="cd-fin-section">
-              <div className="cd-fin-section-head">
-                <h4><FiDollarSign /> Expenses {financials ? `(${financials.totals.expenseCount})` : ""}</h4>
-                <button className="cd-fin-add-btn" onClick={() => setShowExpenseModal(true)}><FiPlus /> Add Expense</button>
-              </div>
-              {!financials ? (
-                <p className="cd-muted">Loading…</p>
-              ) : financials.expenses.length === 0 ? (
-                <p className="cd-muted">No expenses for this case yet. Add one here or from the Expenses section — it maps to this case automatically.</p>
-              ) : (
-                <div className="cd-list">
-                  {financials.expenses.map((exp) => (
-                    <div className="cd-list-item" key={exp.id}>
-                      <div className="cd-li-icon"><FiDollarSign /></div>
-                      <div className="cd-li-body">
-                        <span className="cd-li-title">{exp.title}
-                          {exp.category && <span className="cd-li-type">{exp.category}</span>}
-                        </span>
-                        <span className="cd-li-desc">
-                          {fmtDate(exp.paymentDate)}{exp.paymentStatus ? ` · ${exp.paymentStatus}` : ""}
-                        </span>
-                      </div>
-                      <span className="cd-li-date">{formatCurrency(exp.amount || 0)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* PAYMENTS — client payments received for this case */}
-        {tab === "Payments" && (
-          <div className="cd-financials-tab">
-            <div className="cd-financials">
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Total Received</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalPaymentsReceived || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">No. of Payments</span>
-                <span className="cd-fin-value">{financials?.totals?.paymentCount ?? 0}</span>
-              </div>
-            </div>
-
-            <div className="cd-fin-section">
-              <div className="cd-fin-section-head">
-                <h4><FiDollarSign /> Payments Received {financials ? `(${financials.totals.paymentCount})` : ""}</h4>
-                <button className="cd-fin-add-btn" onClick={() => setShowPaymentModal(true)}><FiPlus /> Add Payment</button>
-              </div>
-              {!financials ? (
-                <p className="cd-muted">Loading…</p>
-              ) : financials.payments.length === 0 ? (
-                <p className="cd-muted">No payments recorded for this case yet. Add one here or from the Expenses section — it maps to this case automatically.</p>
-              ) : (
-                <div className="cd-list">
-                  {financials.payments.map((p) => (
-                    <div className="cd-list-item" key={p.id}>
-                      <div className="cd-li-icon"><FiDollarSign /></div>
-                      <div className="cd-li-body">
-                        <span className="cd-li-title">{p.paymentMode || "Payment"}
-                          {p.referenceNumber && <span className="cd-li-type">Ref {p.referenceNumber}</span>}
-                        </span>
-                        <span className="cd-li-desc">{fmtDate(p.paymentDate)}{p.description ? ` · ${p.description}` : ""}</span>
-                      </div>
-                      <span className="cd-li-date cd-amount-in">{formatCurrency(p.amount || 0)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* INVOICES — live invoices for this case */}
-        {tab === "Invoices" && (
-          <div className="cd-financials-tab">
-            <div className="cd-financials">
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Total Invoiced</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalInvoiced || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Paid</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalPaid || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Unpaid</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalUnpaid || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">No. of Invoices</span>
-                <span className="cd-fin-value">{financials?.totals?.invoiceCount ?? 0}</span>
-              </div>
-            </div>
-
-            <div className="cd-fin-section">
-              <div className="cd-fin-section-head">
-                <h4><FiFileText /> Invoices {financials ? `(${financials.totals.invoiceCount})` : ""}</h4>
-                <button className="cd-fin-add-btn" onClick={() => setShowInvoiceModal(true)}><FiPlus /> Add Invoice</button>
-              </div>
-              {!financials ? (
-                <p className="cd-muted">Loading…</p>
-              ) : financials.invoices.length === 0 ? (
-                <p className="cd-muted">No invoices for this case yet. Add one here or from the Invoices section — it maps to this case automatically.</p>
-              ) : (
-                <div className="cd-list">
-                  {financials.invoices.map((inv) => (
-                    <div className="cd-list-item" key={inv.id}>
-                      <div className="cd-li-icon"><FiFileText /></div>
-                      <div className="cd-li-body">
-                        <span className="cd-li-title">{inv.invoiceNumber}</span>
-                        <span className="cd-li-desc">Issued {fmtDate(inv.invoiceDate)} · Due {fmtDate(inv.dueDate)}</span>
-                      </div>
-                      <span className={`cd-inv-status st-${(inv.status || "").toLowerCase()}`}>{inv.status}</span>
-                      <span className="cd-li-date">{formatCurrency(inv.amount || 0)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* HEARINGS */}
-        {tab === "Hearings" && (
-          <div>
-            <div className="cd-fin-section-head">
-              <h4><FiCalendar /> Upcoming & My Hearings ({myHearings.length})</h4>
-              <button className="cd-fin-add-btn" onClick={() => { setEditingEventId(null); setHearingForm({ title: "", eventType: "HEARING", date: "", time: "" }); setShowHearingModal(true); }}><FiPlus /> Add Hearing</button>
-            </div>
-            <div className="cd-list">
-            {myHearings.length === 0 ? (
-              <p className="cd-muted">No upcoming hearings or reminders. Add one here — past court hearings appear under Court Hearing History below.</p>
-            ) : myHearings.map((ev) => (
-              <div className="cd-list-item" key={ev.id}>
-                <div className="cd-li-icon"><FiCalendar /></div>
-                <div className="cd-li-body">
-                  <span className="cd-li-title">{ev.title} <span className="cd-li-type">{ev.eventType}</span></span>
-                  {ev.description && <span className="cd-li-desc">{ev.description}</span>}
-                </div>
-                <span className="cd-li-date">{fmtDate(ev.date)}{ev.time ? ` · ${ev.time.slice(0, 5)}` : ""}</span>
-                {hearingBizByDate.has(ev.date) && (
-                  <button className="cd-order-dl" style={{ marginLeft: 10 }} disabled={hearingViewBusy === ev.id}
-                    onClick={() => viewHearingBusiness(ev)}>
-                    {hearingViewBusy === ev.id ? "…" : "View"}
-                  </button>
-                )}
-                <button className="cd-row-icon" title="Edit hearing" onClick={() => editHearing(ev)}>Edit</button>
-                <button className="cd-row-del-labeled" title="Delete hearing" onClick={() => deleteHearingEvent(ev.id)}>Delete</button>
-              </div>
-            ))}
-            </div>
-
-            {/* Court hearing/listing history from the imported record (Provakil "Listings"). */}
-            {hearingHistory.length > 0 && (
-              <div style={{ marginTop: 22 }}>
-                <div className="cd-fin-section-head">
-                  <h4><FiCalendar /> Court Hearing History ({hearingHistory.length})</h4>
-                </div>
-                <div className="cd-orders-wrap">
-                  <table className="cd-orders-table">
-                    <thead><tr><th>Cause List</th><th>Judge / Bench</th><th>Business Date</th><th>Hearing Date</th><th>Purpose</th><th>Daily Status</th><th>Actions</th></tr></thead>
-                    <tbody>
-                      {hearingHistory.map((h, i) => (
-                        <tr key={i}>
-                          <td>{h.causeList || "—"}</td>
-                          <td>{h.judge || "—"}</td>
-                          <td>{h.businessDate || "—"}</td>
-                          <td>{h.hearingDate || "—"}</td>
-                          <td>{h.purpose || "—"}</td>
-                          <td>
-                            {(h.businessDetail && Object.keys(h.businessDetail.fields || {}).length) || (h.business && h.businessDate) ? (
-                              <button type="button" className="cd-order-dl" disabled={hearingViewBusy === `h${i}`}
-                                onClick={() => viewHistoryBusiness(h, i)}>
-                                {hearingViewBusy === `h${i}` ? "…" : "View"}
-                              </button>
-                            ) : <span className="cd-order-muted">—</span>}
-                          </td>
-                          <td>
-                            <div className="cd-listing-actions">
-                              <button type="button" onClick={() => copyHearing(h)}>Copy</button>
-                              <button type="button" title={summary.clientId ? "Email this hearing to the client" : "No client email on this case"}
-                                disabled={!summary.clientId || alertBusy === `a${i}`} onClick={() => alertClient(h, i)}>
-                                {alertBusy === `a${i}` ? "Sending…" : "Send Alert to Client"}
-                              </button>
-                              <button type="button" onClick={() => setShowInvoiceModal(true)}>Raise Invoice</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* DOCUMENTS */}
-        {tab === "Documents" && (
-          <div className="cd-docs">
-            <div className="cd-doc-upload">
-              <input type="file" onChange={(e) => setUploadFile(e.target.files[0])} />
-              <button onClick={uploadDoc} disabled={!uploadFile}><FiUpload /> Upload</button>
-            </div>
-            {docs.length === 0 ? (
-              <p className="cd-muted">No documents linked to this case.</p>
-            ) : docs.map((d) => (
-              <div className="cd-list-item" key={d.id}>
-                <div className="cd-li-icon"><FiFolder /></div>
-                <div className="cd-li-body">
-                  <span className="cd-li-title">{d.documentName}</span>
-                  <span className="cd-li-desc">{d.category || "Other"} · {d.version > 1 ? `v${d.version}` : "v1"}</span>
-                </div>
-                <div className="cd-li-actions">
-                  <button onClick={() => previewDoc(d.id)} title="Preview"><FiEye /></button>
-                  <button onClick={() => downloadDoc(d.id, d.originalName || d.documentName)} title="Download"><FiDownload /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* NOTES */}
-        {tab === "Notes" && (
-          <div className="cd-notes">
-            <div className="cd-note-add">
-              <textarea
-                placeholder="Write a case note (diary entry)..."
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-              />
-              <button onClick={addNote}><FiPlus /> Add Note</button>
-            </div>
-            {notes.length === 0 ? (
-              <p className="cd-muted">No notes yet.</p>
-            ) : notes.map((n) => (
-              <div className="cd-note" key={n.id}>
-                <div className="cd-note-body">{n.body}</div>
-                <div className="cd-note-foot">
-                  <span>{new Date(n.createdAt).toLocaleString("en-IN")}</span>
-                  <button onClick={() => deleteNote(n.id)} title="Delete"><FiTrash2 /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* TASKS */}
-        {tab === "Tasks" && (
-          <div className="cd-tasks">
-            <div className="cd-task-add">
-              <div className="cd-task-field cd-task-field-title">
-                <label>Task</label>
-                <input
-                  type="text" placeholder="Task title"
-                  value={newTask.title}
-                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                />
-              </div>
-              <div className="cd-task-field">
-                <label>Priority</label>
-                <select value={newTask.priority} onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}>
-                  <option value="LOW">Low</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="HIGH">High</option>
-                </select>
-              </div>
-              <div className="cd-task-field">
-                <label>Deadline</label>
-                <input type="date" value={newTask.deadline} onChange={(e) => setNewTask({ ...newTask, deadline: e.target.value })} />
-              </div>
-              <div className="cd-task-field">
-                <label>Documents</label>
-                <label className="cd-task-attach" title="Attach documents">
-                  <FiPaperclip />
-                  <span>{taskFiles.length ? `${taskFiles.length} file(s)` : "Attach files"}</span>
-                  <input type="file" multiple style={{ display: "none" }}
-                    onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />
-                </label>
-              </div>
-              <div className="cd-task-field cd-task-field-submit">
-                <button onClick={addTask}><FiPlus /> Add</button>
-              </div>
-            </div>
-            {tasks.length === 0 ? (
-              <p className="cd-muted">No tasks for this case.</p>
-            ) : tasks.map((t) => (
-              <div className={`cd-task ${t.completed ? "done" : ""}`} key={t.id}>
-                <button className="cd-task-check" onClick={() => toggleTask(t.id)} title="Toggle">
-                  {t.completed ? <FiCheckCircle /> : <FiCircle />}
-                </button>
-                <div className="cd-task-main">
-                  <span className="cd-task-title">{t.title}</span>
-                  {t.documents?.length > 0 && (
-                    <div className="cd-task-docs">
-                      {t.documents.map((d) => (
-                        <span key={d.id} className="cd-task-doc" onClick={() => previewDoc(d.id)} title={`View ${d.name}`}>
-                          <FiEye size={11} /> {d.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <span className={`cd-task-prio prio-${(t.priority || "medium").toLowerCase()}`}>{t.priority}</span>
-                {t.deadline && <span className="cd-task-deadline"><FiClock size={11} /> {fmtDate(t.deadline)}</span>}
-                <button className="cd-task-del" onClick={() => deleteTask(t.id)} title="Delete"><FiTrash2 /></button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* TIMELINE */}
-        {tab === "Orders" && (
-          <div className="cd-orders">
-            <div className="cd-fin-section-head">
-              <h4><FiFileText /> Orders</h4>
-              <button className="cd-fin-add-btn" onClick={() => setShowUploadOrder(true)}><FiUpload /> Upload Order</button>
-            </div>
-
-            {/* Court-record orders (scraped, downloaded live) */}
-            {courtRecordLoading && <InlineLoader />}
-            {!courtRecordLoading && (() => {
-              const orders = extractOrders(courtRecord);
-              if (orders.length === 0) {
-                return courtRecordLoaded
-                  ? <p className="cd-muted">No orders found on the court record for this case.</p>
-                  : null;
-              }
-              return (
-                <>
-                  <div className="cd-orders-wrap">
-                    <table className="cd-orders-table">
-                      <thead><tr><th>#</th><th>Order Date</th><th>Details</th><th>Judge</th><th>Document</th></tr></thead>
-                      <tbody>
-                        {orders.map((o, i) => (
-                          <tr key={i}>
-                            <td>{o.number || i + 1}</td><td>{o.date}</td><td>{o.details}</td><td>{o.judge}</td>
-                            <td>
-                              {o.pdf && o.pdf.filename ? (
-                                <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
-                                  onClick={() => downloadOrderPdf(o, i)}>
-                                  {orderDlBusy === i ? "Fetching…" : "Download PDF"}
-                                </button>
-                              ) : o.pdfUrl ? (
-                                <button type="button" className="cd-order-dl" disabled={orderDlBusy === i}
-                                  onClick={() => downloadOrderPdfByUrl(o, i)}>
-                                  {orderDlBusy === i ? "Fetching…" : "Download PDF"}
-                                </button>
-                              ) : <span className="cd-order-muted">—</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="cd-muted cd-orders-note">Court PDFs are fetched live from the court and downloaded to your device.</p>
-                </>
-              );
-            })()}
-
-            {/* Orders you've uploaded (stored documents tagged as "Order") */}
-            {(() => {
-              const uploaded = (docs || []).filter((d) => (d.category || "").toLowerCase() === "order");
-              if (!uploaded.length) return null;
-              return (
-                <div style={{ marginTop: 22 }}>
-                  <div className="cd-fin-section-head"><h4><FiFileText /> Uploaded Orders ({uploaded.length})</h4></div>
-                  <div className="cd-list">
-                    {uploaded.map((d) => (
-                      <div className="cd-list-item" key={d.id}>
-                        <div className="cd-li-icon"><FiFileText /></div>
-                        <div className="cd-li-body">
-                          <span className="cd-li-title">{d.documentName}</span>
-                          <span className="cd-li-desc">{d.description || "Order"}{d.uploadDate ? ` · ${fmtDate(d.uploadDate)}` : ""}</span>
-                        </div>
-                        <button className="cd-order-dl" onClick={() => previewDoc(d.id)}>Preview</button>
-                        <button className="cd-order-dl" style={{ marginLeft: 6 }} onClick={() => downloadDoc(d.id, d.documentName)}>Download</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
           </div>
         )}
 
@@ -1872,34 +1810,6 @@ export default function CaseDetail() {
                   {savingFin ? "Saving..." : "Add Invoice"}
                 </button>
                 <button className="cd-modal-cancel" onClick={() => setShowInvoiceModal(false)}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Payment modal */}
-      {showPaymentModal && (
-        <div className="cd-modal-overlay" onClick={() => setShowPaymentModal(false)}>
-          <div className="cd-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Record Payment — {summary.caseNumber}</h3>
-            <div className="cd-modal-form">
-              <input type="number" placeholder="Amount *" value={paymentForm.amount}
-                onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} />
-              <input type="text" placeholder="Payment Mode (UPI/Bank/Cash)" value={paymentForm.paymentMode}
-                onChange={(e) => setPaymentForm({ ...paymentForm, paymentMode: e.target.value })} />
-              <input type="text" placeholder="Reference / Txn No." value={paymentForm.referenceNumber}
-                onChange={(e) => setPaymentForm({ ...paymentForm, referenceNumber: e.target.value })} />
-              <label className="cd-modal-label">Payment Date</label>
-              <input type="date" value={paymentForm.paymentDate}
-                onChange={(e) => setPaymentForm({ ...paymentForm, paymentDate: e.target.value })} />
-              <input type="text" placeholder="Description" value={paymentForm.description}
-                onChange={(e) => setPaymentForm({ ...paymentForm, description: e.target.value })} />
-              <div className="cd-modal-actions">
-                <button className="cd-modal-save" onClick={addPayment} disabled={savingFin}>
-                  {savingFin ? "Saving..." : "Record Payment"}
-                </button>
-                <button className="cd-modal-cancel" onClick={() => setShowPaymentModal(false)}>Cancel</button>
               </div>
             </div>
           </div>

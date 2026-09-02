@@ -1,4 +1,5 @@
 import datetime
+from django.utils.dateparse import parse_date
 from rest_framework import serializers
 from core.models import Invoice
 
@@ -23,7 +24,13 @@ class InvoiceSerializer(serializers.ModelSerializer):
     def get_status(self, obj):
         if (obj.status or '').upper() == 'PAID':
             return 'PAID'
-        if obj.due_date and obj.due_date < datetime.date.today():
+        due = obj.due_date
+        if isinstance(due, str):
+            # A freshly-created instance can still hold the raw request string.
+            due = parse_date(due)
+        if isinstance(due, datetime.datetime):
+            due = due.date()
+        if due and due < datetime.date.today():
             return 'OVERDUE'
         return 'UNPAID'
 

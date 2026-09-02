@@ -1,5 +1,6 @@
 import datetime
 from django.db.models import Q, Sum
+from django.utils.dateparse import parse_date
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status as http
@@ -9,12 +10,28 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import InvoiceSerializer
 from core.practice import practice_ids
+from notifications import client_events
 
 SORT_MAP = {'invoiceDate': 'invoice_date', 'dueDate': 'due_date', 'amount': 'amount', 'id': 'id'}
 
 
 def _base(request):
     return Invoice.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(request.user))
+
+
+def _as_date(value, default=None):
+    """Coerce an incoming JSON date ("2026-09-25") to a real date.
+
+    Django accepts a string on write, but the in-memory instance then keeps the
+    string, so anything that compares the field to a date afterwards (see
+    InvoiceSerializer.get_status) blows up with a TypeError. Parse on the way in
+    so the saved object is consistent with one loaded from the database.
+    """
+    if not value:
+        return default
+    if isinstance(value, datetime.date):
+        return value
+    return parse_date(str(value)) or default
 
 
 def _case_id(data):
@@ -109,13 +126,14 @@ class CreateInvoiceView(APIView):
         invoice = Invoice.objects.create(
             invoice_number=number,
             amount=data.get('amount') or 0,
-            invoice_date=data.get('invoiceDate') or today,
-            due_date=data.get('dueDate') or (today + datetime.timedelta(days=30)),
+            invoice_date=_as_date(data.get('invoiceDate'), today),
+            due_date=_as_date(data.get('dueDate'), today + datetime.timedelta(days=30)),
             status='UNPAID',
             advocate_id=request.user.id,
             case=case,
             client_id=case.client_id,
         )
+        client_events.invoice_generated(request.user, case.client, invoice, case)
         return Response(InvoiceSerializer(invoice).data, status=http.HTTP_201_CREATED)
 
 
@@ -128,4 +146,5 @@ class PayInvoiceView(APIView):
             return Response({'error': 'Invoice not found'}, status=http.HTTP_404_NOT_FOUND)
         invoice.status = 'PAID'
         invoice.save(update_fields=['status'])
+        client_events.invoice_paid(request.user, invoice.client, invoice, invoice.case)
         return Response(InvoiceSerializer(invoice).data)

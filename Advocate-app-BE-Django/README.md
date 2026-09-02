@@ -32,6 +32,8 @@ REST API the React frontend expects, so the frontend runs unchanged.
 | Backup & restore | `/api/backup/*` — quick/full/database/documents/reports/settings, validate, restore, history, stats, download, delete (ZIP + transactional restore) | ✅ |
 | Communication | `/api/communication/*` (settings, templates CRUD, history, statistics, logs, queue, test, CSV) + `/api/whatsapp/*` (webhook, send-manual, resend) | ✅ |
 | AI Assistant | `POST /api/assistant/query` — rule-based intent router (nav, summary, hearings, invoices, expenses, income, counts, search, create-modals) | ✅ |
+| Cause lists | `GET /api/causelist/my-forums`, `/api/causelist/my-listings` + `manage.py sync_causelist` (Supreme Court) | ✅ |
+| Client notifications | invoice raised/paid, payment, hearing, case & client created — emailed to the CLIENT | ✅ |
 | Real-time WebSockets | live push (bell/activity poll REST instead) | ⏳ deferred |
 
 ## Design notes
@@ -47,12 +49,36 @@ REST API the React frontend expects, so the frontend runs unchanged.
   totalPages, ...}` with 0-indexed `page` / `size` params.
 - **Documents:** files are read from / written to `../Advocate-app-BE-main/uploads/documents`
   (configurable via `DOCUMENT_UPLOAD_DIR`), so existing uploads download & preview.
+- **Cause lists:** `manage.py sync_causelist` pulls a day's published list from the
+  scraper and stores it in `causelist_item`; everything user-facing reads that
+  table, never the scraper (a fetch parses several multi-MB PDFs, ~47s). A day's
+  rows are REPLACED, not merged, because courts revise lists during the day and a
+  stale row would put a client at the wrong position. `courtsearch/matching.py`
+  joins those rows to our own cases — see `ARCHITECTURE.md` §2 for why
+  `cases.case_number` is the wrong column to match on, and why a Supreme Court
+  matter carries three identities at once. **Not yet scheduled**: it must run each
+  morning after the court publishes.
+- **Client notifications:** `notifications/client_events.py` is the one place a
+  client is written to. It queues through `service.notify_client()` and then
+  sends inline via `send_now()`, so a client hears immediately; a failed send
+  leaves the row PENDING for the scheduled drain to retry, so an SMTP outage
+  delays rather than loses. Notifying can never fail the action that triggered it
+  (every call is exception-swallowed), and a client with no email on file is
+  skipped rather than falling back to the advocate's inbox — which is what
+  `process_notifications` would otherwise do. Honours
+  `communication_settings.email_enabled` per advocate.
 - **Real-time:** Channels/ASGI is wired but WebSockets are deferred (same as the pact-pro-draft
   reference). The frontend's STOMP client degrades gracefully; the notification bell polls REST.
 
 ## Run
 
-Prerequisites: Python 3.11, PostgreSQL running with `advocate_db` (user `postgres` / `psql_password`).
+Prerequisites: Python 3.11, PostgreSQL 17 running with the database named in
+`.env` (`DB_NAME`, currently `db_ams`).
+
+Court features (display boards, cause lists, case import, Daily Status) also need
+the **scraper service** running on port 8000 — it lives in a separate repository
+and nothing auto-starts it. While it is down those features return a clean 503.
+See `../LOCAL_DEVELOPMENT.md`.
 
 ```bat
 REM one-time

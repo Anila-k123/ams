@@ -14,9 +14,10 @@ export default function UserManagement() {
   const [form, setForm] = useState({ fullName: "", email: "", phone: "", barCouncilId: "", specialization: "", experience: 0 });
   const [selectedRoles, setSelectedRoles] = useState([]);
   const [password, setPassword] = useState("");
-  // Default to sharing: a user created without practice access logs in to
-  // an empty application, which is the confusing case, not the safe one.
-  const [sharePractice, setSharePractice] = useState(true);
+  // Which practice the account belongs to: "" = heads their own practice (a
+  // senior) or firm-wide staff (accountant/receptionist, scoped by their role);
+  // an id = reports to that senior, joining that team's loop.
+  const [practiceOwnerId, setPracticeOwnerId] = useState("");
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesLoadFailed, setRolesLoadFailed] = useState(false);
   const { hasPermission } = usePermission();
@@ -28,7 +29,7 @@ export default function UserManagement() {
       const [u, r] = await Promise.all([rbacService.getAllUsers(), rbacService.getAllRoles()]);
       setUsers(u);
       setRoles(r);
-    } catch (err) {
+    } catch {
       error("Couldn't load users and roles.");
     } finally {
       setLoading(false);
@@ -40,7 +41,7 @@ export default function UserManagement() {
   const openCreate = () => {
     setEditingUser(null);
     setForm({ fullName: "", email: "", phone: "", barCouncilId: "", specialization: "", experience: 0 });
-    setSharePractice(true);
+    setPracticeOwnerId("");
     setSelectedRoles([]);
     setPassword("");
     setRolesLoading(false);
@@ -58,6 +59,7 @@ export default function UserManagement() {
       specialization: user.specialization || "",
       experience: user.experience || 0,
     });
+    setPracticeOwnerId(user.practiceOwnerId ? String(user.practiceOwnerId) : "");
     // The users endpoint returns `roles` as NAMES, and no `roleIds` at all —
     // so the old `user.roleIds || []` was always [], meaning edit never
     // pre-selected anything and saving could silently drop a user's roles.
@@ -90,14 +92,15 @@ export default function UserManagement() {
       return;
     }
     try {
+      const practiceOwner = practiceOwnerId ? Number(practiceOwnerId) : null;
       if (editingUser) {
-        await rbacService.updateUser(editingUser.id, form);
+        await rbacService.updateUser(editingUser.id, { ...form, practiceOwnerId: practiceOwner });
         // Sync unconditionally — the old `length > 0` guard made it impossible
         // to remove a user's last role.
         await rbacService.setUserRoles(editingUser.id, selectedRoles);
       } else {
         // Was hardcoded to a shared "changeme123" for every new account.
-        const created = await rbacService.createUser({ ...form, password, sharePractice });
+        const created = await rbacService.createUser({ ...form, password, practiceOwnerId: practiceOwner });
         if (selectedRoles.length > 0) {
           await rbacService.setUserRoles(created.id, selectedRoles);
         }
@@ -142,6 +145,13 @@ If they have created any records the account is closed instead, and those record
   if (loading) return <div className="am-loading">Loading...</div>;
   if (!canManage) return <div className="am-empty">You do not have permission to manage users.</div>;
 
+  // Practice heads a new/edited member can report to (active, not the user
+  // being edited). Names for showing "Reports to X" in the table.
+  const seniors = users.filter(
+    (u) => u.isPracticeHead && u.active !== false && (!editingUser || u.id !== editingUser.id)
+  );
+  const nameById = Object.fromEntries(users.map((u) => [u.id, u.fullName]));
+
   return (
     <div className="admin-management">
       <div className="am-header">
@@ -177,27 +187,25 @@ If they have created any records the account is closed instead, and those record
                 )}
               </div>
               {!editingUser && (
-                <>
                 <p className="am-empty" style={{ textAlign: "left", padding: "4px 0" }}>
                   Share this password with the user directly and ask them to change it after first sign-in.
                 </p>
-                <label className="am-practice-toggle">
-                  <input
-                    type="checkbox"
-                    checked={sharePractice}
-                    onChange={(e) => setSharePractice(e.target.checked)}
-                  />
-                  <span>
-                    <strong>Give access to the practice's cases and clients</strong>
-                    <small>
-                      Leave this on for colleagues in your chambers. Turn it off only
-                      for an advocate who should start with an empty, separate
-                      workspace — they will not see any existing case or client.
-                    </small>
-                  </span>
-                </label>
-                </>
               )}
+              <label className="am-practice-select">
+                <strong>Practice</strong>
+                <select value={practiceOwnerId} onChange={(e) => setPracticeOwnerId(e.target.value)}>
+                  <option value="">Head of own practice / firm-wide staff</option>
+                  {seniors.map((s) => (
+                    <option key={s.id} value={s.id}>Reports to {s.fullName}</option>
+                  ))}
+                </select>
+                <small>
+                  Pick the senior this person reports to — they join that team's loop
+                  (its cases, cause-list and hearing alerts). Choose “Head / firm-wide”
+                  for a senior who leads their own team, or for common staff (accountant,
+                  receptionist) who serve the whole firm through their role.
+                </small>
+              </label>
               <div className="am-role-select">
                 <h4>Assign Roles</h4>
                 {rolesLoading && <p className="am-empty">Loading this user's roles…</p>}
@@ -250,9 +258,11 @@ If they have created any records the account is closed instead, and those record
               <td>
                 {u.active === false
                   ? <span className="am-practice-badge left">Left</span>
-                  : u.sharesPractice
-                    ? <span className="am-practice-badge shared">Shared</span>
-                    : <span className="am-practice-badge solo">Separate</span>}
+                  : u.firmWide
+                    ? <span className="am-practice-badge shared">Firm-wide</span>
+                    : u.isPracticeHead
+                      ? <span className="am-practice-badge solo">Head{u.memberCount ? ` (${u.memberCount})` : ""}</span>
+                      : <span className="am-practice-badge shared">Reports to {nameById[u.practiceOwnerId] || "—"}</span>}
               </td>
               <td className="am-actions">
                 <button className="am-icon-btn" title="Edit" onClick={() => openEdit(u)}><FiEdit2 /></button>

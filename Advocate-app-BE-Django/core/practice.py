@@ -32,6 +32,43 @@ from core.models import Advocate
 # request with 30 queries resolves membership once.
 _CACHE_ATTR = '_practice_ids_cache'
 
+# Firm-wide scope: some roles are not team-bound. FIRM_WIDE_SCOPE (seeded by
+# `manage.py seed_firm_wide_scope`) widens visibility to the whole firm; a
+# user's OTHER permissions still decide what they may open. The role-name set is
+# a fallback for before the permission is seeded.
+FIRM_WIDE_PERMISSION = 'FIRM_WIDE_SCOPE'
+FIRM_WIDE_ROLES = {'Super Admin', 'Accountant', 'Receptionist'}
+SUPER_ADMIN_ROLE = 'Super Admin'
+
+
+def _perm_codes(advocate, cache=None):
+    """This advocate's permission code set, optionally memoised in `cache`
+    (a dict keyed by advocate id) so a fan-out over many cases resolves each
+    person's permissions once."""
+    if cache is not None and advocate.id in cache:
+        return cache[advocate.id]
+    try:
+        codes = advocate.permission_codes()
+    except Exception:                                        # noqa: BLE001
+        codes = set()
+    if cache is not None:
+        cache[advocate.id] = codes
+    return codes
+
+
+def has_firm_wide_scope(user):
+    """True when this user sees across every team (Super Admin / Accountant /
+    Receptionist), by the FIRM_WIDE_SCOPE permission or the role-name fallback."""
+    try:
+        if FIRM_WIDE_PERMISSION in user.permission_codes():
+            return True
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        return bool(set(user.role_names()) & FIRM_WIDE_ROLES)
+    except Exception:                                        # noqa: BLE001
+        return False
+
 
 def practice_root(user):
     """The id of the advocate who owns this user's practice."""
@@ -53,12 +90,19 @@ def practice_ids(user):
     root = practice_root(user)
     ids = {root, user.id}
     try:
-        # Deliberately NOT filtered on left_on: a former member's work belongs
-        # to the practice, so their id stays in scope after they leave. They
-        # lose access at authentication, not by having their rows hidden.
-        ids.update(
-            Advocate.objects.filter(parent_advocate_id=root)
-            .values_list('id', flat=True))
+        if has_firm_wide_scope(user):
+            # Firm-wide roles (Super Admin, and the common Accountant/
+            # Receptionist) span every team; their other permissions still gate
+            # what they can actually open.
+            ids = set(Advocate.objects.values_list('id', flat=True))
+        else:
+            # Deliberately NOT filtered on left_on: a former member's work
+            # belongs to the practice, so their id stays in scope after they
+            # leave. They lose access at authentication, not by having their
+            # rows hidden.
+            ids.update(
+                Advocate.objects.filter(parent_advocate_id=root)
+                .values_list('id', flat=True))
     except Exception:                                        # noqa: BLE001
         # If the column is missing (the DDL command has not been run yet) fall
         # back to the old single-advocate scope rather than failing the request.
@@ -126,23 +170,56 @@ def active_members(root_id):
                 .order_by('full_name'))
 
 
-def alert_members(advocate):
-    """The people to notify about `advocate`'s work: the practice owner and its
-    active members (juniors), owner first.
+def alert_members(advocate, permission=None, perm_cache=None):
+    """The people on `advocate`'s team to notify, owner first.
 
     This is the "same loop" rule for alerts. `advocate` is normally a case owner
     (Case.advocate); a case is created by one advocate but belongs to the whole
-    chambers, so a reminder about it goes to everyone currently in the practice.
-    Former members are excluded - they can no longer sign in, so an alert would
-    only pile up unseen. A solo advocate gets just themselves, so nothing about
-    single-advocate behaviour changes.
+    team, so a reminder about it goes to everyone currently in that team. Former
+    members are excluded - they can no longer sign in. A solo advocate gets just
+    themselves, so single-advocate behaviour is unchanged.
+
+    When `permission` is given, only members whose role grants it are kept, so
+    an alert reaches only the people it is relevant to (a hearing alert goes to
+    those with CASE_VIEW, not to a receptionist on the same team).
     """
     root = practice_root(advocate)
     owner = Advocate.objects.filter(id=root).first()
     ordered = ([owner] if owner else []) + active_members(root)
     seen, unique = set(), []
     for member in ordered:
-        if member and member.id not in seen:
-            seen.add(member.id)
-            unique.append(member)
+        if not member or member.id in seen:
+            continue
+        seen.add(member.id)
+        if permission and permission not in _perm_codes(member, perm_cache):
+            continue
+        unique.append(member)
     return unique
+
+
+def firm_wide_members(permission=None, perm_cache=None):
+    """Common staff who serve every team - for firm-wide alerts.
+
+    These are the shared roles (Accountant, Receptionist): an overdue invoice is
+    the firm's accountant's concern whichever team it belongs to, so a firm-wide
+    alert reaches them across all teams. `permission` narrows to those it is
+    relevant to (INVOICE_VIEW -> the accountants).
+
+    The Super Admin is deliberately excluded: they can SEE everything but are not
+    put on every team's alert loop, so their bell/inbox is not firm-wide noise.
+    """
+    out = []
+    for advocate in Advocate.objects.filter(left_on__isnull=True):
+        try:
+            roles = set(advocate.role_names())
+        except Exception:                                    # noqa: BLE001
+            roles = set()
+        if SUPER_ADMIN_ROLE in roles:
+            continue
+        codes = _perm_codes(advocate, perm_cache)
+        if FIRM_WIDE_PERMISSION not in codes and not (roles & FIRM_WIDE_ROLES):
+            continue
+        if permission and permission not in codes:
+            continue
+        out.append(advocate)
+    return out

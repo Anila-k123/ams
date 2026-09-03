@@ -115,10 +115,12 @@ def causelist_alerts(on, court=None, labels=None):
 
         # One id per (case, list date), so re-runs dedup but a new date re-alerts.
         entity_id = case.id * 1_000_000 + ymd
+        # Only people who work the case (CASE_VIEW) - not the firm-wide
+        # accountant/receptionist who share the team's other data.
         queued += fanout(
             case.advocate, 'HEARING_SCHEDULED', subject, body, since,
             entity='CAUSELIST', entity_id=entity_id, case_id=case.id,
-            triggered_by='SCHEDULED')
+            require_permission='CASE_VIEW', triggered_by='SCHEDULED')
 
     if queued:
         # Deliver now rather than waiting for the queue drain: this runs from the

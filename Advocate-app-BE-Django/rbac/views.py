@@ -126,6 +126,9 @@ def role_permissions(request, role_id):
 def _user_map(adv):
     role_ids = AdvocateRole.objects.filter(advocate_id=adv.id).values_list('role_id', flat=True)
     role_names = list(Role.objects.filter(id__in=list(role_ids)).values_list('name', flat=True))
+    is_head = adv.parent_advocate_id is None
+    member_count = (Advocate.objects.filter(parent_advocate_id=adv.id)
+                    .exclude(id=adv.id).count()) if is_head else 0
     return {
         'id': adv.id, 'fullName': adv.full_name, 'email': adv.email, 'phone': adv.phone,
         'barCouncilId': adv.bar_council_id, 'specialization': adv.specialization,
@@ -134,7 +137,40 @@ def _user_map(adv):
         'leftOn': adv.left_on.isoformat() if adv.left_on else None,
         'active': adv.left_on is None,
         'sharesPractice': adv.parent_advocate_id is not None,
+        # For the User Management tree: whether this account heads its own
+        # practice (a senior, or a firm-wide staff account), how many people
+        # report to it, and whether its role gives it firm-wide reach.
+        'isPracticeHead': is_head,
+        'memberCount': member_count,
+        'firmWide': practice.FIRM_WIDE_PERMISSION in adv.permission_codes(),
     }
+
+
+def _resolve_practice_owner(owner_value, target_id=None):
+    """Validate a requested practice owner id. Returns (parent_id, error).
+
+    `owner_value` None / '' / 0 -> (None, None): the advocate heads their own
+    practice (a senior, or firm-wide staff). Otherwise it must be an existing,
+    active practice ROOT (parent_advocate_id IS NULL) - the model is one level
+    deep, so you can only report to a head, not to another member.
+    """
+    if owner_value in (None, '', 0, '0'):
+        return None, None
+    try:
+        oid = int(owner_value)
+    except (TypeError, ValueError):
+        return None, 'practiceOwnerId must be a numeric advocate id or null.'
+    if target_id and oid == target_id:
+        return None, 'A user cannot report to themselves.'
+    owner = Advocate.objects.filter(id=oid).first()
+    if owner is None:
+        return None, 'Chosen practice head does not exist.'
+    if owner.left_on is not None:
+        return None, 'Chosen practice head has left the firm.'
+    if owner.parent_advocate_id is not None:
+        return None, ('Chosen practice head is itself a member of a practice. '
+                      'Pick a senior who heads their own practice.')
+    return oid, None
 
 def _has_history(advocate):
     """Whether this advocate has created anything worth keeping.
@@ -169,6 +205,18 @@ class UsersView(APIView):
         if len(raw_password) < 8:
             return Response({'error': 'password is required (minimum 8 characters).'},
                             status=status.HTTP_400_BAD_REQUEST)
+        # Which practice the new account joins. Explicit practiceOwnerId wins
+        # (null = head their own practice / firm-wide staff; an id = report to
+        # that senior). Falls back to the old sharePractice behaviour when the
+        # field is absent, so existing callers are unaffected.
+        if 'practiceOwnerId' in d:
+            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'))
+            if err:
+                return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        elif d.get('sharePractice') is False:
+            parent_id = None
+        else:
+            parent_id = practice_root(request.user)
         adv = Advocate(
             full_name=d.get('fullName') or '',
             email=d.get('email'),
@@ -183,14 +231,8 @@ class UsersView(APIView):
             whatsapp_enabled=False,
             email_notifications_enabled=True,
             browser_notifications_enabled=True,
-            # Join the creator's practice, so the new account can see the
-            # chambers' cases. Without this a user created here would log in to
-            # an empty application - the account exists, the roles are granted,
-            # and every query finds nothing because the data belongs to
-            # somebody else. Pass sharePractice=false to create an isolated
-            # account instead.
-            parent_advocate_id=(None if d.get('sharePractice') is False
-                                else practice_root(request.user)),
+            # Resolved above: which practice this account belongs to.
+            parent_advocate_id=parent_id,
         )
         adv.save()
         return Response(_user_map(adv), status=status.HTTP_201_CREATED)
@@ -217,6 +259,30 @@ class UserDetailView(APIView):
                 setattr(adv, attr, d[key])
         if d.get('password'):
             adv.password = hash_password(d['password'])
+
+        # Reassign which practice this user belongs to (null = make them a
+        # head/senior; an id = move them under that senior).
+        if 'practiceOwnerId' in d:
+            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'), target_id=adv.id)
+            if err:
+                return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+            # The Super Admin account stays top-level - never tuck it under a team.
+            if parent_id is not None and practice.SUPER_ADMIN_ROLE in adv.role_names():
+                return Response(
+                    {'error': 'The Super Admin account stays top-level and '
+                              'cannot report to a senior.'},
+                    status=status.HTTP_400_BAD_REQUEST)
+            # A head with members can't become a member - it would orphan them.
+            if parent_id is not None:
+                members = (Advocate.objects.filter(parent_advocate_id=adv.id)
+                           .exclude(id=adv.id).count())
+                if members:
+                    return Response(
+                        {'error': 'This user heads a practice with {} member(s). '
+                                  'Move them to another head first.'.format(members)},
+                        status=status.HTTP_409_CONFLICT)
+            adv.parent_advocate_id = parent_id
+
         adv.save()
         return Response(_user_map(adv))
 

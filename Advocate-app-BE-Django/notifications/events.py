@@ -76,20 +76,31 @@ def _channels(advocate):
     return channels
 
 
-def fanout(owner, event_type, subject, body, since, *, entity, entity_id, **kw):
-    """Queue one reminder to every member of the owner's practice, deduped per
-    member.
+def fanout(owner, event_type, subject, body, since, *, entity, entity_id,
+           require_permission=None, include_firm_wide=False, **kw):
+    """Queue one reminder to everyone it's relevant to, deduped per recipient.
 
-    This is what puts a senior and their juniors in the same loop: a case is
-    created by one advocate but belongs to the whole chambers, so an alert about
-    it reaches everyone currently in the practice - each on their own channels,
-    and each only once (the dedup is per recipient). A solo advocate resolves to
-    just themselves, so single-advocate behaviour is unchanged.
+    Puts a senior and their team in the same loop: a case belongs to the whole
+    team, so an alert reaches every team member - each on their own channels,
+    once each. `require_permission` keeps only members whose role grants it, so
+    each role gets only what concerns it (a hearing alert -> CASE_VIEW holders,
+    not the receptionist). `include_firm_wide` also reaches the common staff
+    (e.g. accountants) across every team, for firm-wide matters like invoices.
+    A solo advocate resolves to just themselves, so nothing changes for them.
     """
-    from core.practice import alert_members
+    from core.practice import alert_members, firm_wide_members
+
+    cache = {}
+    recipients = alert_members(owner, permission=require_permission, perm_cache=cache)
+    if include_firm_wide:
+        seen = {m.id for m in recipients}
+        for member in firm_wide_members(permission=require_permission, perm_cache=cache):
+            if member.id not in seen:
+                seen.add(member.id)
+                recipients.append(member)
 
     queued = []
-    for member in alert_members(owner):
+    for member in recipients:
         if _already_notified(member.id, event_type, entity_id, since):
             continue
         queued += service.notify(
@@ -121,7 +132,7 @@ def upcoming_hearings(advocate, today=None):
         queued += fanout(
             advocate, 'HEARING_REMINDER', subject, body, since,
             entity='CaseEvent', entity_id=ev.id, case_id=ev.case_id,
-            triggered_by='SCHEDULED')
+            require_permission='CASE_VIEW', triggered_by='SCHEDULED')
     return queued
 
 
@@ -144,6 +155,7 @@ def overdue_invoices(advocate, today=None):
         queued += fanout(
             advocate, 'OVERDUE_PAYMENT_REMINDER', subject, body, since,
             entity='Invoice', entity_id=inv.id, client_id=inv.client_id,
+            require_permission='INVOICE_VIEW', include_firm_wide=True,
             triggered_by='SCHEDULED')
     return queued
 
@@ -171,7 +183,7 @@ def task_deadlines(advocate, today=None):
         queued += fanout(
             advocate, 'TASK_DEADLINE_REMINDER', subject, body, since,
             entity='CaseTask', entity_id=t.id, case_id=t.case_id,
-            triggered_by='SCHEDULED')
+            require_permission='TASK_VIEW', triggered_by='SCHEDULED')
     return queued
 
 

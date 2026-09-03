@@ -441,6 +441,31 @@
   color: var(--text-muted, var(--text-secondary));
 }
 
+.am-practice-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  margin: 4px 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--input-bg);
+}
+.am-practice-select strong { font-size: 0.86rem; font-weight: 600; }
+.am-practice-select select {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+.am-practice-select small {
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-muted, var(--text-secondary));
+}
+
 .am-practice-badge {
   display: inline-block;
   padding: 2px 8px;

@@ -45,6 +45,7 @@ import {
 const Cases = lazy(() => import("./Cases.jsx"));
 const AddCase = lazy(() => import("./AddCase.jsx"));
 const DisplayBoard = lazy(() => import("./DisplayBoard.jsx"));
+const DailyCauselist = lazy(() => import("./DailyCauselist.jsx"));
 const Clients = lazy(() => import("./Clients.jsx"));
 const Expenses = lazy(() => import("./Expenses.jsx"));
 const HearingsPage = lazy(() => import("./HearingsPage.jsx"));
@@ -199,6 +200,7 @@ function DashboardShell() {
     "/dashboard": "Dashboard",
     "/dashboard/cases": "Cases",
     "/dashboard/display-board": "Display Board",
+    "/dashboard/daily-causelist": "Daily Causelist",
     "/dashboard/clients": "Clients",
     "/dashboard/hearings": "Hearings",
     "/dashboard/invoices": "Invoices",
@@ -499,6 +501,12 @@ function DashboardShell() {
                       <NavLink to="/dashboard/cases" end className={({ isActive }) => isActive ? "nav-link sub active" : "nav-link sub"} title="Workspace">
                         <span className="nav-icon sub-nav-icon">🗂️</span>
                         <span className="nav-text">Workspace</span>
+                      </NavLink>
+                    </li>
+                    <li>
+                      <NavLink to="/dashboard/daily-causelist" className={({ isActive }) => isActive ? "nav-link sub active" : "nav-link sub"} title="Daily Causelist">
+                        <span className="nav-icon sub-nav-icon">📅</span>
+                        <span className="nav-text">Daily Causelist</span>
                       </NavLink>
                     </li>
                     <li>
@@ -1192,6 +1200,7 @@ function DashboardShell() {
             <Route path="/cases" element={<Cases />} />
             <Route path="/cases/new" element={<AddCase />} />
             <Route path="/display-board" element={<DisplayBoard />} />
+            <Route path="/daily-causelist" element={<DailyCauselist />} />
             <Route path="/cases/:id" element={<CaseDetail />} />
             <Route path="/clients" element={<Clients />} />
             <Route path="/expenses" element={<Expenses />} />

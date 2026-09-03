@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { FiAlertCircle, FiChevronDown, FiRefreshCw, FiList } from "react-icons/fi";
+import { FiAlertCircle, FiChevronDown, FiRefreshCw } from "react-icons/fi";
 import "../assets/styles/DisplayBoard.css";
 
 // Fallback list until the courts endpoint responds.
@@ -241,50 +241,10 @@ function CourtPanel({ court, isOpen, onToggle }) {
 // scrape per court. This is the answer to the question an advocate actually
 // arrives with ("where am I today?"), so it goes above everything else rather
 // than being buried inside one of twenty-six collapsed panels.
-function ListedToday({ listings, covered, courts, onOpen }) {
-  if (!listings.length) {
-    return (
-      <div className="listed-today listed-today-empty">
-        <FiList />
-        <span>
-          Nothing of yours is listed today
-          {covered.length
-            ? ` in ${covered.length === 1 ? "the court" : "the courts"} we hold a cause list for.`
-            : " — no cause list has been collected yet."}
-        </span>
-      </div>
-    );
-  }
-  const labelFor = (v) => courts.find((c) => c.value === v)?.label || v;
-  return (
-    <div className="listed-today">
-      <h3><FiList /> Your matters today ({listings.length})</h3>
-      <div className="listed-today-rows">
-        {listings.map((l) => (
-          <button
-            type="button"
-            className="listed-today-row"
-            key={`${l.caseId}-${l.court}-${l.courtNumber}-${l.itemNumber}`}
-            onClick={() => onOpen(l.court)}
-            title="Open this court's display board"
-          >
-            <span className="lt-court">{labelFor(l.court)}</span>
-            <span className="lt-room">Court {l.courtNumber || "—"}</span>
-            <span className="lt-item">Item {l.itemNumber}</span>
-            <span className="lt-case">{l.caseString || l.caseNumber}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function DisplayBoard() {
   const [courts, setCourts] = useState(FALLBACK_COURTS);
   const [openKey, setOpenKey] = useState(null);
   const [myForums, setMyForums] = useState([]);
-  const [listings, setListings] = useState([]);
-  const [covered, setCovered] = useState([]);
   // Default to All Forums and switch once we know the practice has courts of
   // its own, so the page is never briefly empty on first paint.
   const [tab, setTab] = useState("all");
@@ -300,8 +260,8 @@ export default function DisplayBoard() {
     })();
   }, []);
 
-  // My Forums and today's listings are cheap (stored data, no scraping), so
-  // both load up front rather than on demand.
+  // My Forums (courts the practice has cases in) is cheap stored data, so it
+  // loads up front. Your own daily cause list lives on the Daily Causelist page.
   useEffect(() => {
     (async () => {
       try {
@@ -310,13 +270,6 @@ export default function DisplayBoard() {
         setMyForums(mine);
         if (mine.length) setTab("mine");
       } catch { /* leave My Forums empty; All Forums still works */ }
-    })();
-    (async () => {
-      try {
-        const res = await axios.get("/api/causelist/my-listings", authHeaders());
-        setListings(res.data?.listings || []);
-        setCovered(res.data?.coveredCourts || []);
-      } catch { /* the banner simply stays quiet */ }
     })();
   }, []);
 
@@ -327,11 +280,6 @@ export default function DisplayBoard() {
     ? courts.filter((c) => mineKeys.has(c.value))
     : courts;
 
-  const openCourt = (value) => {
-    setTab("all");
-    setOpenKey(value);
-  };
-
   return (
     <div className="board-container">
       <div className="board-header">
@@ -340,13 +288,6 @@ export default function DisplayBoard() {
           <p className="board-sub">Select a court to see its live cause list.</p>
         </div>
       </div>
-
-      <ListedToday
-        listings={listings}
-        covered={covered}
-        courts={courts}
-        onOpen={openCourt}
-      />
 
       <div className="board-tabs" role="tablist">
         <button

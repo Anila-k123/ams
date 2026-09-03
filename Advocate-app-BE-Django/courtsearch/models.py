@@ -62,7 +62,7 @@ class CauseListItem(models.Model):
     """
     court = models.CharField(max_length=32)              # provider key, e.g. 'sci'
     list_date = models.DateField()
-    court_number = models.CharField(max_length=16)       # '1'..'16', or 'R1'
+    court_number = models.CharField(max_length=100)      # '1'..'16'/'R1' (SCI); HC labels like 'PTAJ Chambers (A)'
     item_number = models.CharField(max_length=32)        # '35', '35.1'
     case_string = models.CharField(max_length=255)       # as printed by the court
 

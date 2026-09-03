@@ -27,13 +27,12 @@ const COLORS = {
 
 const containerStyle = {
   position: "fixed",
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%, -50%)",
+  top: "24px",
+  right: "24px",
   zIndex: 2147483647,          // above every overlay in the app
   display: "flex",
   flexDirection: "column",
-  alignItems: "center",
+  alignItems: "flex-end",      // stack toasts flush to the right edge
   gap: "12px",
   pointerEvents: "none",
   maxWidth: "92vw",

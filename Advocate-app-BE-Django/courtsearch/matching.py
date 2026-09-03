@@ -365,6 +365,7 @@ def my_listings(advocate, on):
                     'caseId': case.id,
                     'caseNumber': case.case_number,
                     'caseTitle': case.case_title,
+                    'clientId': case.client_id,      # for the "alert client" button
                     'court': court,
                     'courtNumber': hit.court_number,
                     'itemNumber': hit.item_number,

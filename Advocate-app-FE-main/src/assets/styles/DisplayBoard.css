@@ -300,6 +300,29 @@
 
 .listed-today-row:hover { border-color: var(--accent); }
 
+/* A listing plus its per-row "alert client" action, side by side. */
+.dc-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.dc-row-main { flex: 1; text-decoration: none; }
+.dc-alert-btn {
+  flex-shrink: 0;
+  align-self: center;
+  padding: 8px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dc-alert-btn:hover:not(:disabled) { border-color: var(--accent); }
+.dc-alert-btn:disabled { color: var(--text-secondary); opacity: 0.5; cursor: not-allowed; }
+
 .lt-court { font-weight: 600; }
 .lt-room  { color: var(--text-secondary); white-space: nowrap; }
 /* The number the whole feature exists to show. */

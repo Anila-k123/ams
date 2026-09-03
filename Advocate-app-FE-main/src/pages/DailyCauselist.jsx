@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
 import { FiList } from "react-icons/fi";
+import { useToast } from "../contexts/ToastContext";
 import "../assets/styles/DisplayBoard.css";
 
 function authHeaders() {
@@ -15,10 +16,38 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 // the item number each is listed at. A dedicated page (separate from the Court
 // Display Board, which is for browsing any court's live board).
 export default function DailyCauselist() {
+  const { success, error } = useToast();
   const [date, setDate] = useState(todayISO());
   const [listings, setListings] = useState([]);
   const [covered, setCovered] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [alertBusy, setAlertBusy] = useState(null);
+
+  // Manually forward one listing to the client — the advocate decides which
+  // listings are worth telling the client about. Reuses the case hearing-alert
+  // email endpoint (which pulls the client's address from the case).
+  const alertClient = useCallback(async (l) => {
+    const key = `${l.caseId}-${l.courtNumber}-${l.itemNumber}`;
+    setAlertBusy(key);
+    try {
+      const res = await axios.post(
+        `/api/cases/${l.caseId}/hearing-alert`,
+        {
+          date: l.listDate || date,
+          purpose: "Listed in cause list",
+          bench: l.courtNumber ? `Court ${l.courtNumber}, item ${l.itemNumber}` : "",
+          note: `Listed as: ${l.caseString || l.caseNumber}`,
+        },
+        authHeaders()
+      );
+      if (res.data?.success) success(`Alert sent to client (${res.data.recipient}).`);
+      else error(res.data?.errorMessage || "Alert could not be sent.");
+    } catch (err) {
+      error(err.response?.data?.errorMessage || err.response?.data?.error || "Failed to send alert.");
+    } finally {
+      setAlertBusy(null);
+    }
+  }, [date, success, error]);
 
   const fetchListings = useCallback(async (on) => {
     setLoading(true);
@@ -75,18 +104,31 @@ export default function DailyCauselist() {
             <div className="listed-today" key={courtLabel}>
               <h3><FiList /> {courtLabel} ({rows.length})</h3>
               <div className="listed-today-rows">
-                {rows.map((l) => (
-                  <Link
-                    className="listed-today-row"
-                    key={`${l.caseId}-${l.court}-${l.courtNumber}-${l.itemNumber}`}
-                    to={`/dashboard/cases/${l.caseId}`}
-                    title="Open this case"
-                  >
-                    <span className="lt-court">Court {l.courtNumber || "—"}</span>
-                    <span className="lt-room">Item {l.itemNumber}</span>
-                    <span className="lt-case" style={{ gridColumn: "3 / -1" }}>{l.caseString || l.caseNumber}</span>
-                  </Link>
-                ))}
+                {rows.map((l) => {
+                  const key = `${l.caseId}-${l.courtNumber}-${l.itemNumber}`;
+                  return (
+                    <div className="dc-row" key={`${l.caseId}-${l.court}-${l.courtNumber}-${l.itemNumber}`}>
+                      <Link
+                        className="listed-today-row dc-row-main"
+                        to={`/dashboard/cases/${l.caseId}`}
+                        title="Open this case"
+                      >
+                        <span className="lt-court">Court {l.courtNumber || "—"}</span>
+                        <span className="lt-room">Item {l.itemNumber}</span>
+                        <span className="lt-case" style={{ gridColumn: "3 / -1" }}>{l.caseString || l.caseNumber}</span>
+                      </Link>
+                      <button
+                        type="button"
+                        className="dc-alert-btn"
+                        disabled={!l.clientId || alertBusy === key}
+                        title={l.clientId ? "Email this listing to the client" : "No client linked to this case"}
+                        onClick={() => alertClient(l)}
+                      >
+                        {alertBusy === key ? "Sending…" : "Send Alert to Client"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}

@@ -106,6 +106,21 @@ class Command(BaseCommand):
                 '{} {}: stored {} items across {} courtrooms '
                 '(replaced {}).'.format(court, on, len(rows), rooms, deleted)))
 
+            # Tell each practice about its own matters in this list - in-app for
+            # everyone, email for those who opted in. Best-effort: a failure here
+            # must not undo a stored cause list.
+            try:
+                from notifications.causelist_alerts import causelist_alerts
+                labels = {c.get('value'): c.get('label')
+                          for c in (data.get('courts') or []) if c.get('value')}
+                n = len(causelist_alerts(on, court=court, labels=labels))
+                if n:
+                    self.stdout.write(
+                        '  alerted: queued {} listing notification(s).'.format(n))
+            except Exception as exc:                            # noqa: BLE001
+                self.stderr.write(
+                    self.style.WARNING('  alert step failed: {}'.format(exc)))
+
         if total == 0:
             self.stdout.write(
                 'Nothing stored - the court may not have published yet, '

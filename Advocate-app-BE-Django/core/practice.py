@@ -124,3 +124,25 @@ def active_members(root_id):
     return list(Advocate.objects.filter(parent_advocate_id=root_id,
                                         left_on__isnull=True)
                 .order_by('full_name'))
+
+
+def alert_members(advocate):
+    """The people to notify about `advocate`'s work: the practice owner and its
+    active members (juniors), owner first.
+
+    This is the "same loop" rule for alerts. `advocate` is normally a case owner
+    (Case.advocate); a case is created by one advocate but belongs to the whole
+    chambers, so a reminder about it goes to everyone currently in the practice.
+    Former members are excluded - they can no longer sign in, so an alert would
+    only pile up unseen. A solo advocate gets just themselves, so nothing about
+    single-advocate behaviour changes.
+    """
+    root = practice_root(advocate)
+    owner = Advocate.objects.filter(id=root).first()
+    ordered = ([owner] if owner else []) + active_members(root)
+    seen, unique = set(), []
+    for member in ordered:
+        if member and member.id not in seen:
+            seen.add(member.id)
+            unique.append(member)
+    return unique

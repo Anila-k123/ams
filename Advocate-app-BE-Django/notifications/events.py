@@ -76,6 +76,28 @@ def _channels(advocate):
     return channels
 
 
+def fanout(owner, event_type, subject, body, since, *, entity, entity_id, **kw):
+    """Queue one reminder to every member of the owner's practice, deduped per
+    member.
+
+    This is what puts a senior and their juniors in the same loop: a case is
+    created by one advocate but belongs to the whole chambers, so an alert about
+    it reaches everyone currently in the practice - each on their own channels,
+    and each only once (the dedup is per recipient). A solo advocate resolves to
+    just themselves, so single-advocate behaviour is unchanged.
+    """
+    from core.practice import alert_members
+
+    queued = []
+    for member in alert_members(owner):
+        if _already_notified(member.id, event_type, entity_id, since):
+            continue
+        queued += service.notify(
+            member.id, event_type, subject, body,
+            channels=_channels(member), entity=entity, entity_id=entity_id, **kw)
+    return queued
+
+
 def upcoming_hearings(advocate, today=None):
     """HEARING_REMINDER for hearings in the next couple of days."""
     today = today or timezone.now().date()
@@ -89,8 +111,6 @@ def upcoming_hearings(advocate, today=None):
                       event_type__iexact='HEARING')
               .order_by('date'))
     for ev in events:
-        if _already_notified(advocate.id, 'HEARING_REMINDER', ev.id, since):
-            continue
         case_no = ev.case.case_number if ev.case_id and ev.case else 'N/A'
         when = 'today' if ev.date == today else ev.date.strftime('%d %b %Y')
         subject = 'Hearing {}: {}'.format(when, case_no)
@@ -98,10 +118,10 @@ def upcoming_hearings(advocate, today=None):
                 'Purpose: {}\n').format(
             when, case_no, ev.date, ev.time or 'not stated',
             ev.title or 'Hearing')
-        queued += service.notify(
-            advocate.id, 'HEARING_REMINDER', subject, body,
-            channels=_channels(advocate), case_id=ev.case_id,
-            entity='CaseEvent', entity_id=ev.id, triggered_by='SCHEDULED')
+        queued += fanout(
+            advocate, 'HEARING_REMINDER', subject, body, since,
+            entity='CaseEvent', entity_id=ev.id, case_id=ev.case_id,
+            triggered_by='SCHEDULED')
     return queued
 
 
@@ -114,8 +134,6 @@ def overdue_invoices(advocate, today=None):
                 .filter(advocate_id=advocate.id, due_date__lt=today)
                 .exclude(status__iexact='PAID'))
     for inv in invoices:
-        if _already_notified(advocate.id, 'OVERDUE_PAYMENT_REMINDER', inv.id, since):
-            continue
         days = (today - inv.due_date).days
         client = inv.client.name if inv.client_id and inv.client else 'client'
         subject = 'Invoice {} overdue by {} day(s)'.format(
@@ -123,10 +141,10 @@ def overdue_invoices(advocate, today=None):
         body = ('Invoice   : {}\nClient    : {}\nAmount    : {}\n'
                 'Due date  : {} ({} day(s) overdue)\n').format(
             inv.invoice_number or inv.id, client, inv.amount, inv.due_date, days)
-        queued += service.notify(
-            advocate.id, 'OVERDUE_PAYMENT_REMINDER', subject, body,
-            channels=_channels(advocate), client_id=inv.client_id,
-            entity='Invoice', entity_id=inv.id, triggered_by='SCHEDULED')
+        queued += fanout(
+            advocate, 'OVERDUE_PAYMENT_REMINDER', subject, body, since,
+            entity='Invoice', entity_id=inv.id, client_id=inv.client_id,
+            triggered_by='SCHEDULED')
     return queued
 
 
@@ -140,8 +158,6 @@ def task_deadlines(advocate, today=None):
                      deadline__lte=today)
              .exclude(deadline=None).order_by('deadline'))
     for t in tasks:
-        if _already_notified(advocate.id, 'TASK_DEADLINE_REMINDER', t.id, since):
-            continue
         overdue = (today - t.deadline).days
         case_no = None
         if t.case_id:
@@ -152,10 +168,10 @@ def task_deadlines(advocate, today=None):
         body = ('Task     : {}\nPriority : {}\nDeadline : {} ({})\n'
                 'Case     : {}\n').format(
             t.title, t.priority, t.deadline, when, case_no or 'not linked')
-        queued += service.notify(
-            advocate.id, 'TASK_DEADLINE_REMINDER', subject, body,
-            channels=_channels(advocate), case_id=t.case_id,
-            entity='CaseTask', entity_id=t.id, triggered_by='SCHEDULED')
+        queued += fanout(
+            advocate, 'TASK_DEADLINE_REMINDER', subject, body, since,
+            entity='CaseTask', entity_id=t.id, case_id=t.case_id,
+            triggered_by='SCHEDULED')
     return queued
 
 

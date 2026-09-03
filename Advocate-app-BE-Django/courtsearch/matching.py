@@ -44,6 +44,22 @@ CNR_COURT = {
     'KLHC01': 'kochi',
 }
 
+# District courts (eCourts v6) resolve by their CNR's state+district letters
+# rather than a fixed establishment prefix, because a district has many
+# establishments (TNCH01 City Civil Court, TNCH0B MM George Town, ...) that all
+# belong to the same cause-list scope. 'TNCH' = Tamil Nadu, Chennai.
+DISTRICT_CNR_COURT = {
+    'TNCH': 'chennai_dc',
+}
+# Keys whose cause list is fetched the district way (scoped, CAPTCHA-gated).
+DISTRICT_COURTS = set(DISTRICT_CNR_COURT.values())
+
+
+def district_key(cnr):
+    """The district cause-list key for a CNR, or None. Keys off the 4-letter
+    state+district prefix (positions 0-3), e.g. 'TNCH...' -> 'chennai_dc'."""
+    return DISTRICT_CNR_COURT.get((cnr or '')[:4].upper())
+
 
 def normalise_case(text):
     """'SLP(C) No. 014217 / 2025' -> ('SLP(C)', '14217', '2025').
@@ -143,10 +159,23 @@ def _identity_from(case, record):
             case_block = (raw.get('cases') or [{}])[0]
             details = ((case_block.get('detail') or {}).get('case_details') or {})
             identity['cnr'] = (details.get('CNR Number') or '').split(' ')[0]
+            # A district registration number is printed without its type
+            # ("101/2020"), but the cause list prints it WITH one ("OS/101/2020"),
+            # so a bare (type='', no, year) key would never match. Prepend the
+            # case's own type token so the typed key lines up with the list.
+            type_token = ''
+            m = re.match(r'\s*([A-Za-z().]+)', details.get('Case Type') or '')
+            if m:
+                type_token = m.group(1)
             for label in ('Registration Number', 'Case Number', 'Filing Number'):
-                key = normalise_case(details.get(label))
+                value = details.get(label)
+                key = normalise_case(value)
                 if key:
-                    identity['keys'].add(key)
+                    identity['keys'].add(key)                    # as-printed
+                if type_token and value:
+                    typed_key = normalise_case('{} {}'.format(type_token, value))
+                    if typed_key:
+                        identity['keys'].add(typed_key)          # type-qualified
 
     # Fall back to the typed case number - right for a manually entered case,
     # and harmlessly None when it holds a CNR.
@@ -155,7 +184,10 @@ def _identity_from(case, record):
         identity['keys'].add(typed)
 
     cnr = (identity['cnr'] or case.case_number or '').replace('-', '')
-    identity['court'] = CNR_COURT.get(cnr[:6].upper())
+    # A High Court / Supreme Court CNR maps by its 6-char establishment prefix;
+    # a district CNR maps by its 4-char state+district prefix (many
+    # establishments share one cause-list scope).
+    identity['court'] = CNR_COURT.get(cnr[:6].upper()) or district_key(cnr)
     return identity
 
 
@@ -219,6 +251,57 @@ def your_items_by_courtroom(advocate, court, on):
 
     return {room: ', '.join(sorted(items, key=_num))
             for room, items in out.items()}
+
+
+def district_scope(court):
+    """The exact courtrooms to fetch for a district cause-list sync.
+
+    A district cause list is CAPTCHA-gated and published per court NUMBER, so we
+    never sweep a complex - we fetch only the courtrooms where a case actually
+    sits. Both facts are already in each imported case: the CNR encodes the
+    establishment (TNCH*01*... -> est 1) and case_status names the courtroom
+    ("Court Number and Judge": "41-..."), giving CL_court_no '1^41'.
+
+    Practice-agnostic on purpose: the cause_list table is shared across
+    practices, so each courtroom is fetched once no matter how many practices
+    have a case there. Returns the scraper's `targets` list, grouped by complex:
+        [{"state": 10, "dist": 13, "complex": "1100124@...@N",
+          "courtNos": ["1^41", ...]}]
+    """
+    from courtsearch.models import ImportedCaseRecord
+
+    latest = {}
+    for rec in (ImportedCaseRecord.objects
+                .filter(court_id='ecourts_dc').order_by('id')):
+        latest[rec.case_id] = rec                    # ascending -> last wins
+
+    by_complex = {}
+    for rec in latest.values():
+        raw = _raw_of(rec)
+        block = (raw.get('cases') or [{}])[0]
+        detail = block.get('detail') or {}
+        cd = detail.get('case_details') or {}
+        cs = detail.get('case_status') or {}
+        cnr = (cd.get('CNR Number') or '').split(' ')[0].replace('-', '')
+        if district_key(cnr) != court:
+            continue
+        vt = block.get('view_token') or {}
+        state = vt.get('state_code')
+        dist = vt.get('dist_code')
+        complex_value = (rec.query or {}).get('court_complex') \
+            or vt.get('court_complex_code')
+        room = re.match(r'\s*(\d+)', cs.get('Court Number and Judge') or '')
+        # Need the full cascade plus a courtroom, and an establishment from the
+        # CNR (chars 4-5). A CNR-only import lacks the cascade and is skipped.
+        if not (state and dist and complex_value and room and len(cnr) >= 6):
+            continue
+        est = str(int(cnr[4:6]))
+        court_no = '{}^{}'.format(est, int(room.group(1)))
+        by_complex.setdefault((int(state), int(dist), complex_value),
+                              set()).add(court_no)
+
+    return [{'state': s, 'dist': d, 'complex': cx, 'courtNos': sorted(cnos)}
+            for (s, d, cx), cnos in by_complex.items()]
 
 
 def my_forums(advocate):

@@ -23,6 +23,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from courtsearch import client as court_client
+from courtsearch import matching
 from courtsearch.models import CauseListItem
 
 
@@ -48,11 +49,24 @@ class Command(BaseCommand):
             self.stderr.write('--date must be yyyy-mm-dd')
             return
 
+        # District courts are CAPTCHA-gated, so they are fetched a different way:
+        # scoped to only the courtrooms where a case actually sits (derived from
+        # the practice's own imported cases), via a POST that carries the scope.
+        district = court in matching.DISTRICT_COURTS
+        targets = matching.district_scope(court) if district else None
+        if district and not targets:
+            self.stdout.write(
+                'No imported cases resolve to {} (need the cascade context that '
+                'a case-number/party import stores), so there is nothing to '
+                'fetch. Import a {} case first.'.format(court, court))
+            return
+
         total = 0
         for offset in range(max(1, o['days'])):
             on = start + datetime.timedelta(days=offset)
             try:
-                data = court_client.get_causelist(court, on)
+                data = (court_client.get_district_causelist(court, on, targets)
+                        if district else court_client.get_causelist(court, on))
             except court_client.ScraperUnavailable:
                 self.stderr.write(self.style.ERROR(
                     'Scraper service unreachable - is it running on port 8000?'))

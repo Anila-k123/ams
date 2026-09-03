@@ -1205,15 +1205,22 @@ class ImportedRecordView(APIView):
 # matters, because they are what an advocate opens on a hearing morning.
 
 def _court_labels():
-    """Provider key -> display name, from the display-board court list."""
-    courts = cache.get('court_display_courts')
-    if courts is None:
-        try:
-            courts = client.get_display_courts()
-            cache.set('court_display_courts', courts, 3600)
-        except (client.ScraperUnavailable, client.ScraperError):
-            courts = []                    # fall back to the raw key below
-    return {c.get('value'): c.get('label') for c in (courts or [])}
+    """Provider key -> display name, from the display-board AND cause-list court
+    lists. The cause-list list carries district courts (e.g. chennai_dc) that
+    have no display board, so both are merged; without it those keys would show
+    as their raw slug."""
+    labels = cache.get('court_key_labels')
+    if labels is None:
+        labels = {}
+        for getter in (client.get_display_courts, client.get_causelist_courts):
+            try:
+                for c in (getter() or []):
+                    if c.get('value'):
+                        labels[c['value']] = c.get('label') or c['value']
+            except (client.ScraperUnavailable, client.ScraperError):
+                pass                       # fall back to the raw key below
+        cache.set('court_key_labels', labels, 3600)
+    return labels
 
 
 class MyForumsView(APIView):

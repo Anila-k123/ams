@@ -258,6 +258,27 @@ def get_causelist(court: str, on=None, timeout: int = CAUSELIST_TIMEOUT):
     return get_json('/causelist', params, timeout=timeout)
 
 
+# A district cause list is CAPTCHA-gated: the scraper solves a securimage OCR
+# per court number x Civil/Criminal, each with retries, so scope it and give it
+# room. Still called once a day by sync_causelist, never in a page load.
+DISTRICT_CAUSELIST_TIMEOUT = config('COURT_API_DISTRICT_CAUSELIST_TIMEOUT',
+                                    default=1800, cast=int)
+
+
+def get_district_causelist(court, on, targets,
+                           timeout: int = DISTRICT_CAUSELIST_TIMEOUT):
+    """A district court's cause list for one day, scoped to `targets`.
+
+    District courts have no CAPTCHA-free feed, so the caller passes the exact
+    courtrooms to fetch (from matching.district_scope). POSTs to
+    /causelist/district. Returns the same envelope as get_causelist.
+    """
+    body = {'court': court, 'targets': targets}
+    if on is not None:
+        body['date'] = on.isoformat() if hasattr(on, 'isoformat') else str(on)
+    return post_json('/causelist/district', body, timeout=timeout)
+
+
 # --- eCourts High Court Services (stateful cascade + OCR-CAPTCHA search) ------
 
 def hc_high_courts(timeout: int = LIST_TIMEOUT):

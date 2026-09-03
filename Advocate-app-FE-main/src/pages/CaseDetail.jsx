@@ -455,6 +455,17 @@ export default function CaseDetail() {
     }
   };
 
+  // Load transfer targets up front, so the Transfer action only appears when
+  // there is actually someone to transfer to — a solo advocate has none, so it
+  // stays hidden rather than opening an empty picker.
+  useEffect(() => {
+    if (!hasPermission("CASE_EDIT")) return;
+    axios.get("/api/cases/transfer-targets", authHeaders)
+      .then((res) => setAdvocates(res.data || []))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   const doTransfer = async () => {
     if (!transferTo) { error("Select an advocate to transfer to."); return; }
     setTransferring(true);
@@ -1035,6 +1046,8 @@ export default function CaseDetail() {
   const caseIdentity = extractCaseIdentity(courtRecord, courtRecordCourtId);
   const hearingHistory = extractHearingHistory(courtRecord);
   const invoiceTotal = invoiceForm.particulars.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  // Transfer is offered only to an editor who has someone to transfer to.
+  const canTransfer = hasPermission("CASE_EDIT") && advocates.length > 0;
   // The top list is the advocate's calendar: upcoming hearings + any non-hearing
   // events (meetings, reminders). Past HEARING events are the court hearings that
   // import copied in — those live, in full, under Court Hearing History below, so
@@ -1117,7 +1130,7 @@ export default function CaseDetail() {
             <button className="cd-raise-invoice" onClick={() => setShowInvoiceModal(true)}>
               <FiDollarSign /> Raise Invoice
             </button>
-            {(courtRecord || hasPermission("CASE_DELETE") || hasPermission("USER_MANAGE")) && (
+            {(courtRecord || hasPermission("CASE_DELETE") || canTransfer) && (
               <div className="cd-actions-wrap">
                 <button className="cd-actions-btn" onClick={() => setShowActions((s) => !s)} disabled={refreshing}>
                   {refreshing ? "Refreshing…" : "Actions ▾"}
@@ -1129,7 +1142,9 @@ export default function CaseDetail() {
                       {courtRecord && (
                         <button onClick={refreshCourtData}><FiClock /> Refresh court data</button>
                       )}
-                      {hasPermission("USER_MANAGE") && (
+                      {/* Only when you can edit AND there's actually someone to
+                          transfer to — a solo advocate has no target, so it hides. */}
+                      {canTransfer && (
                         <button onClick={openTransfer}><FiUsers /> Transfer case…</button>
                       )}
                       {hasPermission("CASE_DELETE") && (

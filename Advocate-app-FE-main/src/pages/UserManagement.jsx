@@ -191,21 +191,29 @@ If they have created any records the account is closed instead, and those record
                   Share this password with the user directly and ask them to change it after first sign-in.
                 </p>
               )}
-              <label className="am-practice-select">
-                <strong>Practice</strong>
-                <select value={practiceOwnerId} onChange={(e) => setPracticeOwnerId(e.target.value)}>
-                  <option value="">Head of own practice / firm-wide staff</option>
-                  {seniors.map((s) => (
-                    <option key={s.id} value={s.id}>Reports to {s.fullName}</option>
-                  ))}
-                </select>
-                <small>
-                  Pick the senior this person reports to — they join that team's loop
-                  (its cases, cause-list and hearing alerts). Choose “Head / firm-wide”
-                  for a senior who leads their own team, or for common staff (accountant,
-                  receptionist) who serve the whole firm through their role.
-                </small>
-              </label>
+              {seniors.length > 0 ? (
+                <label className="am-practice-select">
+                  <strong>Practice</strong>
+                  <select value={practiceOwnerId} onChange={(e) => setPracticeOwnerId(e.target.value)}>
+                    <option value="">Head of own practice / firm-wide staff</option>
+                    {seniors.map((s) => (
+                      <option key={s.id} value={s.id}>Reports to {s.fullName}</option>
+                    ))}
+                  </select>
+                  <small>
+                    Pick the senior this person reports to — they join that team's loop
+                    (its cases, cause-list and hearing alerts). Choose “Head / firm-wide”
+                    for a senior who leads their own team, or for common staff (accountant,
+                    receptionist) who serve the whole firm through their role.
+                  </small>
+                </label>
+              ) : (
+                // Solo / first setup: no senior to report to yet, so there is
+                // nothing to choose — the account heads its own practice.
+                <p className="am-empty" style={{ textAlign: "left", padding: "2px 0" }}>
+                  This account will head its own practice. Once you add colleagues, you'll be able to assign who reports to whom here.
+                </p>
+              )}
               <div className="am-role-select">
                 <h4>Assign Roles</h4>
                 {rolesLoading && <p className="am-empty">Loading this user's roles…</p>}

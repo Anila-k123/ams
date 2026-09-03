@@ -389,7 +389,7 @@ export default function CaseDetail() {
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showHearingModal, setShowHearingModal] = useState(false);
   const [expenseForm, setExpenseForm] = useState({ title: "", amount: "", category: "", paymentDate: "", paymentStatus: "" });
-  const [invoiceForm, setInvoiceForm] = useState({ invoiceNumber: "", amount: "", invoiceDate: "", dueDate: "" });
+  const [invoiceForm, setInvoiceForm] = useState({ invoiceDate: "", dueDate: "", particulars: [{ description: "", amount: "" }] });
   const [hearingForm, setHearingForm] = useState({ title: "", eventType: "HEARING", date: "", time: "" });
   const [editingEventId, setEditingEventId] = useState(null);
   const [alertBusy, setAlertBusy] = useState(null);
@@ -445,10 +445,12 @@ export default function CaseDetail() {
     setShowTransfer(true);
     if (advocates.length === 0) {
       try {
-        const res = await axios.get("/api/admin/users", authHeaders);
-        setAdvocates((res.data || []).filter((a) => a.active !== false));
+        // Scoped to who you may transfer to (your team, or the whole firm for a
+        // Super Admin) — no admin permission needed.
+        const res = await axios.get("/api/cases/transfer-targets", authHeaders);
+        setAdvocates(res.data || []);
       } catch {
-        error("Couldn't load advocates (admin permission required).");
+        error("Couldn't load advocates to transfer to.");
       }
     }
   };
@@ -588,14 +590,43 @@ export default function CaseDetail() {
     }
   };
 
+  const setInvParticular = (i, field, value) =>
+    setInvoiceForm((prev) => ({ ...prev, particulars: prev.particulars.map((p, idx) => (idx === i ? { ...p, [field]: value } : p)) }));
+  const addInvParticular = () =>
+    setInvoiceForm((prev) => ({ ...prev, particulars: [...prev.particulars, { description: "", amount: "" }] }));
+  const removeInvParticular = (i) =>
+    setInvoiceForm((prev) => {
+      const rows = prev.particulars.filter((_, idx) => idx !== i);
+      return { ...prev, particulars: rows.length ? rows : [{ description: "", amount: "" }] };
+    });
+  // Picking a past hearing seeds a first particular and sets the invoice date,
+  // so billing an appearance is one click. hearingHistory is built in render.
+  const prefillInvoiceFromHearing = (idx) => {
+    const h = hearingHistory[Number(idx)];
+    if (!h) return;
+    const when = h.hearingDate || h.businessDate || "";
+    const label = `Appearance for hearing${when ? ` on ${when}` : ""}${h.purpose ? ` — ${h.purpose}` : ""}`;
+    setInvoiceForm((prev) => {
+      const first = prev.particulars[0];
+      const particulars = (!first.description && !first.amount)
+        ? [{ description: label, amount: "" }, ...prev.particulars.slice(1)]
+        : [...prev.particulars, { description: label, amount: "" }];
+      return { ...prev, invoiceDate: when || prev.invoiceDate, particulars };
+    });
+  };
+
   const addInvoice = async () => {
-    if (!invoiceForm.invoiceNumber.trim()) { error("Invoice number is required."); return; }
+    const particulars = invoiceForm.particulars
+      .map((p) => ({ description: (p.description || "").trim(), amount: parseFloat(p.amount) || 0 }))
+      .filter((p) => p.description || p.amount);
+    if (!particulars.length || particulars.reduce((s, p) => s + p.amount, 0) <= 0) {
+      error("Add at least one particular with an amount."); return;
+    }
     setSavingFin(true);
     try {
       await withLoading(
         axios.post("/api/invoices/create", {
-          invoiceNumber: invoiceForm.invoiceNumber.trim(),
-          amount: invoiceForm.amount ? parseFloat(invoiceForm.amount) : 0,
+          particulars,
           invoiceDate: invoiceForm.invoiceDate || null,
           dueDate: invoiceForm.dueDate || null,
           caseId: Number(id),
@@ -603,7 +634,7 @@ export default function CaseDetail() {
         "Adding invoice..."
       );
       setShowInvoiceModal(false);
-      setInvoiceForm({ invoiceNumber: "", amount: "", invoiceDate: "", dueDate: "" });
+      setInvoiceForm({ invoiceDate: "", dueDate: "", particulars: [{ description: "", amount: "" }] });
       fetchFinancials();
       fetchSummary();
       success("Invoice added to this case.");
@@ -1003,6 +1034,7 @@ export default function CaseDetail() {
 
   const caseIdentity = extractCaseIdentity(courtRecord, courtRecordCourtId);
   const hearingHistory = extractHearingHistory(courtRecord);
+  const invoiceTotal = invoiceForm.particulars.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
   // The top list is the advocate's calendar: upcoming hearings + any non-hearing
   // events (meetings, reminders). Past HEARING events are the court hearings that
   // import copied in — those live, in full, under Court Hearing History below, so
@@ -1795,19 +1827,54 @@ export default function CaseDetail() {
               <p className="cd-modal-warn">This case has no client linked. An invoice needs a client — set one on the case first.</p>
             )}
             <div className="cd-modal-form">
-              <input type="text" placeholder="Invoice Number *" value={invoiceForm.invoiceNumber}
-                onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceNumber: e.target.value })} />
-              <input type="number" placeholder="Amount" value={invoiceForm.amount}
-                onChange={(e) => setInvoiceForm({ ...invoiceForm, amount: e.target.value })} />
-              <label className="cd-modal-label">Invoice Date</label>
-              <input type="date" value={invoiceForm.invoiceDate}
-                onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceDate: e.target.value })} />
-              <label className="cd-modal-label">Due Date</label>
-              <input type="date" value={invoiceForm.dueDate}
-                onChange={(e) => setInvoiceForm({ ...invoiceForm, dueDate: e.target.value })} />
+              {hearingHistory.length > 0 && (
+                <>
+                  <label className="cd-modal-label">Link a hearing (optional)</label>
+                  <select className="cd-inv-hearing" defaultValue="" onChange={(e) => { if (e.target.value !== "") prefillInvoiceFromHearing(e.target.value); }}>
+                    <option value="">— none (bill by date) —</option>
+                    {hearingHistory.map((h, idx) => (
+                      <option key={idx} value={idx}>
+                        {(h.hearingDate || h.businessDate || "hearing")}{h.purpose ? ` — ${h.purpose}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+              <div className="cd-inv-dates">
+                <div>
+                  <label className="cd-modal-label">Invoice Date</label>
+                  <input type="date" value={invoiceForm.invoiceDate}
+                    onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceDate: e.target.value })} />
+                </div>
+                <div>
+                  <label className="cd-modal-label">Due Date</label>
+                  <input type="date" value={invoiceForm.dueDate}
+                    onChange={(e) => setInvoiceForm({ ...invoiceForm, dueDate: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="cd-inv-particulars-head">
+                <label className="cd-modal-label">Particulars</label>
+                <button type="button" className="cd-inv-add" onClick={addInvParticular}>+ Add Particulars</button>
+              </div>
+              {invoiceForm.particulars.map((p, i) => (
+                <div className="cd-inv-row" key={i}>
+                  <input placeholder="Enter particulars" value={p.description}
+                    onChange={(e) => setInvParticular(i, "description", e.target.value)} />
+                  <input type="number" step="0.01" min="0" placeholder="₹ Amount" value={p.amount}
+                    onChange={(e) => setInvParticular(i, "amount", e.target.value)} />
+                  <button type="button" className="cd-inv-del" title="Remove line"
+                    onClick={() => removeInvParticular(i)} disabled={invoiceForm.particulars.length === 1}>&times;</button>
+                </div>
+              ))}
+              <div className="cd-inv-total">
+                <span>Total</span>
+                <span>₹ {invoiceTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+
               <div className="cd-modal-actions">
-                <button className="cd-modal-save" onClick={addInvoice} disabled={savingFin}>
-                  {savingFin ? "Saving..." : "Add Invoice"}
+                <button className="cd-modal-save" onClick={addInvoice} disabled={savingFin || invoiceTotal <= 0}>
+                  {savingFin ? "Saving..." : "Raise Invoice"}
                 </button>
                 <button className="cd-modal-cancel" onClick={() => setShowInvoiceModal(false)}>Cancel</button>
               </div>

@@ -2,6 +2,7 @@ import datetime
 from django.utils.dateparse import parse_date
 from rest_framework import serializers
 from core.models import Invoice
+from invoices.models import InvoiceItem
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
@@ -15,11 +16,19 @@ class InvoiceSerializer(serializers.ModelSerializer):
     caseTitle = serializers.SerializerMethodField()
     clientName = serializers.SerializerMethodField()
     caseEntity = serializers.SerializerMethodField()
+    # The line-item breakdown, in display order. Empty for older invoices that
+    # were raised before particulars existed (they still carry a total `amount`).
+    particulars = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
         fields = ['id', 'invoiceNumber', 'amount', 'invoiceDate', 'dueDate', 'status',
-                  'caseId', 'caseTitle', 'clientId', 'clientName', 'caseEntity']
+                  'caseId', 'caseTitle', 'clientId', 'clientName', 'caseEntity',
+                  'particulars']
+
+    def get_particulars(self, obj):
+        return [{'description': it.description, 'amount': it.amount}
+                for it in InvoiceItem.objects.filter(invoice_id=obj.id)]
 
     def get_status(self, obj):
         if (obj.status or '').upper() == 'PAID':

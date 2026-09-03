@@ -287,7 +287,41 @@ class TransferCaseView(APIView):
         if not target:
             return Response({'error': 'Target advocate not found'},
                             status=status.HTTP_404_NOT_FOUND)
+        # A team member can only hand a case to someone in their own practice; a
+        # firm-wide user (Super Admin) reaches everyone, because practice_ids()
+        # returns the whole firm for them. This stops a case being transferred
+        # out of the firm's reach.
+        if target.id not in practice_ids(request.user):
+            return Response({'error': 'You can only transfer to advocates in your practice.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        # The target must actually be able to work the case; finance-only staff
+        # (accountant/receptionist) have no CASE_VIEW and should not own cases.
+        if 'CASE_VIEW' not in target.permission_codes():
+            return Response({'error': 'That user cannot hold cases (no case access).'},
+                            status=status.HTTP_400_BAD_REQUEST)
         case.advocate_id = target.id
         case.save(update_fields=['advocate_id'])
         return Response({'message': 'Case transferred successfully',
                          'advocateId': target.id, 'advocateName': target.full_name})
+
+
+class TransferTargetsView(APIView):
+    """Advocates the requester may transfer a case to.
+
+    Their own team's case-holders, or - for a firm-wide user (Super Admin) - any
+    case-holder in the firm, because practice_ids() already returns the whole
+    firm for them. "Case-holder" means the advocate has CASE_VIEW, so finance
+    staff aren't offered. Gated on CASE_EDIT (not USER_MANAGE), so a senior can
+    load the list without admin rights.
+    """
+    permission_classes = [RequirePermission('CASE_EDIT')]
+
+    def get(self, request):
+        targets = (Advocate.objects
+                   .filter(id__in=practice_ids(request.user), left_on__isnull=True)
+                   .exclude(id=request.user.id).order_by('full_name'))
+        return Response([
+            {'id': a.id, 'fullName': a.full_name, 'email': a.email,
+             'roles': a.role_names()}
+            for a in targets if 'CASE_VIEW' in a.permission_codes()
+        ])

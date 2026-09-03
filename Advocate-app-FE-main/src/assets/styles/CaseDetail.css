@@ -764,10 +764,10 @@
   border: 1px solid var(--card-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
-  padding: 24px 26px;
-  width: 440px;
-  max-width: 92%;
-  max-height: 90vh;
+  padding: 28px 32px;
+  width: 720px;
+  max-width: 94%;
+  max-height: 92vh;
   overflow-y: auto;
 }
 .cd-modal h3 { margin: 0 0 16px; font-size: 1.15rem; font-weight: 700; color: var(--text-primary); }
@@ -781,6 +781,29 @@
   margin: 0 0 14px;
 }
 .cd-modal-form { display: flex; flex-direction: column; gap: 12px; }
+/* Invoice particulars (line items) */
+.cd-inv-dates { display: flex; gap: 12px; }
+.cd-inv-dates > div { flex: 1; }
+.cd-inv-particulars-head {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 4px;
+}
+.cd-inv-add {
+  background: transparent; border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm); padding: 6px 12px; font-size: 0.8rem;
+  font-weight: 600; color: var(--accent); cursor: pointer;
+}
+.cd-inv-add:hover { border-color: var(--accent); }
+.cd-inv-row { display: grid; grid-template-columns: 1fr 140px 32px; gap: 8px; align-items: center; }
+.cd-inv-del {
+  background: transparent; border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm); height: 38px; cursor: pointer;
+  color: var(--text-secondary); font-size: 1rem;
+}
+.cd-inv-del:disabled { opacity: 0.4; cursor: not-allowed; }
+.cd-inv-total {
+  display: flex; justify-content: flex-end; gap: 16px; font-weight: 700;
+  padding-top: 8px; border-top: 1px solid var(--input-border); margin-top: 2px;
+}
 .cd-modal-form input,
 .cd-modal-form select {
   background: var(--input-bg);

@@ -5,12 +5,15 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status as http
 
+import re
+
 from core.models import Invoice, Case
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import InvoiceSerializer
+from .models import InvoiceItem
 from core.practice import practice_ids
-from notifications import client_events
+from notifications import client_events, internal_events
 
 SORT_MAP = {'invoiceDate': 'invoice_date', 'dueDate': 'due_date', 'amount': 'amount', 'id': 'id'}
 
@@ -39,6 +42,47 @@ def _case_id(data):
         return data.get('caseId')
     ce = data.get('caseEntity')
     return ce.get('id') if isinstance(ce, dict) else None
+
+
+def _parse_particulars(data):
+    """Clean the incoming line items into [{description, amount, position}].
+
+    Blank rows (no description and no amount) are dropped, so a stray empty row
+    the user left in the form does not become a zero line on the invoice.
+    """
+    items = []
+    for i, row in enumerate(data.get('particulars') or []):
+        if not isinstance(row, dict):
+            continue
+        desc = (row.get('description') or '').strip()
+        try:
+            amt = round(float(row.get('amount') or 0), 2)
+        except (TypeError, ValueError):
+            amt = 0
+        if not desc and not amt:
+            continue
+        items.append({'description': desc[:500], 'amount': amt, 'position': i})
+    return items
+
+
+def _next_invoice_number():
+    """A unique, sequential invoice number ("INV-000123").
+
+    Derived from the highest numeric suffix already in use, then bumped until it
+    is free - so the user never has to type or track a number, matching the
+    Provakil flow. A user-supplied number still wins when one is sent.
+    """
+    highest = 0
+    for existing in Invoice.objects.values_list('invoice_number', flat=True):
+        m = re.search(r'(\d+)\s*$', existing or '')
+        if m:
+            highest = max(highest, int(m.group(1)))
+    nxt = highest + 1
+    number = 'INV-{:06d}'.format(nxt)
+    while Invoice.objects.filter(invoice_number=number).exists():
+        nxt += 1
+        number = 'INV-{:06d}'.format(nxt)
+    return number
 
 
 class InvoiceListView(APIView):
@@ -110,11 +154,6 @@ class CreateInvoiceView(APIView):
 
     def post(self, request):
         data = request.data
-        number = data.get('invoiceNumber')
-        if not number:
-            return Response({'error': 'invoiceNumber is required'}, status=http.HTTP_400_BAD_REQUEST)
-        if Invoice.objects.filter(invoice_number=number).exists():
-            return Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
         cid = _case_id(data)
         case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first() if cid else None
         if case is None:
@@ -122,10 +161,24 @@ class CreateInvoiceView(APIView):
         if case.client_id is None:
             return Response({'error': 'Selected case has no client; invoice needs a client.'},
                             status=http.HTTP_400_BAD_REQUEST)
+
+        # The amount is the sum of the particulars; fall back to a flat `amount`
+        # for older callers that don't send a breakdown.
+        particulars = _parse_particulars(data)
+        if particulars:
+            total = round(sum(p['amount'] for p in particulars), 2)
+        else:
+            total = data.get('amount') or 0
+
+        # Auto-number when the client doesn't supply one (the new forms don't).
+        number = (data.get('invoiceNumber') or '').strip() or _next_invoice_number()
+        if Invoice.objects.filter(invoice_number=number).exists():
+            return Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
+
         today = datetime.date.today()
         invoice = Invoice.objects.create(
             invoice_number=number,
-            amount=data.get('amount') or 0,
+            amount=total,
             invoice_date=_as_date(data.get('invoiceDate'), today),
             due_date=_as_date(data.get('dueDate'), today + datetime.timedelta(days=30)),
             status='UNPAID',
@@ -133,7 +186,15 @@ class CreateInvoiceView(APIView):
             case=case,
             client_id=case.client_id,
         )
+        if particulars:
+            InvoiceItem.objects.bulk_create([
+                InvoiceItem(invoice_id=invoice.id, description=p['description'],
+                            amount=p['amount'], position=p['position'])
+                for p in particulars])
         client_events.invoice_generated(request.user, case.client, invoice, case)
+        # Internal hand-off: tell the accountants (and the team's finance
+        # viewers) there's a new bill to collect.
+        internal_events.invoice_raised(request.user, invoice, case)
         return Response(InvoiceSerializer(invoice).data, status=http.HTTP_201_CREATED)
 
 
@@ -147,4 +208,7 @@ class PayInvoiceView(APIView):
         invoice.status = 'PAID'
         invoice.save(update_fields=['status'])
         client_events.invoice_paid(request.user, invoice.client, invoice, invoice.case)
+        # Internal hand-off: tell the case's advocates it's settled.
+        internal_events.payment_settled(request.user, invoice, invoice.case,
+                                        amount=invoice.amount)
         return Response(InvoiceSerializer(invoice).data)

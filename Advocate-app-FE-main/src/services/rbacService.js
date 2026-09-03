@@ -8,8 +8,17 @@ function authHeaders() {
 async function handleResponse(res) {
   if (res.status === 403) throw new Error("Access denied");
   if (!res.ok) {
-    const text = await res.text().catch(() => "Request failed");
-    throw new Error(text);
+    const text = await res.text().catch(() => "");
+    // The API returns errors as {"error": "..."} (or detail/message). Show that
+    // sentence, not the raw JSON envelope.
+    let message = text || "Request failed";
+    try {
+      const body = JSON.parse(text);
+      message = body.error || body.detail || body.message || message;
+    } catch {
+      /* not JSON — use the raw text */
+    }
+    throw new Error(message);
   }
   return res.json();
 }

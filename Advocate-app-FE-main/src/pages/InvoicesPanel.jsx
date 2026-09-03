@@ -23,11 +23,11 @@ export default function InvoicesPanel() {
   const [closing, setClosing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newInvoice, setNewInvoice] = useState({
-    invoiceNumber: "",
-    amount: "",
     invoiceDate: "",
     dueDate: "",
-    caseId: ""
+    caseId: "",
+    // Line-item breakdown; the amount is the sum of these (no single-amount box).
+    particulars: [{ description: "", amount: "" }],
   });
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
@@ -119,7 +119,7 @@ export default function InvoicesPanel() {
     setTimeout(() => {
       setShowModal(false);
       setClosing(false);
-      setNewInvoice({ invoiceNumber: "", amount: "", invoiceDate: "", dueDate: "", caseId: "" });
+      setNewInvoice({ invoiceDate: "", dueDate: "", caseId: "", particulars: [{ description: "", amount: "" }] });
       triggerRef.current?.focus();
     }, 200);
   }, [closing]);
@@ -147,16 +147,33 @@ export default function InvoicesPanel() {
     if (e.target === e.currentTarget && !submitting) handleClose();
   };
 
+  const setParticular = (i, field, value) =>
+    setNewInvoice((prev) => ({
+      ...prev,
+      particulars: prev.particulars.map((p, idx) => (idx === i ? { ...p, [field]: value } : p)),
+    }));
+  const addParticular = () =>
+    setNewInvoice((prev) => ({ ...prev, particulars: [...prev.particulars, { description: "", amount: "" }] }));
+  const removeParticular = (i) =>
+    setNewInvoice((prev) => {
+      const rows = prev.particulars.filter((_, idx) => idx !== i);
+      return { ...prev, particulars: rows.length ? rows : [{ description: "", amount: "" }] };
+    });
+  const invoiceTotal = newInvoice.particulars.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const particulars = newInvoice.particulars
+        .map((p) => ({ description: (p.description || "").trim(), amount: parseFloat(p.amount) || 0 }))
+        .filter((p) => p.description || p.amount);
       await withLoading(
         axios.post(
           "/api/invoices/create",
           {
-            invoiceNumber: newInvoice.invoiceNumber,
-            amount: Number(newInvoice.amount),
+            // No invoiceNumber — the server assigns the next one.
+            particulars,
             invoiceDate: newInvoice.invoiceDate ? newInvoice.invoiceDate : null,
             dueDate: newInvoice.dueDate ? newInvoice.dueDate : null,
             caseEntity: { id: Number(newInvoice.caseId) }
@@ -341,15 +358,16 @@ export default function InvoicesPanel() {
             </div>
 
             <form onSubmit={handleSubmit} className="inv-form" noValidate>
-              <div className="inv-form-row">
-                <div className="inv-form-group">
-                  <label htmlFor="inv-invoiceNumber">Invoice Number</label>
-                  <input id="inv-invoiceNumber" ref={firstInputRef} name="invoiceNumber" placeholder="e.g. INV-1002" value={newInvoice.invoiceNumber} onChange={handleChange} required />
-                </div>
-                <div className="inv-form-group">
-                  <label htmlFor="inv-amount">Amount (₹)</label>
-                  <input id="inv-amount" name="amount" type="number" step="0.01" min="0" placeholder="0.00" value={newInvoice.amount} onChange={handleChange} required />
-                </div>
+              <div className="inv-form-group full-width">
+                <label htmlFor="inv-caseId">Associated Case</label>
+                <select id="inv-caseId" ref={firstInputRef} name="caseId" value={newInvoice.caseId} onChange={handleChange} required>
+                  <option value="">Select a case...</option>
+                  {cases.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.caseNumber} &mdash; {c.caseTitle} (Client: {c.clientName || "N/A"})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="inv-form-row">
@@ -363,16 +381,36 @@ export default function InvoicesPanel() {
                 </div>
               </div>
 
-              <div className="inv-form-group full-width">
-                <label htmlFor="inv-caseId">Associated Case</label>
-                <select id="inv-caseId" name="caseId" value={newInvoice.caseId} onChange={handleChange} required>
-                  <option value="">Select a case...</option>
-                  {cases.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.caseNumber} &mdash; {c.caseTitle} (Client: {c.clientName || "N/A"})
-                    </option>
-                  ))}
-                </select>
+              <div className="inv-particulars">
+                <div className="inv-particulars-head">
+                  <label>Particulars</label>
+                  <button type="button" className="inv-add-particular" onClick={addParticular}>+ Add Particulars</button>
+                </div>
+                {newInvoice.particulars.map((p, i) => (
+                  <div className="inv-particular-row" key={i}>
+                    <input
+                      className="inv-particular-desc"
+                      placeholder="Enter particulars (e.g. Appearance for hearing on 03 Sep)"
+                      value={p.description}
+                      onChange={(e) => setParticular(i, "description", e.target.value)}
+                    />
+                    <input
+                      className="inv-particular-amt"
+                      type="number" step="0.01" min="0" placeholder="₹ Amount"
+                      value={p.amount}
+                      onChange={(e) => setParticular(i, "amount", e.target.value)}
+                    />
+                    <button
+                      type="button" className="inv-particular-del" title="Remove line"
+                      onClick={() => removeParticular(i)}
+                      disabled={newInvoice.particulars.length === 1}
+                    >&times;</button>
+                  </div>
+                ))}
+                <div className="inv-particulars-total">
+                  <span>Total</span>
+                  <span>₹ {invoiceTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </div>
               </div>
 
               {selectedCase && (
@@ -394,11 +432,11 @@ export default function InvoicesPanel() {
 
               <div className="inv-modal-footer">
                 <button type="button" className="inv-btn-cancel" onClick={handleClose} disabled={submitting}>Cancel</button>
-                <button type="submit" className="inv-btn-submit" disabled={submitting}>
+                <button type="submit" className="inv-btn-submit" disabled={submitting || !newInvoice.caseId || invoiceTotal <= 0}>
                   {submitting ? (
                     <><span className="inv-spinner" /> Generating...</>
                   ) : (
-                    "Generate Invoice"
+                    "Raise Invoice"
                   )}
                 </button>
               </div>

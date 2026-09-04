@@ -12,7 +12,7 @@ from core.permissions import RequirePermission
 from expenses.serializers import ExpenseSerializer
 from invoices.serializers import InvoiceSerializer
 from payments.serializers import ClientPaymentSerializer
-from .models import CaseNote, CaseTag, CaseTask, CaseParty, RelatedCase, CaseTaskDocument
+from .models import CaseNote, CaseTag, CaseTask, CaseParty, RelatedCase, CaseTaskDocument, HearingDetail
 from .serializers import (CaseNoteSerializer, CaseTagSerializer, CaseTaskSerializer,
                           CasePartySerializer)
 
@@ -32,6 +32,7 @@ def _event_payload(ev):
         'description': ev.description,
         'date': ev.date.isoformat() if ev.date else None,
         'time': ev.time.isoformat() if ev.time else None,
+        'hearingDetail': HearingDetail.payload(ev.id),
     }
 
 

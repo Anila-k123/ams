@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useState, useRef } from "react";
+import React, { lazy, Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, NavLink, Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
 import axios from "axios";
 import { useTheme } from "../contexts/ThemeContext.jsx";
@@ -202,7 +202,7 @@ function DashboardShell() {
     "/dashboard/display-board": "Display Board",
     "/dashboard/daily-causelist": "Daily Causelist",
     "/dashboard/clients": "Clients",
-    "/dashboard/hearings": "Hearings",
+    "/dashboard/hearings": "Hearings & Events",
     "/dashboard/invoices": "Invoices",
     "/dashboard/expenses": "Expenses",
     "/dashboard/documents": "Documents",
@@ -308,33 +308,56 @@ function DashboardShell() {
     });
   }, [data]);
 
-  // Fetch document stats separately
-  useEffect(() => {
+  // Fetch document stats separately (kept live by the polling effect below)
+  const fetchDocData = useCallback(async () => {
     if (!token) return;
-    const fetchDocData = async () => {
-      try {
-        const [statsRes, listRes] = await Promise.all([
-          fetch(`${window.API_BASE}/api/documents/stats`, {
-            headers: { Authorization: `Bearer ${token}` }
-          }),
-          fetch(`${window.API_BASE}/api/documents/list`, {
-            headers: { Authorization: `Bearer ${token}` }
-          })
-        ]);
-        if (statsRes.ok) {
-          const stats = await statsRes.json();
-          setDocStats(stats);
-        }
-        if (listRes.ok) {
-          const docs = await listRes.json();
-          setRecentDocs(docs.slice(0, 5));
-        }
-      } catch (err) {
-        console.error("Error fetching doc stats:", err);
+    try {
+      const [statsRes, listRes] = await Promise.all([
+        fetch(`${window.API_BASE}/api/documents/stats`, {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch(`${window.API_BASE}/api/documents/list`, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        setDocStats(stats);
       }
-    };
-    fetchDocData();
+      if (listRes.ok) {
+        const docs = await listRes.json();
+        setRecentDocs(docs.slice(0, 5));
+      }
+    } catch (err) {
+      console.error("Error fetching doc stats:", err);
+    }
   }, [token]);
+
+  useEffect(() => { fetchDocData(); }, [fetchDocData]);
+
+  // Keep the dashboard home near-real-time: enable the context's polling
+  // (30s + refresh-on-focus) only while the home view is mounted, and refresh
+  // the separately-loaded document stats on the same triggers.
+  useEffect(() => {
+    if (!isDashboardHome) return;
+    filter.setPollingEnabled(true);
+    const POLL_MS = 30000;
+    const id = setInterval(() => { fetchDocData(); }, POLL_MS);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "visible") fetchDocData();
+    };
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+    return () => {
+      filter.setPollingEnabled(false);
+      clearInterval(id);
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
+    };
+    // filter.setPollingEnabled is a stable useState setter; depend on the
+    // primitive isDashboardHome + fetchDocData only to avoid effect churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDashboardHome, fetchDocData]);
 
   // Chatbot events
   useEffect(() => {
@@ -525,9 +548,9 @@ function DashboardShell() {
                 </NavLink>
             </li>
             <li>
-                <NavLink to="/dashboard/hearings" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Hearings">
+                <NavLink to="/dashboard/hearings" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Hearings & Events">
                   <span className="nav-icon">📅</span>
-                  <span className="nav-text">Hearings</span>
+                  <span className="nav-text">Hearings & Events</span>
                 </NavLink>
             </li>
             <li>
@@ -726,6 +749,10 @@ function DashboardShell() {
             <div className="topbar-filter-area">
               <DashboardTimeNavigator />
               <TimeSwitcher />
+              <span className="dashboard-live-indicator" title="Live — auto-refreshes every 30 seconds">
+                <span className="live-dot" />
+                Live{filter.lastUpdated ? ` · ${filter.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+              </span>
             </div>
           )}
 

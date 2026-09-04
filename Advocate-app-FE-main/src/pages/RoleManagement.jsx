@@ -119,7 +119,6 @@ export default function RoleManagement() {
   return (
     <div className="admin-management">
       <div className="am-header">
-        <h2 className="am-title">Role Management</h2>
         <button className="am-btn am-btn-primary" onClick={openCreate}><FiPlus /> Create Role</button>
       </div>
 

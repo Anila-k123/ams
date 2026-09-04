@@ -9,6 +9,24 @@ from core.pagination import SpringStylePagination
 from .serializers import CaseEventSerializer
 from core.practice import practice_ids
 from notifications import client_events
+from workspace.models import HearingDetail
+
+
+def _upsert_hearing_detail(event_id, advocate_id, d):
+    """Create/update the advocate's extra hearing detail from request data.
+    Only writes when at least one detail field was provided, so non-hearing
+    events (meetings/reminders) never get an empty row."""
+    keys = {'purpose': 'purpose', 'court': 'court', 'bench_hall': 'benchHall',
+            'judge': 'judge', 'outcome': 'outcome'}
+    vals = {col: (d.get(api) or '') for col, api in keys.items()}
+    next_date = d.get('nextDate') or None
+    if not any(vals.values()) and not next_date:
+        # Nothing supplied — on update, clear any prior detail; on create, skip.
+        HearingDetail.objects.filter(event_id=event_id).delete()
+        return
+    HearingDetail.objects.update_or_create(
+        event_id=event_id,
+        defaults={**vals, 'next_date': next_date, 'advocate_id': advocate_id})
 
 
 def _base(request):
@@ -73,6 +91,7 @@ class CreateEventView(APIView):
             case=case,
             advocate_id=request.user.id,
         )
+        _upsert_hearing_detail(event.id, request.user.id, data)
         client_events.hearing_scheduled(request.user, case.client, event, case)
         return Response(CaseEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
@@ -92,6 +111,7 @@ class UpdateEventView(APIView):
         if 'time' in d:
             event.time = d.get('time') or None
         event.save()
+        _upsert_hearing_detail(event.id, request.user.id, d)
         return Response(CaseEventSerializer(event).data)
 
 
@@ -102,5 +122,6 @@ class DeleteEventView(APIView):
         event = CaseEvent.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if event is None:
             return Response({'error': 'Event not found'}, status=status.HTTP_404_NOT_FOUND)
+        HearingDetail.objects.filter(event_id=event.id).delete()
         event.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

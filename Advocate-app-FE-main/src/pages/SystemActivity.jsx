@@ -391,7 +391,6 @@ export default function SystemActivity() {
     <div className="system-activity-container">
       {isDownloading && <DownloadLoader message="Exporting..." />}
       <div className="sa-header">
-        <h2><FiActivity /> System Activity</h2>
         <span className="sa-total">{data.totalElements} records</span>
       </div>
 

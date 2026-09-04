@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import ReportService from "../services/ReportService";
 import { formatCurrency } from "../utils/formatCurrency";
 import { InlineLoader } from "../components/Loader";
@@ -36,6 +37,7 @@ function Expenses() {
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
   const { success, error } = useToast();
+  const { hasPermission } = usePermission();
 
   // ----------------- FORMS -----------------
   const [newExpense, setNewExpense] = useState({
@@ -428,7 +430,6 @@ function Expenses() {
   // Render
   return (
     <div className="expenses-container">
-      <h2>Case-wise Expense & Payment Management</h2>
 
       {errorMessage && <p className="error-message">{errorMessage}</p>}
       {successMessage && <p className="success-message">{successMessage}</p>}
@@ -492,8 +493,12 @@ function Expenses() {
                     <td>{formatCurrency(balance)}</td>
                     <td className="case-actions">
                       <button onClick={() => fetchExpensesAndPayments(c.id)}>🔍 View</button>
-                      <button onClick={() => handleAddExpense(c.id)}>➕ Add</button>
-                      <button onClick={() => handleAddPayment(c.id)}>💰 Payment</button>
+                      {hasPermission("EXPENSE_CREATE") && (
+                        <button onClick={() => handleAddExpense(c.id)}>➕ Add</button>
+                      )}
+                      {hasPermission("PAYMENT_CREATE") && (
+                        <button onClick={() => handleAddPayment(c.id)}>💰 Payment</button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -574,8 +579,12 @@ function Expenses() {
                           <td>{exp.category}</td>
                           <td>{exp.paymentDate?.split?.("T")[0] ?? exp.paymentDate}</td>
                           <td>
-                            <button onClick={() => handleEdit(exp)}>Edit</button>
-                            <button onClick={() => handleDeleteExpense(exp.id, selectedCase)}>Delete</button>
+                            {hasPermission("EXPENSE_EDIT") && (
+                              <button onClick={() => handleEdit(exp)}>Edit</button>
+                            )}
+                            {hasPermission("EXPENSE_DELETE") && (
+                              <button onClick={() => handleDeleteExpense(exp.id, selectedCase)}>Delete</button>
+                            )}
                           </td>
                         </tr>
                       ))

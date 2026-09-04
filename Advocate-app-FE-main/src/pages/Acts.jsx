@@ -124,8 +124,6 @@ export default function Acts() {
 
   return (
     <div className="acts-container">
-      <h2>Acts</h2>
-
       <div className="acts-search-bar">
         <FiSearch className="acts-search-icon" />
         <input

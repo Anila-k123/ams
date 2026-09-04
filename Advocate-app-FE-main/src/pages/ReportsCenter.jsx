@@ -153,7 +153,6 @@ export default function ReportsCenter() {
       {isDownloading && <DownloadLoader message="Exporting..." />}
       <div className="rc-header">
         <div>
-          <h1 className="rc-page-title">Reports & Analytics</h1>
           <p className="rc-page-subtitle">Comprehensive insights into your practice</p>
         </div>
         <div className="rc-header-right">

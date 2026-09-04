@@ -100,7 +100,6 @@ export default function CommunicationSettings() {
 
   return (
     <div className="comm-page">
-      <h2>Communication Settings</h2>
 
       {message && (
         <div className={`comm-status ${message.type}`}>

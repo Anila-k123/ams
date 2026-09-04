@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext.jsx";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import { FiFolder, FiEye, FiDownload, FiX, FiUpload, FiFile } from "react-icons/fi";
 import ReportService from "../services/ReportService";
 import Pagination from "../components/Pagination";
@@ -42,6 +43,7 @@ function Clients() {
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
   const { success, error } = useToast();
+  const { hasPermission } = usePermission();
   const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived] });
   const searchedFromGlobalNav = useRef(!!location.state?.search);
 
@@ -162,7 +164,9 @@ function Clients() {
     } catch (err) {
       console.error("Error saving client:", err);
       const errData = err.response?.data;
-      const msg = typeof errData === "string" ? errData : (errData?.message || "Failed to save client.");
+      const msg = typeof errData === "string"
+        ? errData
+        : (errData?.error || errData?.message || "Failed to save client.");
       setErrorMessage(msg);
       error(msg);
     }
@@ -269,8 +273,6 @@ function Clients() {
   return (
     <div className="clients-container">
       <div className="clients-header">
-        <h2>{showArchived ? "Archived Clients" : "My Clients"}</h2>
-
         <div className="header-actions">
           <input
             type="text"
@@ -279,9 +281,11 @@ function Clients() {
             onChange={handleSearch}
             className="search-bar"
           />
+          {hasPermission("CLIENT_CREATE") && (
           <button className="add-client-btn" onClick={() => { setNewClient(emptyClient); setEditClientId(null); setShowModal(true); }}>
             Add New Client
           </button>
+          )}
           <button className="view-archived-btn" onClick={() => setShowArchived(!showArchived)}>
             {showArchived ? "🔙 Back to Active" : "🗄️ View Archived"}
           </button>
@@ -400,20 +404,25 @@ function Clients() {
                 <tr key={c.id} className={highlightedId === c.id ? "highlight-row" : ""} ref={(el) => { if (highlightedId === c.id && el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }}>
                   <td title={c.name}>{c.name}</td><td title={c.email}>{c.email}</td><td title={c.phone}>{c.phone}</td><td title={c.gstin || "—"}>{c.gstin || "—"}</td><td title={c.city || "—"}>{c.city || "—"}</td><td title={c.state || "—"}>{c.state || "—"}</td>
                   <td>
-                    {showArchived ? (
-                      <button className="restore-btn" onClick={() => handleRestore(c.id)}>♻️ Restore</button>
-                    ) : (
-                      <>
-                        <button className="edit-btn" onClick={() => { setNewClient(c); setEditClientId(c.id); setShowModal(true); }}>Edit</button>
-                        <button className="archive-btn" onClick={() => handleDelete(c.id)}>Archive</button>
-                      </>
-                    )}
-                    <button className="doc-btn" onClick={() => openClientDocs(c)} title="Documents">
-                      <FiFolder />
-                    </button>
-                    <button className="pdf-btn" onClick={() => ReportService.downloadClientDetail(c.id, c.name)} title="Export PDF">
-                      <FiFile />
-                    </button>
+                    <div className="client-actions">
+                      {showArchived ? (
+                        hasPermission("CLIENT_EDIT") && (
+                          <button className="restore-btn" onClick={() => handleRestore(c.id)}>♻️ Restore</button>
+                        )
+                      ) : (
+                        <>
+                          {hasPermission("CLIENT_EDIT") && (
+                            <button className="edit-btn" onClick={() => { setNewClient(c); setEditClientId(c.id); setShowModal(true); }}>Edit</button>
+                          )}
+                          {hasPermission("CLIENT_DELETE") && (
+                            <button className="archive-btn" onClick={() => handleDelete(c.id)}>Archive</button>
+                          )}
+                        </>
+                      )}
+                      <button className="pdf-btn" onClick={() => ReportService.downloadClientDetail(c.id, c.name)} title="Export PDF">
+                        <FiFile />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

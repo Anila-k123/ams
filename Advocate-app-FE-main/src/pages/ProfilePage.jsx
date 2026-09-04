@@ -13,7 +13,8 @@ const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d
 const TABS = [
   { id: "general", label: "General", icon: FiUser },
   { id: "office", label: "Office", icon: FiHome },
-  { id: "branding", label: "Branding", icon: FiImage },
+  // Branding hidden for now — re-enable this entry to bring the tab back.
+  // { id: "branding", label: "Branding", icon: FiImage },
   { id: "security", label: "Security", icon: FiLock },
   { id: "preferences", label: "Preferences", icon: FiSliders },
 ];
@@ -298,7 +299,6 @@ export default function ProfilePage() {
 
   return (
     <div className="settings-container">
-      <h2>Profile & Office Management</h2>
       <p className="subtle">Manage your identity, office, branding, security, and preferences.</p>
 
       <div className="settings-wrapper-box">

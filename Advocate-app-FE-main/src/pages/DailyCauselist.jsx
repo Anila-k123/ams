@@ -77,7 +77,6 @@ export default function DailyCauselist() {
     <div className="board-container">
       <div className="board-header">
         <div>
-          <h2>Daily Causelist</h2>
           <p className="board-sub">Your matters listed in {isToday ? "today's" : "the day's"} cause lists.</p>
         </div>
         <label className="dc-date">

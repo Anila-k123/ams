@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import { FiSearch, FiDownload, FiPlus, FiCheckCircle } from "react-icons/fi";
 import { SkeletonPage } from "../components/Skeleton";
 import { formatCurrency } from "../utils/formatCurrency";
@@ -42,6 +43,7 @@ export default function InvoicesPanel() {
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
   const { success, error } = useToast();
+  const { hasPermission } = usePermission();
 
   const fetchInvoices = useCallback(async () => {
     try {
@@ -243,12 +245,13 @@ export default function InvoicesPanel() {
     <div className="invoices-container">
       <div className="invoices-header">
         <div>
-          <h2>💵 Invoices Ledger</h2>
           <p className="subtle">Track billing summaries, issue client invoices, and record payments.</p>
         </div>
+        {hasPermission("INVOICE_CREATE") && (
         <button ref={triggerRef} className="add-invoice-btn" onClick={() => setShowModal(true)}>
           <FiPlus /> Generate Invoice
         </button>
+        )}
       </div>
 
       <div className="inv-search-bar">
@@ -321,7 +324,7 @@ export default function InvoicesPanel() {
                       </span>
                     </td>
                     <td className="actions-cell">
-                      {inv.status !== "PAID" && (
+                      {inv.status !== "PAID" && hasPermission("INVOICE_EDIT") && (
                         <button className="pay-btn" onClick={() => handlePay(inv.id)} title="Mark Paid">
                           <FiCheckCircle /> Mark Paid
                         </button>

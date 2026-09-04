@@ -61,7 +61,7 @@ export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onE
           <button onClick={() => onPreview(doc)} title="Preview"><FiEye /></button>
           <button onClick={() => onDownload(doc)} title="Download"><FiDownload /></button>
           {onEdit && <button onClick={() => onEdit(doc)} title="Edit"><FiEdit2 /></button>}
-          <button onClick={() => onDelete(doc)} title="Delete"><FiTrash2 /></button>
+          {onDelete && <button onClick={() => onDelete(doc)} title="Delete"><FiTrash2 /></button>}
         </div>
       </div>
     );
@@ -88,7 +88,7 @@ export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onE
         <button className="icon-btn-action view" onClick={() => onPreview(doc)} title="Preview"><FiEye /></button>
         <button className="icon-btn-action download" onClick={() => onDownload(doc)} title="Download"><FiDownload /></button>
         {onEdit && <button className="icon-btn-action edit" onClick={() => onEdit(doc)} title="Edit"><FiEdit2 /></button>}
-        <button className="icon-btn-action delete" onClick={() => onDelete(doc)} title="Delete"><FiTrash2 /></button>
+        {onDelete && <button className="icon-btn-action delete" onClick={() => onDelete(doc)} title="Delete"><FiTrash2 /></button>}
       </td>
     </tr>
   );

@@ -293,7 +293,6 @@ function BackupPage() {
   return (
     <div className="backup-page">
       {isDownloading && <DownloadLoader message="Downloading Backup..." />}
-      <h2>Backup &amp; Restore</h2>
 
       {statusMsg.text && (
         <div className={`backup-status ${statusMsg.type}`}>

@@ -207,6 +207,28 @@
   box-shadow: var(--shadow-glow);
 }
 
+/* Keep all row actions (Edit / Archive / icon buttons) on one aligned row */
+.clients-table .client-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.clients-table .client-actions > button {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.clients-table .client-actions .pdf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
 .clients-container .modal-overlay {
   position: fixed;
   top: 0;

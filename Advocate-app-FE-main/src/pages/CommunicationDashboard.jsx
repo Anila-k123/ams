@@ -74,7 +74,6 @@ export default function CommunicationDashboard() {
 
   return (
     <div className="comm-page">
-      <h2>Communication Overview</h2>
 
       <div className="comm-stat-cards">
         <div className="comm-stat-card">

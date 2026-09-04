@@ -167,7 +167,6 @@ export default function TasksPage() {
 
   return (
     <div className="tasks-page-container">
-      <h2>📋 To-Do Tasks</h2>
       <p className="subtle">Track tasks, link them to cases, and attach documents.</p>
 
       {/* New Task Form */}

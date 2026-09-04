@@ -11,6 +11,8 @@ export function DashboardFilterProvider({ children, token }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pollingEnabled, setPollingEnabled] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const lastKeyRef = useRef("");
 
   // Decode advocate email from token for cache scoping
@@ -148,6 +150,7 @@ export function DashboardFilterProvider({ children, token }) {
         const result = await dashboardService.fetchDashboard(token, params, advocateEmail);
         if (!cancelled && result) {
           setData(result);
+          setLastUpdated(new Date());
         }
       } catch (err) {
         if (!cancelled) {
@@ -162,6 +165,45 @@ export function DashboardFilterProvider({ children, token }) {
     return () => { cancelled = true; };
   }, [token, view, currentDate, formatApiParams, advocateEmail, refreshKey]);
 
+  // Silent background refresh: re-fetches the current period without toggling
+  // the loading spinner, so the numbers/charts update in place. Cache is busted
+  // first so we always get fresh server data.
+  const silentRefresh = useCallback(async () => {
+    if (!token || !advocateEmail) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    const params = formatApiParams();
+    dashboardService.invalidateCache(advocateEmail, params.view, params.date, params.week, params.month, params.year);
+    try {
+      const result = await dashboardService.fetchDashboard(token, params, advocateEmail);
+      if (result) {
+        setData(result);
+        setLastUpdated(new Date());
+      }
+    } catch {
+      // silent — a failed poll should not disrupt the visible dashboard
+    }
+  }, [token, advocateEmail, formatApiParams]);
+
+  // Near-real-time updates via polling + refresh-on-focus. The backend has no
+  // WebSocket, so this is how the dashboard stays live. Only runs while the
+  // consumer opts in (dashboard home) and the tab is visible, mirroring the
+  // NotificationBell / HearingAlertPopup polling pattern already in the app.
+  const POLL_MS = 30000;
+  useEffect(() => {
+    if (!pollingEnabled || !token || !advocateEmail) return;
+    const id = setInterval(() => { silentRefresh(); }, POLL_MS);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "visible") silentRefresh();
+    };
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
+    };
+  }, [pollingEnabled, token, advocateEmail, silentRefresh]);
+
   const value = useMemo(() => ({
     view,
     setView,
@@ -174,6 +216,9 @@ export function DashboardFilterProvider({ children, token }) {
     data,
     loading: isLoading,
     error,
+    lastUpdated,
+    setPollingEnabled,
+    silentRefresh,
     setExternalLoading,
     invalidateCache: () => {
       const params = formatApiParams();
@@ -185,7 +230,7 @@ export function DashboardFilterProvider({ children, token }) {
       lastKeyRef.current = "";
       setRefreshKey(k => k + 1);
     },
-  }), [view, currentDate, periodLabel, navigatePrev, navigateNext, isNextDisabled, data, isLoading, error, setExternalLoading, formatApiParams, advocateEmail, refreshKey]);
+  }), [view, currentDate, periodLabel, navigatePrev, navigateNext, isNextDisabled, data, isLoading, error, lastUpdated, silentRefresh, setExternalLoading, formatApiParams, advocateEmail, refreshKey]);
 
   return (
     <DashboardFilterContext.Provider value={value}>

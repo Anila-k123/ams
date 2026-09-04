@@ -155,7 +155,6 @@ If they have created any records the account is closed instead, and those record
   return (
     <div className="admin-management">
       <div className="am-header">
-        <h2 className="am-title">User Management</h2>
         <button className="am-btn am-btn-primary" onClick={openCreate}><FiUserPlus /> Create User</button>
       </div>
 

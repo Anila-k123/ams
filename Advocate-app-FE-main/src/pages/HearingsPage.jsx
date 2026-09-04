@@ -7,10 +7,21 @@ import Select from "react-select";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import Modal from "../components/Modal";
 import { useToast } from "../contexts/ToastContext.jsx";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import "../assets/styles/HearingsPage.css";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 
 const localizer = momentLocalizer(moment);
+
+const PURPOSE_OPTIONS = [
+  "Arguments", "Evidence", "Framing of Issues", "For Counter / Reply",
+  "For Orders", "Interim Application", "Mention", "Cross-examination", "Other",
+];
+
+const emptyEvent = {
+  title: "", eventType: "", description: "", date: "", time: "", caseId: "",
+  purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "",
+};
 
 function HearingsPage() {
   const [events, setEvents] = useState([]);
@@ -24,18 +35,12 @@ function HearingsPage() {
   const [highlightedId, setHighlightedId] = useState(null);
   const location = useLocation();
 
-  const [newEvent, setNewEvent] = useState({
-    title: "",
-    eventType: "",
-    description: "",
-    date: "",
-    time: "",
-    caseId: "",
-  });
+  const [newEvent, setNewEvent] = useState(emptyEvent);
 
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
   const { success, error, warning, info } = useToast();
+  const { hasPermission } = usePermission();
 
   // ✅ Fetch Cases
   const fetchCases = async () => {
@@ -118,18 +123,33 @@ function HearingsPage() {
   const handleAddEvent = async (e) => {
     e.preventDefault();
     setFormError("");
+    // Every event (hearing, meeting, payment-due, document) must belong to a
+    // case — the backend CaseEvent.case is a required foreign key — so validate
+    // the options here rather than sending an event the server will reject.
+    if (!newEvent.title.trim()) { setFormError("Title is required."); return; }
+    if (!newEvent.eventType) { setFormError("Please choose an event type."); return; }
+    if (!newEvent.date) { setFormError("Date is required."); return; }
+    if (!newEvent.caseId) { setFormError("Please select the case this event belongs to."); return; }
     setSaving(true);
     try {
       await withLoading(
         axios.post(
           "/api/events/create",
           {
-            title: newEvent.title,
+            title: newEvent.title.trim(),
             eventType: newEvent.eventType,
-            description: newEvent.description,
+            description: newEvent.description.trim(),
             date: newEvent.date,
-            time: newEvent.time,
+            time: newEvent.time || null,
             caseEntity: { id: Number(newEvent.caseId) },
+            ...(newEvent.eventType === "HEARING" ? {
+              purpose: newEvent.purpose,
+              court: newEvent.court,
+              benchHall: newEvent.benchHall,
+              judge: newEvent.judge,
+              nextDate: newEvent.nextDate || null,
+              outcome: newEvent.outcome,
+            } : {}),
           },
           { headers: { Authorization: `Bearer ${token}` } }
         ),
@@ -137,14 +157,7 @@ function HearingsPage() {
       );
 
       setShowModal(false);
-      setNewEvent({
-        title: "",
-        eventType: "",
-        description: "",
-        date: "",
-        time: "",
-        caseId: "",
-      });
+      setNewEvent(emptyEvent);
       fetchEvents();
       success("Event created successfully!");
     } catch (err) {
@@ -165,14 +178,7 @@ function HearingsPage() {
   const closeModal = () => {
     setShowModal(false);
     setFormError("");
-    setNewEvent({
-      title: "",
-      eventType: "",
-      description: "",
-      date: "",
-      time: "",
-      caseId: "",
-    });
+    setNewEvent(emptyEvent);
   };
 
   // ✅ Calendar Navigation
@@ -223,9 +229,10 @@ function HearingsPage() {
   return (
     <div className="calendar-container">
       <div className="calendar-header">
-        <h2>Hearings Calendar</h2>
         <div className="calendar-header-actions">
-          <button className="add-event-btn" onClick={openModal}>Add Event</button>
+          {hasPermission("EVENT_CREATE") && (
+            <button className="add-event-btn" onClick={openModal}>Add Event</button>
+          )}
           <button onClick={goToPrev}>Prev</button>
           <button onClick={goToToday}>Today</button>
           <button onClick={goToNext}>Next</button>
@@ -287,7 +294,7 @@ function HearingsPage() {
             onChange={handleChange}
           />
 
-          <label>Select Case:</label>
+          <label>Select Case: *</label>
           <Select
             options={caseOptions}
             value={caseOptions.find((opt) => opt.value === newEvent.caseId) || null}
@@ -304,6 +311,21 @@ function HearingsPage() {
               }),
             }}
           />
+
+          {newEvent.eventType === "HEARING" && (
+            <div className="hearing-detail-fields">
+              <select name="purpose" value={newEvent.purpose} onChange={handleChange}>
+                <option value="">Purpose / stage…</option>
+                {PURPOSE_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <input name="court" placeholder="Court" value={newEvent.court} onChange={handleChange} />
+              <input name="benchHall" placeholder="Bench / Hall no." value={newEvent.benchHall} onChange={handleChange} />
+              <input name="judge" placeholder="Judge / Coram" value={newEvent.judge} onChange={handleChange} />
+              <label>Next hearing date</label>
+              <input type="date" name="nextDate" value={newEvent.nextDate} onChange={handleChange} />
+              <textarea name="outcome" placeholder="Outcome / order (after the hearing)" value={newEvent.outcome} onChange={handleChange}></textarea>
+            </div>
+          )}
 
           <textarea
             name="description"

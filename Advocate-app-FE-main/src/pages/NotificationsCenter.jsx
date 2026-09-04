@@ -215,9 +215,6 @@ export default function NotificationsCenter() {
       {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, background: "linear-gradient(135deg,#818cf8,#4f46e5)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
-            📨 Notification Center
-          </h1>
           <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: 14 }}>
             Monitor email delivery and notification history
           </p>

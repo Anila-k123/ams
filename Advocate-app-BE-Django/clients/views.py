@@ -1,3 +1,5 @@
+import re
+
 from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -66,6 +68,36 @@ class SearchClientsView(APIView):
         return Response(ClientSerializer(qs.order_by('name'), many=True).data)
 
 
+def _digits(value):
+    return re.sub(r'\D', '', value or '')
+
+
+def _find_practice_duplicate(user, name, email, phone_digits):
+    """The existing client in this user's practice that matches on name AND a
+    contact point, split into (active, archived).
+
+    Mirrors the case rule: dedup is per PRACTICE, not per advocate, so two
+    members of one chambers cannot each add the same client and list it twice in
+    every shared view. A different practice adding the same person is untouched
+    (their query is scoped to their own advocate ids). Name alone is too weak -
+    two different people share a name - so a match also needs a phone or email
+    hit; the caller only runs this when at least one contact was given.
+    """
+    candidates = Client.objects.filter(
+        advocate_id__in=practice_ids(user), name__iexact=name)
+    active = archived = None
+    for c in candidates:
+        same_email = bool(email) and (c.email or '').strip().lower() == email
+        same_phone = bool(phone_digits) and _digits(c.phone) == phone_digits
+        if not (same_email or same_phone):
+            continue
+        if c.deleted:
+            archived = archived or c
+        else:
+            active = active or c
+    return active, archived
+
+
 class CreateClientView(APIView):
     permission_classes = [RequirePermission('CLIENT_CREATE')]
 
@@ -73,6 +105,34 @@ class CreateClientView(APIView):
         s = ClientRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         d = s.validated_data
+        name = (d['name'] or '').strip()
+        email = (d.get('email') or '').strip().lower()
+        phone_digits = _digits(d.get('phone'))
+
+        # Only look for a duplicate when there is a contact point to match on;
+        # a bare name is too weak to safely block a genuinely different person.
+        if email or phone_digits:
+            active, archived = _find_practice_duplicate(
+                request.user, name, email, phone_digits)
+            if active is not None:
+                return Response({
+                    'error': 'A client named "{}" with this contact already '
+                             'exists in your practice.'.format(active.name),
+                    'existingClientId': active.id,
+                    'existingClientName': active.name,
+                }, status=status.HTTP_409_CONFLICT)
+            if archived is not None:
+                # Re-adding a client this practice archived: restore the row
+                # rather than inserting a second one (mirrors the case path).
+                archived.name = d['name']
+                archived.email = d.get('email')
+                archived.phone = d.get('phone')
+                archived.address = d.get('address')
+                archived.deleted = False
+                archived.save()
+                return Response(ClientSerializer(archived).data,
+                                status=status.HTTP_200_OK)
+
         client = Client.objects.create(
             name=d['name'], email=d.get('email'), phone=d.get('phone'),
             address=d.get('address'), deleted=False, advocate_id=request.user.id,

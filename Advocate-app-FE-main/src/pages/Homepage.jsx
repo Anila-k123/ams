@@ -18,7 +18,6 @@ return(
         </div>
         <div id='welcomebox' className="container-xl d-flex justify-content-center rounded text-center">
           <div>
-          <h1 className="welcome-title">WELCOME</h1>
           <h1 className="main-title">ADVOCATE CASE MANAGEMENT SYSTEM</h1>
           <img src={hmlogo} alt="logo" />
           <div className="premium-divider">────────◆────────</div>

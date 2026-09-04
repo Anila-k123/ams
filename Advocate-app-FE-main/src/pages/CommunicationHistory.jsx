@@ -37,7 +37,6 @@ export default function CommunicationHistory() {
 
   return (
     <div className="comm-page">
-      <h2>Notification History</h2>
 
       <div className="comm-search-bar">
         <FiSearch />

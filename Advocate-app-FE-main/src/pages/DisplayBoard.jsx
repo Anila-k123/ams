@@ -284,7 +284,6 @@ export default function DisplayBoard() {
     <div className="board-container">
       <div className="board-header">
         <div>
-          <h2>Court Display Board</h2>
           <p className="board-sub">Select a court to see its live cause list.</p>
         </div>
       </div>

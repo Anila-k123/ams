@@ -4,8 +4,8 @@ import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
 import Select from "react-select";
 import { FiFolder, FiEye, FiDownload, FiX, FiUpload, FiClock, FiEdit2, FiTrash2, FiExternalLink, FiBriefcase, FiCalendar, FiCheckCircle, FiDollarSign } from "react-icons/fi";
-import CaseTimeline from "../components/CaseTimeline.jsx";
 import { useToast } from "../contexts/ToastContext.jsx";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import { formatCurrency } from "../utils/formatCurrency";
 import Pagination from "../components/Pagination";
 import usePagination from "../hooks/usePagination";
@@ -131,6 +131,7 @@ function Cases() {
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
   const { withLoading } = useLoading();
   const { success, error } = useToast();
+  const { hasPermission } = usePermission();
   const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived, filterStatus, filterCourt, sort] });
   const [pageLoading, setPageLoading] = useState(true);
   const searchedFromGlobalNav = useRef(!!location.state?.search);
@@ -141,15 +142,6 @@ function Cases() {
   const [caseDocs, setCaseDocs] = useState([]);
   const [caseDocsLoading, setCaseDocsLoading] = useState(false);
   const [uploadDocFile, setUploadDocFile] = useState(null);
-
-  // Timeline modal state
-  const [showTimeline, setShowTimeline] = useState(false);
-  const [timelineCase, setTimelineCase] = useState(null);
-
-  const openTimeline = (c) => {
-    setTimelineCase(c);
-    setShowTimeline(true);
-  };
 
   // ---------------- COURT LOOKUP (prefill Add Case from the official record) ----------------
   const [lkCourts, setLkCourts] = useState([]);
@@ -509,7 +501,6 @@ function Cases() {
 
   return (
     <div className="cases-container">
-      <h2>{showArchived ? "Archived Cases" : "Case Workspace"}</h2>
       {errorMessage && <p className="error-message">{errorMessage}</p>}
 
       {/* Dashboard cards */}
@@ -531,9 +522,11 @@ function Cases() {
 
       {/* Top Actions */}
       <div className="cases-top-actions">
+        {hasPermission("CASE_CREATE") && (
         <button onClick={() => navigate("/dashboard/cases/new")}>
           Add New Case
         </button>
+        )}
         <input
           type="text"
           placeholder="🔍 Search by case number, client name, or email"
@@ -765,15 +758,19 @@ function Cases() {
                           <FiExternalLink />
                         </button>
                         {showArchived ? (
-                          <button className="action-btn restore-btn" onClick={() => handleRestore(c.id)} title="Restore">♻️</button>
+                          hasPermission("CASE_EDIT") && (
+                            <button className="action-btn restore-btn" onClick={() => handleRestore(c.id)} title="Restore">♻️</button>
+                          )
                         ) : (
                           <>
-                            <button className="action-btn edit-btn" onClick={() => handleEdit(c)} title="Edit"><FiEdit2 /></button>
-                            <button className="action-btn delete-btn" onClick={() => handleDelete(c.id)} title="Archive"><FiTrash2 /></button>
+                            {hasPermission("CASE_EDIT") && (
+                              <button className="action-btn edit-btn" onClick={() => handleEdit(c)} title="Edit"><FiEdit2 /></button>
+                            )}
+                            {hasPermission("CASE_DELETE") && (
+                              <button className="action-btn delete-btn" onClick={() => handleDelete(c.id)} title="Archive"><FiTrash2 /></button>
+                            )}
                           </>
                         )}
-                        <button className="action-btn timeline-btn" onClick={() => openTimeline(c)} title="Timeline"><FiClock /></button>
-                        <button className="action-btn docs-btn" onClick={() => openCaseDocs(c)} title="Documents"><FiFolder /></button>
                       </div>
                     </td>
                   </tr>
@@ -830,15 +827,6 @@ function Cases() {
             )}
           </div>
         </div>
-      )}
-
-      {/* Case Timeline Modal */}
-      {showTimeline && timelineCase && (
-        <CaseTimeline
-          caseId={timelineCase.id}
-          caseNumber={timelineCase.caseNumber}
-          onClose={() => { setShowTimeline(false); setTimelineCase(null); }}
-        />
       )}
     </div>
   );

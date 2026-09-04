@@ -17,7 +17,7 @@ import { formatCurrency } from "../utils/formatCurrency";
 import { InlineLoader } from "../components/Loader";
 import "../assets/styles/CaseDetail.css";
 
-const TABS = ["Parties", "Hearings", "Orders", "Expenses", "Invoices", "Tasks", "Notes", "Documents", "Related Cases", "Acts", "Extra Details", "Timeline"];
+const TABS = ["Parties", "Hearings", "Events", "Orders", "Expenses", "Invoices", "Tasks", "Notes", "Documents", "Related Cases", "Acts", "Extra Details", "Timeline"];
 const STATUS_SELECT = [
   { value: "", label: "—" },
   { value: "Active", label: "Active" },
@@ -222,6 +222,19 @@ const EVENT_TYPES = [
   { value: "PAYMENT_DUE", label: "Payment Due" },
   { value: "DOCUMENT", label: "Document Filing" },
 ];
+// Non-hearing calendar entries live in their own "Events" tab, kept apart from
+// hearings so the hearings view (which also lists past court hearings) is not
+// cluttered by meetings/reminders.
+const OTHER_EVENT_TYPES = EVENT_TYPES.filter((t) => t.value !== "HEARING");
+
+const HEARING_PURPOSES = [
+  "Arguments", "Evidence", "Framing of Issues", "For Counter / Reply",
+  "For Orders", "Interim Application", "Mention", "Cross-examination", "Other",
+];
+const EMPTY_HEARING = {
+  title: "", eventType: "HEARING", date: "", time: "", description: "",
+  purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "",
+};
 
 function fmtDate(dateStr) {
   if (!dateStr) return "—";
@@ -388,9 +401,12 @@ export default function CaseDetail() {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showHearingModal, setShowHearingModal] = useState(false);
+  // "hearing" → the Hearings tab (type locked to HEARING); "event" → the Events
+  // tab (Meeting / Payment Due / Document). Controls the shared add/edit modal.
+  const [eventModalMode, setEventModalMode] = useState("hearing");
   const [expenseForm, setExpenseForm] = useState({ title: "", amount: "", category: "", paymentDate: "", paymentStatus: "" });
   const [invoiceForm, setInvoiceForm] = useState({ invoiceDate: "", dueDate: "", particulars: [{ description: "", amount: "" }] });
-  const [hearingForm, setHearingForm] = useState({ title: "", eventType: "HEARING", date: "", time: "" });
+  const [hearingForm, setHearingForm] = useState(EMPTY_HEARING);
   const [editingEventId, setEditingEventId] = useState(null);
   const [alertBusy, setAlertBusy] = useState(null);
   const [savingFin, setSavingFin] = useState(false);
@@ -664,6 +680,15 @@ export default function CaseDetail() {
       eventType: hearingForm.eventType,
       date: hearingForm.date,
       time: hearingForm.time || null,
+      description: hearingForm.description || "",
+      ...(eventModalMode === "hearing" ? {
+        purpose: hearingForm.purpose,
+        court: hearingForm.court,
+        benchHall: hearingForm.benchHall,
+        judge: hearingForm.judge,
+        nextDate: hearingForm.nextDate || null,
+        outcome: hearingForm.outcome,
+      } : {}),
     };
     try {
       if (editingEventId) {
@@ -673,10 +698,12 @@ export default function CaseDetail() {
       }
       setShowHearingModal(false);
       setEditingEventId(null);
-      setHearingForm({ title: "", eventType: "HEARING", date: "", time: "" });
+      setHearingForm(EMPTY_HEARING);
       fetchEvents();
       fetchSummary();
-      success(editingEventId ? "Hearing updated." : "Hearing added to this case.");
+      success(eventModalMode === "event"
+        ? (editingEventId ? "Event updated." : "Event added to this case.")
+        : (editingEventId ? "Hearing updated." : "Hearing added to this case."));
     } catch (err) {
       error(err.response?.data?.error || "Failed to save hearing.");
     } finally {
@@ -686,11 +713,20 @@ export default function CaseDetail() {
 
   const editHearing = (ev) => {
     setEditingEventId(ev.id);
+    setEventModalMode(ev.eventType === "HEARING" ? "hearing" : "event");
+    const hd = ev.hearingDetail || {};
     setHearingForm({
       title: ev.title || "",
       eventType: ev.eventType || "HEARING",
       date: ev.date || "",
       time: ev.time ? ev.time.slice(0, 5) : "",
+      description: ev.description || "",
+      purpose: hd.purpose || "",
+      court: hd.court || "",
+      benchHall: hd.benchHall || "",
+      judge: hd.judge || "",
+      nextDate: hd.nextDate || "",
+      outcome: hd.outcome || "",
     });
     setShowHearingModal(true);
   };
@@ -877,7 +913,7 @@ export default function CaseDetail() {
     if (tab === "Related Cases") { fetchRelated(); fetchLinkableCases(); }
     if (tab === "Acts") { fetchLinkedActs(); fetchCitedActs(); }
     if (tab === "Expenses" || tab === "Invoices") fetchFinancials();
-    if (tab === "Hearings") fetchEvents();
+    if (tab === "Hearings" || tab === "Events") fetchEvents();
     if (tab === "Documents" || tab === "Orders") fetchDocs();
     if (tab === "Notes") fetchNotes();
     if (tab === "Tasks") fetchTasks();
@@ -1048,13 +1084,13 @@ export default function CaseDetail() {
   const invoiceTotal = invoiceForm.particulars.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
   // Transfer is offered only to an editor who has someone to transfer to.
   const canTransfer = hasPermission("CASE_EDIT") && advocates.length > 0;
-  // The top list is the advocate's calendar: upcoming hearings + any non-hearing
-  // events (meetings, reminders). Past HEARING events are the court hearings that
-  // import copied in — those live, in full, under Court Hearing History below, so
-  // we hide them here to avoid the duplicate. Nothing is deleted.
+  // Hearings tab: manually-added HEARING events (upcoming ones we track). Past
+  // court hearings from the imported record live in full under Court Hearing
+  // History below. Non-hearing entries move to the separate Events tab.
   const _todayISO = new Date().toISOString().slice(0, 10);
-  const myHearings = (events || []).filter(
-    (ev) => (ev.date && ev.date >= _todayISO) || ev.eventType !== "HEARING");
+  const hearingEvents = (events || []).filter(
+    (ev) => ev.eventType === "HEARING" && (!ev.date || ev.date >= _todayISO));
+  const otherEvents = (events || []).filter((ev) => ev.eventType !== "HEARING");
 
   return (
     <div className="case-detail">
@@ -1127,9 +1163,11 @@ export default function CaseDetail() {
         </div>
         <div className="cd-header-side">
           <div className="cd-header-actions">
-            <button className="cd-raise-invoice" onClick={() => setShowInvoiceModal(true)}>
-              <FiDollarSign /> Raise Invoice
-            </button>
+            {hasPermission("INVOICE_CREATE") && (
+              <button className="cd-raise-invoice" onClick={() => setShowInvoiceModal(true)}>
+                <FiDollarSign /> Raise Invoice
+              </button>
+            )}
             {(courtRecord || hasPermission("CASE_DELETE") || canTransfer) && (
               <div className="cd-actions-wrap">
                 <button className="cd-actions-btn" onClick={() => setShowActions((s) => !s)} disabled={refreshing}>
@@ -1236,17 +1274,27 @@ export default function CaseDetail() {
         {tab === "Hearings" && (
           <div>
             <div className="cd-fin-section-head">
-              <h4><FiCalendar /> Upcoming & My Hearings ({myHearings.length})</h4>
-              <button className="cd-fin-add-btn" onClick={() => { setEditingEventId(null); setHearingForm({ title: "", eventType: "HEARING", date: "", time: "" }); setShowHearingModal(true); }}><FiPlus /> Add Hearing</button>
+              <h4><FiCalendar /> Hearings ({hearingEvents.length})</h4>
+              {hasPermission("EVENT_CREATE") && <button className="cd-fin-add-btn" onClick={() => { setEditingEventId(null); setEventModalMode("hearing"); setHearingForm(EMPTY_HEARING); setShowHearingModal(true); }}><FiPlus /> Add Hearing</button>}
             </div>
             <div className="cd-list">
-            {myHearings.length === 0 ? (
-              <p className="cd-muted">No upcoming hearings or reminders. Add one here — past court hearings appear under Court Hearing History below.</p>
-            ) : myHearings.map((ev) => (
+            {hearingEvents.length === 0 ? (
+              <p className="cd-muted">No upcoming hearings. Add one here — past court hearings appear under Court Hearing History below.</p>
+            ) : hearingEvents.map((ev) => (
               <div className="cd-list-item" key={ev.id}>
                 <div className="cd-li-icon"><FiCalendar /></div>
                 <div className="cd-li-body">
-                  <span className="cd-li-title">{ev.title} <span className="cd-li-type">{ev.eventType}</span></span>
+                  <span className="cd-li-title">
+                    {ev.title}
+                    {ev.hearingDetail?.purpose && <span className="cd-li-type">{ev.hearingDetail.purpose}</span>}
+                  </span>
+                  {(ev.hearingDetail?.court || ev.hearingDetail?.benchHall || ev.hearingDetail?.judge) && (
+                    <span className="cd-li-desc">
+                      {[ev.hearingDetail.court, ev.hearingDetail.benchHall && `Hall ${ev.hearingDetail.benchHall}`, ev.hearingDetail.judge].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
+                  {ev.hearingDetail?.nextDate && <span className="cd-li-desc">Next date: {fmtDate(ev.hearingDetail.nextDate)}</span>}
+                  {ev.hearingDetail?.outcome && <span className="cd-li-desc">Outcome: {ev.hearingDetail.outcome}</span>}
                   {ev.description && <span className="cd-li-desc">{ev.description}</span>}
                 </div>
                 <span className="cd-li-date">{fmtDate(ev.date)}{ev.time ? ` · ${ev.time.slice(0, 5)}` : ""}</span>
@@ -1256,8 +1304,8 @@ export default function CaseDetail() {
                     {hearingViewBusy === ev.id ? "…" : "View"}
                   </button>
                 )}
-                <button className="cd-row-icon" title="Edit hearing" onClick={() => editHearing(ev)}>Edit</button>
-                <button className="cd-row-del-labeled" title="Delete hearing" onClick={() => deleteHearingEvent(ev.id)}>Delete</button>
+                {hasPermission("EVENT_CREATE") && <button className="cd-row-icon" title="Edit hearing" onClick={() => editHearing(ev)}>Edit</button>}
+                {hasPermission("EVENT_DELETE") && <button className="cd-row-del-labeled" title="Delete hearing" onClick={() => deleteHearingEvent(ev.id)}>Delete</button>}
               </div>
             ))}
             </div>
@@ -1294,7 +1342,7 @@ export default function CaseDetail() {
                                 disabled={!summary.clientId || alertBusy === `a${i}`} onClick={() => alertClient(h, i)}>
                                 {alertBusy === `a${i}` ? "Sending…" : "Send Alert to Client"}
                               </button>
-                              <button type="button" onClick={() => setShowInvoiceModal(true)}>Raise Invoice</button>
+                              {hasPermission("INVOICE_CREATE") && <button type="button" onClick={() => setShowInvoiceModal(true)}>Raise Invoice</button>}
                             </div>
                           </td>
                         </tr>
@@ -1307,12 +1355,37 @@ export default function CaseDetail() {
           </div>
         )}
 
+        {tab === "Events" && (
+          <div>
+            <div className="cd-fin-section-head">
+              <h4><FiCalendar /> Events ({otherEvents.length})</h4>
+              {hasPermission("EVENT_CREATE") && <button className="cd-fin-add-btn" onClick={() => { setEditingEventId(null); setEventModalMode("event"); setHearingForm({ ...EMPTY_HEARING, eventType: "MEETING" }); setShowHearingModal(true); }}><FiPlus /> Add Event</button>}
+            </div>
+            <div className="cd-list">
+              {otherEvents.length === 0 ? (
+                <p className="cd-muted">No meetings, payment-due or document reminders for this case yet.</p>
+              ) : otherEvents.map((ev) => (
+                <div className="cd-list-item" key={ev.id}>
+                  <div className="cd-li-icon"><FiCalendar /></div>
+                  <div className="cd-li-body">
+                    <span className="cd-li-title">{ev.title} <span className="cd-li-type">{ev.eventType}</span></span>
+                    {ev.description && <span className="cd-li-desc">{ev.description}</span>}
+                  </div>
+                  <span className="cd-li-date">{fmtDate(ev.date)}{ev.time ? ` · ${ev.time.slice(0, 5)}` : ""}</span>
+                  {hasPermission("EVENT_CREATE") && <button className="cd-row-icon" title="Edit event" onClick={() => editHearing(ev)}>Edit</button>}
+                  {hasPermission("EVENT_DELETE") && <button className="cd-row-del-labeled" title="Delete event" onClick={() => deleteHearingEvent(ev.id)}>Delete</button>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* TIMELINE */}
         {tab === "Orders" && (
           <div className="cd-orders">
             <div className="cd-fin-section-head">
               <h4><FiFileText /> Orders</h4>
-              <button className="cd-fin-add-btn" onClick={() => setShowUploadOrder(true)}><FiUpload /> Upload Order</button>
+              {hasPermission("DOCUMENT_UPLOAD") && <button className="cd-fin-add-btn" onClick={() => setShowUploadOrder(true)}><FiUpload /> Upload Order</button>}
             </div>
 
             {/* Court-record orders (scraped, downloaded live) */}
@@ -1399,7 +1472,7 @@ export default function CaseDetail() {
             <div className="cd-fin-section">
               <div className="cd-fin-section-head">
                 <h4><FiDollarSign /> Expenses {financials ? `(${financials.totals.expenseCount})` : ""}</h4>
-                <button className="cd-fin-add-btn" onClick={() => setShowExpenseModal(true)}><FiPlus /> Add Expense</button>
+                {hasPermission("EXPENSE_CREATE") && <button className="cd-fin-add-btn" onClick={() => setShowExpenseModal(true)}><FiPlus /> Add Expense</button>}
               </div>
               {!financials ? (
                 <p className="cd-muted">Loading…</p>
@@ -1452,7 +1525,7 @@ export default function CaseDetail() {
             <div className="cd-fin-section">
               <div className="cd-fin-section-head">
                 <h4><FiFileText /> Invoices {financials ? `(${financials.totals.invoiceCount})` : ""}</h4>
-                <button className="cd-fin-add-btn" onClick={() => setShowInvoiceModal(true)}><FiPlus /> Add Invoice</button>
+                {hasPermission("INVOICE_CREATE") && <button className="cd-fin-add-btn" onClick={() => setShowInvoiceModal(true)}><FiPlus /> Add Invoice</button>}
               </div>
               {!financials ? (
                 <p className="cd-muted">Loading…</p>
@@ -1569,10 +1642,12 @@ export default function CaseDetail() {
         {/* DOCUMENTS */}
         {tab === "Documents" && (
           <div className="cd-docs">
+            {hasPermission("DOCUMENT_UPLOAD") && (
             <div className="cd-doc-upload">
               <input type="file" onChange={(e) => setUploadFile(e.target.files[0])} />
               <button onClick={uploadDoc} disabled={!uploadFile}><FiUpload /> Upload</button>
             </div>
+            )}
             {docs.length === 0 ? (
               <p className="cd-muted">No documents linked to this case.</p>
             ) : docs.map((d) => (
@@ -1768,10 +1843,28 @@ export default function CaseDetail() {
             <select value={transferTo} onChange={(e) => setTransferTo(e.target.value)}
               style={{ width: "100%", padding: "8px 10px", borderRadius: 8 }}>
               <option value="">Select an advocate…</option>
-              {advocates.map((a) => (
-                <option key={a.id} value={a.id}>{a.fullName || a.email}{a.email ? ` — ${a.email}` : ""}</option>
-              ))}
+              {advocates.some((a) => !a.crossTeam) && (
+                <optgroup label="Your team">
+                  {advocates.filter((a) => !a.crossTeam).map((a) => (
+                    <option key={a.id} value={a.id}>{a.fullName || a.email}{a.email ? ` — ${a.email}` : ""}</option>
+                  ))}
+                </optgroup>
+              )}
+              {advocates.some((a) => a.crossTeam) && (
+                <optgroup label="Other teams (senior)">
+                  {advocates.filter((a) => a.crossTeam).map((a) => (
+                    <option key={a.id} value={a.id}>{a.fullName || a.email}{a.email ? ` — ${a.email}` : ""}</option>
+                  ))}
+                </optgroup>
+              )}
             </select>
+            {advocates.find((a) => String(a.id) === String(transferTo))?.crossTeam && (
+              <p className="cd-muted" style={{ margin: "10px 0 0", color: "var(--danger, #d5493f)" }}>
+                This moves the entire matter — hearings, invoices, documents and the client — to
+                {" "}{advocates.find((a) => String(a.id) === String(transferTo))?.fullName}'s team.
+                Your team will no longer see it.
+              </p>
+            )}
             <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
               <button className="cd-actions-btn" onClick={doTransfer} disabled={!transferTo || transferring}>
                 {transferring ? "Transferring…" : "Transfer"}
@@ -1930,23 +2023,56 @@ export default function CaseDetail() {
       {showHearingModal && (
         <div className="cd-modal-overlay" onClick={() => { setShowHearingModal(false); setEditingEventId(null); }}>
           <div className="cd-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{editingEventId ? "Edit Hearing" : "Add Hearing"} — {summary.caseNumber}</h3>
+            <h3>{editingEventId
+              ? (eventModalMode === "event" ? "Edit Event" : "Edit Hearing")
+              : (eventModalMode === "event" ? "Add Event" : "Add Hearing")} — {summary.caseNumber}</h3>
             <div className="cd-modal-form">
               <input type="text" placeholder="Title *" value={hearingForm.title}
                 onChange={(e) => setHearingForm({ ...hearingForm, title: e.target.value })} />
-              <select value={hearingForm.eventType}
-                onChange={(e) => setHearingForm({ ...hearingForm, eventType: e.target.value })}>
-                {EVENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
+              {eventModalMode === "event" && (
+                <select value={hearingForm.eventType}
+                  onChange={(e) => setHearingForm({ ...hearingForm, eventType: e.target.value })}>
+                  {OTHER_EVENT_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              )}
               <label className="cd-modal-label">Date *</label>
               <input type="date" value={hearingForm.date}
                 onChange={(e) => setHearingForm({ ...hearingForm, date: e.target.value })} />
               <label className="cd-modal-label">Time</label>
               <input type="time" value={hearingForm.time}
                 onChange={(e) => setHearingForm({ ...hearingForm, time: e.target.value })} />
+
+              {eventModalMode === "hearing" && (
+                <>
+                  <label className="cd-modal-label">Purpose / stage</label>
+                  <select value={hearingForm.purpose}
+                    onChange={(e) => setHearingForm({ ...hearingForm, purpose: e.target.value })}>
+                    <option value="">Select purpose…</option>
+                    {HEARING_PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <input type="text" placeholder="Court" value={hearingForm.court}
+                    onChange={(e) => setHearingForm({ ...hearingForm, court: e.target.value })} />
+                  <input type="text" placeholder="Bench / Hall no." value={hearingForm.benchHall}
+                    onChange={(e) => setHearingForm({ ...hearingForm, benchHall: e.target.value })} />
+                  <input type="text" placeholder="Judge / Coram" value={hearingForm.judge}
+                    onChange={(e) => setHearingForm({ ...hearingForm, judge: e.target.value })} />
+                  <label className="cd-modal-label">Next hearing date</label>
+                  <input type="date" value={hearingForm.nextDate}
+                    onChange={(e) => setHearingForm({ ...hearingForm, nextDate: e.target.value })} />
+                  <textarea placeholder="Outcome / order (after the hearing)" value={hearingForm.outcome}
+                    onChange={(e) => setHearingForm({ ...hearingForm, outcome: e.target.value })} />
+                </>
+              )}
+
+              <label className="cd-modal-label">Description</label>
+              <textarea placeholder="Notes" value={hearingForm.description}
+                onChange={(e) => setHearingForm({ ...hearingForm, description: e.target.value })} />
+
               <div className="cd-modal-actions">
                 <button className="cd-modal-save" onClick={addHearing} disabled={savingFin}>
-                  {savingFin ? "Saving..." : (editingEventId ? "Save Hearing" : "Add Hearing")}
+                  {savingFin ? "Saving..." : (editingEventId
+                    ? (eventModalMode === "event" ? "Save Event" : "Save Hearing")
+                    : (eventModalMode === "event" ? "Add Event" : "Add Hearing"))}
                 </button>
                 <button className="cd-modal-cancel" onClick={() => { setShowHearingModal(false); setEditingEventId(null); }}>Cancel</button>
               </div>

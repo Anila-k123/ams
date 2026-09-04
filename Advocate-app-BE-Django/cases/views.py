@@ -1,16 +1,18 @@
 import datetime
 from django.db.models import Q
+from django.db import transaction
 from django.conf import settings
 from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from core.models import Case, Client, Advocate, NotificationHistory
+from core.models import (Case, Client, Advocate, NotificationHistory,
+                         CaseEvent, Invoice, Expense, ClientPayment, Document)
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseSerializer
-from core.practice import practice_ids
+from core.practice import practice_ids, is_owner, practice_root
 from notifications import client_events
 
 SORT_MAP = {'createdAt': 'created_at', 'caseNumber': 'case_number',
@@ -270,9 +272,80 @@ class HearingAlertView(APIView):
                         status=status.HTTP_200_OK if ok else status.HTTP_502_BAD_GATEWAY)
 
 
+# Child records that make up a "matter": each carries its own advocate_id
+# (creator) and is listed by it, so a cross-team move must re-own all of them,
+# or the receiving team sees the case shell with none of its hearings, money or
+# documents. (advocate_field, has_client) per model, keyed on case_id.
+_MATTER_CHILDREN = [
+    (CaseEvent, False), (Invoice, True), (Expense, True),
+    (ClientPayment, True), (Document, True),
+]
+
+
+def _resolve_target_client(target, src_client):
+    """A client in the target senior's practice equivalent to src_client.
+
+    Reuses an existing active match (same dedup rule as client creation) so a
+    repeat transfer does not pile up copies; otherwise copies the client into
+    the target's practice. Returns the client id, or None when the case had no
+    client.
+    """
+    if src_client is None:
+        return None
+    # Local import avoids a module-load cycle (clients.views imports core only).
+    from clients.views import _find_practice_duplicate, _digits
+    name = (src_client.name or '').strip()
+    email = (src_client.email or '').strip().lower()
+    phone_digits = _digits(src_client.phone)
+    if name and (email or phone_digits):
+        active, _archived = _find_practice_duplicate(target, name, email, phone_digits)
+        if active is not None:
+            return active.id
+    copy = Client.objects.create(
+        name=src_client.name, email=src_client.email, phone=src_client.phone,
+        address=src_client.address, deleted=False, advocate_id=target.id)
+    return copy.id
+
+
+def _move_matter(case, target):
+    """Move a whole matter to another practice's senior, atomically: the client
+    (copied/reused in the target practice) and every child record are re-owned by
+    `target`, then the case itself. The sending team no longer reaches it."""
+    from workspace.models import (CaseNote, CaseTask, CaseTag, CaseParty,
+                                   RelatedCase, CaseTaskDocument)
+    from appeals.models import AppealDetection
+    from courtsearch.models import ImportedCaseRecord
+
+    with transaction.atomic():
+        new_client_id = _resolve_target_client(target, case.client)
+
+        for model, has_client in _MATTER_CHILDREN:
+            fields = {'advocate_id': target.id}
+            if has_client:
+                fields['client_id'] = new_client_id
+            model.objects.filter(case_id=case.id).update(**fields)
+
+        task_ids = list(CaseTask.objects.filter(case_id=case.id)
+                        .values_list('id', flat=True))
+        CaseTaskDocument.objects.filter(task_id__in=task_ids).update(advocate_id=target.id)
+        for model in (CaseNote, CaseTask, CaseTag, CaseParty, RelatedCase):
+            model.objects.filter(case_id=case.id).update(advocate_id=target.id)
+        AppealDetection.objects.filter(source_case_id=case.id).update(advocate_id=target.id)
+        ImportedCaseRecord.objects.filter(case_id=case.id).update(advocate_id=target.id)
+
+        case.advocate_id = target.id
+        case.client_id = new_client_id
+        case.save(update_fields=['advocate_id', 'client_id'])
+
+
 class TransferCaseView(APIView):
-    """Reassign a case to another advocate. The requester must be able to reach
-    the case (own it / share the practice); the target can be any advocate."""
+    """Reassign a case to another advocate.
+
+    Within the requester's own practice this is a simple owner change (the whole
+    team keeps seeing it). Across teams - a senior handing a matter to ANOTHER
+    senior - it is a full move: the case, its children and a copy of the client
+    are re-owned by the target, and only a practice owner may do it.
+    """
     permission_classes = [RequirePermission('CASE_EDIT')]
 
     def put(self, request, pk):
@@ -287,41 +360,86 @@ class TransferCaseView(APIView):
         if not target:
             return Response({'error': 'Target advocate not found'},
                             status=status.HTTP_404_NOT_FOUND)
-        # A team member can only hand a case to someone in their own practice; a
-        # firm-wide user (Super Admin) reaches everyone, because practice_ids()
-        # returns the whole firm for them. This stops a case being transferred
-        # out of the firm's reach.
-        if target.id not in practice_ids(request.user):
-            return Response({'error': 'You can only transfer to advocates in your practice.'},
-                            status=status.HTTP_403_FORBIDDEN)
         # The target must actually be able to work the case; finance-only staff
         # (accountant/receptionist) have no CASE_VIEW and should not own cases.
         if 'CASE_VIEW' not in target.permission_codes():
             return Response({'error': 'That user cannot hold cases (no case access).'},
                             status=status.HTTP_400_BAD_REQUEST)
+
+        # "Cross-team" is decided by where the CASE lives vs where the target
+        # lives - NOT by the requester's scope. A firm-wide Super Admin reaches
+        # everyone, but moving a case from one practice to another still has to
+        # carry the whole matter, or the receiving team sees an empty shell.
+        owner = Advocate.objects.filter(id=case.advocate_id).first()
+        case_root = practice_root(owner) if owner else case.advocate_id
+        cross_team = practice_root(target) != case_root
+
+        if cross_team:
+            # Handing a matter out of the team: only a senior (practice owner)
+            # may, and only to another senior, so a junior cannot fling cases
+            # across the firm and a case never lands with a team member instead
+            # of that team's owner.
+            if not is_owner(request.user):
+                return Response({'error': 'Only a practice owner can transfer a case to another team.'},
+                                status=status.HTTP_403_FORBIDDEN)
+            if target.parent_advocate_id is not None:
+                return Response({'error': 'A case can only be transferred to another senior (practice owner).'},
+                                status=status.HTTP_403_FORBIDDEN)
+            # The receiving practice must not already hold this case number
+            # (cases are UNIQUE per advocate); refuse rather than crash on save.
+            if Case.objects.filter(advocate_id=target.id,
+                                   case_number=case.case_number).exists():
+                return Response({'error': 'The receiving advocate already has a case with this number.'},
+                                status=status.HTTP_409_CONFLICT)
+            _move_matter(case, target)
+            return Response({'message': 'Case transferred successfully',
+                             'advocateId': target.id, 'advocateName': target.full_name,
+                             'crossTeam': True})
+
+        # Same practice: everyone shares scope, so a plain owner change is enough.
         case.advocate_id = target.id
         case.save(update_fields=['advocate_id'])
         return Response({'message': 'Case transferred successfully',
-                         'advocateId': target.id, 'advocateName': target.full_name})
+                         'advocateId': target.id, 'advocateName': target.full_name,
+                         'crossTeam': False})
 
 
 class TransferTargetsView(APIView):
     """Advocates the requester may transfer a case to.
 
-    Their own team's case-holders, or - for a firm-wide user (Super Admin) - any
-    case-holder in the firm, because practice_ids() already returns the whole
-    firm for them. "Case-holder" means the advocate has CASE_VIEW, so finance
-    staff aren't offered. Gated on CASE_EDIT (not USER_MANAGE), so a senior can
-    load the list without admin rights.
+    Always their own team's case-holders (and, for a firm-wide Super Admin, the
+    whole firm - practice_ids() returns everyone for them). In addition, a
+    practice OWNER is offered the firm's other seniors, so a senior can hand a
+    matter to another team. "Case-holder" means the advocate has CASE_VIEW, so
+    finance staff aren't offered. Each target is tagged crossTeam so the UI can
+    group them and warn before moving a matter out of the team.
     """
     permission_classes = [RequirePermission('CASE_EDIT')]
 
     def get(self, request):
-        targets = (Advocate.objects
-                   .filter(id__in=practice_ids(request.user), left_on__isnull=True)
-                   .exclude(id=request.user.id).order_by('full_name'))
-        return Response([
-            {'id': a.id, 'fullName': a.full_name, 'email': a.email,
-             'roles': a.role_names()}
-            for a in targets if 'CASE_VIEW' in a.permission_codes()
-        ])
+        my_root = practice_root(request.user)
+        seen = {request.user.id}
+        out = []
+
+        def add(a):
+            if a.id in seen or 'CASE_VIEW' not in a.permission_codes():
+                return
+            seen.add(a.id)
+            out.append({'id': a.id, 'fullName': a.full_name, 'email': a.email,
+                        'roles': a.role_names(),
+                        'crossTeam': practice_root(a) != my_root})
+
+        for a in (Advocate.objects
+                  .filter(id__in=practice_ids(request.user), left_on__isnull=True)
+                  .exclude(id=request.user.id).order_by('full_name')):
+            add(a)
+
+        # A senior may also transfer to another team's senior.
+        if is_owner(request.user):
+            for a in (Advocate.objects
+                      .filter(parent_advocate_id__isnull=True, left_on__isnull=True)
+                      .exclude(id=request.user.id).order_by('full_name')):
+                add(a)
+
+        out.sort(key=lambda t: (t['crossTeam'], t['fullName']))
+        return Response(out)

@@ -13,6 +13,7 @@ import DocumentCard from "../components/DocumentCard";
 import FilePreviewModal from "../components/FilePreviewModal";
 import { SkeletonDocCard } from "../components/Skeleton";
 import { useLoading } from "../contexts/LoadingContext.jsx";
+import { usePermission } from "../contexts/PermissionContext.jsx";
 import Pagination from "../components/Pagination";
 
 const CATEGORIES = [
@@ -56,6 +57,7 @@ export default function DocumentsPanel() {
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
   const searchedFromGlobalNav = useRef(!!location.state?.search);
+  const { hasPermission } = usePermission();
 
   const token = localStorage.getItem("token");
   const { withLoading } = useLoading();
@@ -280,9 +282,6 @@ export default function DocumentsPanel() {
   if (loading && documents.length === 0) {
     return (
       <div className="documents-container">
-        <div className="documents-header">
-          <h2>Documents</h2>
-        </div>
         <div className="doc-grid">
           {[1, 2, 3, 4, 5, 6].map(i => <SkeletonDocCard key={i} />)}
         </div>
@@ -294,12 +293,13 @@ export default function DocumentsPanel() {
     <div className="documents-container">
       <div className="documents-header">
         <div>
-          <h2>Documents</h2>
           <p className="subtle">{totalElements} file{totalElements !== 1 ? "s" : ""}</p>
         </div>
+        {hasPermission("DOCUMENT_UPLOAD") && (
         <button className="upload-btn" onClick={handleUploadClick}>
           <FiPlus /> Upload Files
         </button>
+        )}
       </div>
 
       {error && <div className="doc-error-banner">{error} <button onClick={() => setError("")}><FiX /></button></div>}
@@ -354,7 +354,7 @@ export default function DocumentsPanel() {
           <FiFolder size={64} />
           <h3>No documents found</h3>
           <p>{hasFilters ? "Try adjusting your filters" : "Upload your first document to get started"}</p>
-          {!hasFilters && <button className="upload-btn" onClick={handleUploadClick}><FiUpload /> Upload</button>}
+          {!hasFilters && hasPermission("DOCUMENT_UPLOAD") && <button className="upload-btn" onClick={handleUploadClick}><FiUpload /> Upload</button>}
         </div>
       ) : viewMode === "grid" ? (
           <div className="doc-grid">
@@ -365,8 +365,8 @@ export default function DocumentsPanel() {
                   gridView={true}
                   onPreview={handlePreview}
                   onDownload={handleDownload}
-                  onDelete={handleDelete}
-                  onEdit={handleEdit}
+                  onDelete={hasPermission("DOCUMENT_DELETE") ? handleDelete : undefined}
+                  onEdit={hasPermission("DOCUMENT_EDIT") ? handleEdit : undefined}
                 />
               </div>
             ))}
@@ -395,8 +395,8 @@ export default function DocumentsPanel() {
                   className={highlightedId === doc.id ? "highlight-row" : ""}
                   onPreview={handlePreview}
                   onDownload={handleDownload}
-                  onDelete={handleDelete}
-                  onEdit={handleEdit}
+                  onDelete={hasPermission("DOCUMENT_DELETE") ? handleDelete : undefined}
+                  onEdit={hasPermission("DOCUMENT_EDIT") ? handleEdit : undefined}
                 />
               ))}
             </tbody>

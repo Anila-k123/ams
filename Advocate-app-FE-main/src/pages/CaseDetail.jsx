@@ -1244,7 +1244,7 @@ export default function CaseDetail() {
                       {p.counsel && <span>Counsel: {p.counsel}</span>}
                       {p.contact && <span>{p.contact}</span>}
                     </div>
-                    <button className="cd-row-del" onClick={() => deleteParty(p.id)} title="Remove"><FiTrash2 /></button>
+                    {hasPermission("CASE_EDIT") && <button className="cd-row-del" onClick={() => deleteParty(p.id)} title="Remove"><FiTrash2 /></button>}
                   </div>
                 ))}
               </div>
@@ -1584,7 +1584,7 @@ export default function CaseDetail() {
                 </label>
               </div>
               <div className="cd-task-field cd-task-field-submit">
-                <button onClick={addTask}><FiPlus /> Add</button>
+                {hasPermission("TASK_CREATE") && <button onClick={addTask}><FiPlus /> Add</button>}
               </div>
             </div>
             {tasks.length === 0 ? (
@@ -1608,7 +1608,7 @@ export default function CaseDetail() {
                 </div>
                 <span className={`cd-task-prio prio-${(t.priority || "medium").toLowerCase()}`}>{t.priority}</span>
                 {t.deadline && <span className="cd-task-deadline"><FiClock size={11} /> {fmtDate(t.deadline)}</span>}
-                <button className="cd-task-del" onClick={() => deleteTask(t.id)} title="Delete"><FiTrash2 /></button>
+                {hasPermission("TASK_DELETE") && <button className="cd-task-del" onClick={() => deleteTask(t.id)} title="Delete"><FiTrash2 /></button>}
               </div>
             ))}
           </div>
@@ -1623,7 +1623,7 @@ export default function CaseDetail() {
                 value={newNote}
                 onChange={(e) => setNewNote(e.target.value)}
               />
-              <button onClick={addNote}><FiPlus /> Add Note</button>
+              {hasPermission("CASE_EDIT") && <button onClick={addNote}><FiPlus /> Add Note</button>}
             </div>
             {notes.length === 0 ? (
               <p className="cd-muted">No notes yet.</p>
@@ -1632,7 +1632,7 @@ export default function CaseDetail() {
                 <div className="cd-note-body">{n.body}</div>
                 <div className="cd-note-foot">
                   <span>{new Date(n.createdAt).toLocaleString("en-IN")}</span>
-                  <button onClick={() => deleteNote(n.id)} title="Delete"><FiTrash2 /></button>
+                  {hasPermission("CASE_EDIT") && <button onClick={() => deleteNote(n.id)} title="Delete"><FiTrash2 /></button>}
                 </div>
               </div>
             ))}
@@ -1685,7 +1685,7 @@ export default function CaseDetail() {
                       </span>
                       <span className="cd-li-desc">{r.caseTitle || ""}{r.note ? ` · ${r.note}` : ""}</span>
                     </div>
-                    <button className="cd-row-del" onClick={() => deleteRelated(r.id)} title="Unlink"><FiTrash2 /></button>
+                    {hasPermission("CASE_EDIT") && <button className="cd-row-del" onClick={() => deleteRelated(r.id)} title="Unlink"><FiTrash2 /></button>}
                   </div>
                 ))}
               </div>
@@ -1731,7 +1731,7 @@ export default function CaseDetail() {
                         {[a.actYear, a.jurisdiction].filter(Boolean).join(" · ")}
                       </span>
                     </div>
-                    <button className="cd-row-del" onClick={() => deleteAct(a.actId)} title="Unlink act"><FiTrash2 /></button>
+                    {hasPermission("CASE_EDIT") && <button className="cd-row-del" onClick={() => deleteAct(a.actId)} title="Unlink act"><FiTrash2 /></button>}
                   </div>
                 ))}
               </div>
@@ -1749,9 +1749,11 @@ export default function CaseDetail() {
                     isClearable
                   />
                 </div>
-                <button onClick={addAct} disabled={!selectedAct || linkingAct}>
-                  <FiPlus /> {linkingAct ? "Linking…" : "Link"}
-                </button>
+                {hasPermission("CASE_EDIT") && (
+                  <button onClick={addAct} disabled={!selectedAct || linkingAct}>
+                    <FiPlus /> {linkingAct ? "Linking…" : "Link"}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2069,7 +2071,8 @@ export default function CaseDetail() {
                 onChange={(e) => setHearingForm({ ...hearingForm, description: e.target.value })} />
 
               <div className="cd-modal-actions">
-                <button className="cd-modal-save" onClick={addHearing} disabled={savingFin}>
+                <button className="cd-modal-save" onClick={addHearing}
+                  disabled={savingFin || !hearingForm.title.trim() || !hearingForm.date}>
                   {savingFin ? "Saving..." : (editingEventId
                     ? (eventModalMode === "event" ? "Save Event" : "Save Hearing")
                     : (eventModalMode === "event" ? "Add Event" : "Add Hearing"))}

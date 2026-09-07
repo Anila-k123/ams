@@ -101,3 +101,33 @@ def payment_settled(actor, ref, case, amount=None):
     except Exception:                                        # noqa: BLE001
         log.exception('payment_settled notification failed')
         return []
+
+
+def hearing_added_team(actor, event, case):
+    """A hearing was added to a case -> tell the case's team immediately.
+
+    Reaches the case's team advocates (CASE_VIEW) in-app + email right away, so
+    the whole team knows a date is set - not only when the scheduled look-ahead
+    reminder fires near the date. The client is emailed separately (immediately)
+    by client_events.hearing_scheduled. The person who added it is not pinged.
+    """
+    try:
+        if case is None or not getattr(case, 'advocate_id', None):
+            return []
+        recipients = alert_members(case.advocate, permission='CASE_VIEW')
+        title = getattr(event, 'title', '') or (getattr(event, 'event_type', '') or 'Hearing')
+        tm = getattr(event, 'time', None)
+        subject = 'New hearing - {}'.format(getattr(case, 'case_number', '') or title)
+        body = ('A hearing has been added to this case.\n\n'
+                'Case    : {}\nWhat    : {}\nDate    : {}{}\nAdded by: {}\n').format(
+            getattr(case, 'case_number', '') or '-', title,
+            getattr(event, 'date', ''), (' ' + str(tm)) if tm else '',
+            getattr(actor, 'full_name', ''))
+        return _fanout_now(
+            recipients, 'HEARING_SCHEDULED', subject, body,
+            actor_id=getattr(actor, 'id', None), case_id=getattr(case, 'id', None),
+            client_id=getattr(case, 'client_id', None),
+            entity='CaseEvent', entity_id=getattr(event, 'id', None))
+    except Exception:                                        # noqa: BLE001
+        log.exception('hearing_added_team notification failed')
+        return []

@@ -8,8 +8,24 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseEventSerializer
 from core.practice import practice_ids
-from notifications import client_events
+from notifications import client_events, internal_events
 from workspace.models import HearingDetail
+
+# The event kinds the form offers; anything else is rejected so a bad payload
+# can't create an unlabelled event.
+EVENT_TYPES = {'HEARING', 'MEETING', 'PAYMENT_DUE', 'DOCUMENT'}
+
+
+def _validate_event(data):
+    """Return an error string for a bad create/update payload, or None."""
+    if not (data.get('title') or '').strip():
+        return 'Title is required.'
+    if not data.get('date'):
+        return 'Date is required.'
+    et = data.get('eventType')
+    if et is not None and et not in EVENT_TYPES:
+        return 'Invalid event type.'
+    return None
 
 
 def _upsert_hearing_detail(event_id, advocate_id, d):
@@ -73,6 +89,9 @@ class CreateEventView(APIView):
 
     def post(self, request):
         data = request.data
+        err = _validate_event(data)
+        if err:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
         case_id = None
         ce = data.get('caseEntity')
         if isinstance(ce, dict):
@@ -92,7 +111,10 @@ class CreateEventView(APIView):
             advocate_id=request.user.id,
         )
         _upsert_hearing_detail(event.id, request.user.id, data)
+        # Immediate: the client (existing) and now the case's team, so everyone
+        # knows a date is set the moment it's added - not only near the date.
         client_events.hearing_scheduled(request.user, case.client, event, case)
+        internal_events.hearing_added_team(request.user, event, case)
         return Response(CaseEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
 
@@ -104,6 +126,9 @@ class UpdateEventView(APIView):
         if event is None:
             return Response({'error': 'Event not found'}, status=status.HTTP_404_NOT_FOUND)
         d = request.data
+        err = _validate_event(d)
+        if err:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
         for attr, key in [('title', 'title'), ('event_type', 'eventType'),
                           ('description', 'description'), ('date', 'date')]:
             if key in d:

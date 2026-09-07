@@ -6,6 +6,7 @@ import { FiPlus, FiTrash2, FiCheckSquare, FiSquare, FiSearch, FiPaperclip, FiEye
 import "../assets/styles/TasksPage.css";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 import { useToast } from "../contexts/ToastContext.jsx";
+import { usePermission } from "../contexts/PermissionContext";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -36,6 +37,7 @@ const selectStyles = {
 };
 
 export default function TasksPage() {
+  const { hasPermission } = usePermission();
   const [tasks, setTasks] = useState([]);
   const [cases, setCases] = useState([]);
   const [title, setTitle] = useState("");
@@ -217,9 +219,11 @@ export default function TasksPage() {
               onChange={(e) => setFiles(Array.from(e.target.files || []))} />
           </label>
         </div>
-        <div className="task-field task-field-submit">
-          <button type="submit"><FiPlus /> Add Task</button>
-        </div>
+        {hasPermission("TASK_CREATE") && (
+          <div className="task-field task-field-submit">
+            <button type="submit"><FiPlus /> Add Task</button>
+          </div>
+        )}
       </form>
       {files.length > 0 && (
         <div className="task-file-chips">
@@ -287,7 +291,7 @@ export default function TasksPage() {
                 </div>
                 <div className="task-side-actions">
                   <span className={`priority-tag ${(task.priority || "medium").toLowerCase()}`}>{task.priority}</span>
-                  <button className="delete-task-btn" onClick={() => handleDelete(task.id)}><FiTrash2 /></button>
+                  {hasPermission("TASK_DELETE") && <button className="delete-task-btn" onClick={() => handleDelete(task.id)}><FiTrash2 /></button>}
                 </div>
               </div>
             ))}

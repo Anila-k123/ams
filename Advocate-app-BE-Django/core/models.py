@@ -62,12 +62,6 @@ class Advocate(models.Model):
     # junior moved on. They stay a (former) member for data purposes and lose
     # access instead. Added by `manage.py enable_shared_practice`.
     left_on = models.DateField(null=True, blank=True)
-    # Cross-app identity minted by ABS (the identity provider). AMS stores a copy
-    # only - never generates its own. NULL until the backfill matches this
-    # advocate to an ABS user by email, or they log in with an ABS token. Added
-    # by `manage.py add_external_id` - the table is Spring-owned (managed=False),
-    # so there is no migration for it.
-    external_id = models.UUIDField(unique=True, null=True, db_index=True)
 
     class Meta:
         managed = False

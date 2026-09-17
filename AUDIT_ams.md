@@ -1,24 +1,30 @@
 # AUDIT_ams — Advocate Management System (Django Backend)
 
 **Repo sub-path audited:** `Advocate-app-BE-Django/`
-**Audit date:** 2026-08-04
+**Audit date:** 2026-09-08 (re-audit; supersedes the 2026-08-04 revision)
+
+> Re-check notes: since the previous revision the project gained two apps
+> (`courtsearch`, `acts`), an audit-logging middleware, an OpenAI-compatible LLM
+> assistant, a background scheduler, a shared-practice / team model
+> (`Advocate.parent_advocate_id`, `left_on`), cross-team case transfer, and a
+> (still-disabled) WebSocket path on the frontend. The database was reachable
+> this time, so §9 now contains real numbers. Sections rewritten accordingly.
 
 ---
 
-## 1. Identity and auth
+## 1. Identity and auth (highest priority)
 
 ### AUTH_USER_MODEL
 
 `AUTH_USER_MODEL` is **not set** in `advocate_backend/settings.py`. Django's built-in
 auth framework (`django.contrib.auth`) is **not installed** (absent from
-`INSTALLED_APPS`). There is no Django auth user model at all.
+`INSTALLED_APPS`). There is no Django auth user model.
 
-The "user" in this system is `core.models.Advocate`, a plain `models.Model`
-(not a subclass of `AbstractUser` or `AbstractBaseUser`). It maps onto a
-pre-existing PostgreSQL table created and owned by the sibling Spring Boot
-backend.
+The "user" is `core.models.Advocate`, a plain `models.Model` (not `AbstractUser` /
+`AbstractBaseUser`). It maps onto an existing PostgreSQL table (`advocate`) whose
+schema originates from the sibling Spring/Hibernate backend; `managed = False`.
 
-### User model — verbatim source (`core/models.py`, lines 10–81)
+### User model — verbatim source (`core/models.py`)
 
 ```python
 class Advocate(models.Model):
@@ -63,152 +69,140 @@ class Advocate(models.Model):
     whatsapp_enabled = models.BooleanField(default=False)
     email_notifications_enabled = models.BooleanField(default=False)
     browser_notifications_enabled = models.BooleanField(default=True)
-
-    class Meta:
-        managed = False
-        db_table = 'advocate'
-
-    # --- DRF/auth compatibility: request.user is an Advocate instance ---
-    @property
-    def is_authenticated(self):
-        return True
-
-    @property
-    def is_anonymous(self):
-        return False
-
-    def permission_codes(self):
-        """Return the set of permission name strings for this advocate,
-        resolved through advocate_roles -> role_permissions -> permissions."""
-        role_ids = AdvocateRole.objects.filter(
-            advocate_id=self.id).values_list('role_id', flat=True)
-        perm_ids = RolePermission.objects.filter(
-            role_id__in=list(role_ids)).values_list('permission_id', flat=True)
-        return set(Permission.objects.filter(
-            id__in=list(perm_ids)).values_list('name', flat=True))
-
-    def role_names(self):
-        role_ids = AdvocateRole.objects.filter(
-            advocate_id=self.id).values_list('role_id', flat=True)
-        return list(Role.objects.filter(
-            id__in=list(role_ids)).values_list('name', flat=True))
 ```
 
-No custom managers. No standard Django manager (`objects` uses the default).
+> **NOTE — verify verbatim before integration.** The live `advocate` table has two
+> columns the previously-quoted class body did NOT include:
+> `parent_advocate_id` and `left_on` (confirmed via `information_schema` this
+> audit — see §9 and §6). These back the shared-practice hierarchy and the
+> soft-departure flag. The exact field declarations in `core/models.py` for these
+> two columns were not re-quoted verbatim here — `UNKNOWN: exact declaration of
+> Advocate.parent_advocate_id / Advocate.left_on`; a human should confirm the
+> field types (the migration `core/enable_shared_practice.py` adds
+> `parent_advocate_id`; `core/auth.py` reads `left_on`).
 
-### Organisation / firm / tenant / workspace model
+Compatibility shims on the class (`is_authenticated` → True, `is_anonymous` → False,
+`permission_codes()`, `role_names()`) are unchanged from the prior revision and
+resolve permissions through `advocate_roles → role_permissions → permissions`.
+No custom manager; default `objects`.
 
-There is **no org/firm/tenant/workspace model**. This system is single-tenant:
-each row in the `advocate` table is a solo practitioner who owns all their own
-data. All data isolation is enforced by filtering on `advocate_id` in every query.
+### Organisation / firm / tenant / practice model
 
-### FK/OneToOne/M2M relationships to the Advocate (user) model
+There is **no dedicated org/firm table.** The tenancy unit is now a **shared
+practice (team)** expressed on the user model itself:
 
-All FK references in `core/models.py` use a raw `ForeignKey` to `Advocate`
-with `on_delete=models.DO_NOTHING` (mirrors the Spring `@JoinColumn` with no
-cascade). All models are `managed=False`.
+- `Advocate.parent_advocate_id` (self-referential bare `BigIntegerField`) — a member
+  advocate points at the practice **head**. A NULL parent = a practice root / solo.
+- `Advocate.left_on` — soft-departure timestamp; a non-NULL value means the advocate
+  has left the practice (their work is retained, their tokens are rejected at auth).
+- `core/practice.py` is the scoping core: `practice_ids(user)` restricts queries to
+  `advocate_id IN <practice>`; `FIRM_WIDE_PERMISSION = 'FIRM_WIDE_SCOPE'` and
+  `FIRM_WIDE_ROLES = {Super Admin, Accountant, Receptionist}` widen scope to the
+  whole firm. Helpers: `practice_root`, `members`, `is_owner`, `has_left`,
+  `mark_left`, `reinstate`, `alert_members`, `firm_wide_members`.
+
+This is a one-level hierarchy (members report to a head), not arbitrary nesting.
+The prior audit's "single-tenant / solo practitioner" description is **no longer
+accurate.**
+
+### FK / OneToOne / M2M relationships to the Advocate model
+
+Real relational `ForeignKey` to `core.Advocate` (all in `core/models.py`,
+`on_delete=DO_NOTHING`, `db_column='advocate_id'`, all `managed=False`):
 
 | File | Model | Field | on_delete | null | blank |
 |------|-------|-------|-----------|------|-------|
-| `core/models.py` | `Client` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | True | True |
-| `core/models.py` | `Case` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | False | False |
-| `core/models.py` | `CaseEvent` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | False | False |
-| `core/models.py` | `Document` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | False | False |
-| `core/models.py` | `Expense` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | False | False |
-| `core/models.py` | `Invoice` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | False | False |
-| `core/models.py` | `ClientPayment` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | True | True |
-| `core/models.py` | `Task` | `advocate` (`db_column='advocate_id'`) | `DO_NOTHING` | False | False |
+| `core/models.py` | `Client` | `advocate` | `DO_NOTHING` | True | True |
+| `core/models.py` | `Case` | `advocate` | `DO_NOTHING` | False | — |
+| `core/models.py` | `CaseEvent` | `advocate` | `DO_NOTHING` | False | False |
+| `core/models.py` | `Document` | `advocate` | `DO_NOTHING` | False | False |
+| `core/models.py` | `Expense` | `advocate` | `DO_NOTHING` | False | False |
+| `core/models.py` | `Invoice` | `advocate` | `DO_NOTHING` | False | False |
+| `core/models.py` | `ClientPayment` | `advocate` | `DO_NOTHING` | True | True |
 
-The following models store `advocate_id` as a plain `BigIntegerField` (no ORM
-FK, no cascade), effectively bare integer foreign keys:
+(Prior revision also listed `Task` here; `Task` in current `core/models.py` uses a
+bare `advocate_id` integer — see below. `UNKNOWN`: whether a relational FK still
+exists on `Task`; treat as bare-int.)
 
-| Model | Field |
-|-------|-------|
-| `PasswordResetOtp` | `advocate_id` |
-| `AuditLog` | `advocate_id` |
-| `Activity` | `advocate_id` |
-| `CommunicationSettings` | `advocate_id` |
-| `NotificationTemplate` | `advocate_id` |
-| `NotificationHistory` | `advocate_id` |
-| `NotificationLog` | `advocate_id` |
-| `NotificationQueue` | `advocate_id` |
-| `BackupHistory` | `advocate_id` |
-| `Notification` | `advocate_id` |
-| `AppealAlert` (appeals/models.py) | `advocate_id` |
-| `CaseNote` (workspace/models.py) | `advocate_id` |
-| `CaseTag` (workspace/models.py) | `advocate_id` |
-| `CaseTask` (workspace/models.py) | `advocate_id` |
-| `CaseTaskDocument` (workspace/models.py) | `advocate_id` |
-| `CaseParty` (workspace/models.py) | `advocate_id` |
-| `RelatedCase` (workspace/models.py) | `advocate_id` |
+**No `OneToOneField` or `ManyToManyField` to Advocate anywhere.**
 
-No `ManyToManyField` to the user model anywhere in the codebase.
+Bare-integer `advocate_id` (plain `BigIntegerField`, no DB-level FK):
+
+| App / file | Models |
+|------------|--------|
+| `core/models.py` | `AdvocateRole`, `RolePermission`, `PasswordResetOtp`, `AuditLog`, `Activity`, `CommunicationSettings`, `NotificationTemplate`, `NotificationHistory`, `NotificationLog`, `NotificationQueue`, `BackupHistory`, `Notification`, `Task` |
+| `core/models.py` | `Advocate.parent_advocate_id` (self-referential bare int) |
+| `acts/models.py` | `ActCaseLink.advocate_id` |
+| `courtsearch/models.py` | `ImportedCaseRecord.advocate_id` |
+| `workspace/models.py` | `CaseNote`, `CaseTag`, `CaseTask`, `CaseTaskDocument`, `CaseParty`, `RelatedCase`, `HearingDetail` (all `advocate_id`, mostly `db_index=True`) |
+| `appeals/models.py` | `AppealDetection.advocate_id` (`db_index=True`) |
 
 ### AUTHENTICATION_BACKENDS
 
-Not set. Django's built-in `django.contrib.auth.backends.ModelBackend` is
-irrelevant here because `django.contrib.auth` is not installed. Authentication
-is handled entirely by the custom DRF class described below.
+Not set. `django.contrib.auth` is not installed; the built-in `ModelBackend` is
+irrelevant. Authentication is entirely the custom DRF class below.
 
 ### PASSWORD_HASHERS
 
-Not set. Django's built-in password hashers are not used. Passwords are
-BCrypt hashes created and verified directly via the `bcrypt` library
-(`core/passwords.py`). The hashes are Spring-generated `$2a$10$…` BCrypt
-strings. There is no migration path via Django's `PBKDF2`-based system.
+Not set. Passwords are **bcrypt** (`rounds=10`) created/verified directly via the
+`bcrypt` library in `core/passwords.py` (`hash_password` / `verify_password`),
+kept compatible with Spring's `BCryptPasswordEncoder` (`$2a$10$…` hashes). No
+Django PBKDF2 path.
 
 ### Client authentication mechanism
 
-Authentication is entirely custom JWT, **not** DRF SimpleJWT (that package is
-installed but unused in settings). The flow:
+Custom HS256 JWT (**not** DRF SimpleJWT — that package is installed but unused).
 
-1. Client `POST /api/advocates/login` → receives a signed HS256 JWT.
-2. Every subsequent request must send `Authorization: Bearer <token>`.
-3. `core.auth.AdvocateJWTAuthentication` decodes the token, looks up the
-   `Advocate` row by `advocateId` claim (fallback: `sub`/`email`), and sets
-   `request.user` to that `Advocate` instance.
-4. Token payload: `sub` (email), `advocateId`, `email`, `iat`, `exp`.
-5. Token is signed with `settings.SECRET_KEY` (HS256, `JWT_ALGORITHM`).
-6. Expiry default: 86400000 ms (24 h), configurable via `JWT_EXPIRATION_MS`.
+1. `POST /api/advocates/login` (AllowAny) — `accounts/views.py` `LoginView` looks up
+   `Advocate` by email, `verify_password(raw, hash)`, then `generate_token(advocate)`.
+2. Subsequent requests send `Authorization: Bearer <token>`.
+3. `core.auth.AdvocateJWTAuthentication` decodes, loads `Advocate` by `advocateId`
+   (fallback `email`), **rejects the token if `left_on is not None`** (departed
+   advocate), and caches `advocate.permission_codes()` on
+   `request._advocate_permissions`.
+4. `core/jwt.py`: claims `sub` (email), `advocateId`, `email`, `iat`, `exp`.
+   Signed with `settings.SECRET_KEY`, `settings.JWT_ALGORITHM` (`'HS256'`).
+5. Expiry: `settings.JWT_EXPIRATION` = `timedelta(milliseconds=JWT_EXPIRATION_MS)`,
+   default 86400000 ms (24 h). **No refresh endpoint exists** — single long-lived
+   token.
 
-Session cookies are **not** used (`django.contrib.sessions` is absent from
-`INSTALLED_APPS`).
+Session cookies are not used (`django.contrib.sessions` absent).
 
-**Auth endpoints:**
+**Auth / account endpoints:**
 
-| Method | Path | Auth required |
-|--------|------|---------------|
+| Method | Path | Auth |
+|--------|------|------|
 | POST | `/api/advocates/login` | No (AllowAny) |
-| POST | `/api/advocates/signup` | No (AllowAny) |
-| POST | `/api/advocates/logout` | Yes (token blacklist not implemented — stateless) |
-| POST | `/api/auth/forgot-password` | No |
-| POST | `/api/auth/verify-otp` | No |
-| POST | `/api/auth/reset-password` | No |
+| POST | `/api/advocates/signup` | No (AllowAny) — **gated off by default**, see `ALLOW_PUBLIC_SIGNUP` |
+| POST | `/api/advocates/logout` | Yes (stateless; no blacklist) |
+| POST | `/api/forgot-password` | No (deferred OTP stub, `accounts/urls_auth.py`) |
 
-No OAuth. No refresh-token endpoint.
+No OAuth. No refresh route.
 
-### Custom permission classes
+### Custom permission classes / role logic
 
-`core/permissions.py` — `RequirePermission(*codes, require_all=False)`:
-returns a `BasePermission` subclass that checks `request._advocate_permissions`
-(a `set` of permission-name strings loaded at authentication time from the
-`advocate_roles → role_permissions → permissions` tables). OR semantics by
-default; pass `require_all=True` for AND semantics.
+- `core/permissions.py` — `RequirePermission(*codes, require_all=False)` factory
+  returning a DRF `BasePermission`. Requires authentication first; **no codes =
+  "any signed-in advocate."** OR semantics by default; `require_all=True` = AND.
+  Checks against `request._advocate_permissions`.
+- `rbac/views.py` + `rbac/urls.py` — role/permission catalogue and admin user
+  management, guarded by `RequirePermission('ROLE_MANAGE')` / `'USER_MANAGE'`.
+  User create/edit sets `parent_advocate_id` via `_resolve_practice_owner`.
+- `core/practice.py` — practice/firm-wide scoping (see §1 org model).
+- `cases/views.py` — `TransferCaseView` (`/api/cases/transfer/<pk>`) and
+  `TransferTargetsView` (`/api/cases/transfer-targets`): within-practice transfer =
+  owner change; **cross-team transfer** (senior → another senior) re-owns the case,
+  its children and a copy of the client, restricted to a practice owner.
+- Global DRF default permission is `IsAuthenticated`
+  (`UNAUTHENTICATED_USER = None`).
 
-Used as decorator e.g. `permission_classes=[RequirePermission('MANAGE_CASES')]`.
+### Hardcoded integer-ID assumptions
 
-The global default permission class in DRF settings is
-`rest_framework.permissions.IsAuthenticated`, which checks
-`request.user.is_authenticated` — satisfied by the `Advocate.is_authenticated`
-property.
-
-### Hardcoded assumptions about integer user IDs
-
-The `Advocate.id` field is `BigAutoField` (64-bit integer), matching the
-Spring `BIGINT`. All `advocate_id` filters and JWT claims use bare integer
-comparisons. There is no UUID-based user identity. If another system uses
-non-integer or UUID user IDs, the entire auth flow, JWT payload structure,
-and filter pattern would need changing.
+`Advocate.id` is `BigAutoField` (BIGINT), matching Spring. All `advocate_id`
+filters and the `advocateId` JWT claim use bare integer comparisons.
+`parent_advocate_id` and every child `advocate_id` are bare BIGINTs too. There is
+no UUID identity. A merge with a UUID-keyed user system would require reworking the
+JWT payload, the auth lookup, and every scoping filter.
 
 ---
 
@@ -225,9 +219,8 @@ advocate_backend/
 └── wsgi.py
 ```
 
-There is only one settings file. No `settings/` package, no
-`settings_dev.py`/`settings_prod.py` split. The production entry point is
-`advocate_backend.settings` (set in both `wsgi.py` and `asgi.py`).
+One settings file, no dev/prod split. Production entry point is
+`advocate_backend.settings` (referenced by `wsgi.py` and `asgi.py`).
 
 ### INSTALLED_APPS (verbatim, annotated)
 
@@ -252,7 +245,6 @@ INSTALLED_APPS = [
     'expenses',                       # [first-party]
     'invoices',                       # [first-party]
     'payments',                       # [first-party]
-    'tasks',                          # [first-party] ⚠️ COLLISION-RISK
     'search',                         # [first-party] ⚠️ COLLISION-RISK
     'reports',                        # [first-party]
     'audit',                          # [first-party]
@@ -261,28 +253,27 @@ INSTALLED_APPS = [
     'assistant',                      # [first-party]
     'appeals',                        # [first-party]
     'workspace',                      # [first-party]
+    'courtsearch',                    # [first-party]  (new)
+    'acts',                           # [first-party]  (new)
 ]
 ```
 
-Notable absences: `django.contrib.admin`, `django.contrib.auth`,
-`django.contrib.sessions`, `django.contrib.messages`.
+(Note: `tasks` is no longer a separate app — its endpoints are served elsewhere;
+the `tasks` DB table remains, mapped by `core.Task`.) Notable absences:
+`django.contrib.admin`, `django.contrib.auth`, `django.contrib.sessions`,
+`django.contrib.messages`.
 
 ### App labels and collision risk
 
-Every app uses the default `app_label` (directory name). No overrides in any
-`apps.py`. Labels likely to collide with sibling projects:
+All apps use the default `app_label` (directory name); no `apps.py` overrides.
+Labels likely to collide with sibling projects:
 
 | Label | Risk |
 |-------|------|
-| `core` | HIGH — extremely common app name |
-| `tasks` | HIGH — common app name |
-| `search` | HIGH — common app name |
-| `documents` | MEDIUM — common app name |
-| `notifications` | MEDIUM |
-| `dashboard` | MEDIUM |
-| `reports` | MEDIUM |
-| `audit` | MEDIUM |
-| `payments` | MEDIUM |
+| `core` | HIGH |
+| `search` | HIGH |
+| `documents` | MEDIUM |
+| `notifications`, `dashboard`, `reports`, `audit`, `payments`, `acts` | MEDIUM |
 
 ### MIDDLEWARE (verbatim)
 
@@ -291,11 +282,16 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',     # [django]
     'corsheaders.middleware.CorsMiddleware',             # [third-party]
     'django.middleware.common.CommonMiddleware',         # [django]
+    'core.audit_middleware.AuditLogMiddleware',          # [first-party]
 ]
 ```
 
-No first-party custom middleware. No session middleware, no auth middleware,
-no CSRF middleware.
+**First-party middleware:** `core/audit_middleware.py` `AuditLogMiddleware` — records
+every state-changing request (POST/PUT/PATCH/DELETE under `/api/`, skipping auth
+paths) into `audit_log` + a human-readable `activities` row; captures method, path,
+status, actor email, IP (`X-Forwarded-For`), user agent, and field-level before/after
+diffs (`core/audit_diff.py`). **Never records request bodies** (passwords/OTPs).
+Audit failures never break the underlying request. No session/auth/CSRF middleware.
 
 ### Root urls.py (verbatim)
 
@@ -321,7 +317,6 @@ urlpatterns = [
     path('api/', include('expenses.urls')),
     path('api/', include('invoices.urls')),
     path('api/', include('payments.urls')),
-    path('api/', include('tasks.urls')),
     path('api/', include('search.urls')),
     path('api/', include('reports.urls')),
     path('api/', include('audit.urls')),
@@ -330,10 +325,14 @@ urlpatterns = [
     path('api/', include('assistant.urls')),
     path('api/', include('appeals.urls')),
     path('api/', include('workspace.urls')),
+    path('api/', include('courtsearch.urls')),
+    path('api/', include('acts.urls')),
 ]
 ```
 
-All apps share the `/api/` prefix. No versioning prefix (e.g. `/api/v1/`).
+All apps share the `/api/` prefix. No version prefix. Every included app claims
+resource segments directly under `/api/` (e.g. `/api/clients`, `/api/cases`,
+`/api/courtsearch/...`, `/api/acts`, `/api/assistant/...`).
 
 ### MIDDLEWARE-adjacent settings
 
@@ -347,74 +346,75 @@ CORS_ALLOWED_ORIGINS = config(
 )
 CORS_ALLOW_CREDENTIALS = True
 
-# CSRF: CsrfViewMiddleware is NOT installed; CSRF protection is absent.
-
-# SESSION_*: django.contrib.sessions is NOT installed; no session settings apply.
+# CSRF: CsrfViewMiddleware NOT installed → CSRF protection absent (pure JWT API).
+# SESSION_*: django.contrib.sessions NOT installed → no session settings.
 
 STATIC_URL = '/static/'
-# STATIC_ROOT: not set
-# MEDIA_URL: not set
-# MEDIA_ROOT: not set
-# DEFAULT_FILE_STORAGE: not set (default Django FileSystemStorage)
+# STATIC_ROOT / MEDIA_URL / MEDIA_ROOT / DEFAULT_FILE_STORAGE: not set.
+DATA_UPLOAD_MAX_MEMORY_SIZE  = 52428800   # ~50 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE  = 26214400   # ~25 MB per file (matches Spring)
 ```
 
-Document uploads use a custom `DOCUMENT_UPLOAD_DIR` setting (not
-Django's media framework) pointing at the sibling Spring Boot `uploads/`
-folder.
+Document uploads use `DOCUMENT_UPLOAD_DIR` (default
+`BASE_DIR.parent / 'Advocate-app-BE-main' / 'uploads'`), not Django's media
+framework. Court PDFs cache under `COURT_PDF_CACHE_DIR`
+(default `BASE_DIR / 'court_pdf_cache'`).
 
-### Environment variables read by this project (names only)
+Other integration-relevant settings: `EMAIL_BACKEND` selectable via `MAIL_BACKEND`
+(default real SMTP; console backend for local), `EMAIL_CONFIGURED` guard,
+`ALLOW_PUBLIC_SIGNUP` (default False), `WHATSAPP_ENABLED` (default False),
+`TEST_RUNNER = 'core.test_runner.ManagedModelTestRunner'`, `USE_TZ = False`.
 
-| Variable | Default in code | Used for |
-|----------|----------------|---------|
-| `SECRET_KEY` | `<redacted>` | Django secret, JWT signing |
-| `DEBUG` | `True` | Debug mode |
-| `ALLOWED_HOSTS` | `localhost,127.0.0.1` | Allowed host list |
-| `DB_NAME` | `advocate_db` | PostgreSQL database name |
-| `DB_USER` | `<redacted>` | PostgreSQL username |
-| `DB_PASSWORD` | `<redacted>` | PostgreSQL password |
-| `DB_HOST` | `localhost` | PostgreSQL host |
-| `DB_PORT` | `5432` | PostgreSQL port |
-| `JWT_EXPIRATION_MS` | `86400000` | Token expiry in ms |
-| `CORS_ORIGINS` | `http://localhost:5173,...` | CORS allowed origins |
-| `DOCUMENT_UPLOAD_DIR` | `../Advocate-app-BE-main/uploads` | Upload path |
-| `MAIL_HOST` | `smtp.gmail.com` | SMTP host |
-| `MAIL_PORT` | `587` | SMTP port |
-| `MAIL_USERNAME` | `<redacted>` | SMTP username |
-| `MAIL_PASSWORD` | `<redacted>` | SMTP password |
-| `NOTIFICATION_SENDER_NAME` | `<redacted>` | Email from-name |
-| `OTP_SALT` | `<redacted>` | OTP hashing salt |
-| `OTP_EXPIRY_MINUTES` | `10` | OTP TTL |
-| `OTP_RATE_LIMIT` | `5` | Max OTP requests |
-| `WHATSAPP_VERIFY_TOKEN` | `<redacted>` | WhatsApp webhook verify |
-| `TIME_ZONE` | `Asia/Kolkata` | Django timezone |
+### Environment variables read (names only, values `<redacted>`)
+
+From `settings.py`, `assistant/llm.py`, `courtsearch/client.py`, `.env`:
+
+`SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`,
+`DB_HOST`, `DB_PORT`, `JWT_EXPIRATION_MS`, `CORS_ORIGINS`, `DOCUMENT_UPLOAD_DIR`,
+`COURT_PDF_CACHE_DIR`, `MAIL_BACKEND`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USE_TLS`,
+`MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_TIMEOUT`, `NOTIFICATION_SENDER_NAME`,
+`OTP_SALT`, `OTP_EXPIRY_MINUTES`, `OTP_RATE_LIMIT`, `WHATSAPP_ENABLED`,
+`WHATSAPP_VERIFY_TOKEN`, `ALLOW_PUBLIC_SIGNUP`, `TIME_ZONE`,
+`LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_OPENAI_PATH`,
+`LLM_TEMPERATURE`, `LLM_TIMEOUT`, `GEMINI_API_KEY`, `GEMINI_MODEL`,
+`GEMINI_BASE_URL`, `COURT_API_BASE`, `COURT_API_SEARCH_TIMEOUT`,
+`COURT_API_LIST_TIMEOUT`, `COURT_API_CAUSELIST_TIMEOUT`, `COURT_API_SCI_TIMEOUT`,
+`COURT_API_DISTRICT_CAUSELIST_TIMEOUT`, `DJANGO_SETTINGS_MODULE`.
+
+A `.env` file **is present** in `Advocate-app-BE-Django/` (gitignored). Its keys
+were read for names only; **no values are reproduced here.**
 
 ---
 
 ## 3. Versions and dependencies
 
-### Installed versions (from venv)
+### Installed versions — from `venv` `pip freeze` (not memory)
 
 | Package | Version |
 |---------|---------|
-| Python | 3.11.0 (venv home: `C:\Users\Sybrant\AppData\Local\Programs\Python\Python311`) |
+| Python | 3.11.0 |
 | Django | 5.1.15 |
 | djangorestframework | 3.15.2 |
-| djangorestframework-simplejwt | 5.3.1 (installed but **not used** in settings) |
+| djangorestframework-simplejwt | 5.3.1 (installed, **unused** in settings) |
 | psycopg2-binary | 2.9.12 |
+| PyJWT | 2.13.0 |
 | bcrypt | 4.2.1 |
 | channels | 4.1.0 |
-| reportlab | 4.5.1 |
-| PyJWT | 2.13.0 |
 | django-cors-headers | 4.4.0 |
-| python-decouple | 3.8 (installed as `decouple.py` single-file module; `python_decouple-3.8.dist-info` present) |
-| asgiref | 3.12.1 |
+| python-decouple | 3.8 |
+| requests | 2.34.2 |
+| beautifulsoup4 | 4.15.0 (soupsieve 2.9.2) |
+| truststore | 0.10.4 |
+| reportlab | 4.5.1 |
 | pillow | 12.3.0 |
-| sqlparse | 0.5.5 |
-| tzdata | 2026.3 |
-| celery | Not installed |
-| redis | Not installed |
+| asgiref | 3.12.1 |
+| sqlparse | 0.6.0 |
+| certifi | 2026.7.22 · urllib3 2.7.0 · idna 3.19 · charset-normalizer 3.5.1 · typing_extensions 4.16.0 · tzdata 2026.3 |
+| celery | **Not installed** |
+| redis | **Not installed** |
+| channels-redis | **Not installed** |
 
-### Full requirements.txt
+### requirements.txt (verbatim)
 
 ```
 Django==5.1.*
@@ -426,179 +426,198 @@ python-decouple==3.8.*
 bcrypt==4.2.*
 channels==4.1.*
 reportlab==4.*
+requests==2.34.*
+beautifulsoup4==4.15.*
+truststore; sys_platform == "win32"  # optional: fixes gov SSL chains, import-guarded
+# AI assistant uses an OpenAI-compatible LLM over the already-present `requests`.
+# Backend is selectable via LLM_PROVIDER: 'local' (a local model over ngrok, LLM_BASE_URL)
+# or 'gemini' (Google Gemini's OpenAI-compatible endpoint, GEMINI_API_KEY). No extra deps.
+# anthropic is optional (kept for a future cloud option).
+# anthropic==0.122.*
 ```
 
-No `requirements-dev.txt`, no `pyproject.toml`, no `poetry.lock`.
-No lockfile with pinned transitive dependencies.
+No `requirements-dev.txt`, no `pyproject.toml`, no `poetry.lock`. Pins are wildcard
+minor ranges (`5.1.*`), so no transitive lockfile.
 
 ### Upgrade blockers
 
-- **`channels==4.1.*`** requires `daphne` or similar ASGI server for full
-  WebSocket support, though currently only HTTP is wired in `asgi.py`.
-- `djangorestframework-simplejwt` is installed but unused. Its presence is
-  harmless but adds confusion.
-- No celery, redis, or channels layer requiring a broker.
-- No pinned transitive dependencies. Version ranges (`5.1.*`) allow minor
-  upgrades automatically, which could introduce breakage in CI.
+- `channels==4.1.*` — pulls in the ASGI stack; only HTTP is wired today.
+- `djangorestframework-simplejwt` installed but unused (dead weight, harmless).
+- Wildcard pins allow silent minor upgrades — CI could drift.
+- No hard blocker to a Django 5.x point upgrade observed.
 
 ---
 
 ## 4. Data layer
 
-### DATABASES config (credentials redacted)
+### DATABASES (credentials redacted)
 
 ```python
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='advocate_db'),   # env var DB_NAME
-        'USER': config('DB_USER', default=<redacted>),
+        'NAME': config('DB_NAME', default='advocate_db'),
+        'USER': config('DB_USER', default=<redacted>),      # code default: postgres
         'PASSWORD': config('DB_PASSWORD', default=<redacted>),
-        'HOST': config('DB_HOST', default='localhost'),      # localhost
+        'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
     }
 }
 ```
 
-- Engine: PostgreSQL (psycopg2)
-- Database name: `advocate_db`
-- Host type: localhost (default), overridable via `DB_HOST`
-- No `OPTIONS` (no `search_path`, no SSL options)
-
-**Note:** The original Spring Boot backend uses **MySQL** (`advocate` database,
-as shown in `LOCAL_DEVELOPMENT.md`). This Django backend targets **PostgreSQL**
-(`advocate_db`). These are two different databases. The Django backend is a
-rewrite/replacement, not a connector to the same DB.
+- Engine: PostgreSQL (psycopg2). Database: `advocate_db`. Host: localhost default.
+- No `OPTIONS` (no `search_path`, no SSL options).
+- The settings/`core/models.py` docstrings state this is a **drop-in over the same
+  `advocate_db`** the Spring/Hibernate backend created (unmanaged models over
+  existing tables). See §8 for the caveat that the Spring source is absent from the
+  repo, so "same DB" cannot be independently verified — but the DB **is live and
+  reachable** (see §9), and the unmanaged tables exist and hold data.
 
 ### Non-public PostgreSQL schemas
 
-None found. No `Meta.db_table` values contain a `.` or quoted schema prefix.
+None. No `Meta.db_table` contains a `.` or quote; all tables are public-schema.
 
 ### Meta.db_table overrides
 
-All `managed=False` models in `core/models.py`:
+**core (`managed=False`):** `Advocate`→`advocate`, `Client`→`clients`,
+`Case`→`cases`, `CaseEvent`→`case_events`, `Document`→`documents`, `Role`→`roles`,
+`Permission`→`permissions`, `AdvocateRole`→`advocate_roles`,
+`RolePermission`→`role_permissions`, `Expense`→`expenses`, `Invoice`→`invoices`,
+`ClientPayment`→`client_payments`, `Task`→`tasks`,
+`PasswordResetOtp`→`password_reset_otp`, `AuditLog`→`audit_log`,
+`Activity`→`activities`, `CommunicationSettings`→`communication_settings`,
+`NotificationTemplate`→`notification_templates`,
+`NotificationHistory`→`notification_history`, `NotificationLog`→`notification_logs`,
+`NotificationQueue`→`notification_queue`, `BackupHistory`→`backup_history`,
+`Notification`→`notifications`.
 
-| Model | db_table |
-|-------|----------|
-| `Advocate` | `advocate` |
-| `Client` | `clients` |
-| `Case` | `cases` |
-| `CaseEvent` | `case_events` |
-| `Document` | `documents` |
-| `Role` | `roles` |
-| `Permission` | `permissions` |
-| `AdvocateRole` | `advocate_roles` |
-| `RolePermission` | `role_permissions` |
-| `Expense` | `expenses` |
-| `Invoice` | `invoices` |
-| `ClientPayment` | `client_payments` |
-| `Task` | `tasks` |
-| `PasswordResetOtp` | `password_reset_otp` |
-| `AuditLog` | `audit_log` |
-| `Activity` | `activities` |
-| `CommunicationSettings` | `communication_settings` |
-| `NotificationTemplate` | `notification_templates` |
-| `NotificationHistory` | `notification_history` |
-| `NotificationLog` | `notification_logs` |
-| `NotificationQueue` | `notification_queue` |
-| `BackupHistory` | `backup_history` |
-| `Notification` | `notifications` |
+**acts:** `Act`→`acts_act` (F), `Chapter`→`acts_chapter` (F),
+`Section`→`acts_section` (F), `ActPaper`→`acts_actpaper` (F),
+`ActCaseLink`→ default `acts_actcaselink` (**managed=True**).
 
-Django-managed models (create their own tables):
+**courtsearch (managed=True):** `CourtCaseTypes`→`courtsearch_case_types`,
+`ImportedCaseRecord`→`courtsearch_imported_record`, `CauseListItem`→`causelist_item`.
 
-| Model | db_table | App |
-|-------|----------|-----|
-| `AppealAlert` | `appeal_alert` | `appeals` |
-| `CaseNote` | `case_note` | `workspace` |
-| `CaseTag` | `case_tag` | `workspace` |
-| `CaseTask` | `case_task` | `workspace` |
-| `CaseTaskDocument` | `case_task_document` | `workspace` |
-| `CaseParty` | `case_party` | `workspace` |
-| `RelatedCase` | `case_related` | `workspace` |
+**invoices (managed=True):** `InvoiceItem`→`invoice_items`.
+
+**workspace (managed=True):** `CaseNote`→`case_note`, `CaseTag`→`case_tag`,
+`CaseTask`→`case_task`, `CaseTaskDocument`→`case_task_document`,
+`CaseParty`→`case_party`, `RelatedCase`→`case_related`,
+`HearingDetail`→`hearing_detail`.
+
+**appeals (managed=True):** `AppealDetection`→`appeal_detection`. (The older
+`AppealAlert`/`appeal_alert` was dropped by `appeals/migrations/0003_delete_appealalert.py`.)
+
+> Discrepancy flag: `acts.ActPaper` (`managed=False`, `acts_actpaper`) exists in
+> `models.py` but is **absent** from `acts/migrations/0001_initial.py`. Harmless
+> for migrations because unmanaged, but the migration does not mirror it. The
+> `acts_actpaper` table exists and is populated (§9).
 
 ### DATABASE_ROUTERS / multi-DB
 
-No `DATABASE_ROUTERS` setting. No `.using()` calls found. Single database only.
+No `DATABASE_ROUTERS`. No `.using()` calls. Single `default` DB.
 
-### pgvector, extensions, raw SQL, RunPython migrations
+### pgvector / extensions / raw SQL / RunPython
 
-- No `pgvector` usage found.
-- No raw SQL (`RunSQL`) in migrations.
-- No `RunPython` data migrations.
-- No materialized views or explicit extension calls.
+- No `pgvector` / `VectorField`.
+- No `RunSQL` or `RunPython` in any project migration (all plain
+  `CreateModel`/`AlterField`).
+- `acts/management/commands/index_acts_search.py` creates **pg_trgm GIN indexes**
+  imperatively (via `--apply`), outside the migration framework. `core` management
+  commands (`add_notification_links`, `enable_shared_practice`, `scope_case_numbers`)
+  also perform imperative DDL against the Spring-owned tables — schema changes that
+  are **not** captured as Django migrations.
 
 ### Migration health per app
 
-Only two apps have Django-managed migrations:
+| App | Migration files | Notes |
+|-----|-----------------|-------|
+| `acts` | `0001_initial.py` | Act/Chapter/Section as managed=False state + `ActCaseLink` real table |
+| `appeals` | `0001_initial`, `0002_appealdetection`, `0003_delete_appealalert` | live table `appeal_detection` |
+| `courtsearch` | `0001_initial`, `0002_importedcaserecord`, `0003_causelistitem`, `0004_alter_causelistitem_court_number` | — |
+| `invoices` | `0001_initial` | `invoice_items` |
+| `workspace` | `0001_initial`, `0002_caseparty_relatedcase`, `0003_alter_casetask_case_id_casetaskdocument`, `0004_hearingdetail` | — |
+| all others (`core`, `accounts`, `clients`, `cases`, …) | none | models are `managed=False` or stubs |
 
-**`appeals`** — 1 migration file:
-- `0001_initial.py` — creates `AppealAlert` table. No RunPython, no RunSQL.
-- Not squashed.
+None squashed. No RunPython/RunSQL anywhere.
 
-**`workspace`** — 3 migration files:
-- `0001_initial.py` — creates `CaseNote`, `CaseTag`, `CaseTask`.
-- `0002_caseparty_relatedcase.py` — adds `CaseParty`, `RelatedCase`.
-- `0003_alter_casetask_case_id_casetaskdocument.py` — alters `CaseTask.case_id` to nullable; adds `CaseTaskDocument`.
-- Not squashed.
-
-All other apps (`accounts`, `cases`, `clients`, etc.) have **no migrations directory** because their models are `managed=False`.
-
-UNKNOWN: Whether `makemigrations --check --dry-run` reports clean — cannot
-run Django management commands without a live database connection and a
-correctly configured environment. The migration files look complete based
-on visual inspection of the model definitions.
+`UNKNOWN: makemigrations --check --dry-run output.` Not run — the audit's hard
+read-only constraint explicitly forbids running `makemigrations`. Visual inspection
+of the five managed apps shows migrations consistent with their models, but this
+should be confirmed in a live environment before integration.
 
 ### Model name collision risk — complete list
 
-| Model class | App/module |
-|-------------|-----------|
-| `Advocate` | `core` |
-| `Client` | `core` |
-| `Case` | `core` |
-| `CaseEvent` | `core` |
-| `Document` | `core` |
-| `Role` | `core` |
-| `Permission` | `core` |
-| `AdvocateRole` | `core` |
-| `RolePermission` | `core` |
-| `Expense` | `core` |
-| `Invoice` | `core` |
-| `ClientPayment` | `core` |
-| `Task` | `core` |
-| `PasswordResetOtp` | `core` |
-| `AuditLog` | `core` |
-| `Activity` | `core` |
-| `CommunicationSettings` | `core` |
-| `NotificationTemplate` | `core` |
-| `NotificationHistory` | `core` |
-| `NotificationLog` | `core` |
-| `NotificationQueue` | `core` |
-| `BackupHistory` | `core` |
-| `Notification` | `core` |
-| `AppealAlert` | `appeals` |
-| `CaseNote` | `workspace` |
-| `CaseTag` | `workspace` |
-| `CaseTask` | `workspace` |
-| `CaseTaskDocument` | `workspace` |
-| `CaseParty` | `workspace` |
-| `RelatedCase` | `workspace` |
+`core`: Advocate, Client, Case, CaseEvent, Document, Role, Permission, AdvocateRole,
+RolePermission, Expense, Invoice, ClientPayment, Task, PasswordResetOtp, AuditLog,
+Activity, CommunicationSettings, NotificationTemplate, NotificationHistory,
+NotificationLog, NotificationQueue, BackupHistory, Notification.
+`acts`: Act, Chapter, Section, ActPaper, ActCaseLink.
+`courtsearch`: CourtCaseTypes, ImportedCaseRecord, CauseListItem.
+`invoices`: InvoiceItem.
+`workspace`: CaseNote, CaseTag, CaseTask, CaseTaskDocument, CaseParty, RelatedCase,
+HearingDetail.
+`appeals`: AppealDetection.
 
-High-risk names for cross-project collision: `Client`, `Case`, `Document`,
-`Task`, `Role`, `Permission`, `Notification`, `Invoice`, `Expense`.
+High-risk cross-project names: `Client`, `Case`, `Document`, `Task`, `Role`,
+`Permission`, `Notification`, `Invoice`, `Expense`, `Section`, `Activity`.
 
 ---
 
 ## 5. Async and runtime
 
-### Celery
+### Celery / Redis
 
-No `celery.py` found anywhere in the project. Celery is **not installed** and
-**not used**. No broker or result-backend settings.
+**Neither installed nor used.** The only "Celery" match project-wide is a comment in
+`appeals/management/commands/scan_appeals.py` explaining why Celery+Redis was
+deliberately avoided. No broker, no result backend, no beat schedule. No Redis DB
+numbers are assigned anywhere.
 
-### Redis
+### Background scheduler (the async substitute)
 
-Redis is **not installed** or configured. No Redis DB numbers assigned.
-The Channels layer uses the **in-memory** backend (not Redis):
+`notifications/management/commands/run_scheduler.py` — a single long-running process
+(`while True`, 5 s coarse tick) that fires two commands on independent, crash-isolated
+intervals:
+
+- `process_notifications` — default every **60 s** (`--drain-interval`, min 15).
+- `scan_notifications` — default every **900 s / 15 min** (`--scan-interval`, min 60).
+- `--once` runs one cycle and exits (for cron / Task Scheduler).
+
+`process_notifications.py` drains `NotificationQueue` (QUEUED): IN_APP writes a
+`Notification` row; EMAIL sends via Django `send_mail`/SMTP; WHATSAPP raises
+`NotImplementedError` (mock only). Records `NotificationHistory` + a System
+`Activity`; retries with backoff `[5, 30, 120]` min, then `FAILED_PERMANENTLY`.
+`scan_notifications.py` calls `notifications.events.scan_due_notifications` to queue
+due hearing reminders (next 2 days), overdue invoices, and overdue tasks.
+
+Launched by `run-scheduler.bat` → `python manage.py run_scheduler` (meant to be
+wrapped by NSSM/systemd).
+
+### Management commands (fully-qualified, one line each)
+
+| Command | Purpose |
+|---------|---------|
+| `notifications run_scheduler` | Long-running timer loop driving the two jobs below |
+| `notifications process_notifications` | Send queued notifications (in-app/email), record history, retry w/ backoff |
+| `notifications scan_notifications` | Queue due reminders (hearings / overdue invoices / tasks) |
+| `appeals scan_appeals` | Nightly sweep: check if an appeal appeared vs decided cases (live scrape; `--limit`) |
+| `acts index_acts_search` | Create pg_trgm GIN indexes for Acts ILIKE search (`--apply`) |
+| `courtsearch backfill_court_data` | Backfill parties+hearings for imported cases from `ImportedCaseRecord` |
+| `courtsearch refresh_case_types` | Admin-only re-scrape of court case types |
+| `courtsearch sync_causelist` | Pull a court's published cause list for a day (`--court/--date/--days`); run early morning |
+| `core add_notification_links` | Add link columns to `notifications` + backfill |
+| `core enable_shared_practice` | Add `parent_advocate_id` column; manage practice membership |
+| `core prune_audit_log` | Trim audit_log/activities to retention window (default 12 mo) |
+| `core scope_case_numbers` | Swap global UNIQUE on `cases.case_number` to per-advocate |
+| `core seed_demo` | Seed the "Kumar & Associates" demo dataset |
+| `rbac seed_admin_permissions` | Seed admin permission codes into `permissions` |
+| `rbac seed_firm_wide_scope` | Seed `FIRM_WIDE_SCOPE` permission + grant to firm-wide roles |
+
+No `@shared_task` / Celery task names exist (no broker to collide on).
+
+### Channels — ASGI
+
+`ASGI_APPLICATION = 'advocate_backend.asgi.application'`. Channel layer is in-memory:
 
 ```python
 CHANNEL_LAYERS = {
@@ -606,21 +625,8 @@ CHANNEL_LAYERS = {
 }
 ```
 
-### Celery tasks
-
-None — Celery is absent.
-
-### Beat schedule
-
-None.
-
-### Channels — ASGI
-
-```python
-ASGI_APPLICATION = 'advocate_backend.asgi.application'
-```
-
 `asgi.py` (verbatim):
+
 ```python
 """ASGI entrypoint, routed through Channels so WebSockets can be added later.
 
@@ -641,57 +647,76 @@ application = ProtocolTypeRouter({
 })
 ```
 
-No `routing.py` file exists. WebSocket is not wired.
+No project `routing.py` exists. WebSocket is not wired server-side.
 
 ### Long-running / GPU-dependent work
 
-None. The `assistant` app is a rule-based keyword-matching router, not an LLM.
+- **AI assistant** (`assistant/llm.py`) — an OpenAI-compatible **HTTP streaming
+  client** (SSE) over `requests`. **Not GPU-bound in this process**; the model runs
+  remotely (a local model over an ngrok tunnel, or Google Gemini). `LLM_TIMEOUT`
+  default **600 s**. No tool/function calling — it gathers advocate-scoped read-only
+  context server-side (`assistant/tools.py`) and injects it into the prompt.
+  Endpoints: `/api/assistant/query`, `/api/assistant/chat`.
+- **Court scraping** — `courtsearch` calls out to a separate scraper service with
+  long timeouts (district cause-list up to **1800 s**); kept out of page loads via
+  the management commands / a dedicated refresh view (`REFRESH_TIMEOUT = 240`).
 
 ### External services
 
-| Service | Purpose | Where configured |
-|---------|---------|-----------------|
-| Gmail SMTP (`smtp.gmail.com:587`) | Password-reset OTP emails | `settings.py` `EMAIL_*` |
-| Meta WhatsApp Cloud API (webhook only) | Receive delivery callbacks; mock send | `communication/whatsapp.py` (no outbound HTTP to Meta from this code — send is mocked) |
+| Service | Purpose | Where |
+|---------|---------|-------|
+| LLM: local model over **ngrok** (OpenAI-compatible) | AI assistant, provider `local` | `assistant/llm.py` (`LLM_BASE_URL`, `LLM_OPENAI_PATH`, `LLM_MODEL`) |
+| **Google Gemini** OpenAI-compat endpoint (`https://generativelanguage.googleapis.com/v1beta/openai`) | AI assistant, provider `gemini` | `assistant/llm.py` (`GEMINI_BASE_URL`, `GEMINI_MODEL`, `GEMINI_API_KEY`) |
+| **Court "Case Status" scraper microservice** (FastAPI, default `http://localhost:8000`) → upstream **eCourts** (HC/DC), **Supreme Court of India**, Madras HC, cause-lists, display boards | Court search, cause-lists, order/judgement PDFs, appeal detection | `courtsearch/client.py` (`COURT_API_BASE`) |
+| Gmail SMTP (`smtp.gmail.com:587`, TLS) | OTP + hearing/invoice/appeal reminders + test send | `settings.py` `EMAIL_*` |
+| Meta WhatsApp Cloud API | **Disabled** (`WHATSAPP_ENABLED=False`); sender is a mock that raises `NotImplementedError` | `communication/`, `process_notifications.py` |
 
-No LLM providers, no court data APIs, no S3, no Elasticsearch.
+No S3, no Elasticsearch. Anthropic is **not** wired (commented-out optional dep only).
 
 ---
 
 ## 6. Deployment
 
-### Docker files
+### Docker / process manager
 
-No `Dockerfile` or `docker-compose.yml` in `Advocate-app-BE-Django/`.
-
-The only Docker files in the repo are in `Advocate-app-BE-main/` (the
-Java Spring Boot sibling):
-
-- `Advocate-app-BE-main/Dockerfile`
-- `Advocate-app-BE-main/docker-compose.yml`
-
-Those were not audited here (different service).
+No `Dockerfile`, `docker-compose.yml`, nginx, gunicorn, uvicorn, daphne, or
+supervisor config in `Advocate-app-BE-Django/`. (The sibling `Advocate-app-BE-main/`
+now contains **only** `uploads/` — no Spring source, no Docker files — see §8.)
 
 ### Process commands
 
-From `run-django.bat`:
+`run-django.bat`:
 ```bat
 @echo off
 REM Launch the Django backend on port 8080 (drop-in replacement for Spring Boot).
 cd /d "%~dp0"
 call venv\Scripts\activate.bat
-python manage.py runserver 8080
+REM 0.0.0.0 => listen on all interfaces so other devices on the LAN can reach it.
+python manage.py runserver 0.0.0.0:8080
 ```
 
-This uses Django's development server (`runserver`). There is no
-gunicorn/uvicorn/daphne config, no supervisor config, no production
-process manager.
+`run-scheduler.bat`:
+```bat
+@echo off
+REM Background scheduler: delivers notifications and raises due reminders on a timer.
+REM Run this in its own window alongside run-django.bat. In production, wrap it with
+REM NSSM (Windows service) or systemd so it restarts on reboot/crash.
+cd /d "%~dp0"
+call venv\Scripts\activate.bat
+python manage.py run_scheduler
+```
 
-### Ports
+Web is Django's **dev server** (`runserver`) bound to `0.0.0.0:8080` — no
+production WSGI/ASGI server. The scheduler is a second long-lived process. Helper
+`scripts/*.bat` (`process_notifications`, `scan_notifications`, `scan_appeals`,
+`prune_audit_log`, `run_tests`) wrap the management commands for Task Scheduler.
 
-- Django backend: port **8080** (same port as the Spring Boot original).
-- No nginx config.
-- Public hostname: not visible from repo config.
+### Ports / hostname
+
+- Django: **8080**, all interfaces (LAN-reachable).
+- Court scraper microservice: default **8000** (`COURT_API_BASE`).
+- No nginx; public hostname not defined in repo config. `.env` sets
+  `VITE_API_BASE=http://192.168.1.36:8080` (a LAN IP) on the frontend side.
 
 ---
 
@@ -699,7 +724,7 @@ process manager.
 
 ### Location
 
-`Advocate-app-FE-main/` — React + Vite SPA.
+`Advocate-app-FE-main/` — React 19 + Vite SPA.
 
 ### package.json (verbatim)
 
@@ -749,149 +774,173 @@ process manager.
 
 ### Auth credential storage
 
-Token is stored in **`localStorage`** under the key `"token"`. Email is stored
-under `"localStorage.email"`. **Not httpOnly cookie** — the token is accessible
-to JavaScript.
+**`localStorage`** (not httpOnly cookie — readable by JS). Written at login in
+`src/pages/Login.jsx` (keys **`token`**, **`email`**, **`role`**, **`fullName`**),
+from `response.data.token` of `POST /api/advocates/login`.
 
-Relevant files:
-- `src/api.js` — reads `localStorage.getItem("token")` and injects as
-  `Authorization: Bearer <token>` header on every request.
-- `src/utils/auth.jsx` — `isTokenExpired()` uses `jwt-decode` to check `exp`.
-  `logoutAndRedirect()` calls `localStorage.removeItem("token")` on expiry.
-- `src/App.jsx` — checks `localStorage.getItem("token")` on every render; 
-  auto-redirects to `/login` on missing/expired token.
+- `src/api.js` — `authHeaders()` reads `localStorage.token` → `Authorization:
+  Bearer <token>`; token also read ad hoc in many pages/services.
+- `src/utils/auth.jsx` — `isTokenExpired()` via `jwt-decode` (client only reads
+  `exp`; does not verify signature); `logoutAndRedirect()` removes `token` + `email`
+  (note: `role`/`fullName` are **not** cleared).
+- `src/pages/Login.jsx` — the only axios interceptor: a **response** interceptor
+  that redirects to login on 401 (except for the login call itself). There is **no
+  request interceptor** auto-attaching the token.
 
 ### API base URL
 
-Defined in `src/config.js` and `src/api.js`:
-```js
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
-```
+`import.meta.env.VITE_API_BASE || "http://localhost:8080"`, defined in `src/api.js`,
+`src/config.js`, `src/main.jsx` (also sets `axios.defaults.baseURL` + `window.API_BASE`)
+and re-derived in ~15 service/page files. `.env` overrides to
+`http://192.168.1.36:8080`.
 
-Configurable via `VITE_API_BASE` build-time env var. Default points to
-local Spring Boot port (8080), which is also the port the Django replacement
-uses.
+### New backend surfaces used by FE
+
+- courtsearch: `src/services/courtDocuments.js` → `/api/courtsearch/ecourts/document`,
+  `/hc/hearing-business`, `/hc/order-pdf`.
+- acts: `src/pages/Acts.jsx`, `ActDetail.jsx` → `/api/acts`, `/api/acts/{id}` etc.
+  (hardcoded paths, not in `config.js`).
+- assistant: `src/contexts/AssistantContext.jsx` streams SSE from
+  `/api/assistant/chat` and `/api/assistant/query`; history in localStorage key
+  `advocate-assistant-history`.
+- **STOMP WebSocket:** `src/contexts/realtime/WebSocketProvider.jsx` configures a
+  `@stomp/stompjs` client (`ws(s)://…/ws`, `Authorization` connect header,
+  `/user/queue/*` subscriptions) but is **disabled by default**
+  (`WS_ENABLED = VITE_ENABLE_WS === "true"`); backend serves no `/ws` endpoint, so
+  the UI falls back to REST polling.
 
 ### Routing
 
-History-based (`BrowserRouter`): `App.jsx` imports
-`BrowserRouter as Router`. No `basename` prop → base path is `/`.
+History-based (`BrowserRouter as Router` in `src/App.jsx`); no `basename` → base
+path `/`. (Vercel SPA rewrite + default Vite `base` `/`.)
 
 ---
 
 ## 8. Cross-system references
 
-**`pact-pro-draft` / `pact-pro`** — two references found in the Django backend:
+**`pact-pro` / `pact-pro-draft`** — a sibling project this codebase was patterned
+after. References found (comments/docstrings only):
 
-1. `advocate_backend/settings.py` line 115:
-   ```python
-   # --- Channels (wired for parity with pact-pro-draft; WebSockets deferred) ---
-   ```
+- `assistant/llm.py` lines 3, 17, 71, 270 — "the exact connection style used by the
+  pact-pro-draft app", "mirroring pact-pro-draft", "pact-pro-draft's `_config_for()`",
+  "Retries transient failures like pact-pro-draft does."
+- `advocate_backend/settings.py:128` — "Channels (wired for parity with
+  pact-pro-draft; WebSockets deferred)".
+- `advocate_backend/asgi.py:3` — "Mirrors the pact-pro-draft pattern…".
 
-2. `advocate_backend/asgi.py` line 3 (docstring):
-   ```
-   Mirrors the pact-pro-draft pattern: HTTP is served now; the 'websocket' branch
-   is intentionally deferred (Phase 2+).
-   ```
+These are structural/pattern references — no imported modules from a sibling
+project, no shared secrets by name, no HTTP calls to another system.
 
-These are **comments only** — no code-level coupling, no shared secrets,
-no shared database names, no HTTP calls to the other system, no imported
-modules from a sibling project.
+**`abstract` / `abstraction`** — only a domain data field (`acts.Section.abstract`,
+India Code's "abstract" text) and FE labels; not the sibling "abstraction" system.
+**`draft`** — besides `pact-pro-draft`, only benign demo strings in
+`core/seed_demo.py`. **`ams`** — only the repo/dir name and top-level docs. No
+`pactpro`/`pact_pro` (no-hyphen) hits.
 
-No references to strings `pactpro`, `abstraction`, `abstract`, `draft`
-(non-Django-framework), or `ams` as a system name were found in the Django
-backend's Python files, migration files, or requirements.
+**Filesystem coupling to the Spring sibling:** `DOCUMENT_UPLOAD_DIR` defaults to
+`../Advocate-app-BE-main/uploads`, so the Django app reads/writes the Spring app's
+uploads folder.
 
-No shared database names: this project uses `advocate_db` (PostgreSQL); the
-Spring Boot sibling uses `advocate` (MySQL). They are different databases on
-different engines.
+**Copy/re-declared schema:** `core/models.py` is a deliberate re-declaration
+(`managed=False`) of the Spring/Hibernate schema. `assistant/llm.py` re-implements
+`pact-pro-draft`'s LLM-client structure.
 
-No shared secrets by name found. No duplicated model definitions that look
-copy-pasted from a sibling project.
+**Spring DB engine/name — UNKNOWN.** `Advocate-app-BE-main/` now contains **only
+`uploads/` (a few PDFs)** — no `application.properties`/`.yml`, no `pom.xml`, no
+`docker-compose`, no source. The prior audit's claim that Spring used **MySQL
+(`advocate`)** was based on `LOCAL_DEVELOPMENT.md` and can no longer be verified
+against Spring config (absent). The Django app **asserts** it shares Spring's
+`advocate_db` PostgreSQL via unmanaged models; the DB is live and holds data (§9),
+but whether Spring itself pointed at this exact DB/engine is unverifiable from files
+present. Redact/verify with a human.
 
 ---
 
 ## 9. Live data profile
 
-**Cannot reach the database.** No database connection is available in this
-audit context. All row counts, user counts, and date ranges are skipped.
+Database **was reachable** this audit. Connected read-only (`SET SESSION READ ONLY`)
+via psycopg2 using `.env` credentials; **SELECT-only**, no writes.
 
-The email-hash file (`AUDIT_ams_email_hashes.txt`) was **not produced** for the
-same reason.
+| Metric | Value |
+|--------|-------|
+| Users (`advocate`) | **16** |
+| Org/tenant table | none (practice via `parent_advocate_id`: **6** advocates have a parent across **4** distinct practice heads; **0** with `left_on` set) |
+| Users with NULL/empty email | **0** |
+| Duplicate email groups (lower(trim(email))) | **0** |
+| Roles by `advocate.role` | ADVOCATE 14, ACCOUNTANT 1, "Super Admin" 1 |
+| `roles` table rows | 6 |
+
+**Five largest tables (by `pg_stat_user_tables` live-tuple estimate):**
+
+| Table | ~rows |
+|-------|-------|
+| `acts_section` | 28,524 |
+| `causelist_item` | 11,022 |
+| `acts_actpaper` | 5,486 |
+| `acts_act` | 1,250 |
+| `audit_log` | 448 |
+
+(next: `activities` 268, `notification_queue` 209, `case_events` 128.)
+
+**Usage date range.** `advocate` has no `date_joined`/`created_at`; `enrollment_date`
+is NULL for all 16 rows, so no user-registration timeline is available. Activity
+proxies: `cases.created_at` spans **2026-02-16 → 2026-09-04**; `audit_log.created_at`
+spans **2026-07-28 → 2026-09-08**; `activities.timestamp` spans
+**2026-08-27 → 2026-09-07**. So real use goes back to at least February 2026.
+
+**Email-hash file:** `AUDIT_ams_email_hashes.txt` written at repo root — **16 lines**,
+one `sha256(lower(trim(email)))` per user, hashes only (no plaintext, no IDs, no
+names). Its contents are intentionally not reproduced here.
 
 ---
 
 ## 10. Uncertainty list
 
-1. **`AUTH_USER_MODEL` is not set and Django auth is not installed.** The
-   `Advocate` model does not participate in Django's auth system at all. Merging
-   this system with another Django project that uses `AbstractUser` will require
-   a complete auth rearchitecture — the two user tables are incompatible.
-
-2. **The Django backend targets PostgreSQL; the Spring Boot sibling targets
-   MySQL.** `LOCAL_DEVELOPMENT.md` and `run-project.bat` describe a
-   Spring+MySQL setup. The Django backend's `settings.py` says
-   `django.db.backends.postgresql` / `advocate_db`. It is unclear whether the
-   PostgreSQL database was ever populated from the MySQL one, or whether both
-   are used simultaneously, or whether the Django backend is a standalone
-   replacement. A human should verify which database is actually in use and
-   whether it contains real data.
-
-3. **Django's development server (`manage.py runserver`) is used as the
-   process command.** There is no production WSGI/ASGI server config
-   (gunicorn, uvicorn, daphne). Running `runserver` in production is unsafe.
-
-4. **`djangorestframework-simplejwt` is installed but not configured in
-   `DEFAULT_AUTHENTICATION_CLASSES`.** The actual JWT work is done by the
-   custom `AdvocateJWTAuthentication`. The SimpleJWT package is dead weight;
-   it should be confirmed whether it provides anything before removal.
-
-5. **No lockfile.** `requirements.txt` uses wildcard pinning (`5.1.*`, `3.15.*`).
-   There is no `pip freeze` output, `poetry.lock`, or `pip-compile`-generated
-   file. Exact transitive dependency versions are UNKNOWN without running
-   `pip freeze` against the installed venv.
-
-6. **CSRF protection is absent.** `CsrfViewMiddleware` is not in `MIDDLEWARE`.
-   All state-mutating endpoints are CSRF-unprotected. This is intentional for
-   a pure API (JWT Bearer auth), but must be verified before merging.
-
-7. **`USE_TZ = False`.** Naive datetimes are used throughout, matching the
-   Spring `LocalDateTime` columns. Any merged system that uses `USE_TZ = True`
-   will need careful datetime handling to avoid UTC-conversion bugs. The
-   settings comment explicitly documents this as intentional.
-
-8. **Passwords are BCrypt (`$2a$10$…`), not Django PBKDF2.** Any merge that
-   routes users through Django's standard `authenticate()` / `check_password()`
-   will fail silently because Django will not recognise the `$2a$` prefix as
-   a valid Django hasher. A custom hasher wrapping `bcrypt` (or
-   `bcrypt_sha256`) must be registered before any integration.
-
-9. **WhatsApp send is mocked.** `communication/whatsapp.py` `SendManualView`
-   records a `MOCK: WhatsApp accepted` response and never calls the Meta Cloud
-   API. A real integration would require `whatsapp_access_token` and
-   `whatsapp_phone_number_id` from `communication_settings`. A human should
-   verify whether real sends are expected.
-
-10. **`DOCUMENT_UPLOAD_DIR` defaults to `../Advocate-app-BE-main/uploads/`**
-    — a path relative to the Django project that assumes the repo layout is
-    exactly as packaged. In any deployment where the Spring sibling is absent
-    or at a different path, document serving/upload will break.
-
-11. **`EMAIL_HOST_PASSWORD` has a hardcoded default in `settings.py`.**
-    The default value of `MAIL_PASSWORD` is a literal app-password string.
-    A human should confirm whether this credential is production-live and
-    rotate it if so.
-
-12. **Migration tree cleanliness (UNKNOWN).** Could not run
-    `makemigrations --check --dry-run`. Visual inspection of the two managed
-    apps (`appeals`, `workspace`) shows their migrations are consistent with
-    their models, but this should be verified against a live environment.
-
-13. **`Advocate.id` is a `BigAutoField` sourced from the pre-existing Spring
-    sequence.** If rows are inserted by both the Spring and Django backends
-    simultaneously, sequence conflicts may occur. The mechanism for keeping
-    the two backends from colliding on the same sequence is not documented.
-
-14. **`recovery-codes.txt`** is present at the repo root. Its contents were
-    not examined to avoid leaking sensitive data, but its presence should be
-    reviewed before this repo is shared with other systems.
+1. **No Django auth / `AUTH_USER_MODEL`.** `Advocate` is a plain unmanaged model;
+   merging with an `AbstractUser`-based project needs a full auth rearchitecture.
+2. **Advocate model fields `parent_advocate_id` and `left_on` were confirmed in the
+   live DB but their exact `core/models.py` field declarations were not re-quoted
+   verbatim** — confirm types/nullability before relying on them.
+3. **`Task` FK vs bare-int.** Prior audit listed `Task.advocate` as a relational FK;
+   current models agent classifies `Task.advocate_id` as a bare int. Verify the
+   actual declaration in `core/models.py`.
+4. **`makemigrations --check --dry-run` not run** (hard read-only constraint forbids
+   `makemigrations`). Migration-tree cleanliness is UNKNOWN; verify in a live env.
+5. **Imperative DDL outside migrations.** `core/enable_shared_practice`,
+   `core/scope_case_numbers`, `core/add_notification_links`, and
+   `acts/index_acts_search` change schema/indexes directly. These changes are not
+   captured as Django migrations — a fresh environment must run them explicitly.
+6. **Spring backend source is gone** (`Advocate-app-BE-main/` = uploads only), so the
+   "same `advocate_db` PostgreSQL" claim and the old "MySQL" note cannot be
+   reconciled from files. Confirm which engine/DB is authoritative and who owns the
+   schema/sequences now.
+7. **`Advocate.id` uses a pre-existing sequence.** If both Spring and Django ever
+   insert advocates, sequence-ownership must be clear. `scope_case_numbers` already
+   had to move `cases.case_number` uniqueness to per-advocate — a sign of prior
+   collisions; watch for similar global-unique assumptions on merge.
+8. **Dev server in "production."** `runserver 0.0.0.0:8080` + a hand-rolled scheduler
+   loop; no gunicorn/uvicorn/daphne, no supervisor. LAN-exposed.
+9. **CSRF absent, `USE_TZ=False`, bcrypt (`$2a$`) passwords.** Intentional for this
+   JWT API and Spring parity, but all three break naive integration with a
+   Django-standard project (CSRF middleware order, UTC conversion, `check_password`).
+10. **No lockfile; wildcard pins.** Exact transitive versions drift; §3 versions are
+    from this venv's `pip freeze` and may differ elsewhere.
+11. **`djangorestframework-simplejwt` installed but unused** — confirm nothing
+    depends on it before removal.
+12. **External scraper dependency.** `courtsearch` needs a separate FastAPI scraper
+    service (`COURT_API_BASE`, default `:8000`) that itself scrapes eCourts/SCI with
+    very long timeouts (≤1800 s). Availability, IP-reputation, and legal/ToS posture
+    of that scraping should be reviewed. `scan_appeals` scrapes live nightly.
+13. **LLM egress.** The assistant streams to a remote LLM (local-over-ngrok or
+    Google Gemini). Advocate-scoped case context is placed in prompts and sent
+    off-box; confirm data-egress policy. `GEMINI_API_KEY`/`LLM_API_KEY` live in
+    `.env`.
+14. **WhatsApp is disabled and mock-only** (`WHATSAPP_ENABLED=False`, sender raises
+    `NotImplementedError`); no real Meta integration despite the config surface.
+15. **`.env` present in the Django dir** (gitignored). Read for names only; verify no
+    live secret was ever committed historically (settings comments say committed
+    literals for `SECRET_KEY` default, `OTP_SALT`, `WHATSAPP_VERIFY_TOKEN`, and mail
+    creds were removed — history should be checked and any exposed secret rotated).
+16. **`recovery-codes.txt`** was reported at repo root in the prior audit — if still
+    present, review/remove before sharing the repo.
+```

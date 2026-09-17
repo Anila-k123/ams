@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { FiSearch, FiX, FiPlus, FiClock, FiTrash2, FiFileText, FiUsers, FiBriefcase, FiCalendar, FiDollarSign, FiCreditCard, FiFolder } from "react-icons/fi";
+import { FiSearch, FiX, FiClock, FiTrash2 } from "react-icons/fi";
 import { useSearch } from "../contexts/SearchContext";
 import SearchResultCard from "./SearchResultCard";
 
@@ -14,16 +14,6 @@ const SECTION_LABELS = {
   documents: "Documents",
   payments: "Payments",
 };
-
-const QUICK_ACTIONS = [
-  { icon: <FiUsers />, label: "New Client", action: "clients" },
-  { icon: <FiBriefcase />, label: "New Case", action: "cases" },
-  { icon: <FiCalendar />, label: "New Hearing", action: "hearings" },
-  { icon: <FiDollarSign />, label: "Generate Invoice", action: "invoices" },
-  { icon: <FiFolder />, label: "Upload Document", action: "documents" },
-  { icon: <FiCreditCard />, label: "Add Expense", action: "expenses" },
-  { icon: <FiFileText />, label: "Record Payment", action: "payments" },
-];
 
 function buildFlatList(results) {
   if (!results) return [];
@@ -40,7 +30,7 @@ function buildFlatList(results) {
   return flat;
 }
 
-export default function GlobalSearchModal({ isOpen, onClose, onNavigate, onQuickAction }) {
+export default function GlobalSearchModal({ isOpen, onClose, onNavigate }) {
   const { query, results, loading, selectedIndex, recentSearches, setQuery, setSelectedIndex, addRecentSearch, clearRecentSearches, resetSearch } = useSearch();
   const [showRecent, setShowRecent] = useState(true);
   const inputRef = useRef(null);
@@ -101,11 +91,6 @@ export default function GlobalSearchModal({ isOpen, onClose, onNavigate, onQuick
     onNavigate(section, item);
   };
 
-  const handleQuickAction = (action) => {
-    onClose();
-    if (onQuickAction) onQuickAction(action);
-  };
-
   const handleRecentClick = (term) => {
     setQuery(term);
   };
@@ -164,23 +149,6 @@ export default function GlobalSearchModal({ isOpen, onClose, onNavigate, onQuick
                   </div>
                 </>
               )}
-
-              <div className="global-search-section-label">
-                <FiPlus className="gs-section-icon" />
-                Quick Actions
-              </div>
-              <div className="gs-quick-actions">
-                {QUICK_ACTIONS.map((qa, idx) => (
-                  <button
-                    key={idx}
-                    className="gs-quick-action-btn"
-                    onClick={() => handleQuickAction(qa.action)}
-                  >
-                    <span className="gs-qa-icon">{qa.icon}</span>
-                    <span className="gs-qa-label">{qa.label}</span>
-                  </button>
-                ))}
-              </div>
 
               {recentSearches.length === 0 && (
                 <div className="global-search-hint">

@@ -313,6 +313,12 @@ function buildParties(record, courtId) {
 // Parse the portal's mixed date formats into ISO (yyyy-mm-dd); "" if unparseable.
 const _MONTHS = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
   jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12 };
+// eCourts CNR = 16 chars: 4 letters (state+district+establishment) + 12 digits.
+// e.g. KLML170000832024. Case-insensitive — users may type lowercase.
+const CNR_RE = /^[A-Za-z]{4}\d{12}$/;
+const isValidCnr = (v) => CNR_RE.test(String(v || "").trim());
+const CNR_WARNING = "CNR must be 16 characters: 4 letters + 12 digits (e.g. KLML170000832024).";
+
 function toISODate(s) {
   if (!s) return "";
   const t = String(s).trim();
@@ -409,7 +415,6 @@ export default function AddCase() {
 
   const [step, setStep] = useState("select"); // select | search | review | manual
   const [courts, setCourts] = useState([]);
-  const [forumQuery, setForumQuery] = useState("");
   const [selectedCourt, setSelectedCourt] = useState(null);
   const [clients, setClients] = useState([]);
 
@@ -530,10 +535,15 @@ export default function AddCase() {
     return list;
   }, [courts]);
 
-  const filteredForums = useMemo(() => {
-    const q = forumQuery.trim().toLowerCase();
-    return q ? forums.filter((f) => f.name.toLowerCase().includes(q)) : forums;
-  }, [forums, forumQuery]);
+  const forumOptions = useMemo(
+    () => forums.map((f) => ({ value: f.id, label: f.name, forum: f })),
+    [forums]
+  );
+
+  // CNR validity — shared by the three online CNR search inputs (all use cnrInput).
+  const cnrTrimmed = cnrInput.trim();
+  const cnrValid = isValidCnr(cnrTrimmed);
+  const cnrWarn = cnrTrimmed.length > 0 && !cnrValid;  // show only after typing
 
   const loadCaseTypes = useCallback(async (courtId) => {
     setTypesLoading(true); setCaseTypes({}); setLkType(null);
@@ -786,7 +796,7 @@ export default function AddCase() {
   const sciSearchEnabled = (() => {
     if (sciMode === "case_number") return !!(lkType && lkNumber.trim() && lkYear);
     if (sciMode === "diary_no") return !!lkNumber.trim() && !!sciYear;
-    if (sciMode === "cnr") return !!cnrInput.trim();
+    if (sciMode === "cnr") return cnrValid;
     if (sciMode === "aor_code") return !!sciAorCode.trim() && !!sciYear;
     if (sciMode === "party_name") return sciPartyName.trim().length >= 3;
     return false;
@@ -1136,7 +1146,7 @@ export default function AddCase() {
   };
 
   const ecSearchEnabled = (() => {
-    if (ecMode === "cnr") return !!cnrInput.trim();
+    if (ecMode === "cnr") return cnrValid;
     const isHc = selectedCourt?.id === "ecourts_hc";
     const ready = isHc ? hcReady : cascadeReady;
     if (!ready) return false;
@@ -1169,6 +1179,16 @@ export default function AddCase() {
 
   // The 16-digit rule is Madras HC's CNR format; eCourts / manual cases use other formats.
   const requires16 = selectedCourt?.id === "madras_hc";
+
+  // Soft, non-blocking CNR hint for the manual Case Number: only when the value
+  // looks like an attempted CNR (16 chars) but breaks the pattern. Skipped when
+  // requires16 (Madras HC keeps its own rule) to avoid double messaging.
+  const caseNumberCnrHint =
+    !requires16 &&
+    newCase.caseNumber.trim().length === 16 &&
+    !isValidCnr(newCase.caseNumber)
+      ? "Doesn't match CNR format (4 letters + 12 digits) — save anyway if this isn't a CNR."
+      : "";
 
   const onField = (e) => {
     const { name, value } = e.target;
@@ -1272,6 +1292,7 @@ export default function AddCase() {
                  className={caseNumberError ? "ac-input-error" : ""}
                  placeholder={requires16 ? "16-digit CNR" : "Case number"} />
           {caseNumberError && <span className="ac-field-error">{caseNumberError}</span>}
+          {!caseNumberError && caseNumberCnrHint && <span className="ac-field-warning">{caseNumberCnrHint}</span>}
         </div>
         <div className="ac-field">
           <label>Case Title</label>
@@ -1345,30 +1366,7 @@ export default function AddCase() {
           <div className="ac-panel">
             <div className="ac-panel-head">Quick Select</div>
             <div className="ac-panel-body">
-              <div className="ac-search">
-                <FiSearch />
-                <input value={forumQuery} onChange={(e) => setForumQuery(e.target.value)}
-                       placeholder="Start typing to search for a court…" />
-              </div>
               <ul className="ac-forum-list">
-                {filteredForums.map((f) => (
-                  <li key={f.id}>
-                    <button className="ac-forum-item" onClick={() => chooseForum(f)}>
-                      {f.kind === "manual" ? <FiEdit3 /> : f.kind === "cnr" ? <FiSearch /> : <FiHome />}
-                      <span>{f.name}</span>
-                    </button>
-                  </li>
-                ))}
-                {filteredForums.length === 0 && <li className="ac-empty">No match.</li>}
-              </ul>
-            </div>
-          </div>
-
-          <div className="ac-panel">
-            <div className="ac-panel-head">Available Courts</div>
-            <div className="ac-panel-body">
-              {courtsLoading && <p className="ac-hint">Loading courts…</p>}
-              <ul className="ac-forum-list plain">
                 {forums.map((f) => (
                   <li key={f.id}>
                     <button className="ac-forum-item" onClick={() => chooseForum(f)}>
@@ -1377,10 +1375,27 @@ export default function AddCase() {
                     </button>
                   </li>
                 ))}
+                {forums.length === 0 && <li className="ac-empty">No courts available.</li>}
               </ul>
-              {courtsError
-                ? <p className="ac-hint">Online courts are unavailable until the lookup service is running. You can still choose “Offline / Manual Entry”.</p>
-                : <p className="ac-hint">More courts appear here automatically as they’re added. Choose “Offline / Manual Entry” to type a case in yourself.</p>}
+            </div>
+          </div>
+
+          <div className="ac-panel">
+            <div className="ac-panel-head">Available Courts</div>
+            <div className="ac-panel-body">
+              {courtsLoading && <p className="ac-hint">Loading courts…</p>}
+              <div className="ac-field">
+                <label>Select a court</label>
+                <Select
+                  options={forumOptions}
+                  value={null}
+                  onChange={(opt) => opt && chooseForum(opt.forum)}
+                  isLoading={courtsLoading}
+                  placeholder={courtsLoading ? "Loading courts…" : "Select a court to proceed…"}
+                  styles={customSelectStyles}
+                  isSearchable
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -1456,7 +1471,8 @@ export default function AddCase() {
           {sciMode === "cnr" && (
             <div className="ac-search-form">
               <div className="ac-field ac-field-full"><label>CNR Number</label>
-                <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-char CNR" /></div>
+                <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-char CNR" />
+                {cnrWarn && <p className="ac-warning">{CNR_WARNING}</p>}</div>
             </div>
           )}
           {sciMode === "aor_code" && (
@@ -1542,7 +1558,8 @@ export default function AddCase() {
           {/* Per-mode fields */}
           {ecMode === "cnr" && (
             <div className="ac-search-form"><div className="ac-field ac-field-full"><label>CNR Number</label>
-              <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-digit CNR, e.g. KLML170000832024" /></div></div>
+              <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-digit CNR, e.g. KLML170000832024" />
+              {cnrWarn && <p className="ac-warning">{CNR_WARNING}</p>}</div></div>
           )}
           {ecMode === "case_number" && (
             <div className="ac-search-form">
@@ -1940,10 +1957,11 @@ export default function AddCase() {
               <label>CNR Number</label>
               <input value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16}
                 placeholder="16-char CNR, e.g. KLML170000832024" />
+              {cnrWarn && <p className="ac-warning">{CNR_WARNING}</p>}
             </div>
           </div>
           <div className="ac-actions">
-            <button className="ac-search-btn" onClick={runSearchCnr} disabled={searching || !cnrInput.trim()}>
+            <button className="ac-search-btn" onClick={runSearchCnr} disabled={searching || !cnrValid}>
               <FiSearch /> {searching ? "Searching case…" : "Search For Case"}
             </button>
           </div>

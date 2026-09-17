@@ -12,4 +12,5 @@ urlpatterns = [
     path('cases/transfer-targets', views.TransferTargetsView.as_view()),
     path('cases/transfer/<int:pk>', views.TransferCaseView.as_view()),
     path('cases/<int:pk>/hearing-alert', views.HearingAlertView.as_view()),
+    path('cases/<int:case_id>/timeline', views.CaseTimelineView.as_view()),
 ]

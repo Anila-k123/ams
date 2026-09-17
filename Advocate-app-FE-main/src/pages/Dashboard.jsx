@@ -7,7 +7,7 @@ import {
   FiBriefcase, FiFolder, FiUsers, FiCalendar, FiFileText,
   FiTrendingUp, FiSettings, FiLogOut, FiSearch,
   FiCheckCircle, FiCheckSquare, FiAlertCircle, FiMessageSquare,
-  FiActivity, FiChevronDown, FiDownload
+  FiActivity, FiChevronDown, FiDownload, FiZap
 } from "react-icons/fi";
 import ReportService from "../services/ReportService";
 import { formatCurrency } from "../utils/formatCurrency";
@@ -20,14 +20,13 @@ import "../assets/styles/Dashboard.css";
 import "../assets/styles/Assistant.css";
 import "../assets/styles/RealTime.css";
 import "../assets/styles/ReportsCenter.css";
+import LOGO_RE from '../assets/images/LOGO_RE.png';
 import { DashboardFilterProvider, useDashboardFilter } from "../contexts/DashboardFilterContext";
 import { AssistantProvider } from "../contexts/AssistantContext";
 import { WebSocketProvider, useWebSocketContext } from "../contexts/realtime/WebSocketProvider";
 import { SidebarProvider, useSidebar } from "../contexts/SidebarContext";
 import { PermissionProvider, usePermission } from "../contexts/PermissionContext";
 import dashboardService from "../services/DashboardService";
-import DashboardTimeNavigator from "../components/DashboardTimeNavigator";
-import TimeSwitcher from "../components/TimeSwitcher";
 import AssistantPanel from "../components/AssistantPanel";
 import PermissionRoute from "../components/PermissionRoute";
 import NotificationBell from "../components/NotificationBell";
@@ -35,6 +34,7 @@ import ActivityFeed from "../components/ActivityFeed";
 import HearingAlertPopup from "../components/HearingAlertPopup";
 import SearchModal from "../components/SearchModal";
 import GlobalSearchModal from "../components/GlobalSearchModal";
+import QuickActionsModal from "../components/QuickActionsModal";
 import { SearchProvider } from "../contexts/SearchContext";
 import {
   Skeleton, SkeletonCard, SkeletonChart, SkeletonHearingItem,
@@ -185,11 +185,9 @@ function DashboardShell() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   // Global Search
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState(null);
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [casesOpen, setCasesOpen] = useState(true);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
 
   // Audio Alerts
 
@@ -238,7 +236,7 @@ function DashboardShell() {
 
   // Context: filtered dashboard data
   const filter = useDashboardFilter();
-  const { data, loading, view } = filter;
+  const { data, loading } = filter;
 
   // Live dashboard updates
   const { subscribe: wsSubscribe } = useWebSocketContext();
@@ -395,28 +393,6 @@ function DashboardShell() {
     }
   };
 
-  const handleSearchChange = async (e) => {
-    const query = e.target.value;
-    setSearchQuery(query);
-    if (query.trim().length < 2) {
-      setSearchResults(null);
-      setShowSuggestions(false);
-      return;
-    }
-    try {
-      const res = await withLoading(
-        axios.get(`/api/search?keyword=${encodeURIComponent(query)}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        "Searching..."
-      );
-      setSearchResults(res.data);
-      setShowSuggestions(true);
-    } catch (err) {
-      console.error("Error in global search:", err);
-    }
-  };
-
   const handleToggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     toggleTheme();
@@ -471,8 +447,17 @@ function DashboardShell() {
     }
   };
 
-  const handleQuickAction = (action) => {
-    navigate(`/dashboard/${action}`);
+  // Quick Actions → navigate to the page and open its "add" form directly.
+  // Mirrors the AI-assistant flow: navigate, then dispatch the modal event
+  // once the target page has mounted its listener.
+  const handleQuickAction = (route, modalToOpen) => {
+    setQuickActionsOpen(false);
+    navigate(route);
+    if (modalToOpen) {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("assistant-open-modal", { detail: modalToOpen }));
+      }, 450);
+    }
   };
 
   return (
@@ -484,10 +469,9 @@ function DashboardShell() {
       {/* ===== SIDEBAR ===== */}
       <aside className="left-sidebar">
         <div className="brand">
-          <div className="brand-logo">⚖️</div>
+          <div className="brand-logo"><img src={LOGO_RE}/></div>
           <div>
-            <div className="brand-name">AdvocateApp</div>
-            <div className="brand-sub">Practice Manager</div>
+            <div className="brand-name">AMS</div>
           </div>
         </div>
 
@@ -496,6 +480,12 @@ function DashboardShell() {
           <FiSearch className="sidebar-search-icon" />
           <span className="sidebar-search-txt">Search</span>
           <span className="sidebar-search-shortcut">Ctrl+K</span>
+        </div>
+
+        {/* Quick Actions Toggle */}
+        <div className="sidebar-search-btn" onClick={() => setQuickActionsOpen(true)}>
+          <FiZap className="sidebar-search-icon" />
+          <span className="sidebar-search-txt">Quick Actions</span>
         </div>
 
         <nav className="nav">
@@ -701,54 +691,11 @@ function DashboardShell() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="search-bar-container">
-            <div className="search-input-box">
-              <FiSearch className="search-icon" />
-              <input
-                type="text"
-                placeholder="Search cases, clients, hearings..."
-                value={searchQuery}
-                onChange={handleSearchChange}
-                onFocus={() => setShowSuggestions(true)}
-                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              />
-            </div>
-            {showSuggestions && searchResults && (
-              <div className="autocomplete-suggestions">
-                {searchResults.cases?.length > 0 && (
-                  <div className="suggestion-section">
-                    <h5>Cases</h5>
-                    {searchResults.cases.map(c => (
-                      <Link key={c.id} to="/dashboard/cases" className="suggestion-item">{c.caseNumber} — {c.caseTitle}</Link>
-                    ))}
-                  </div>
-                )}
-                {searchResults.clients?.length > 0 && (
-                  <div className="suggestion-section">
-                    <h5>Clients</h5>
-                    {searchResults.clients.map(c => (
-                      <Link key={c.id} to="/dashboard/clients" className="suggestion-item">{c.name} ({c.phone})</Link>
-                    ))}
-                  </div>
-                )}
-                {searchResults.documents?.length > 0 && (
-                  <div className="suggestion-section">
-                    <h5>Documents</h5>
-                    {searchResults.documents.map(d => (
-                      <Link key={d.id} to="/dashboard/documents" className="suggestion-item">{d.fileName}</Link>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Time Navigator + Time Switcher — only on dashboard home */}
+          {/* Period filters (date navigator + day/week/month/year switcher) are
+              hidden: the backend ignores those params, so switching periods was
+              a no-op. Only the live indicator remains. */}
           {isDashboardHome && (
             <div className="topbar-filter-area">
-              <DashboardTimeNavigator />
-              <TimeSwitcher />
               <span className="dashboard-live-indicator" title="Live — auto-refreshes every 30 seconds">
                 <span className="live-dot" />
                 Live{filter.lastUpdated ? ` · ${filter.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
@@ -860,12 +807,7 @@ function DashboardShell() {
                           <div className="card-left">
                             <span className="card-title">Clients</span>
                             <h3 className="card-val"><CountUp value={dash.totalClients} /></h3>
-                            <span className="card-subtext">{
-                              view === 'day' ? 'Added Today' :
-                              view === 'week' ? 'Added This Week' :
-                              view === 'month' ? 'Added This Month' :
-                              'Added This Year'
-                            }</span>
+                            <span className="card-subtext">All time</span>
                           </div>
                           <div className="card-icon-box"><FiUsers /></div>
                         </Link>
@@ -1217,7 +1159,7 @@ function DashboardShell() {
 
                   {/* Footer */}
                   <footer className="dashboard-footer-main">
-                    <span>© 2025 AdvocateApp. All rights reserved.</span>
+                    <span>© 2026 AMS. All rights reserved.</span>
                     <span>Version 1.0.0</span>
                   </footer>
                 </div>
@@ -1267,8 +1209,9 @@ function DashboardShell() {
 
       <AssistantPanel />
       <SearchProvider>
-        <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} onNavigate={handleSearchNavigate} onQuickAction={handleQuickAction} />
+        <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} onNavigate={handleSearchNavigate} />
       </SearchProvider>
+      <QuickActionsModal isOpen={quickActionsOpen} onClose={() => setQuickActionsOpen(false)} onAction={handleQuickAction} />
 
     </div>
   );

@@ -1,5 +1,5 @@
 import '../assets/styles/Login.css';
-import logpic from '../assets/images/login.jpeg';
+import logpic from '../assets/images/login.png';
 import { useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import axios from 'axios';

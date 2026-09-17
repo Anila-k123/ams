@@ -544,7 +544,16 @@ function Expenses() {
             <h3>Add Client Payment</h3>
             <form onSubmit={handlePaymentSubmit} className="expense-form">
               <input name="amount" type="number" placeholder="Amount" value={newPayment.amount} onChange={handlePaymentChange} required />
-              <input name="paymentMode" placeholder="Payment Mode (UPI/Bank/Cash)" value={newPayment.paymentMode} onChange={handlePaymentChange} />
+              <select name="paymentMode" value={newPayment.paymentMode} onChange={handlePaymentChange}>
+                <option value="" disabled>Payment Mode</option>
+                <option value="UPI">UPI</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Cash">Cash</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Card">Card (Credit/Debit)</option>
+                <option value="Net Banking">Net Banking</option>
+                <option value="Demand Draft">Demand Draft</option>
+              </select>
               <input name="referenceNumber" placeholder="Reference / Transaction No." value={newPayment.referenceNumber} onChange={handlePaymentChange} />
               <input name="paymentDate" type="date" value={newPayment.paymentDate} onChange={handlePaymentChange} />
               <textarea name="description" placeholder="Description" value={newPayment.description} onChange={handlePaymentChange}></textarea>

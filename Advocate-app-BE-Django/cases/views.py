@@ -1,6 +1,6 @@
 import datetime
 from django.db.models import Q
-from django.db import transaction
+from django.db import transaction, connection
 from django.conf import settings
 from django.core.mail import send_mail
 from rest_framework.views import APIView
@@ -41,6 +41,70 @@ def _extract_client_id(data):
     if isinstance(client, dict):
         return client.get('id')
     return None
+
+
+class CaseTimelineView(APIView):
+    """Read-only activity timeline for a case, newest first.
+
+    Reads the Spring-era `case_timeline_event` table directly (it has no Django
+    model). Supports ?search= (title/description) and ?eventType=A,B filtering
+    plus page/size pagination, returned in the Spring response shape the
+    frontend CaseTimeline component expects.
+    """
+    permission_classes = [RequirePermission()]
+
+    def get(self, request, case_id):
+        if not Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists():
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            page = max(int(request.query_params.get('page', 0)), 0)
+        except (TypeError, ValueError):
+            page = 0
+        try:
+            size = min(max(int(request.query_params.get('size', 20)), 1), 100)
+        except (TypeError, ValueError):
+            size = 20
+        search = (request.query_params.get('search') or '').strip()
+        event_types = [t.strip() for t in (request.query_params.get('eventType') or '').split(',') if t.strip()]
+
+        where = ['case_id = %s']
+        params = [case_id]
+        if search:
+            where.append('(title ILIKE %s OR description ILIKE %s)')
+            params += ['%' + search + '%', '%' + search + '%']
+        if event_types:
+            where.append('event_type IN (' + ','.join(['%s'] * len(event_types)) + ')')
+            params += event_types
+        where_sql = ' AND '.join(where)
+
+        with connection.cursor() as cur:
+            cur.execute('SELECT count(*) FROM case_timeline_event WHERE ' + where_sql, params)
+            total = cur.fetchone()[0]
+            cur.execute(
+                'SELECT id, title, description, created_at, event_type, color, icon, '
+                'reference_type, reference_id, performed_by '
+                'FROM case_timeline_event WHERE ' + where_sql +
+                ' ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s',
+                params + [size, page * size])
+            rows = cur.fetchall()
+
+        content = [{
+            'id': r[0], 'title': r[1], 'description': r[2],
+            'createdAt': r[3].isoformat() if r[3] else None,
+            'eventType': r[4], 'color': r[5], 'icon': r[6],
+            'referenceType': r[7], 'referenceId': r[8], 'performedBy': r[9],
+        } for r in rows]
+
+        total_pages = (total + size - 1) // size if size else 0
+        return Response({
+            'content': content,
+            'number': page,
+            'size': size,
+            'totalElements': total,
+            'totalPages': total_pages,
+            'last': (page >= total_pages - 1) if total_pages else True,
+        })
 
 
 class CaseListView(APIView):

@@ -74,3 +74,5 @@ Advocate-app-FE-main/dist/
 # ignored in the frontend .gitignore, which does not cover the backend path.
 Advocate-app-BE-Django/uploads/
 Advocate-app-BE-Django/logs/
+Advocate-app-BE-main/uploads/
+Advocate-app-BE-main/logs/

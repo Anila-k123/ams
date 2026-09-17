@@ -144,6 +144,7 @@
 .ac-field textarea:focus { outline: none; border-color: var(--accent); }
 .ac-input-error { border-color: #e04f5f !important; }
 .ac-field-error { color: #e04f5f; font-size: 0.78rem; }
+.ac-field-warning { display: block; margin-top: 4px; color: #d97706; font-size: 0.78rem; }
 
 /* Case form */
 .ac-form-grid {
@@ -174,6 +175,7 @@
 .ac-save:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .ac-error { color: #e04f5f; font-size: 0.85rem; margin: 14px 0 0; text-align: center; }
+.ac-warning { color: #d97706; font-size: 0.8rem; margin: 6px 2px 0; line-height: 1.4; }
 
 .ac-banner {
   display: flex;

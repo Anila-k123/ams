@@ -2,12 +2,16 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import AsyncSelect from "react-select/async";
+import { jwtDecode } from "jwt-decode";
 import {
   FiArrowLeft, FiCalendar, FiFolder, FiEye, FiDownload, FiUpload, FiTrash2,
-  FiPlus, FiClock, FiTag, FiCheckCircle, FiCircle, FiFileText, FiDollarSign,
-  FiUsers, FiLink, FiPaperclip, FiBook, FiEdit2, FiSave, FiX
+  FiPlus, FiClock, FiTag, FiCheckCircle, FiCircle, FiFileText,
+  FiUsers, FiLink, FiPaperclip, FiBook, FiEdit2, FiSave, FiX, FiZap, FiUser,
+  FiXCircle, FiRotateCcw
 } from "react-icons/fi";
+import { TbCurrencyRupee } from "react-icons/tb";
 import CaseTimeline from "../components/CaseTimeline.jsx";
+import DocumentSummaryModal from "../components/DocumentSummaryModal";
 import CaseExtraDetails from "../components/CaseExtraDetails.jsx";
 import { fetchCourtDocument, downloadHcOrderPdf, fetchHcBusiness } from "../services/courtDocuments";
 import { useToast } from "../contexts/ToastContext.jsx";
@@ -18,6 +22,14 @@ import { InlineLoader } from "../components/Loader";
 import "../assets/styles/CaseDetail.css";
 
 const TABS = ["Parties", "Hearings", "Events", "Orders", "Expenses", "Invoices", "Tasks", "Notes", "Documents", "Related Cases", "Acts", "Extra Details", "Timeline"];
+
+// Same document categories offered on the main Documents upload, so a document
+// attached to a task is filed under the same taxonomy.
+const DOC_CATEGORIES = [
+  "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
+  "Notice", "Judgment", "Invoice", "Payment Receipt",
+  "Identity Proof", "Address Proof", "Other",
+];
 const STATUS_SELECT = [
   { value: "", label: "—" },
   { value: "Active", label: "Active" },
@@ -248,10 +260,14 @@ export default function CaseDetail() {
   const navigate = useNavigate();
   const { success, error } = useToast();
   const { hasPermission } = usePermission();
+  const [summaryDoc, setSummaryDoc] = useState(null);
   const { withLoading } = useLoading();
 
   const token = localStorage.getItem("token");
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
+  const myId = (() => {
+    try { return jwtDecode(token)?.advocateId ?? null; } catch { return null; }
+  })();
 
   const [tab, setTab] = useState("Parties");
   const [summary, setSummary] = useState(null);
@@ -389,7 +405,8 @@ export default function CaseDetail() {
   // Inputs
   const [newTag, setNewTag] = useState("");
   const [newNote, setNewNote] = useState("");
-  const [newTask, setNewTask] = useState({ title: "", priority: "MEDIUM", deadline: "" });
+  const [newTask, setNewTask] = useState({ title: "", priority: "MEDIUM", deadline: "", category: "", assignedTo: "" });
+  const [assignees, setAssignees] = useState([]);
   const [taskFiles, setTaskFiles] = useState([]);
   const [uploadFile, setUploadFile] = useState(null);
   // Upload Order modal
@@ -887,6 +904,10 @@ export default function CaseDetail() {
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
 
+  // Load financials on mount too — the header "Amount" shows the total invoiced,
+  // so it can't wait for the Expenses/Invoices tab to be opened.
+  useEffect(() => { fetchFinancials(); }, [fetchFinancials]);
+
   const fetchCourtRecord = useCallback(async () => {
     setCourtRecordLoading(true);
     try {
@@ -906,6 +927,15 @@ export default function CaseDetail() {
   // strip, so it can't wait for a tab to open. Defined here (after
   // fetchCourtRecord) to avoid a temporal-dead-zone reference.
   useEffect(() => { fetchCourtRecord(); }, [fetchCourtRecord]);
+
+  // Team members a senior can assign tasks to (only fetched if permitted).
+  useEffect(() => {
+    if (!hasPermission("TASK_ASSIGN")) return;
+    axios.get("/api/workspace/assignable-advocates", authHeaders)
+      .then((res) => setAssignees(res.data || []))
+      .catch((err) => console.error("Error fetching assignable advocates:", err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Lazily load tab data on demand
   useEffect(() => {
@@ -968,19 +998,21 @@ export default function CaseDetail() {
       await withLoading((async () => {
         const res = await axios.post(`/api/workspace/cases/${id}/tasks`, {
           title, priority: newTask.priority, deadline: newTask.deadline || null,
+          assignedToId: newTask.assignedTo || undefined,
         }, authHeaders);
         const taskId = res.data.id;
         for (const file of taskFiles) {
           const fd = new FormData();
           fd.append("file", file);
           fd.append("caseId", id);
+          if (newTask.category) fd.append("category", newTask.category);
           const up = await axios.post("/api/documents/upload", fd, authHeaders);
           if (up.data?.id) {
             await axios.post(`/api/workspace/tasks/${taskId}/documents`, { documentId: up.data.id }, authHeaders);
           }
         }
       })(), "Adding task...");
-      setNewTask({ title: "", priority: "MEDIUM", deadline: "" });
+      setNewTask({ title: "", priority: "MEDIUM", deadline: "", category: "", assignedTo: "" });
       setTaskFiles([]);
       fetchTasks();
       fetchSummary();
@@ -996,12 +1028,19 @@ export default function CaseDetail() {
     } catch { error("Failed to update task."); }
   };
 
-  const deleteTask = async (taskId) => {
+  const changeTaskPriority = async (taskId, priority) => {
     try {
-      await axios.delete(`/api/workspace/tasks/${taskId}`, authHeaders);
+      await axios.put(`/api/workspace/tasks/${taskId}/priority`, { priority }, authHeaders);
+      fetchTasks();
+    } catch { error("Failed to update priority."); }
+  };
+
+  const cancelTask = async (taskId, cancelled = true) => {
+    try {
+      await axios.put(`/api/workspace/tasks/${taskId}/cancel`, { cancelled }, authHeaders);
       fetchTasks();
       fetchSummary();
-    } catch { error("Failed to delete task."); }
+    } catch { error("Failed to update task."); }
   };
 
   // ---------- Documents ----------
@@ -1129,9 +1168,9 @@ export default function CaseDetail() {
                   ...clients.map((c) => ({ value: String(c.id), label: c.name }))]}
                 onSave={(v) => patchCase({ clientId: v === "" ? null : Number(v) })} />
             </span>
-            <span><strong>Amount:</strong>{" "}
-              <InlineEdit value={summary.amount ?? ""} display={formatCurrency(summary.amount || 0)} type="number"
-                onSave={(v) => patchCase({ amount: v === "" ? null : Number(v) })} />
+            <span title="Total invoiced for this case">
+              <strong>Amount:</strong>{" "}
+              {formatCurrency(financials?.totals?.totalInvoiced || 0)}
             </span>
           </div>
 
@@ -1165,7 +1204,7 @@ export default function CaseDetail() {
           <div className="cd-header-actions">
             {hasPermission("INVOICE_CREATE") && (
               <button className="cd-raise-invoice" onClick={() => setShowInvoiceModal(true)}>
-                <FiDollarSign /> Raise Invoice
+                <TbCurrencyRupee /> Raise Invoice
               </button>
             )}
             {(courtRecord || hasPermission("CASE_DELETE") || canTransfer) && (
@@ -1471,7 +1510,7 @@ export default function CaseDetail() {
 
             <div className="cd-fin-section">
               <div className="cd-fin-section-head">
-                <h4><FiDollarSign /> Expenses {financials ? `(${financials.totals.expenseCount})` : ""}</h4>
+                <h4><TbCurrencyRupee /> Expenses {financials ? `(${financials.totals.expenseCount})` : ""}</h4>
                 {hasPermission("EXPENSE_CREATE") && <button className="cd-fin-add-btn" onClick={() => setShowExpenseModal(true)}><FiPlus /> Add Expense</button>}
               </div>
               {!financials ? (
@@ -1482,7 +1521,7 @@ export default function CaseDetail() {
                 <div className="cd-list">
                   {financials.expenses.map((exp) => (
                     <div className="cd-list-item" key={exp.id}>
-                      <div className="cd-li-icon"><FiDollarSign /></div>
+                      <div className="cd-li-icon"><TbCurrencyRupee /></div>
                       <div className="cd-li-body">
                         <span className="cd-li-title">{exp.title}
                           {exp.category && <span className="cd-li-type">{exp.category}</span>}
@@ -1583,6 +1622,22 @@ export default function CaseDetail() {
                     onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />
                 </label>
               </div>
+              <div className="cd-task-field">
+                <label>Category</label>
+                <select value={newTask.category} onChange={(e) => setNewTask({ ...newTask, category: e.target.value })}>
+                  <option value="">Select category</option>
+                  {DOC_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              {hasPermission("TASK_ASSIGN") && (
+                <div className="cd-task-field">
+                  <label>Assign to</label>
+                  <select value={newTask.assignedTo} onChange={(e) => setNewTask({ ...newTask, assignedTo: e.target.value })}>
+                    <option value="">Myself</option>
+                    {assignees.map((a) => <option key={a.id} value={a.id}>{a.fullName || a.email}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="cd-task-field cd-task-field-submit">
                 {hasPermission("TASK_CREATE") && <button onClick={addTask}><FiPlus /> Add</button>}
               </div>
@@ -1590,12 +1645,12 @@ export default function CaseDetail() {
             {tasks.length === 0 ? (
               <p className="cd-muted">No tasks for this case.</p>
             ) : tasks.map((t) => (
-              <div className={`cd-task ${t.completed ? "done" : ""}`} key={t.id}>
+              <div className={`cd-task ${t.completed ? "done" : ""}${t.cancelled ? " cancelled" : ""}`} key={t.id}>
                 <button className="cd-task-check" onClick={() => toggleTask(t.id)} title="Toggle">
                   {t.completed ? <FiCheckCircle /> : <FiCircle />}
                 </button>
                 <div className="cd-task-main">
-                  <span className="cd-task-title">{t.title}</span>
+                  <span className="cd-task-title">{t.title}{t.cancelled && <span className="cd-task-cancelled"> Cancelled</span>}</span>
                   {t.documents?.length > 0 && (
                     <div className="cd-task-docs">
                       {t.documents.map((d) => (
@@ -1606,9 +1661,27 @@ export default function CaseDetail() {
                     </div>
                   )}
                 </div>
-                <span className={`cd-task-prio prio-${(t.priority || "medium").toLowerCase()}`}>{t.priority}</span>
+                {t.assignedToName && (
+                  <span className="cd-task-assignee" title={`Assigned to ${t.assignedToName}`}>
+                    <FiUser size={11} /> {t.assignedToName}
+                  </span>
+                )}
+                <select
+                  className={`cd-task-prio cd-task-prio-select prio-${(t.priority || "medium").toLowerCase()}`}
+                  value={t.priority || "MEDIUM"}
+                  onChange={(e) => changeTaskPriority(t.id, e.target.value)}
+                  title="Change priority"
+                >
+                  <option value="HIGH">HIGH</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="LOW">LOW</option>
+                </select>
                 {t.deadline && <span className="cd-task-deadline"><FiClock size={11} /> {fmtDate(t.deadline)}</span>}
-                {hasPermission("TASK_DELETE") && <button className="cd-task-del" onClick={() => deleteTask(t.id)} title="Delete"><FiTrash2 /></button>}
+                {(t.assignedById ?? t.createdById) === myId && (
+                  t.cancelled
+                    ? <button className="cd-task-del" onClick={() => cancelTask(t.id, false)} title="Restore task"><FiRotateCcw /></button>
+                    : <button className="cd-task-del" onClick={() => cancelTask(t.id, true)} title="Cancel task"><FiXCircle /></button>
+                )}
               </div>
             ))}
           </div>
@@ -1659,11 +1732,20 @@ export default function CaseDetail() {
                 </div>
                 <div className="cd-li-actions">
                   <button onClick={() => previewDoc(d.id)} title="Preview"><FiEye /></button>
+                  <button className="cd-summary-btn" onClick={() => setSummaryDoc(d)} title="See Summary"><FiZap /> See Summary</button>
                   <button onClick={() => downloadDoc(d.id, d.originalName || d.documentName)} title="Download"><FiDownload /></button>
                 </div>
               </div>
             ))}
           </div>
+        )}
+
+        {summaryDoc && (
+          <DocumentSummaryModal
+            doc={summaryDoc}
+            onClose={() => setSummaryDoc(null)}
+            canRegenerate={hasPermission("DOCUMENT_EDIT")}
+          />
         )}
 
         {/* RELATED CASES */}

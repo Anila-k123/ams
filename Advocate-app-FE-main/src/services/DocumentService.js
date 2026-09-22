@@ -184,6 +184,72 @@ class DocumentService {
     return await res.json();
   }
 
+  // AI summary: fetch the stored summary + key points for a document.
+  // Returns { status, summary, keyPoints, modelUsed, error, updatedAt }.
+  // status is one of NONE | PENDING | PROCESSING | READY | FAILED | UNSUPPORTED.
+  async getSummary(id) {
+    const res = await fetch(`${API_BASE}/${id}/summary`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // Re-run summarization in the background (requires DOCUMENT_EDIT). Returns
+  // the queued status, e.g. { status: "PENDING" }.
+  async regenerateSummary(id) {
+    const res = await fetch(`${API_BASE}/${id}/summary/regenerate`, {
+      method: "POST",
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // Version history for a document (newest first, current flagged isCurrent).
+  async getVersions(id) {
+    const res = await fetch(`${API_BASE}/${id}/versions`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  }
+
+  // Upload a new version of an existing document (requires DOCUMENT_UPLOAD).
+  // `note` (optional) describes what changed in this version.
+  async uploadNewVersion(id, file, note) {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (note) formData.append("note", note);
+    const res = await fetch(`${API_BASE}/${id}/versions`, {
+      method: "POST",
+      headers: this.getAuthHeaders(),
+      body: formData,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "Upload failed");
+      throw new Error(t);
+    }
+    return await res.json();
+  }
+
+  // Download a specific version's file.
+  async downloadVersion(id, version) {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE}/${id}/versions/${version}/download`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error("Download failed");
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition");
+    let filename = "download";
+    if (disposition) {
+      const match = disposition.match(/filename="?(.+?)"?$/);
+      if (match) filename = match[1];
+    }
+    return { blob, filename };
+  }
+
   clearCache() {
     this.cache.clear();
   }

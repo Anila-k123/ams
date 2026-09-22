@@ -7,4 +7,5 @@ urlpatterns = [
     path('invoices/summary', views.InvoiceSummaryView.as_view()),
     path('invoices/create', views.CreateInvoiceView.as_view()),
     path('invoices/pay/<int:pk>', views.PayInvoiceView.as_view()),
+    path('invoices/billing-profile', views.BillingProfileView.as_view()),
 ]

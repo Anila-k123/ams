@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
-import { FiZap, FiX, FiUsers, FiBriefcase, FiCalendar, FiDollarSign, FiFolder, FiCreditCard } from "react-icons/fi";
+import { FiZap, FiX, FiUsers, FiBriefcase, FiCalendar, FiFolder, FiCreditCard } from "react-icons/fi";
+import { TbCurrencyRupee } from "react-icons/tb";
 
 // Each action navigates to its page and opens that page's "add" form directly.
 // `modal` matches the detail string the target page listens for on the
@@ -8,7 +9,7 @@ const QUICK_ACTIONS = [
   { icon: <FiUsers />, label: "New Client", route: "/dashboard/clients", modal: "create-client" },
   { icon: <FiBriefcase />, label: "New Case", route: "/dashboard/cases", modal: "create-case" },
   { icon: <FiCalendar />, label: "New Hearing", route: "/dashboard/hearings", modal: "create-hearing" },
-  { icon: <FiDollarSign />, label: "Generate Invoice", route: "/dashboard/invoices", modal: "create-invoice" },
+  { icon: <TbCurrencyRupee />, label: "Generate Invoice", route: "/dashboard/invoices", modal: "create-invoice" },
   { icon: <FiFolder />, label: "Upload Document", route: "/dashboard/documents", modal: "upload-document" },
   { icon: <FiCreditCard />, label: "Add Expense", route: "/dashboard/expenses", modal: "create-expense" },
 ];

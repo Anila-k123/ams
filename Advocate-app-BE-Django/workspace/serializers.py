@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from core.models import Case, Document
+from core.models import Case, Document, Advocate
 from .models import CaseNote, CaseTag, CaseTask, CaseParty, RelatedCase, CaseTaskDocument
 
 
@@ -26,11 +26,40 @@ class CaseTaskSerializer(serializers.ModelSerializer):
     caseNumber = serializers.SerializerMethodField()
     caseTitle = serializers.SerializerMethodField()
     documents = serializers.SerializerMethodField()
+    createdById = serializers.IntegerField(source='advocate_id', read_only=True)
+    assignedToId = serializers.SerializerMethodField()
+    assignedToName = serializers.SerializerMethodField()
+    assignedById = serializers.IntegerField(source='assigned_by_id', read_only=True, allow_null=True)
+    assignedByName = serializers.SerializerMethodField()
 
     class Meta:
         model = CaseTask
         fields = ['id', 'caseId', 'caseNumber', 'caseTitle', 'title', 'priority',
-                  'deadline', 'completed', 'createdAt', 'documents']
+                  'deadline', 'completed', 'cancelled', 'createdAt', 'documents',
+                  'createdById', 'assignedToId', 'assignedToName', 'assignedById',
+                  'assignedByName']
+
+    def _name(self, advocate_id):
+        if not advocate_id:
+            return None
+        cache = self.context.setdefault('_adv_names', {}) if isinstance(self.context, dict) else None
+        if cache is not None and advocate_id in cache:
+            return cache[advocate_id]
+        a = Advocate.objects.filter(id=advocate_id).only('full_name').first()
+        name = a.full_name if a else None
+        if cache is not None:
+            cache[advocate_id] = name
+        return name
+
+    def get_assignedToId(self, obj):
+        # NULL assignee means the task is the creator's own.
+        return obj.assigned_to_id or obj.advocate_id
+
+    def get_assignedToName(self, obj):
+        return self._name(obj.assigned_to_id or obj.advocate_id)
+
+    def get_assignedByName(self, obj):
+        return self._name(obj.assigned_by_id)
 
     def _case(self, obj):
         if not obj.case_id:

@@ -64,6 +64,8 @@ const CommunicationSettings = lazy(() => import("./CommunicationSettings.jsx"));
 const CommunicationHistory = lazy(() => import("./CommunicationHistory.jsx"));
 const AppealAlert = lazy(() => import("./AppealAlert.jsx"));
 const Acts = lazy(() => import("./Acts.jsx"));
+const LegalDictionary = lazy(() => import("./LegalDictionary.jsx"));
+const LawCodes = lazy(() => import("./LawCodes.jsx"));
 const ActDetail = lazy(() => import("./ActDetail.jsx"));
 const CaseDetail = lazy(() => import("./CaseDetail.jsx"));
 
@@ -169,6 +171,7 @@ function DashboardShell() {
   const [fullName, setFullName] = useState(localStorage.getItem("fullName") || "Advocate Y");
   const [email, setEmail] = useState(localStorage.getItem("email") || "advocate@example.com");
   const [role, setRole] = useState(localStorage.getItem("role") || "ADVOCATE");
+  const [branding, setBranding] = useState({ officeLogoUrl: "", profilePhotoUrl: "", officeName: "" });
 
   // Dashboard widgets state (atomic — updated by single setState call)
   const [dash, setDash] = useState({
@@ -209,6 +212,8 @@ function DashboardShell() {
     "/dashboard/notifications": "Notifications",
     "/dashboard/appeal-alert": "Appeal Alert",
     "/dashboard/acts": "Acts",
+    "/dashboard/legal-dictionary": "Legal Dictionary",
+    "/dashboard/law-codes": "Law Codes (BNS)",
     "/dashboard/activity": "System Activity",
     "/dashboard/backup": "Backup",
     "/dashboard/users": "User Management",
@@ -250,20 +255,26 @@ function DashboardShell() {
     return unsub;
   }, [wsSubscribe, filter]);
 
-  // Profile sync
+  // Profile sync — full profile so the sidebar can show firm logo + photo.
   useEffect(() => {
-    axios.get("/api/advocates/profile", {
+    axios.get("/api/profile", {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then((res) => {
-        if (res.data && res.data.fullName) {
-          setFullName(res.data.fullName);
-          localStorage.setItem("fullName", res.data.fullName);
-          if (res.data.email) {
-            setEmail(res.data.email);
-            localStorage.setItem("email", res.data.email);
-          }
+        const d = res.data || {};
+        if (d.fullName) {
+          setFullName(d.fullName);
+          localStorage.setItem("fullName", d.fullName);
         }
+        if (d.email) {
+          setEmail(d.email);
+          localStorage.setItem("email", d.email);
+        }
+        setBranding({
+          officeLogoUrl: d.officeLogoUrl || "",
+          profilePhotoUrl: d.profilePhotoUrl || "",
+          officeName: d.officeName || "",
+        });
       })
       .catch(() => {});
   }, [token]);
@@ -469,7 +480,7 @@ function DashboardShell() {
       {/* ===== SIDEBAR ===== */}
       <aside className="left-sidebar">
         <div className="brand">
-          <div className="brand-logo"><img src={LOGO_RE}/></div>
+          <div className="brand-logo"><img src={LOGO_RE} alt="logo" /></div>
           <div>
             <div className="brand-name">AMS</div>
           </div>
@@ -592,6 +603,18 @@ function DashboardShell() {
                 </NavLink>
             </li>
             <li>
+                <NavLink to="/dashboard/legal-dictionary" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Legal Dictionary">
+                  <span className="nav-icon">📖</span>
+                  <span className="nav-text">Legal Dictionary</span>
+                </NavLink>
+            </li>
+            <li>
+                <NavLink to="/dashboard/law-codes" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"} title="Law Codes (IPC → BNS)">
+                  <span className="nav-icon">⚖️</span>
+                  <span className="nav-text">Law Codes (BNS)</span>
+                </NavLink>
+            </li>
+            <li>
               <Link to="#" className="nav-link" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("assistant-toggle-open")); }} title="AI Assistant">
                 <span className="nav-icon">💬</span>
                 <span className="nav-text">AI Assistant</span>
@@ -661,7 +684,11 @@ function DashboardShell() {
         </nav>
 
         <div className="sidebar-profile-card">
-          <div className="profile-avatar">{fullName.charAt(0).toUpperCase()}</div>
+          <div className="profile-avatar">
+            {branding.profilePhotoUrl
+              ? <img src={branding.profilePhotoUrl} alt="" className="avatar-img" />
+              : fullName.charAt(0).toUpperCase()}
+          </div>
           <div className="profile-details">
             <span className="profile-name">{fullName}</span>
             <span className="profile-email">{email}</span>
@@ -723,7 +750,11 @@ function DashboardShell() {
                 onClick={() => setAccountMenuOpen((v) => !v)}
                 style={{ display: "flex", alignItems: "center", cursor: "pointer" }}
               >
-                <div className="top-avatar">{fullName.charAt(0).toUpperCase()}</div>
+                <div className="top-avatar">
+                  {branding.profilePhotoUrl
+                    ? <img src={branding.profilePhotoUrl} alt="" className="avatar-img" />
+                    : fullName.charAt(0).toUpperCase()}
+                </div>
                 <span className="user-email">{fullName} <FiChevronDown /></span>
               </div>
               {accountMenuOpen && (
@@ -1184,6 +1215,8 @@ function DashboardShell() {
             <Route path="/appeal-alert" element={<AppealAlert />} />
             <Route path="/acts" element={<Acts />} />
             <Route path="/acts/:id" element={<ActDetail />} />
+            <Route path="/legal-dictionary" element={<LegalDictionary />} />
+            <Route path="/law-codes" element={<LawCodes />} />
             <Route path="/activity" element={
               <PermissionRoute permissions="AUDIT_VIEW"><SystemActivity /></PermissionRoute>
             } />

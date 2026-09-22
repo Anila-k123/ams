@@ -10,8 +10,9 @@ from rest_framework.response import Response
 from core.models import (Case, Client, Document, Invoice, Expense, ClientPayment,
                          CaseEvent, Advocate)
 from core.permissions import RequirePermission
-from .pdf import build_pdf, money
-from core.practice import practice_ids
+from .pdf import build_pdf, build_invoice_pdf, money, letterhead_from_advocate
+from core.practice import practice_ids, practice_root
+from invoices.models import InvoiceItem, InvoiceTaxDetail, FirmBillingProfile
 
 MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -24,6 +25,13 @@ def _pdf(pdf_bytes, filename):
 
 def _d(v):
     return v.isoformat() if isinstance(v, (datetime.date, datetime.datetime)) else (v or '')
+
+
+def _branding(request):
+    """Firm letterhead for PDFs — the practice OWNER's branding, so a junior's
+    invoice/report still carries the firm's logo, signature and seal."""
+    owner = Advocate.objects.filter(id=practice_root(request.user)).first() or request.user
+    return letterhead_from_advocate(owner)
 
 
 # ============================== PDF REPORTS ==============================
@@ -47,7 +55,7 @@ class CaseReportView(APIView):
              'headers': ['Case #', 'Title', 'Type', 'Status', 'Court', 'Client'],
              'rows': rows},
         ]
-        return _pdf(build_pdf('Case Report', blocks), 'CASE_REPORT.pdf')
+        return _pdf(build_pdf('Case Report', blocks, branding=_branding(request)), 'CASE_REPORT.pdf')
 
 
 class ClientReportView(APIView):
@@ -71,21 +79,21 @@ class ClientReportView(APIView):
              'headers': ['Name', 'Phone', 'Email', 'Cases', 'Active', 'Closed'],
              'rows': rows},
         ]
-        return _pdf(build_pdf('Client Report', blocks), 'CLIENT_REPORT.pdf')
+        return _pdf(build_pdf('Client Report', blocks, branding=_branding(request)), 'CLIENT_REPORT.pdf')
 
 
 class ExpenseReportView(APIView):
     permission_classes = [RequirePermission('REPORT_VIEW')]
 
     def get(self, request):
-        return _pdf(_expense_pdf(_expenses(request.user.id), 'All Expenses'), 'EXPENSE_REPORT.pdf')
+        return _pdf(_expense_pdf(_expenses(request.user.id), 'All Expenses', _branding(request)), 'EXPENSE_REPORT.pdf')
 
 
 def _expenses(advocate_id):
     return Expense.objects.select_related('case').filter(advocate_id=advocate_id).order_by('-payment_date')
 
 
-def _expense_pdf(qs, subtitle):
+def _expense_pdf(qs, subtitle, branding=None):
     rows = []
     total = 0.0
     for e in qs:
@@ -98,7 +106,7 @@ def _expense_pdf(qs, subtitle):
         {'type': 'table',
          'headers': ['Date', 'Title', 'Category', 'Amount', 'Description'], 'rows': rows},
     ]
-    return build_pdf('Expense Report', blocks, subtitle=subtitle)
+    return build_pdf('Expense Report', blocks, subtitle=subtitle, branding=branding)
 
 
 class InvoicePdfView(APIView):
@@ -109,18 +117,11 @@ class InvoicePdfView(APIView):
             id=pk, advocate_id__in=practice_ids(request.user)).first()
         if inv is None:
             return Response({'error': 'Invoice not found'}, status=404)
-        blocks = [
-            {'type': 'kv', 'rows': [
-                ('Invoice Number', inv.invoice_number),
-                ('Status', inv.status),
-                ('Invoice Date', _d(inv.invoice_date)),
-                ('Due Date', _d(inv.due_date)),
-                ('Client', inv.client.name if inv.client_id and inv.client else ''),
-                ('Case', inv.case.case_number if inv.case_id and inv.case else ''),
-                ('Amount', money(inv.amount)),
-            ]},
-        ]
-        return _pdf(build_pdf('Invoice ' + inv.invoice_number, blocks), f'{inv.invoice_number}.pdf')
+        items = list(InvoiceItem.objects.filter(invoice_id=inv.id))
+        tax = InvoiceTaxDetail.objects.filter(invoice_id=inv.id).first()
+        firm = FirmBillingProfile.objects.filter(advocate_id=practice_root(request.user)).first()
+        pdf = build_invoice_pdf(inv, items, tax, firm, branding=_branding(request))
+        return _pdf(pdf, f'{inv.invoice_number}.pdf')
 
 
 class ReceiptPdfView(APIView):
@@ -142,7 +143,7 @@ class ReceiptPdfView(APIView):
             ]},
             {'type': 'para', 'text': p.description or ''},
         ]
-        return _pdf(build_pdf('Payment Receipt', blocks), f'RECEIPT_{p.id}.pdf')
+        return _pdf(build_pdf('Payment Receipt', blocks, branding=_branding(request)), f'RECEIPT_{p.id}.pdf')
 
 
 class ClientDetailPdfView(APIView):
@@ -174,7 +175,7 @@ class ClientDetailPdfView(APIView):
              'rows': [[_d(p.payment_date), money(p.amount), p.payment_mode or '', p.reference_number or ''] for p in pays]},
         ]
         safe = (cl.name or 'CLIENT').upper().replace(' ', '_')
-        return _pdf(build_pdf('Client: ' + (cl.name or ''), blocks), f'CLIENT_{safe}.pdf')
+        return _pdf(build_pdf('Client: ' + (cl.name or ''), blocks, branding=_branding(request)), f'CLIENT_{safe}.pdf')
 
 
 class CaseDetailPdfView(APIView):
@@ -212,7 +213,7 @@ class CaseDetailPdfView(APIView):
             {'type': 'table', 'headers': ['Date', 'Event'],
              'rows': [[_d(e.date), e.title] for e in events]},
         ]
-        return _pdf(build_pdf('Case: ' + c.case_number, blocks), f'CASE_{c.case_number}.pdf')
+        return _pdf(build_pdf('Case: ' + c.case_number, blocks, branding=_branding(request)), f'CASE_{c.case_number}.pdf')
 
 
 class MonthlyPdfView(APIView):
@@ -255,7 +256,7 @@ class MonthlyPdfView(APIView):
             ]},
         ]
         label = f'{MONTHS[month - 1]}_{year}'
-        return _pdf(build_pdf(f'Monthly Report — {MONTHS[month - 1]} {year}', blocks),
+        return _pdf(build_pdf(f'Monthly Report — {MONTHS[month - 1]} {year}', blocks, branding=_branding(request)),
                     f'MONTHLY_REPORT_{label}.pdf')
 
 
@@ -273,7 +274,7 @@ class FilteredExpensePdfView(APIView):
             qs = qs.filter(case_id=p['caseId'])
         if p.get('category'):
             qs = qs.filter(category__iexact=p['category'])
-        return _pdf(_expense_pdf(qs.order_by('-payment_date'), 'Filtered Expenses'),
+        return _pdf(_expense_pdf(qs.order_by('-payment_date'), 'Filtered Expenses', _branding(request)),
                     'EXPENSE_FILTERED_REPORT.pdf')
 
 
@@ -309,7 +310,7 @@ class DashboardPdfView(APIView):
             {'type': 'table', 'headers': ['Status', 'Count'],
              'rows': [[k, v] for k, v in status_counts.items()]},
         ]
-        return _pdf(build_pdf('Dashboard Report', blocks), 'DASHBOARD_REPORT.pdf')
+        return _pdf(build_pdf('Dashboard Report', blocks, branding=_branding(request)), 'DASHBOARD_REPORT.pdf')
 
 
 # ============================== REPORTS CENTER ==============================

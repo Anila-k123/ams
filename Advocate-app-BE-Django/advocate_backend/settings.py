@@ -49,6 +49,8 @@ INSTALLED_APPS = [
     'workspace',
     'courtsearch',
     'acts',
+    'dictionary',
+    'lawcodes',
 ]
 
 # Webhook verification token. No default: it was a committed literal, and a
@@ -144,6 +146,17 @@ COURT_PDF_CACHE_DIR = config(
     'COURT_PDF_CACHE_DIR',
     default=str(BASE_DIR / 'court_pdf_cache'),
 )
+
+# --- Document AI summaries: on upload we extract text (PDF/DOCX/TXT) and ask the
+# assistant LLM (LLM_PROVIDER) for a structured legal summary, stored in the
+# document_summary table. Turn off with SUMMARY_ENABLED=False. ---
+SUMMARY_ENABLED = config('SUMMARY_ENABLED', default=True, cast=bool)
+SUMMARY_MAX_CHARS = config('SUMMARY_MAX_CHARS', default=24000, cast=int)
+
+# --- Public base URL: how outside clients (e.g. an email recipient's inbox)
+# reach this server for public assets like the firm logo in branded emails.
+# In production set this to the real https host; localhost won't load remotely. ---
+PUBLIC_BASE_URL = config('PUBLIC_BASE_URL', default='http://localhost:8080')
 
 # --- Email (SMTP) ---
 # Every outbound message in the app goes through here: password-reset OTPs,

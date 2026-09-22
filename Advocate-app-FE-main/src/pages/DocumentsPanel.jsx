@@ -11,6 +11,8 @@ import "../assets/styles/DocumentsPanel.css";
 import documentService from "../services/DocumentService";
 import DocumentCard from "../components/DocumentCard";
 import FilePreviewModal from "../components/FilePreviewModal";
+import DocumentSummaryModal from "../components/DocumentSummaryModal";
+import DocumentVersionsModal from "../components/DocumentVersionsModal";
 import { SkeletonDocCard } from "../components/Skeleton";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 import { usePermission } from "../contexts/PermissionContext.jsx";
@@ -45,6 +47,8 @@ export default function DocumentsPanel() {
   const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
   const [previewDoc, setPreviewDoc] = useState(null);
+  const [summaryDoc, setSummaryDoc] = useState(null);
+  const [versionsDoc, setVersionsDoc] = useState(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFiles, setUploadFiles] = useState([]);
   const [uploadOptions, setUploadOptions] = useState({ category: "", caseId: "", clientId: "", documentName: "", description: "" });
@@ -222,6 +226,10 @@ export default function DocumentsPanel() {
 
   const handlePreview = (doc) => setPreviewDoc(doc);
 
+  const handleSummary = (doc) => setSummaryDoc(doc);
+
+  const handleVersions = (doc) => setVersionsDoc(doc);
+
   const handleDownload = async (doc) => {
     try {
       const { blob, filename } = await documentService.downloadDocument(doc.id);
@@ -364,6 +372,8 @@ export default function DocumentsPanel() {
                   doc={doc}
                   gridView={true}
                   onPreview={handlePreview}
+                  onSummary={handleSummary}
+                  onVersions={handleVersions}
                   onDownload={handleDownload}
                   onDelete={hasPermission("DOCUMENT_DELETE") ? handleDelete : undefined}
                   onEdit={hasPermission("DOCUMENT_EDIT") ? handleEdit : undefined}
@@ -394,6 +404,8 @@ export default function DocumentsPanel() {
                   gridView={false}
                   className={highlightedId === doc.id ? "highlight-row" : ""}
                   onPreview={handlePreview}
+                  onSummary={handleSummary}
+                  onVersions={handleVersions}
                   onDownload={handleDownload}
                   onDelete={hasPermission("DOCUMENT_DELETE") ? handleDelete : undefined}
                   onEdit={hasPermission("DOCUMENT_EDIT") ? handleEdit : undefined}
@@ -513,6 +525,25 @@ export default function DocumentsPanel() {
           doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
           onDownload={handleDownload}
+        />
+      )}
+
+      {/* AI Summary Modal */}
+      {summaryDoc && (
+        <DocumentSummaryModal
+          doc={summaryDoc}
+          onClose={() => setSummaryDoc(null)}
+          canRegenerate={hasPermission("DOCUMENT_EDIT")}
+        />
+      )}
+
+      {/* Version History Modal */}
+      {versionsDoc && (
+        <DocumentVersionsModal
+          doc={versionsDoc}
+          onClose={() => setVersionsDoc(null)}
+          canUpload={hasPermission("DOCUMENT_UPLOAD")}
+          onUpdated={fetchDocuments}
         />
       )}
 

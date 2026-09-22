@@ -4,10 +4,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from "recharts";
 import {
-  FiDollarSign, FiTrendingUp, FiTrendingDown, FiAlertCircle,
+  FiTrendingUp, FiTrendingDown, FiAlertCircle,
   FiDownload, FiFileText, FiCalendar, FiUsers, FiBriefcase,
   FiClock, FiCheckCircle, FiXCircle
 } from "react-icons/fi";
+import { TbCurrencyRupee } from "react-icons/tb";
 import { useLoading } from "../contexts/LoadingContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import ReportService from "../services/ReportService";
@@ -199,7 +200,7 @@ export default function ReportsCenter() {
             {fin ? (
               <>
                 <div className="rc-metrics-grid">
-                  <MetricCard title="Revenue" value={fin.revenue?.current || 0} previous={fin.revenue?.previous} change={fin.revenue?.change || 0} icon={<FiDollarSign />} format="currency" />
+                  <MetricCard title="Revenue" value={fin.revenue?.current || 0} previous={fin.revenue?.previous} change={fin.revenue?.change || 0} icon={<TbCurrencyRupee />} format="currency" />
                   <MetricCard title="Expenses" value={fin.expenses?.current || 0} previous={fin.expenses?.previous} change={fin.expenses?.change || 0} icon={<FiTrendingDown />} format="currency" />
                   <MetricCard title="Net Income" value={fin.netIncome?.current || 0} previous={fin.netIncome?.previous} change={fin.netIncome?.change || 0} icon={<FiTrendingUp />} format="currency" />
                   <MetricCard title="Outstanding" value={fin.outstandingPayments?.total || 0} previous={0} change={0} icon={<FiAlertCircle />} format="currency" />

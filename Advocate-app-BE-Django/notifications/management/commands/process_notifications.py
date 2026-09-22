@@ -19,15 +19,18 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from django.utils.html import escape
 
 from core.audit import record_system_action
 from core.models import (Advocate, Case, Client, Notification,
                          NotificationHistory, NotificationQueue)
+from core.practice import practice_root
 from notifications import service
 
 log = logging.getLogger(__name__)
@@ -122,13 +125,18 @@ class Command(BaseCommand):
             if not to:
                 raise ValueError(
                     'no recipient email for advocate {}'.format(row.advocate_id))
-            send_mail(
-                subject=payload.get('subject') or '(no subject)',
-                message=payload.get('body') or '',
-                from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
-                recipient_list=[to],
-                fail_silently=False,
-            )
+            subject = payload.get('subject') or '(no subject)'
+            body = payload.get('body') or ''
+            sender = getattr(settings, 'DEFAULT_FROM_EMAIL', None)
+            brand = self._email_branding(row.advocate_id)
+            if brand:
+                msg = EmailMultiAlternatives(subject=subject, body=body,
+                                             from_email=sender, to=[to])
+                msg.attach_alternative(self._html_email(body, brand), 'text/html')
+                msg.send(fail_silently=False)
+            else:
+                send_mail(subject=subject, message=body, from_email=sender,
+                          recipient_list=[to], fail_silently=False)
             return 'smtp accepted for {}'.format(to)
 
         if channel == service.WHATSAPP:
@@ -176,6 +184,56 @@ class Command(BaseCommand):
     def _advocate_email(advocate_id):
         adv = Advocate.objects.filter(id=advocate_id).only('email').first()
         return adv.email if adv else None
+
+    @staticmethod
+    def _email_branding(advocate_id):
+        """The firm's (practice owner's) branding for a branded HTML email."""
+        adv = Advocate.objects.filter(id=advocate_id).first()
+        if adv is None:
+            return None
+        owner = Advocate.objects.filter(id=practice_root(adv)).first() or adv
+        logo_url = None
+        if owner.office_logo_path:
+            base = getattr(settings, 'PUBLIC_BASE_URL', '').rstrip('/')
+            logo_url = base + '/api/profile/files/branding/' + os.path.basename(
+                owner.office_logo_path.replace('\\', '/'))
+        contact = ' · '.join([x for x in [owner.office_phone, owner.office_email,
+                                          getattr(owner, 'website', None)] if x])
+        return {
+            'office_name': owner.office_name or owner.full_name or 'Advocate',
+            'primary': owner.primary_brand_color or '#1f3a8a',
+            'logo_url': logo_url,
+            'contact': contact,
+        }
+
+    @staticmethod
+    def _html_email(body, brand):
+        """Wrap the plain body in a branded HTML shell (firm header + footer)."""
+        primary = escape(brand['primary'])
+        office = escape(brand['office_name'])
+        logo = (f'<img src="{escape(brand["logo_url"])}" alt="{office}" '
+                f'style="max-height:46px;margin-bottom:6px;">') if brand['logo_url'] else ''
+        contact = ('<div style="color:#64748b;font-size:12px;margin-top:4px;">'
+                   + escape(brand['contact']) + '</div>') if brand['contact'] else ''
+        body_html = escape(body).replace('\n', '<br>')
+        return f"""\
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;
+     border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+  <div style="background:{primary};color:#ffffff;padding:18px 22px;">
+    {logo}
+    <div style="font-size:18px;font-weight:700;">{office}</div>
+  </div>
+  <div style="padding:22px;color:#1e293b;font-size:14px;line-height:1.6;">
+    {body_html}
+  </div>
+  <div style="border-top:3px solid {primary};padding:16px 22px;background:#f8fafc;">
+    <div style="font-weight:600;color:#334155;">{office}</div>
+    {contact}
+    <div style="color:#94a3b8;font-size:11px;margin-top:8px;">
+      Sent via the Advocate Management System.
+    </div>
+  </div>
+</div>"""
 
     def _fail(self, row, message, now):
         """Mark a queue row failed, scheduling a retry if any remain."""

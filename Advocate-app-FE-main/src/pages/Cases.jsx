@@ -3,7 +3,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { useLoading } from "../contexts/LoadingContext";
 import Select from "react-select";
-import { FiFolder, FiEye, FiDownload, FiX, FiUpload, FiClock, FiEdit2, FiTrash2, FiExternalLink, FiBriefcase, FiCalendar, FiCheckCircle, FiDollarSign } from "react-icons/fi";
+import { FiFolder, FiEye, FiDownload, FiX, FiUpload, FiClock, FiEdit2, FiTrash2, FiExternalLink, FiBriefcase, FiCalendar, FiCheckCircle } from "react-icons/fi";
+import { TbCurrencyRupee } from "react-icons/tb";
 import { useToast } from "../contexts/ToastContext.jsx";
 import { usePermission } from "../contexts/PermissionContext.jsx";
 import { formatCurrency } from "../utils/formatCurrency";
@@ -496,7 +497,7 @@ function Cases() {
     { key: "active", label: "Active", value: stats.activeCases, icon: <FiCheckCircle />, accent: "var(--success)" },
     { key: "pending", label: "Pending", value: stats.pendingCases, icon: <FiClock />, accent: "var(--warning)" },
     { key: "hearings", label: "Upcoming Hearings", value: stats.upcomingHearings, icon: <FiCalendar />, accent: "#A855F7" },
-    { key: "dues", label: "Outstanding Dues", value: formatCurrency(stats.outstandingDues), icon: <FiDollarSign />, accent: "var(--danger)" },
+    { key: "dues", label: "Outstanding Dues", value: formatCurrency(stats.outstandingDues), icon: <TbCurrencyRupee />, accent: "var(--danger)" },
   ] : [];
 
   return (

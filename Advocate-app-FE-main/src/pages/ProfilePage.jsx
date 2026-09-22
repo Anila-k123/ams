@@ -13,14 +13,13 @@ const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d
 const TABS = [
   { id: "general", label: "General", icon: FiUser },
   { id: "office", label: "Office", icon: FiHome },
-  // Branding hidden for now — re-enable this entry to bring the tab back.
-  // { id: "branding", label: "Branding", icon: FiImage },
+  { id: "branding", label: "Branding", icon: FiImage },
   { id: "security", label: "Security", icon: FiLock },
   { id: "preferences", label: "Preferences", icon: FiSliders },
 ];
 
 export default function ProfilePage() {
-  const { theme: currentTheme, setTheme: applyTheme } = useTheme();
+  const { setTheme: applyTheme } = useTheme();
   const { withLoading } = useLoading();
   const toast = useToast();
   const token = localStorage.getItem("token");
@@ -100,7 +99,7 @@ export default function ProfilePage() {
         emailNotificationsEnabled: d.emailNotificationsEnabled || false,
         browserNotificationsEnabled: d.browserNotificationsEnabled !== false,
       });
-    } catch (err) {
+    } catch {
       toast.error("Failed to load profile");
     } finally {
       setLoading(false);
@@ -240,7 +239,6 @@ export default function ProfilePage() {
         }),
         "Uploading..."
       );
-      const urlKey = `${uploadTarget}Url`;
       if (uploadTarget === "photo") setBranding((prev) => ({ ...prev, profilePhotoUrl: res.data.profilePhotoUrl }));
       else if (uploadTarget === "logo") setBranding((prev) => ({ ...prev, officeLogoUrl: res.data.officeLogoUrl }));
       else if (uploadTarget === "signature") setBranding((prev) => ({ ...prev, signatureUrl: res.data.signatureUrl }));

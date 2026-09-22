@@ -29,4 +29,6 @@ urlpatterns = [
     path('api/', include('workspace.urls')),
     path('api/', include('courtsearch.urls')),
     path('api/', include('acts.urls')),
+    path('api/', include('dictionary.urls')),
+    path('api/', include('lawcodes.urls')),
 ]

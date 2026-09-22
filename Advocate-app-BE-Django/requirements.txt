@@ -9,6 +9,8 @@ channels==4.1.*
 reportlab==4.*
 requests==2.34.*
 beautifulsoup4==4.15.*
+pdfplumber==0.11.*      # extract text from uploaded PDFs for AI summarization
+python-docx==1.1.*      # extract text from uploaded .docx for AI summarization
 truststore; sys_platform == "win32"  # optional: fixes gov SSL chains, import-guarded
 # AI assistant uses an OpenAI-compatible LLM over the already-present `requests`.
 # Backend is selectable via LLM_PROVIDER: 'local' (a local model over ngrok, LLM_BASE_URL)

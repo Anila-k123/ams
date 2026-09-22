@@ -29,6 +29,16 @@ export default function InvoicesPanel() {
     caseId: "",
     // Line-item breakdown; the amount is the sum of these (no single-amount box).
     particulars: [{ description: "", amount: "" }],
+    // Recipient GST/tax details for the invoice (snapshotted on the invoice).
+    kindAttn: "",
+    recipientGstin: "",
+    recipientState: "",
+    recipientStateCode: "",
+    recipientAddress: "",
+    placeOfSupply: "",
+    // GST treatment: 'rcm' (reverse charge, recipient pays) or 'forward' (firm charges GST).
+    taxMode: "rcm",
+    gstRate: "18",
   });
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
@@ -121,7 +131,11 @@ export default function InvoicesPanel() {
     setTimeout(() => {
       setShowModal(false);
       setClosing(false);
-      setNewInvoice({ invoiceDate: "", dueDate: "", caseId: "", particulars: [{ description: "", amount: "" }] });
+      setNewInvoice({
+        invoiceDate: "", dueDate: "", caseId: "", particulars: [{ description: "", amount: "" }],
+        kindAttn: "", recipientGstin: "", recipientState: "", recipientStateCode: "",
+        recipientAddress: "", placeOfSupply: "", taxMode: "rcm", gstRate: "18",
+      });
       triggerRef.current?.focus();
     }, 200);
   }, [closing]);
@@ -162,6 +176,12 @@ export default function InvoicesPanel() {
       return { ...prev, particulars: rows.length ? rows : [{ description: "", amount: "" }] };
     });
   const invoiceTotal = newInvoice.particulars.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+  // Live GST preview for the form (the server recomputes + splits CGST/SGST vs IGST).
+  const isForward = newInvoice.taxMode === "forward";
+  const gstRateNum = parseFloat(newInvoice.gstRate) || 0;
+  const gstAmount = isForward ? Math.round(invoiceTotal * gstRateNum) / 100 : 0;
+  const grandTotal = invoiceTotal + gstAmount;
+  const inr = (n) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -178,7 +198,17 @@ export default function InvoicesPanel() {
             particulars,
             invoiceDate: newInvoice.invoiceDate ? newInvoice.invoiceDate : null,
             dueDate: newInvoice.dueDate ? newInvoice.dueDate : null,
-            caseEntity: { id: Number(newInvoice.caseId) }
+            caseEntity: { id: Number(newInvoice.caseId) },
+            // Recipient GST/tax details (blank ones are prefilled server-side
+            // from this client's most recent invoice).
+            kindAttn: newInvoice.kindAttn,
+            recipientGstin: newInvoice.recipientGstin,
+            recipientState: newInvoice.recipientState,
+            recipientStateCode: newInvoice.recipientStateCode,
+            recipientAddress: newInvoice.recipientAddress,
+            placeOfSupply: newInvoice.placeOfSupply,
+            taxMode: newInvoice.taxMode,
+            gstRate: newInvoice.gstRate,
           },
           { headers: { Authorization: `Bearer ${token}` } }
         ),
@@ -411,8 +441,65 @@ export default function InvoicesPanel() {
                   </div>
                 ))}
                 <div className="inv-particulars-total">
-                  <span>Total</span>
-                  <span>₹ {invoiceTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  <span>{isForward ? "Taxable value" : "Total"}</span>
+                  <span>₹ {inr(invoiceTotal)}</span>
+                </div>
+                {isForward && (
+                  <>
+                    <div className="inv-particulars-total inv-tax-line">
+                      <span>GST @ {gstRateNum || 0}% (CGST+SGST / IGST)</span>
+                      <span>₹ {inr(gstAmount)}</span>
+                    </div>
+                    <div className="inv-particulars-total inv-grand-total">
+                      <span>Grand total</span>
+                      <span>₹ {inr(grandTotal)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="inv-tax-details">
+                <label className="inv-tax-heading">Recipient / GST details <span>(for the tax invoice)</span></label>
+                <div className="inv-form-row">
+                  <div className="inv-form-group">
+                    <label htmlFor="inv-taxMode">GST treatment</label>
+                    <select id="inv-taxMode" name="taxMode" value={newInvoice.taxMode} onChange={handleChange}>
+                      <option value="rcm">Reverse charge (recipient pays GST)</option>
+                      <option value="forward">Forward charge (firm charges GST)</option>
+                    </select>
+                  </div>
+                  {isForward && (
+                    <div className="inv-form-group">
+                      <label htmlFor="inv-gstRate">GST rate (%)</label>
+                      <input id="inv-gstRate" name="gstRate" type="number" step="0.01" min="0" value={newInvoice.gstRate} onChange={handleChange} placeholder="18" />
+                    </div>
+                  )}
+                </div>
+                <div className="inv-form-group full-width">
+                  <label htmlFor="inv-kindAttn">Kind Attn (contact person)</label>
+                  <input id="inv-kindAttn" name="kindAttn" value={newInvoice.kindAttn} onChange={handleChange} placeholder="e.g. Ms S V Archana" />
+                </div>
+                <div className="inv-form-row">
+                  <div className="inv-form-group">
+                    <label htmlFor="inv-recipientGstin">Recipient GSTIN/UIN</label>
+                    <input id="inv-recipientGstin" name="recipientGstin" value={newInvoice.recipientGstin} onChange={handleChange} placeholder="e.g. 33AACCI3508E2Z3" />
+                  </div>
+                  <div className="inv-form-group">
+                    <label htmlFor="inv-recipientState">State</label>
+                    <input id="inv-recipientState" name="recipientState" value={newInvoice.recipientState} onChange={handleChange} placeholder="e.g. TAMIL NADU" />
+                  </div>
+                  <div className="inv-form-group">
+                    <label htmlFor="inv-recipientStateCode">State Code</label>
+                    <input id="inv-recipientStateCode" name="recipientStateCode" value={newInvoice.recipientStateCode} onChange={handleChange} placeholder="e.g. 33" />
+                  </div>
+                </div>
+                <div className="inv-form-group full-width">
+                  <label htmlFor="inv-recipientAddress">Billing address</label>
+                  <textarea id="inv-recipientAddress" name="recipientAddress" rows={2} value={newInvoice.recipientAddress} onChange={handleChange} placeholder="Full billing address (one line per row)" />
+                </div>
+                <div className="inv-form-group full-width">
+                  <label htmlFor="inv-placeOfSupply">Place of Supply</label>
+                  <input id="inv-placeOfSupply" name="placeOfSupply" value={newInvoice.placeOfSupply} onChange={handleChange} placeholder="Defaults to State (e.g. TAMIL NADU - 33)" />
                 </div>
               </div>
 

@@ -565,6 +565,16 @@
   color: var(--text-muted); transition: all var(--transition);
 }
 .cd-li-actions button:hover { color: var(--primary); border-color: var(--primary); }
+/* AI "See Summary" — labelled violet button (overrides the icon-button width). */
+.cd-li-actions button.cd-summary-btn {
+  width: auto; gap: 5px; padding: 0 10px;
+  color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 35%, transparent);
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.cd-li-actions button.cd-summary-btn:hover {
+  color: #8b5cf6; border-color: color-mix(in srgb, #8b5cf6 55%, transparent);
+  background: color-mix(in srgb, #8b5cf6 12%, transparent);
+}
 
 /* Documents */
 .cd-docs { display: flex; flex-direction: column; gap: 8px; }
@@ -675,7 +685,17 @@
 .prio-high { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .prio-medium { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
 .prio-low { background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--success); }
+.cd-task-prio-select {
+  border: none; cursor: pointer;
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  text-align: center; text-align-last: center;
+}
+.cd-task-prio-select option { color: var(--text-primary); background: var(--bg-secondary); }
+.cd-task.cancelled { opacity: 0.55; }
+.cd-task.cancelled .cd-task-title { text-decoration: line-through; color: var(--text-muted); }
+.cd-task-cancelled { font-size: 10px; font-weight: 700; color: var(--danger); text-transform: uppercase; text-decoration: none; margin-left: 6px; }
 .cd-task-deadline { font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.cd-task-assignee { font-size: 11px; font-weight: 600; color: #8b5cf6; background: color-mix(in srgb, #8b5cf6 12%, transparent); padding: 2px 8px; border-radius: 100px; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .cd-task-del { background: none; border: none; color: var(--danger); cursor: pointer; opacity: 0.6; }
 .cd-task-del:hover { opacity: 1; }
 

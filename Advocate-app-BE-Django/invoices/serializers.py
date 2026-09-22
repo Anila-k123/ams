@@ -2,7 +2,7 @@ import datetime
 from django.utils.dateparse import parse_date
 from rest_framework import serializers
 from core.models import Invoice
-from invoices.models import InvoiceItem
+from invoices.models import InvoiceItem, FirmBillingProfile
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
@@ -53,3 +53,24 @@ class InvoiceSerializer(serializers.ModelSerializer):
         if not obj.case_id:
             return None
         return {'id': obj.case.id, 'caseNumber': obj.case.case_number, 'caseTitle': obj.case.case_title}
+
+
+class FirmBillingProfileSerializer(serializers.ModelSerializer):
+    """The firm's static invoice billing details, editable in Settings -> Billing."""
+    payInFavourOf = serializers.CharField(source='pay_in_favour_of', required=False, allow_blank=True)
+    bankName = serializers.CharField(source='bank_name', required=False, allow_blank=True)
+    bankBranchAddress = serializers.CharField(source='bank_branch_address', required=False, allow_blank=True)
+    accountNumber = serializers.CharField(source='account_number', required=False, allow_blank=True)
+    ifscCode = serializers.CharField(source='ifsc_code', required=False, allow_blank=True)
+    micrCode = serializers.CharField(source='micr_code', required=False, allow_blank=True)
+    remittanceEmail = serializers.CharField(source='remittance_email', required=False, allow_blank=True)
+    hsnCode = serializers.CharField(source='hsn_code', required=False, allow_blank=True)
+    serviceCategory = serializers.CharField(source='service_category', required=False, allow_blank=True)
+    gstNote = serializers.CharField(source='gst_note', required=False, allow_blank=True)
+    isoNote = serializers.CharField(source='iso_note', required=False, allow_blank=True)
+
+    class Meta:
+        model = FirmBillingProfile
+        fields = ['payInFavourOf', 'bankName', 'bankBranchAddress', 'accountNumber',
+                  'ifscCode', 'micrCode', 'remittanceEmail', 'hsnCode', 'serviceCategory',
+                  'gstNote', 'isoNote']

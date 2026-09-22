@@ -61,6 +61,11 @@ GEMINI_BASE_URL = config(
     default='https://generativelanguage.googleapis.com/v1beta/openai',
 ).rstrip('/')
 
+# OpenAI backend (native OpenAI Chat Completions API)
+OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+OPENAI_MODEL = config('OPENAI_MODEL', default='gpt-4o-2024-08-06')
+OPENAI_BASE_URL = config('OPENAI_BASE_URL', default='https://api.openai.com/v1').rstrip('/')
+
 # shared
 LLM_TEMPERATURE = config('LLM_TEMPERATURE', default=0.2, cast=float)
 LLM_TIMEOUT = config('LLM_TIMEOUT', default=600, cast=int)
@@ -69,6 +74,10 @@ LLM_TIMEOUT = config('LLM_TIMEOUT', default=600, cast=int)
 def _backend():
     """Resolve the active backend to a (base_url, openai_path, model, api_key) tuple,
     mirroring pact-pro-draft's `_config_for()`. Returns None if unconfigured."""
+    if LLM_PROVIDER == 'openai':
+        if not OPENAI_API_KEY:
+            return None
+        return (OPENAI_BASE_URL, '/chat/completions', OPENAI_MODEL, OPENAI_API_KEY)
     if LLM_PROVIDER == 'gemini':
         if not GEMINI_API_KEY:
             return None
@@ -77,6 +86,20 @@ def _backend():
     if not LLM_BASE_URL:
         return None
     return (LLM_BASE_URL, LLM_OPENAI_PATH, LLM_MODEL, LLM_API_KEY)
+
+
+def _missing_config_var():
+    """Name of the env var that must be set for the active provider."""
+    return {
+        'openai': 'OPENAI_API_KEY',
+        'gemini': 'GEMINI_API_KEY',
+    }.get(LLM_PROVIDER, 'LLM_BASE_URL')
+
+
+def active_model_name():
+    """The model name of the active backend, or None if unconfigured."""
+    backend = _backend()
+    return backend[2] if backend else None
 
 _MAX_ATTEMPTS = 3
 _RETRY_STATUS = {429, 502, 503, 504}
@@ -297,14 +320,64 @@ def _post_stream(payload, base_url, openai_path, api_key):
     raise AssistantUnavailable(str(last) if last else 'request failed')
 
 
+def complete_text(system_prompt, user_prompt, temperature=None, max_tokens=2000):
+    """Non-streaming completion against the active backend (local or gemini).
+
+    Reuses the same provider config, endpoint, and retry policy as the streaming
+    assistant. Returns the assistant's message content as a plain string.
+    Raises AssistantUnavailable if the backend is unconfigured or unreachable.
+    """
+    backend = _backend()
+    if backend is None:
+        raise AssistantUnavailable(f'LLM is not configured (missing {_missing_config_var()}).')
+    base_url, openai_path, model, api_key = backend
+
+    url = f"{base_url}{openai_path}"
+    headers = {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    payload = {
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt},
+        ],
+        'temperature': LLM_TEMPERATURE if temperature is None else temperature,
+        'max_tokens': max_tokens,
+        'stream': False,
+    }
+
+    last = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=LLM_TIMEOUT)
+            if resp.status_code in _RETRY_STATUS and attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            resp.encoding = 'utf-8'
+            obj = resp.json()
+            choices = obj.get('choices') or [{}]
+            content = (choices[0].get('message') or {}).get('content') or ''
+            return content
+        except requests.RequestException as exc:
+            last = exc
+            if attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise AssistantUnavailable(str(exc))
+        except ValueError as exc:  # bad/empty JSON body
+            raise AssistantUnavailable(f'invalid response from model: {exc}')
+    raise AssistantUnavailable(str(last) if last else 'request failed')
+
+
 def stream_answer(question, advocate_id):
     """Generator yielding SSE frames: {type:'text',text} deltas, then {type:'done'}
     (or {type:'error',message}). Builds context, then streams the local model."""
     backend = _backend()
     if backend is None:
-        missing = 'GEMINI_API_KEY' if LLM_PROVIDER == 'gemini' else 'LLM_BASE_URL'
         yield _sse({'type': 'error',
-                    'message': f'The AI assistant is not configured (missing {missing}).'})
+                    'message': f'The AI assistant is not configured (missing {_missing_config_var()}).'})
         return
     base_url, openai_path, model, api_key = backend
 

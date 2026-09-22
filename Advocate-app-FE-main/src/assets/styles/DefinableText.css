@@ -1,0 +1,29 @@
+.def-word { cursor: help; border-radius: 2px; transition: background 120ms ease; }
+.def-word:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  background: color-mix(in srgb, #8b5cf6 12%, transparent);
+}
+
+.def-pop-backdrop {
+  position: fixed; inset: 0; z-index: 10000; background: transparent;
+}
+.def-pop {
+  position: fixed; z-index: 10001;
+  width: 320px; max-height: 220px; overflow-y: auto;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, rgba(148,163,184,0.3));
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+  padding: 14px 16px 12px;
+}
+.def-pop-close {
+  position: absolute; top: 8px; right: 8px;
+  background: none; border: none; color: var(--text-muted); cursor: pointer; display: flex;
+}
+.def-pop-term {
+  font-weight: 700; color: #8b5cf6; margin-bottom: 6px; padding-right: 18px; font-size: 14px;
+}
+.def-pop-def { color: var(--text-primary); font-size: 13px; line-height: 1.55; }
+.def-pop-def p { margin: 0 0 6px; }
+.def-pop-muted { color: var(--text-muted); font-size: 13px; padding-right: 18px; }

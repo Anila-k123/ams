@@ -1,0 +1,546 @@
+# CrPC (Code of Criminal Procedure, 1973) -> BNSS (Bharatiya Nagarik Suraksha Sanhita, 2023)
+# Source: vakilpedia.com/crpc-to-bnss-section-list
+# old_section | new_section | subject
+1 | 1 | Short title, extent and commencement
+2 | 2 | Definitions
+2(a) | 2(1)(c) | bailable offence
+2(b) | 2(1)(f) | charge
+2(c) | 2(1)(g) | cognizable offence
+2(d) | 2(1)(h) | complaint
+2(e) | 2(1)(j) | High Court
+2(g) | 2(1)(k) | inquiry
+2(h) | 2(1)(l) | investigation
+2(i) | 2(1)(m) | judicial proceeding
+2(j) | 2(1)(n) | local jurisdiction
+2(l) | 2(1)(o) | non-cognizable offence
+2(m) | 2(1)(p) | notification
+2(n) | 2(1)(q) | offence
+2(o) | 2(1)(r) | officer in charge of a police station
+2(p) | 2(1)(s) | place
+2(r) | 2(1)(t) | police report
+2(s) | 2(1)(u) | police station
+2(u) | 2(1)(v) | Public Prosecutor
+2(v) | 2(1)(w) | sub-division
+2(w) | 2(1)(x) | summons-case
+2(wa) | 2(1)(y) | victim
+2(x) | 2(1)(z) | warrant-case
+3 | 3 | Construction of references
+4 | 4 | Trial of offences under Bharatiya Nyaya Sanhita and other laws
+5 | 5 | Saving
+6 | 6 | Classes of Criminal Courts
+7 | 7 | Territorial divisions
+9 | 8 | Court of Session
+11 | 9 | Courts of Judicial Magistrates
+12 | 10 | Chief Judicial Magistrate and Additional Chief Judicial Magistrate, etc
+13 | 11 | Special Judicial Magistrates
+14 | 12 | Local jurisdiction of Judicial Magistrates
+15 | 13 | Subordination of Judicial Magistrates
+20 | 14 | Executive Magistrates
+21 | 15 | Special Executive Magistrates
+22 | 16 | Local Jurisdiction of Executive Magistrates
+23 | 17 | Subordination of Executive Magistrates
+24 | 18 | Public Prosecutors
+25 | 19 | Assistant Public Prosecutors
+25A | 20 | Directorate of Prosecution
+26 | 21 | Courts by which offences are triable
+28 | 22 | Sentences which High Courts and Sessions Judges may pass
+29 | 23 | Sentences which Magistrates may pass
+30 | 24 | Sentence of imprisonment in default of fine
+31 | 25 | Sentence in cases of conviction of several offences at one trial
+32 | 26 | Mode of conferring powers
+33 | 27 | Powers of officers appointed
+34 | 28 | Withdrawal of powers
+35 | 29 | Powers of Judges and Magistrates exercisable by their successors-in-office
+36 | 30 | Powers of superior officers of police
+37 | 31 | Public when to assist Magistrates and police
+38 | 32 | Aid to person, other than police officer, executing warrant
+39 | 33 | Public to give information of certain offences
+40 | 34 | Duty of officers employed in connection with the affairs of a village to make certain report
+41 & 41A | 35 | When police may arrest without warrant
+41B | 36 | Procedure of arrest and duties of officer making arrest
+41C | 37 | Designated Police Officer
+41D | 38 | Right of arrested person to meet an advocate of his choice during interrogation
+42 | 39 | Arrest on refusal to give name and residence
+43 | 40 | Arrest by private person and procedure on such arrest
+44 | 41 | Arrest by Magistrate
+45 | 42 | Protection of members of the Armed Forces from arrest
+46 | 43 | Arrest how made
+47 | 44 | Search of place entered by person sought to be arrested
+48 | 45 | Pursuit of offenders into other jurisdictions
+49 | 46 | No unnecessary restraint
+50 | 47 | Person arrested to be informed of grounds of arrest and of right to bail
+50A | 48 | Obligation of person making arrest to inform about the arrest, etc, to relative or friend
+51 | 49 | Search of arrested person
+52 | 50 | Power to seize offensive weapons
+53 | 51 | Examination of accused by medical practitioner at the request of police officer
+53A | 52 | Examination of person accused of rape by medical practitioner
+54 | 53 | Examination of arrested person by medical officer
+54A | 54 | Identification of person arrested
+55 | 55 | Procedure when police officer deputes subordinate to arrest without warrant
+55A | 56 | Health and safety of arrested person
+56 | 57 | Person arrested to be taken before Magistrate or officer in charge of police station
+57 | 58 | Person arrested not to be detained more than twenty-four hours
+58 | 59 | Police to report apprehensions
+59 | 60 | Discharge of person apprehended
+60 | 61 | Power, on escape, to pursue and retake
+60A | 62 | Arrest to be made strictly according to the Sanhita
+61 | 63 | Form of summons
+62 | 64 | Summons how served
+63 | 65 | Service of summons on corporate bodies, firms, and societies
+64 | 66 | Service when persons summoned cannot be found
+65 | 67 | Procedure when service cannot be effected as before provided
+66 | 68 | Service on Government servant
+67 | 69 | Service of summons outside local limits
+68 | 70 | Proof of service in such cases and when serving officer not present
+69 | 71 | Service of summons on witness by post
+70 | 72 | Form of warrant of arrest and duration
+71 | 73 | Power to direct security to be taken
+72 | 74 | Warrants to whom directed
+73 | 75 | Warrant may be directed to any person
+74 | 76 | Warrant directed to police officer
+75 | 77 | Notification of substance of warrant
+76 | 78 | Person arrested to be brought before court without delay
+77 | 79 | Where warrant may be executed
+78 | 80 | Warrant forwarded for execution outside jurisdiction
+79 | 81 | Warrant directed to police officer for execution outside jurisdiction
+80 | 82 | Procedure on arrest of person against whom warrant issued
+81 | 83 | Procedure by Magistrate before whom such person arrested is brought
+82 | 84 | Proclamation for person absconding
+83 | 85 | Attachment of property of person absconding
+84 | 87 | Claims and objections to attachment
+85 | 88 | Release, sale and restoration of attached property
+86 | 89 | Appeal from order rejecting application for restoration of attached property
+87 | 90 | Issue of warrant in lieu of, or in addition to, summons
+88 | 91 | Power to take bond or bail bond for appearance
+89 | 92 | Arrest on breach of bond or bail bond for appearance
+90 | 93 | Provisions of this Chapter generally applicable to summonses and warrants of arrest
+91 | 94 | Summons to produce document or other thing
+92 | 95 | Procedure as to letters
+93 | 96 | When search-warrant may be issued
+94 | 97 | Search of place suspected to contain stolen property, forged documents, etc
+95 | 98 | Power to declare certain publications forfeited and to issue search-warrants for the same
+96 | 99 | Application to High Court to set aside declaration of forfeiture
+97 | 100 | Search for persons wrongfully confined
+98 | 101 | Power to compel restoration of abducted females
+99 | 102 | Direction, etc, of search-warrants
+100 | 103 | Persons in charge of closed place to allow search
+101 | 104 | Disposal of things found in search beyond jurisdiction
+102 | 106 | Power of police officer to seize certain property
+103 | 108 | Magistrate may direct search in his presence
+104 | 109 | Power to impound document, etc, produced
+105 | 110 | Reciprocal arrangements regarding processes
+105A | 111 | Definitions
+166A | 112 | Letter of request to competent authority for investigation in a country or place outside India
+166B | 113 | Letter of request from a country or place outside India to a Court or an authority for investigation in India
+105B | 114 | Assistance in securing transfer of persons
+105C | 115 | Assistance in relation to orders of attachment or forfeiture of property
+105D | 116 | Identifying unlawfully acquired property
+105E | 117 | Seizure or attachment of property
+105F | 118 | Management of properties seized or forfeited under this Chapter
+105G | 119 | Notice of forfeiture of property
+105H | 120 | Forfeiture of property in certain cases
+105I | 121 | Fine in lieu of forfeiture
+105J | 122 | Certain transfers to be null and void
+105K | 123 | Procedure in respect of letter of request
+105L | 124 | Application of this Chapter
+106 | 125 | Security for keeping the peace on conviction
+107 | 126 | Security for keeping the peace in other cases
+108 | 127 | Security for good behaviour from persons disseminating seditious matters
+109 | 128 | Security for good behaviour from suspected persons
+110 | 129 | Security for good behaviour from habitual offenders
+111 | 130 | Order to be made
+112 | 131 | Procedure in respect of person present in Court
+113 | 132 | Summons or warrant in case of person not so present
+114 | 133 | Copy of order to accompany summons or warrant
+115 | 134 | Power to dispense with personal attendance
+116 | 135 | Inquiry as to truth of information
+117 | 136 | Order to give security
+118 | 137 | Discharge of person informed against
+119 | 138 | Commencement of period for which security is required
+120 | 139 | Contents of bond
+121 | 140 | Power to reject sureties
+122 | 141 | Imprisonment in default of security
+123 | 142 | Power to release persons imprisoned for failing to give security
+124 | 143 | Security for unexpired period of bond
+125 | 144 | Order for maintenance of wives, children and parents
+126 | 145 | Procedure
+127 | 146 | Alteration in allowance
+128 | 147 | Enforcement of order of maintenance
+129 | 148 | Dispersal of assembly by use of civil force
+130 | 149 | Use of armed forces to disperse assembly
+131 | 150 | Power of certain armed force officers to disperse assembly
+132 | 151 | Protection against prosecution for acts done under sections 148, 149 and 150
+133 | 152 | Conditional order for removal of nuisance
+134 | 153 | Service or notification of order
+135 | 154 | Person to whom order is addressed to obey or show cause
+136 | 155 | Penalty for failure to comply with section 154
+137 | 156 | Procedure where existence of public right is denied
+138 | 157 | Procedure where person against whom order is made under section 152 appears to show cause
+139 | 158 | Power of Magistrate to direct local investigation and examination of an expert
+140 | 159 | Power of Magistrate to furnish written instructions, etc
+141 | 160 | Procedure on order being made absolute and consequences of disobedience
+142 | 161 | Injunction pending inquiry
+143 | 162 | Magistrate may prohibit repetition or continuance of public nuisance
+144 | 163 | Power to issue order in urgent cases of nuisance or apprehended danger
+145 | 164 | Procedure where dispute concerning land or water is likely to cause breach of peace
+146 | 165 | Power to attach subject of dispute and to appoint receiver
+147 | 166 | Dispute concerning right of use of land or water
+148 | 167 | Local inquiry
+149 | 168 | Police to prevent cognizable offences
+150 | 169 | Information of design to commit cognizable offences
+151 | 170 | Arrest to prevent the commission of cognizable offences
+152 | 171 | Prevention of injury to public property
+154 | 173 | Information in cognizable cases
+155 | 174 | Information as to non-cognizable cases and investigation of such cases
+156 | 175 | Police officer's power to investigate cognizable case
+157 | 176 | Procedure for investigation
+158 | 177 | Report how submitted
+159 | 178 | Power to hold investigation or preliminary inquiry
+160 | 179 | Police officer's power to require attendance of witnesses
+161 | 180 | Examination of witnesses by police
+162 | 181 | Statements to police and use thereof
+163 | 182 | No inducement to be offered
+164 | 183 | Recording of confessions and statements
+164A | 184 | Medical examination of the victim of rape
+165 | 185 | Search by police officer
+166 | 186 | When officer in charge of police station may require another to issue search-warrant
+167 | 187 | Procedure when investigation cannot be completed in twenty-four hours
+168 | 188 | Report of investigation by subordinate police officer
+169 | 189 | Release of accused when evidence deficient
+170 | 190 | Cases to be sent to Magistrate, when evidence is sufficient
+171 | 191 | Complainant and witnesses not to be required to accompany police officer and not to be subjected to restraint
+172 | 192 | Diary of proceedings in investigation
+173 | 193 | Report of police officer on completion of investigation
+174 | 194 | Police to enquire and report on suicide, etc
+175 | 195 | Power to summon persons
+176 | 196 | Inquiry by Magistrate into cause of death
+177 | 197 | Ordinary place of inquiry and trial
+178 | 198 | Place of inquiry or trial
+179 | 199 | Offence triable where act is done or consequence ensues
+180 | 200 | Place of trial where act is an offence by reason of relation to other offence
+181 | 201 | Place of trial in case of certain offences
+182 | 202 | Offences committed by means of electronic communications, letters, etc
+183 | 203 | Offence committed on journey or voyage
+184 | 204 | Place of trial for offences triable together
+185 | 205 | Power to order cases to be tried in different sessions divisions
+186 | 206 | High Court to decide, in case of doubt, district where inquiry or trial shall take place
+187 | 207 | Power to issue summons or warrant for offence committed beyond local jurisdiction
+188 | 208 | Offence committed outside India
+189 | 209 | Receipt of evidence relating to offences committed outside India
+190 | 210 | Cognizance of offences by Magistrates
+191 | 211 | Transfer on application of the accused
+192 | 212 | Making over of cases to Magistrates
+193 | 213 | Cognizance of offences by Courts of Session
+194 | 214 | Additional Sessions Judges to try cases made over to them
+195 | 215 | Prosecution for contempt of lawful authority of public servants, for offences against public justice and for offences relating to documents given in evidence
+195A | 216 | Procedure for witnesses in case of threatening, etc
+196 | 217 | Prosecution for offences against the State and for criminal conspiracy to commit such offence
+197 | 218 | Prosecution of Judges and public servants
+198 | 219 | Prosecution for offences against marriage
+198A | 220 | Prosecution of offences under section 498A of the Bharatiya Nyaya Sanhita, 2023
+198B | 221 | Cognizance of offence
+199 | 222 | Prosecution for defamation
+200 | 223 | Examination of complainant
+201 | 224 | Procedure by Magistrate not competent to take cognizance of the case
+202 | 225 | Postponement of issue of process
+203 | 226 | Dismissal of complaint
+204 | 227 | Issue of process
+205 | 228 | Magistrate may dispense with personal attendance of accused
+206 | 229 | Special summons in cases of petty offence
+207 | 230 | Supply to the accused of copy of police report and other documents
+208 | 231 | Supply of copies of statements and documents to accused in other cases triable by Court of Session
+209 | 232 | Commitment of case to Court of Session when offence is triable exclusively by it
+210 | 233 | Procedure to be followed when there is a complaint case and police investigation in respect of the same offence
+211 | 234 | Contents of charge
+212 | 235 | Particulars as to time, place and person
+213 | 236 | When manner of committing offence must be stated
+214 | 237 | Words in charge taken in sense of law under which offence is punishable
+215 | 238 | Effect of errors
+216 | 239 | Court may alter charge
+217 | 240 | Recall of witnesses when charge altered
+218 | 241 | Separate charges for distinct offences
+219 | 242 | Offences of same kind within year may be charged together
+220 | 243 | Trial for more than one offence
+221 | 244 | Where it is doubtful what offence has been committed
+222 | 245 | When offence proved included in offence charged
+223 | 246 | What persons may be charged jointly
+224 | 247 | Withdrawal of remaining charges on conviction on one of several charges
+225 | 248 | Trial to be conducted by Public Prosecutor
+226 | 249 | Opening case for prosecution
+227 | 250 | Discharge
+228 | 251 | Framing of charge
+229 | 252 | Conviction on plea of guilty
+230 | 253 | Date for prosecution evidence
+231 | 254 | Evidence for prosecution
+232 | 255 | Acquittal
+233 | 256 | Entering upon defence
+234 | 257 | Arguments
+235 | 258 | Judgment of acquittal or conviction
+236 | 259 | Previous conviction
+237 | 260 | Procedure in cases instituted under sub-section 2 of section 222
+238 | 261 | Compliance with section 230
+239 | 262 | When accused shall be discharged
+240 | 263 | Framing of charge
+241 | 264 | Conviction on plea of guilty
+242 | 265 | Evidence for prosecution
+243 | 266 | Evidence for defence
+244 | 267 | Evidence for prosecution
+245 | 268 | When accused shall be discharged
+246 | 269 | Procedure where accused is not discharged
+247 | 270 | Evidence for defence
+248 | 271 | Acquittal or conviction
+249 | 272 | Absence of complainant
+250 | 273 | Compensation for accusation without reasonable cause
+251 | 274 | Substance of accusation to be stated
+252 | 275 | Conviction on plea of guilty
+253 | 276 | Conviction on plea of guilty in absence of accused in petty cases
+254 | 277 | Procedure when not convicted
+255 | 278 | Acquittal or conviction
+256 | 279 | Non-appearance or death of complainant
+257 | 280 | Withdrawal of complaint
+258 | 281 | Power to stop proceedings in certain cases
+259 | 282 | Power of Court to convert summons-cases into warrant-cases
+260 | 283 | Power to try summarily
+261 | 284 | Summary trial by Magistrate of the second class
+262 | 285 | Procedure for summary trials
+263 | 286 | Record in summary trials
+264 | 287 | Judgment in cases tried summarily
+265 | 288 | Language of record and judgment
+265A | 289 | Application of the Chapter
+265B | 290 | Application for plea bargaining
+265C | 291 | Guidelines for mutually satisfactory disposition
+265D | 292 | Report of the mutually satisfactory disposition to be submitted before the Court
+265E | 293 | Disposal of the case
+265F | 294 | Judgment of the Court
+265G | 295 | Finality of the judgment
+265H | 296 | Power of the Court in plea bargaining
+265-I | 297 | Period of detention undergone by the accused to be set off against the sentence of imprisonment
+265J | 298 | Savings
+265K | 299 | Statements of accused not to be used
+265L | 300 | Non-application of the Chapter
+266 | 301 | Definitions
+267 | 302 | Power to require attendance of prisoners
+268 | 303 | Power of State Government or Central Government to exclude certain persons from operation of section 302
+269 | 304 | Officer in charge of prison to abstain from carrying out order in certain contingencies
+270 | 305 | Prisoner to be brought to Court in custody
+271 | 306 | Power to issue commission for examination of witness in prison
+272 | 307 | Language of Courts
+273 | 308 | Evidence to be taken in presence of accused
+274 | 309 | Record in summons-cases and inquiries
+275 | 310 | Record in warrant-cases
+276 | 311 | Record in trial before Court of Session
+277 | 312 | Language of record of evidence
+278 | 313 | Procedure in regard to such evidence when completed
+279 | 314 | Interpretation of evidence to accused or his pleader
+280 | 315 | Remarks respecting demeanour of witness
+281 | 316 | Record of examination of accused
+282 | 317 | Interpreter to be bound to interpret truthfully
+283 | 318 | Record in High Court
+284 | 319 | When attendance of witness may be dispensed with and commission issued
+285 | 320 | Commission to whom to be issued
+286 | 321 | Execution of commissions
+287 | 322 | Parties may examine witnesses
+288 | 323 | Return of commission
+289 | 324 | Adjournment of proceeding
+290 | 325 | Execution of foreign commissions
+291 | 326 | Deposition of medical witness
+291A | 327 | Identification report of Magistrate
+292 | 328 | Evidence of officers of the Mint
+293 | 329 | Reports of certain Government scientific experts
+294 | 330 | No formal proof of certain documents
+295 | 331 | Affidavit in proof of conduct of public servants
+296 | 332 | Evidence of formal character on affidavit
+297 | 333 | Authorities before whom affidavits may be sworn
+298 | 334 | Previous conviction or acquittal how proved
+299 | 335 | Record of evidence in absence of accused
+300 | 337 | Person once convicted or acquitted not to be tried for same offence
+301 | 338 | Appearance by Public Prosecutors
+302 | 339 | Permission to conduct prosecution
+303 | 340 | Right of person against whom proceedings are instituted to be defended
+304 | 341 | Legal aid to accused at State expense in certain cases
+305 | 342 | Procedure when corporation or registered society is an accused
+306 | 343 | Tender of pardon to accomplice
+307 | 344 | Power to direct tender of pardon
+308 | 345 | Trial of person not complying with conditions of pardon
+309 | 346 | Power to postpone or adjourn proceedings
+310 | 347 | Local inspection
+311 | 348 | Power to summon material witness, or examine person present
+311A | 349 | Power of Magistrate to order person to give specimen signatures or handwriting
+312 | 350 | Expenses of complainants and witnesses
+313 | 351 | Power to examine the accused
+314 | 352 | Oral arguments and memorandum of arguments
+315 | 353 | Accused person to be competent witness
+316 | 354 | No influence to be used to induce disclosure
+317 | 355 | Provision for inquiries and trial being held in the absence of accused in certain cases
+318 | 357 | Procedure where accused does not understand proceedings
+319 | 358 | Power to proceed against other persons appearing to be guilty of offence
+320 | 359 | Compounding of offences
+321 | 360 | Withdrawal from prosecution
+322 | 361 | Procedure in cases which Magistrate cannot dispose of
+323 | 362 | Procedure when, after commencement of inquiry or trial, Magistrate finds case should be committed
+324 | 363 | Trial of persons previously convicted of offences against coinage, stamp-law or property
+325 | 364 | Procedure when Magistrate cannot pass sentence sufficiently severe
+326 | 365 | Conviction or commitment on evidence partly recorded by one Magistrate and partly by another
+327 | 366 | Court to be open
+328 | 367 | Procedure in case of accused being person of unsound mind
+329 | 368 | Procedure in case of person of unsound mind tried before Court
+330 | 369 | Release of person with mental illness pending investigation or trial
+331 | 370 | Resumption of inquiry or trial
+332 | 371 | Procedure on accused appearing before Magistrate or Court
+333 | 372 | When accused appears to have been of sound mind
+334 | 373 | Judgment of acquittal on ground of unsoundness of mind
+335 | 374 | Person acquitted on ground of unsoundness of mind to be detained in safe custody
+336 | 375 | Power of State Government to empower officer-in-charge to discharge
+337 | 376 | Procedure where prisoner of unsound mind is reported capable of making his defence
+338 | 377 | Procedure where person of unsound mind detained is declared fit to be released
+339 | 378 | Delivery of person of unsound mind to care of relative or friend
+340 | 379 | Procedure in cases mentioned in section 215
+341 | 380 | Appeal
+342 | 381 | Power to order costs
+343 | 382 | Procedure of Magistrate taking cognizance
+344 | 383 | Summary procedure for trial for giving false evidence
+345 | 384 | Procedure in certain cases of contempt
+346 | 385 | Procedure where Court considers that case should not be dealt with under section 384
+347 | 386 | When Registrar or Sub-Registrar to be deemed a Civil Court
+348 | 387 | Discharge of offender on submission of apology
+349 | 388 | Imprisonment or committal of person refusing to answer or produce document
+350 | 389 | Summary procedure for punishment for non-attendance by a witness in obedience to summons
+351 | 390 | Appeals from convictions under sections 383, 384, 388 and 389
+352 | 391 | Certain Judges and Magistrates not to try certain offences when committed before themselves
+353 | 392 | Judgment
+354 | 393 | Language and contents of judgment
+356 | 394 | Order for notifying address of previously convicted offender
+357 | 395 | Order to pay compensation
+357A & 357B | 396 | Victim compensation scheme
+357C | 397 | Treatment of victims
+358 | 399 | Compensation to persons groundlessly arrested
+359 | 400 | Order to pay costs in non-cognizable cases
+360 | 401 | Order to release on probation of good conduct or after admonition
+361 | 402 | Special reasons to be recorded in certain cases
+362 | 403 | Court not to alter judgment
+363 | 404 | Copy of judgment to be given to the accused and other persons
+364 | 405 | Judgment when to be translated
+365 | 406 | Court of Session to send copy of finding and sentence to District Magistrate
+366 | 407 | Sentence of death to be submitted by Court of Session for confirmation
+367 | 408 | Power to direct further inquiry to be made or additional evidence to be taken
+368 | 409 | Power of High Court to confirm sentence or annul conviction
+369 | 410 | Confirmation or new sentence to be signed by two Judges
+370 | 411 | Procedure in case of difference of opinion
+371 | 412 | Procedure in cases submitted to High Court for confirmation
+372 | 413 | No appeal to lie unless otherwise provided
+373 | 414 | Appeal from orders requiring security or refusal to accept or rejecting surety for keeping peace or good behaviour
+374 | 415 | Appeals from convictions
+375 | 416 | No appeal in certain cases when accused pleads guilty
+376 | 417 | No appeal in petty cases
+377 | 418 | Appeal by the State Government against sentence
+378 | 419 | Appeal in case of acquittal
+379 | 420 | Appeal against conviction by High Court in certain cases
+380 | 421 | Special right of appeal in certain cases
+381 | 422 | Appeal to Court of Session how heard
+382 | 423 | Petition of appeal
+383 | 424 | Procedure when appellant in jail
+384 | 425 | Summary dismissal of appeal
+385 | 426 | Procedure for hearing appeals not dismissed summarily
+386 | 427 | Powers of the Appellate Court
+387 | 428 | Judgments of Subordinate Appellate Court
+388 | 429 | Order of High Court on appeal to be certified to lower Court
+389 | 430 | Suspension of sentence pending the appeal; release of appellant on bail
+390 | 431 | Arrest of accused in appeal from acquittal
+391 | 432 | Appellate Court may take further evidence or direct it to be taken
+392 | 433 | Procedure where Judges of Court of Appeal are equally divided
+393 | 434 | Finality of judgments and orders on appeal
+394 | 435 | Abatement of appeals
+395 | 436 | Reference to High Court
+396 | 437 | Disposal of case according to decision of High Court
+397 | 438 | Calling for records to exercise powers of revision
+398 | 439 | Power to order inquiry
+399 | 440 | Sessions Judge's powers of revision
+400 | 441 | Power of Additional Sessions Judge
+401 | 442 | High Court's powers of revision
+402 | 443 | Power of High Court to withdraw or transfer revision cases
+403 | 444 | Option of Court to hear parties
+405 | 445 | High Court's order to be certified to lower Court
+406 | 446 | Power of Supreme Court to transfer cases and appeals
+407 | 447 | Power of High Court to transfer cases and appeals
+408 | 448 | Power of Sessions Judge to transfer cases and appeals
+409 | 449 | Withdrawal of cases and appeals by Session Judge
+410 | 450 | Withdrawal of cases by Judicial Magistrate
+411 | 451 | Making over or withdrawal of cases by Executive Magistrates
+412 | 452 | Reasons to be recorded
+413 | 453 | Execution of order passed under section 409
+414 | 454 | Execution of sentence of death passed by High Court
+415 | 455 | Commutation of sentence of death in case of appeal to Supreme Court
+416 | 456 | Postponement of capital sentence on pregnant woman
+417 | 457 | Power to appoint place of imprisonment
+418 | 458 | Execution of sentence of imprisonment
+419 | 459 | Direction of warrant for execution
+420 | 460 | Warrant with whom to be lodged
+421 | 461 | Warrant for levy of fine
+422 | 462 | Effect of such warrant
+423 | 463 | Warrant for levy of fine issued by a Court in any territory to which this Sanhita does not extend
+424 | 464 | Suspension of execution of sentence of imprisonment
+425 | 465 | Who may issue warrant
+426 | 466 | Sentence on escaped convict when to take effect
+427 | 467 | Sentence on offender already sentenced for another offence
+428 | 468 | Period of detention undergone by the accused to be set off against the sentence of imprisonment
+429 | 469 | Saving
+430 | 470 | Return of warrant on execution of sentence
+431 | 471 | Money ordered to be paid recoverable as a fine
+432 | 473 | Power to suspend or remit sentences
+433 | 474 | Power to commute sentence
+433A | 475 | Restriction on powers of remission or commutation in certain cases
+434 | 476 | Concurrent power of Central Government in case of death sentences
+435 | 477 | State Government to act after concurrence with Central Government in certain cases
+436 | 478 | In what cases bail to be taken
+436A | 479 | Maximum period for which an undertrial prisoner can be detained
+437 | 480 | When bail may be taken in case of non-bailable offence
+437A | 481 | Bail to require accused to appear before next appellate Court
+438 | 482 | Direction for grant of bail to person apprehending arrest
+439 | 483 | Special powers of High Court or Court of Session regarding bail
+440 | 484 | Amount of bond and reduction thereof
+441 | 485 | Bond of accused and sureties
+441A | 486 | Declaration by sureties
+442 | 487 | Discharge from custody
+443 | 488 | Power to order sufficient bail when that first taken is insufficient
+444 | 489 | Discharge of sureties
+445 | 490 | Deposit instead of recognizance
+446 | 491 | Procedure when bond has been forfeited
+446A | 492 | Cancellation of bond and bail bond
+447 | 493 | Procedure in case of insolvency of death of surety or when a bond is forfeited
+448 | 494 | Bond required from child
+449 | 495 | Appeal from orders under section 491
+450 | 496 | Power to direct levy of amount due on certain recognizances
+451 | 497 | Order for custody and disposal of property pending trial in certain cases
+452 | 498 | Order for disposal of property at conclusion of trial
+453 | 499 | Payment to innocent purchaser of money found on accused
+454 | 500 | Appeal against orders under section 498 or section 499
+455 | 501 | Destruction of libellous and other matter
+456 | 502 | Power to restore possession of immovable property
+457 | 503 | Procedure by police upon seizure of property
+458 | 504 | Procedure where no claimant appears within six months
+459 | 505 | Power to sell perishable property
+460 | 506 | Irregularities which do not vitiate proceedings
+461 | 507 | Irregularities which vitiate proceedings
+462 | 508 | Proceedings in wrong place
+463 | 509 | Non-compliance with provisions of section 183 or section 316
+464 | 510 | Effect of omission to frame, or absence of, or error in, charge
+465 | 511 | Finding or sentence when reversible by reason of error, omission or irregularity
+466 | 512 | Defect or error not to make attachment unlawful
+467 | 513 | Definitions
+468 | 514 | Bar to taking cognizance after lapse of the period of limitation
+469 | 515 | Commencement of the period of limitation
+470 | 516 | Exclusion of time in certain cases
+471 | 517 | Exclusion of date on which Court is closed
+472 | 518 | Continuing offence
+473 | 519 | Extension of period of limitation in certain cases
+474 | 520 | Trials before High Courts
+475 | 521 | Delivery to commanding officers of persons liable to be tried by Court-martial
+476 | 522 | Forms
+477 | 523 | Power of High Court to make rules
+478 | 524 | Power to alter functions allocated to Executive Magistrate in certain cases
+479 | 525 | Case in which Judge or Magistrate is personally interested
+480 | 526 | Practising advocate not to sit as Magistrate in certain Courts
+481 | 527 | Public servant concerned in sale not to purchase or bid for property
+482 | 528 | Saving of inherent powers of High Court
+483 | 529 | Duty of High Court to exercise continuous superintendence over Courts
+484 | 531 | Repeal and savings

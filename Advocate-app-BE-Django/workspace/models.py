@@ -35,13 +35,18 @@ class CaseTag(models.Model):
 
 class CaseTask(models.Model):
     id = models.BigAutoField(primary_key=True)
-    advocate_id = models.BigIntegerField(db_index=True)
+    advocate_id = models.BigIntegerField(db_index=True)          # creator / owner
     case_id = models.BigIntegerField(db_index=True, null=True, blank=True)
     title = models.CharField(max_length=255)
     priority = models.CharField(max_length=16, default='MEDIUM')
     deadline = models.DateField(null=True, blank=True)
     completed = models.BooleanField(default=False)
+    cancelled = models.BooleanField(default=False)   # soft-cancel: kept for record
     created_at = models.DateTimeField(auto_now_add=True)
+    # Delegation: who the task is FOR (defaults to the creator) and who assigned
+    # it. NULL assigned_to_id is treated as "assigned to the creator".
+    assigned_to_id = models.BigIntegerField(db_index=True, null=True, blank=True)
+    assigned_by_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = 'case_task'

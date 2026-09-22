@@ -1,5 +1,5 @@
 import React from "react";
-import { FiFile, FiFileText, FiImage, FiArchive, FiDownload, FiEye, FiTrash2, FiEdit2 } from "react-icons/fi";
+import { FiFile, FiFileText, FiImage, FiArchive, FiDownload, FiEye, FiTrash2, FiEdit2, FiZap, FiLayers } from "react-icons/fi";
 
 const CATEGORY_COLORS = {
   "Court Order": "#6366f1", "Petition": "#f59e0b", "Evidence": "#10b981",
@@ -28,7 +28,7 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
-export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onEdit, gridView, className }) {
+export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onEdit, onSummary, onVersions, gridView, className }) {
   const Icon = getFileIcon(doc.fileType);
   const catColor = CATEGORY_COLORS[doc.category] || CATEGORY_COLORS["Other"];
 
@@ -53,13 +53,25 @@ export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onE
             <div className="doc-card-client">Client: {doc.client.name}</div>
           )}
           <div className="doc-card-footer">
-            <span className="doc-card-version">v{doc.version}</span>
+            {onVersions ? (
+              <button className="doc-card-version doc-card-version-btn" onClick={() => onVersions(doc)} title="Version history">
+                <FiLayers size={11} /> v{doc.version}
+              </button>
+            ) : (
+              <span className="doc-card-version">v{doc.version}</span>
+            )}
             <span className="doc-card-date">{new Date(doc.uploadDate).toLocaleDateString()}</span>
           </div>
         </div>
+        {onSummary && (
+          <button className="doc-summary-btn" onClick={() => onSummary(doc)}>
+            <FiZap /> See Summary
+          </button>
+        )}
         <div className="doc-card-actions">
           <button onClick={() => onPreview(doc)} title="Preview"><FiEye /></button>
           <button onClick={() => onDownload(doc)} title="Download"><FiDownload /></button>
+          {onVersions && <button onClick={() => onVersions(doc)} title="Versions / upload new"><FiLayers /></button>}
           {onEdit && <button onClick={() => onEdit(doc)} title="Edit"><FiEdit2 /></button>}
           {onDelete && <button onClick={() => onDelete(doc)} title="Delete"><FiTrash2 /></button>}
         </div>
@@ -74,7 +86,11 @@ export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onE
           <Icon size={18} color={catColor} style={{ flexShrink: 0 }} />
           <div>
             <strong>{doc.documentName}</strong>
-            {doc.version > 1 && <span className="doc-list-version"> v{doc.version}</span>}
+            {onVersions ? (
+              <button className="doc-list-version doc-card-version-btn" onClick={() => onVersions(doc)} title="Version history"> v{doc.version}</button>
+            ) : (
+              doc.version > 1 && <span className="doc-list-version"> v{doc.version}</span>
+            )}
           </div>
         </div>
       </td>
@@ -86,7 +102,9 @@ export default function DocumentCard({ doc, onPreview, onDownload, onDelete, onE
       <td><span className={`doc-status-badge ${(doc.status || "ACTIVE").toLowerCase()}`}>{doc.status || "ACTIVE"}</span></td>
       <td className="actions-cell">
         <button className="icon-btn-action view" onClick={() => onPreview(doc)} title="Preview"><FiEye /></button>
+        {onSummary && <button className="doc-summary-btn-sm" onClick={() => onSummary(doc)} title="See Summary"><FiZap /> Summary</button>}
         <button className="icon-btn-action download" onClick={() => onDownload(doc)} title="Download"><FiDownload /></button>
+        {onVersions && <button className="icon-btn-action versions" onClick={() => onVersions(doc)} title="Versions / upload new"><FiLayers /></button>}
         {onEdit && <button className="icon-btn-action edit" onClick={() => onEdit(doc)} title="Edit"><FiEdit2 /></button>}
         {onDelete && <button className="icon-btn-action delete" onClick={() => onDelete(doc)} title="Delete"><FiTrash2 /></button>}
       </td>

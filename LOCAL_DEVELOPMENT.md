@@ -167,6 +167,13 @@ Registered tasks, each a `.bat` in `Advocate-app-BE-Django/scripts/`:
 | AMS Reminder Scan | `scan_notifications.bat` | daily | Raises hearing / invoice / task reminders |
 | AMS Appeal Scan | `scan_appeals.bat` | daily | Detects appealable disposals (needs the scraper) |
 | AMS Prune Audit Log | `prune_audit_log.bat` | daily | Trims `audit_log` |
+| AMS Document Summaries | `summarize_documents.bat` | 5–10 min | Catch-up/retry for document AI summaries (uploads summarize immediately; this reruns anything left PENDING or stuck). Needs `LLM_PROVIDER`/`GEMINI_API_KEY`. |
+
+Backfill summaries for documents uploaded before this feature existed:
+
+```bat
+venv\Scripts\python.exe manage.py summarize_documents --all
+```
 
 **Not yet registered:** `manage.py sync_causelist`. It must run each morning
 *after* the court publishes, or the cause-list features have no data:

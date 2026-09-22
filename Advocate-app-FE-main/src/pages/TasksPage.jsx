@@ -2,16 +2,26 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import Select from "react-select";
-import { FiPlus, FiTrash2, FiCheckSquare, FiSquare, FiSearch, FiPaperclip, FiEye, FiX } from "react-icons/fi";
+import { jwtDecode } from "jwt-decode";
+import { FiPlus, FiXCircle, FiRotateCcw, FiCheckSquare, FiSquare, FiSearch, FiPaperclip, FiEye, FiX, FiUser } from "react-icons/fi";
 import "../assets/styles/TasksPage.css";
 import { useLoading } from "../contexts/LoadingContext.jsx";
 import { useToast } from "../contexts/ToastContext.jsx";
 import { usePermission } from "../contexts/PermissionContext";
+import Modal from "../components/Modal";
 
 const FILTERS = [
-  { key: "all", label: "All" },
-  { key: "pending", label: "Pending" },
+  { key: "inprogress", label: "In Progress" },
   { key: "completed", label: "Completed" },
+  { key: "canceled", label: "Canceled" },
+];
+
+// Same document categories as the Documents upload, so a file attached to a task
+// is filed under the same taxonomy.
+const DOC_CATEGORIES = [
+  "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
+  "Notice", "Judgment", "Invoice", "Payment Receipt",
+  "Identity Proof", "Address Proof", "Other",
 ];
 
 const selectStyles = {
@@ -45,14 +55,23 @@ export default function TasksPage() {
   const [deadline, setDeadline] = useState("");
   const [linkedCase, setLinkedCase] = useState(null);
   const [files, setFiles] = useState([]);
+  const [docCategory, setDocCategory] = useState("");
   const [searchText, setSearchText] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("inprogress");
+  const [scope, setScope] = useState("team");   // team | mine | created
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [assignees, setAssignees] = useState([]);
+  const [assignTo, setAssignTo] = useState("");   // "" = myself
   const [highlightedId, setHighlightedId] = useState(null);
   const location = useLocation();
   const navigate = useNavigate();
 
   const token = localStorage.getItem("token");
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } };
+  const canAssign = hasPermission("TASK_ASSIGN");
+  const myId = (() => {
+    try { return jwtDecode(token)?.advocateId ?? null; } catch { return null; }
+  })();
   const { withLoading } = useLoading();
   const { success, error } = useToast();
 
@@ -76,7 +95,18 @@ export default function TasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  useEffect(() => { fetchTasks(); fetchCases(); }, [fetchTasks, fetchCases]);
+  const fetchAssignees = useCallback(async () => {
+    if (!canAssign) return;
+    try {
+      const res = await axios.get("/api/workspace/assignable-advocates", authHeaders);
+      setAssignees(res.data || []);
+    } catch (err) {
+      console.error("Error fetching assignable advocates:", err);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, canAssign]);
+
+  useEffect(() => { fetchTasks(); fetchCases(); fetchAssignees(); }, [fetchTasks, fetchCases, fetchAssignees]);
 
   // Global Search navigation
   useEffect(() => {
@@ -94,6 +124,7 @@ export default function TasksPage() {
       const fd = new FormData();
       fd.append("file", file);
       if (caseId) fd.append("caseId", caseId);
+      if (docCategory) fd.append("category", docCategory);
       const res = await axios.post("/api/documents/upload", fd, authHeaders);
       if (res.data?.id) ids.push(res.data.id);
     }
@@ -109,6 +140,7 @@ export default function TasksPage() {
         // 1) create the task
         const res = await axios.post("/api/workspace/tasks/create", {
           title: title.trim(), priority, deadline: deadline || null, caseId,
+          assignedToId: assignTo || undefined,
         }, authHeaders);
         const taskId = res.data.id;
         // 2) upload + attach documents
@@ -119,7 +151,8 @@ export default function TasksPage() {
           }
         }
       })(), "Creating Task...");
-      setTitle(""); setPriority("MEDIUM"); setDeadline(""); setLinkedCase(null); setFiles([]);
+      setTitle(""); setPriority("MEDIUM"); setDeadline(""); setLinkedCase(null); setFiles([]); setDocCategory(""); setAssignTo("");
+      setShowAddModal(false);
       fetchTasks();
       success("Task created.");
     } catch (err) {
@@ -135,11 +168,37 @@ export default function TasksPage() {
     } catch (err) { console.error("Error toggling task:", err); }
   };
 
-  const handleDelete = async (id) => {
+  const handleCancel = async (id, cancelled = true) => {
     try {
-      await withLoading(axios.delete(`/api/workspace/tasks/${id}`, authHeaders), "Deleting Task...");
+      await withLoading(
+        axios.put(`/api/workspace/tasks/${id}/cancel`, { cancelled }, authHeaders),
+        cancelled ? "Cancelling Task..." : "Restoring Task...");
       fetchTasks();
-    } catch (err) { console.error("Error deleting task:", err); }
+    } catch (err) {
+      console.error("Error cancelling task:", err);
+      error(err.response?.data?.error || "Failed to update task.");
+    }
+  };
+
+  const handleChangePriority = async (id, newPriority) => {
+    try {
+      await axios.put(`/api/workspace/tasks/${id}/priority`, { priority: newPriority }, authHeaders);
+      fetchTasks();
+    } catch (err) {
+      console.error("Error updating priority:", err);
+      error(err.response?.data?.error || "Failed to update priority.");
+    }
+  };
+
+  const handleReassign = async (id, assignedToId) => {
+    try {
+      await axios.put(`/api/workspace/tasks/${id}/assign`, { assignedToId }, authHeaders);
+      fetchTasks();
+      success("Task reassigned.");
+    } catch (err) {
+      console.error("Error reassigning task:", err);
+      error(err.response?.data?.error || "Failed to reassign task.");
+    }
   };
 
   // Open a document in a new tab
@@ -156,8 +215,11 @@ export default function TasksPage() {
   const caseOptions = cases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }));
 
   const visibleTasks = tasks.filter((t) => {
-    if (filter === "pending" && t.completed) return false;
-    if (filter === "completed" && !t.completed) return false;
+    if (filter === "inprogress" && (t.completed || t.cancelled)) return false;
+    if (filter === "completed" && (!t.completed || t.cancelled)) return false;
+    if (filter === "canceled" && !t.cancelled) return false;
+    if (scope === "mine" && t.assignedToId !== myId) return false;
+    if (scope === "created" && t.createdById !== myId) return false;
     if (searchText.trim()) {
       const k = searchText.toLowerCase();
       return (t.title || "").toLowerCase().includes(k)
@@ -169,9 +231,17 @@ export default function TasksPage() {
 
   return (
     <div className="tasks-page-container">
-      <p className="subtle">Track tasks, link them to cases, and attach documents.</p>
+      <div className="tasks-page-header">
+        {hasPermission("TASK_CREATE") && (
+          <button className="tasks-add-btn" onClick={() => setShowAddModal(true)}>
+            <FiPlus /> Add Task
+          </button>
+        )}
+      </div>
 
-      {/* New Task Form */}
+      {/* New Task Form (popup) */}
+      <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title="New Task">
+        <div className="task-form-modal">
       <form onSubmit={handleCreateTask} className="task-creation-form task-creation-form-rich">
         <div className="task-field task-field-title">
           <label htmlFor="task-title">Task</label>
@@ -219,6 +289,24 @@ export default function TasksPage() {
               onChange={(e) => setFiles(Array.from(e.target.files || []))} />
           </label>
         </div>
+        <div className="task-field">
+          <label htmlFor="task-doc-category">Category</label>
+          <select id="task-doc-category" value={docCategory} onChange={(e) => setDocCategory(e.target.value)}>
+            <option value="">Select category</option>
+            {DOC_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        {canAssign && (
+          <div className="task-field">
+            <label htmlFor="task-assign-to">Assign to</label>
+            <select id="task-assign-to" value={assignTo} onChange={(e) => setAssignTo(e.target.value)}>
+              <option value="">Myself</option>
+              {assignees.map((a) => (
+                <option key={a.id} value={a.id}>{a.fullName || a.email}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {hasPermission("TASK_CREATE") && (
           <div className="task-field task-field-submit">
             <button type="submit"><FiPlus /> Add Task</button>
@@ -235,9 +323,18 @@ export default function TasksPage() {
           ))}
         </div>
       )}
+        </div>
+      </Modal>
 
       {/* Filter + search */}
       <div className="tasks-toolbar">
+        <div className="tasks-filter-tabs">
+          {[{ key: "team", label: "Team" }, { key: "mine", label: "Assigned to me" }, { key: "created", label: "Created by me" }].map((s) => (
+            <button key={s.key} className={`tasks-filter-tab ${scope === s.key ? "active" : ""}`} onClick={() => setScope(s.key)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
         <div className="tasks-filter-tabs">
           {FILTERS.map((f) => (
             <button key={f.key} className={`tasks-filter-tab ${filter === f.key ? "active" : ""}`} onClick={() => setFilter(f.key)}>
@@ -265,7 +362,7 @@ export default function TasksPage() {
             {visibleTasks.map((task) => (
               <div
                 key={task.id}
-                className={`task-row-card ${task.completed ? "completed" : ""}${highlightedId === task.id ? " highlight-row" : ""}`}
+                className={`task-row-card ${task.completed ? "completed" : ""}${task.cancelled ? " cancelled" : ""}${highlightedId === task.id ? " highlight-row" : ""}`}
                 ref={(el) => { if (highlightedId === task.id && el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }}
               >
                 <button className="toggle-complete-btn" onClick={() => handleToggle(task.id)}>
@@ -287,11 +384,43 @@ export default function TasksPage() {
                         <FiEye /> {d.name}
                       </span>
                     ))}
+                    {task.assignedToName && (
+                      <span className="task-assignee-chip" title={task.assignedToId === myId ? "Assigned to you" : `Assigned to ${task.assignedToName}`}>
+                        <FiUser /> {task.assignedToId === myId ? "You" : task.assignedToName}
+                      </span>
+                    )}
+                    {task.cancelled && <span className="task-cancelled-chip">Cancelled</span>}
                   </div>
                 </div>
                 <div className="task-side-actions">
-                  <span className={`priority-tag ${(task.priority || "medium").toLowerCase()}`}>{task.priority}</span>
-                  {hasPermission("TASK_DELETE") && <button className="delete-task-btn" onClick={() => handleDelete(task.id)}><FiTrash2 /></button>}
+                  <select
+                    className="task-reassign-select"
+                    value={task.priority || "MEDIUM"}
+                    onChange={(e) => handleChangePriority(task.id, e.target.value)}
+                    title="Change priority"
+                  >
+                    <option value="HIGH">High</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="LOW">Low</option>
+                  </select>
+                  {canAssign && (
+                    <select
+                      className="task-reassign-select"
+                      value={task.assignedToId || ""}
+                      onChange={(e) => handleReassign(task.id, e.target.value)}
+                      title="Reassign task"
+                    >
+                      <option value={myId}>Me</option>
+                      {assignees.map((a) => (
+                        <option key={a.id} value={a.id}>{a.fullName || a.email}</option>
+                      ))}
+                    </select>
+                  )}
+                  {(task.assignedById ?? task.createdById) === myId && (
+                    task.cancelled
+                      ? <button className="delete-task-btn" title="Restore task" onClick={() => handleCancel(task.id, false)}><FiRotateCcw /></button>
+                      : <button className="delete-task-btn" title="Cancel task" onClick={() => handleCancel(task.id, true)}><FiXCircle /></button>
+                  )}
                 </div>
               </div>
             ))}

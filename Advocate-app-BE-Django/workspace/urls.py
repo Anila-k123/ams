@@ -25,9 +25,13 @@ urlpatterns = [
     # Tasks — unified (standalone + per-case)
     path('workspace/tasks/all', views.MyTasksAllView.as_view()),
     path('workspace/tasks/create', views.CreateTaskView.as_view()),
+    path('workspace/assignable-advocates', views.AssignableAdvocatesView.as_view()),
     path('workspace/cases/<int:case_id>/tasks', views.CaseTasksView.as_view()),
     path('workspace/tasks/<int:task_id>/documents', views.TaskDocumentsView.as_view()),
     path('workspace/tasks/<int:task_id>/documents/<int:document_id>', views.DeleteTaskDocumentView.as_view()),
+    path('workspace/tasks/<int:pk>/assign', views.AssignTaskView.as_view()),
+    path('workspace/tasks/<int:pk>/priority', views.UpdateTaskPriorityView.as_view()),
+    path('workspace/tasks/<int:pk>/cancel', views.CancelTaskView.as_view()),
     path('workspace/tasks/<int:pk>/toggle', views.ToggleCaseTaskView.as_view()),
     path('workspace/tasks/<int:pk>', views.DeleteCaseTaskView.as_view()),
 

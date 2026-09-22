@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from core.models import Case, CaseEvent, Expense, Invoice, ClientPayment, Document
+from core.models import Case, CaseEvent, Expense, Invoice, ClientPayment, Document, Advocate
 from core.permissions import RequirePermission
 from expenses.serializers import ExpenseSerializer
 from invoices.serializers import InvoiceSerializer
@@ -19,9 +19,98 @@ from .serializers import (CaseNoteSerializer, CaseTagSerializer, CaseTaskSeriali
 
 # --- helpers -------------------------------------------------------------
 
+log = logging.getLogger(__name__)
+
+
 def _owns_case(request, case_id):
     """Only allow workspace ops on cases the requesting advocate owns."""
     return Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists()
+
+
+def _can_assign(request):
+    """True if the user may assign tasks to other team members."""
+    try:
+        return 'TASK_ASSIGN' in request.user.permission_codes()
+    except Exception:
+        return False
+
+
+def _assignable_advocates(user):
+    """Active people in the user's practice (owner + members) they may assign to."""
+    from core.practice import practice_root, active_members
+    root = practice_root(user)
+    people, seen = [], set()
+    owner = Advocate.objects.filter(id=root, left_on__isnull=True).first()
+    if owner:
+        people.append(owner)
+        seen.add(owner.id)
+    for m in active_members(root):
+        if m.id not in seen:
+            people.append(m)
+            seen.add(m.id)
+    return people
+
+
+def _assignable_ids(user):
+    return {a.id for a in _assignable_advocates(user)}
+
+
+def _resolve_assignee(request):
+    """Resolve the requested assignee id, enforcing the assign policy.
+
+    Returns (assigned_to_id, error_response). On success error_response is None.
+    Defaults to the requesting user (self-assign) when no/blank assignedToId.
+    """
+    raw = request.data.get('assignedToId')
+    if raw in (None, '', 0, '0'):
+        return request.user.id, None
+    try:
+        target = int(raw)
+    except (TypeError, ValueError):
+        return None, Response({'error': 'invalid assignedToId'}, status=status.HTTP_400_BAD_REQUEST)
+    if target == request.user.id:
+        return target, None
+    if not _can_assign(request):
+        return None, Response({'error': 'You do not have permission to assign tasks to others.'},
+                              status=status.HTTP_403_FORBIDDEN)
+    if target not in _assignable_ids(request.user):
+        return None, Response({'error': 'That advocate is not in your team.'},
+                              status=status.HTTP_400_BAD_REQUEST)
+    return target, None
+
+
+def _notify_assignment(task, assigner):
+    """Tell the assignee they've been given a task (in-app + email). Never raises."""
+    if not task.assigned_to_id or task.assigned_to_id == assigner.id:
+        return
+    try:
+        from notifications import service
+        assignee = Advocate.objects.filter(id=task.assigned_to_id).first()
+        if assignee is None:
+            return
+        case_no = None
+        if task.case_id:
+            c = Case.objects.filter(id=task.case_id).only('case_number').first()
+            case_no = c.case_number if c else None
+        subject = 'New task assigned: {}'.format(task.title)
+        body = ('You have been assigned a task by {}.\n\n'
+                'Task     : {}\n'
+                'Priority : {}\n'
+                'Deadline : {}\n'
+                'Case     : {}\n').format(
+            assigner.full_name or 'a colleague', task.title, task.priority,
+            task.deadline or 'none', case_no or 'not linked')
+        channels = [service.IN_APP]
+        if getattr(assignee, 'email_notifications_enabled', False):
+            channels.append(service.EMAIL)
+        ids = service.notify(
+            assignee.id, 'TASK_ASSIGNED', subject, body, channels=tuple(channels),
+            recipient_name=assignee.full_name, recipient_email=assignee.email,
+            entity='CaseTask', entity_id=task.id, case_id=task.case_id,
+            triggered_by='USER')
+        service.send_now(ids)
+    except Exception:
+        log.exception('task-assign notify failed for task %s', task.id)
 
 
 def _event_payload(ev):
@@ -128,12 +217,18 @@ class CaseTasksView(APIView):
         title = (request.data.get('title') or '').strip()
         if not title:
             return Response({'error': 'title is required'}, status=status.HTTP_400_BAD_REQUEST)
+        assignee_id, err = _resolve_assignee(request)
+        if err is not None:
+            return err
         task = CaseTask.objects.create(
             advocate_id=request.user.id, case_id=case_id, title=title,
             priority=request.data.get('priority') or 'MEDIUM',
             deadline=request.data.get('deadline') or None,
             completed=False,
+            assigned_to_id=assignee_id,
+            assigned_by_id=request.user.id,
         )
+        _notify_assignment(task, request.user)
         return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
 
@@ -158,6 +253,9 @@ class CreateTaskView(APIView):
         case_id = request.data.get('caseId') or None
         if case_id and not _owns_case(request, case_id):
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        assignee_id, err = _resolve_assignee(request)
+        if err is not None:
+            return err
         task = CaseTask.objects.create(
             advocate_id=request.user.id,
             case_id=case_id,
@@ -165,8 +263,44 @@ class CreateTaskView(APIView):
             priority=request.data.get('priority') or 'MEDIUM',
             deadline=request.data.get('deadline') or None,
             completed=False,
+            assigned_to_id=assignee_id,
+            assigned_by_id=request.user.id,
         )
+        _notify_assignment(task, request.user)
         return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+
+
+class AssignableAdvocatesView(APIView):
+    """Active people in the requester's practice they could assign a task to.
+
+    Any authenticated user may read it; the UI only shows the picker to those
+    with TASK_ASSIGN, and the assign endpoints enforce the permission."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        out = [{'id': a.id, 'fullName': a.full_name, 'email': a.email,
+                'roles': a.role_names()}
+               for a in _assignable_advocates(request.user)
+               if a.id != request.user.id]
+        return Response(out)
+
+
+class AssignTaskView(APIView):
+    """Reassign an existing task to a team member. PUT {assignedToId}."""
+    permission_classes = [RequirePermission('TASK_ASSIGN')]
+
+    def put(self, request, pk):
+        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        if task is None:
+            return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        assignee_id, err = _resolve_assignee(request)
+        if err is not None:
+            return err
+        task.assigned_to_id = assignee_id
+        task.assigned_by_id = request.user.id
+        task.save(update_fields=['assigned_to_id', 'assigned_by_id'])
+        _notify_assignment(task, request.user)
+        return Response(CaseTaskSerializer(task).data)
 
 
 class TaskDocumentsView(APIView):
@@ -210,6 +344,49 @@ class ToggleCaseTaskView(APIView):
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         task.completed = not task.completed
         task.save(update_fields=['completed'])
+        return Response(CaseTaskSerializer(task).data)
+
+
+class UpdateTaskPriorityView(APIView):
+    """PUT /api/workspace/tasks/<pk>/priority {priority}. Any practice member
+    (including the task's assignee) may change a task's priority."""
+    permission_classes = [RequirePermission()]
+
+    _ALLOWED = {'LOW', 'MEDIUM', 'HIGH'}
+
+    def put(self, request, pk):
+        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        if task is None:
+            return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        priority = (request.data.get('priority') or '').strip().upper()
+        if priority not in self._ALLOWED:
+            return Response({'error': 'priority must be LOW, MEDIUM or HIGH'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        task.priority = priority
+        task.save(update_fields=['priority'])
+        return Response(CaseTaskSerializer(task).data)
+
+
+class CancelTaskView(APIView):
+    """PUT /api/workspace/tasks/<pk>/cancel {cancelled?} -> soft-cancel a task.
+
+    Replaces hard delete: the task is kept for the record, just flagged cancelled.
+    Body may pass {cancelled: false} to restore. Any practice member may do it."""
+    permission_classes = [RequirePermission()]
+
+    def put(self, request, pk):
+        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        if task is None:
+            return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Only the person who assigned the task may cancel/restore it. For tasks
+        # created before assignment existed, the creator is the assigner.
+        assigner_id = task.assigned_by_id or task.advocate_id
+        if request.user.id != assigner_id:
+            return Response({'error': 'Only the person who assigned this task can cancel it.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        cancelled = request.data.get('cancelled', True)
+        task.cancelled = bool(cancelled)
+        task.save(update_fields=['cancelled'])
         return Response(CaseTaskSerializer(task).data)
 
 

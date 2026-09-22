@@ -76,3 +76,5 @@ Advocate-app-BE-Django/uploads/
 Advocate-app-BE-Django/logs/
 Advocate-app-BE-main/uploads/
 Advocate-app-BE-main/logs/
+# Raw dictionary source dumps (imported into the DB; re-fetchable via import_legal_terms --url)
+Advocate-app-BE-Django/_data/

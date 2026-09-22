@@ -1,0 +1,193 @@
+# IEA (Indian Evidence Act, 1872) -> BSA (Bharatiya Sakshya Adhiniyam, 2023)
+# Source: vakilpedia.com/iea-to-bsa-section-list
+# old_section | new_section | subject
+1 | 1 | Short title, application and commencement
+3 | 2 | Definitions
+3, para 1 | 2(1)(a) | Court
+4, para 3 | 2(1)(b) | Conclusive proof
+3, para 8 | 2(1)(c) | Disproved
+3, para 5 | 2(1)(d) | Document
+3, para 6 | 2(1)(e) | Evidence
+3, para 2 | 2(1)(f) | Fact
+3, para 4 | 2(1)(g) | Facts in issue
+4, para 1 | 2(1)(h) | May presume
+3, para 9 | 2(1)(i) | Not proved
+3, para 7 | 2(1)(j) | Proved
+3, para 3 | 2(1)(k) | Relevant
+4, para 2 | 2(1)(l) | Shall presume
+5 | 3 | Evidence maybe given of facts in issue and relevant facts
+6 | 4 | Relevancy of facts forming part of same transaction
+7 | 5 | Facts which are occasion, cause or effect
+8 | 6 | Motive, preparation and previous or subsequent conduct
+9 | 7 | Facts necessary to explain or introduce fact in issue
+10 | 8 | Things said or done by conspirator in reference to common design
+11 | 9 | When facts not otherwise relevant become relevant
+12 | 10 | Facts tending to enable Court to determine amount in damages suits
+13 | 11 | Facts relevant when right or custom is in question
+14 | 12 | Facts showing existence of state of mind, or of body or bodily feeling
+15 | 13 | Facts bearing on question whether act was accidental or intentional
+16 | 14 | Existence of course of business when relevant
+17 | 15 | Admission defined
+18 | 16 | Admission by party to proceeding or his agent
+19 | 17 | Admissions by persons whose position must be proved as against party
+20 | 18 | Admissions by persons expressly referred to by party to suit
+21 | 19 | Proof of admissions against persons making them
+22 | 20 | When oral admissions as to contents of documents are relevant
+23 | 21 | Admissions in civil cases when relevant
+24 | 22(1) | Confession caused by inducement, threat, coercion or promise
+28 | First proviso to 22 | Confession made after removal of impression caused by inducement
+29 | Second proviso to 22 | Confession otherwise relevant not to become irrelevant
+25 | 23(1) | Confession to police officer
+26 | 23(2) | Confession by accused while in custody of police
+27 | Proviso to 23 | How much of information received from accused may be proved
+30 | 24 | Consideration of proved confession affecting person making it
+31 | 25 | Admissions not conclusive proof, but may estop
+32 | 26 | Statement of relevant fact by person who is dead or cannot be found
+33 | 27 | Relevancy of evidence for proving truth of facts in subsequent proceeding
+34 | 28 | Entries in books of account when relevant
+35 | 29 | Relevancy of entry in public record or electronic record made in performance of duty
+36 | 30 | Relevancy of statements in maps, charts and plans
+37 | 31 | Relevancy of statement as to fact of public nature in certain Acts
+38 | 32 | Relevancy of statements as to any law contained in law books
+39 | 33 | Evidence to be given when statement forms part of conversation or document
+40 | 34 | Previous judgments relevant to bar a second suit or trial
+41 | 35 | Relevancy of certain judgments in probate jurisdiction
+42 | 36 | Relevancy and effect of judgments, orders or decrees other than section 35
+43 | 37 | Judgments other than those in sections 34, 35 and 36 when relevant
+44 | 38 | Fraud or collusion in obtaining judgment, or incompetency of Court
+45 | 39(1) | Opinions of experts
+45A | 39(2) | Opinion of Examiner of Electronic Evidence
+46 | 40 | Facts bearing upon opinions of experts
+47 | 41(1) | Opinion as to handwriting and signature, when relevant
+47A | 41(2) | Opinion as to electronic signature, when relevant
+48 | 42 | Opinion as to existence of general custom or right
+49 | 43 | Opinion as to usages, tenets, etc., when relevant
+50 | 44 | Opinion on relationship, when relevant
+51 | 45 | Grounds of opinion, when relevant
+52 | 46 | In civil cases character to prove conduct imputed, irrelevant
+53 | 47 | In criminal cases previous good character relevant
+53A | 48 | Evidence of character or previous sexual experience not relevant in certain cases
+54 | 49 | Previous bad character not relevant, except in reply
+55 | 50 | Character as affecting damages
+56 | 51 | Fact judicially noticeable need not be proved
+57 | 52 | Facts of which Court shall take judicial notice
+58 | 53 | Facts admitted need not be proved
+59 | 54 | Proof of facts by oral evidence
+60 | 55 | Oral evidence to be direct
+61 | 56 | Proof of contents of documents
+62 | 57 | Primary evidence
+63 | 58 | Secondary evidence
+64 | 59 | Proof of documents by primary evidence
+65 | 60 | Cases in which secondary evidence relating to documents may be given
+65A | 62 | Special provisions as to evidence relating to electronic record
+65B | 63 | Admissibility of electronic records
+66 | 64 | Rules as to notice to produce
+67 | 65 | Proof of signature and handwriting of person alleged to have signed or written document
+67A | 66 | Proof as to electronic signature
+68 | 67 | Proof of execution of document required by law to be attested
+69 | 68 | Proof where no attesting witness found
+70 | 69 | Admission of execution by party to attested document
+71 | 70 | Proof when attesting witness denies execution
+72 | 71 | Proof of document not required by law to be attested
+73 | 72 | Comparison of signature, writing or seal with others admitted or proved
+73A | 73 | Proof as to verification of digital signature
+74 | 74(1) | Public and private documents
+75 | 74(2) | Public and private documents
+76 | 75 | Certified copies of public documents
+77 | 76 | Proof of documents by production of certified copies
+78 | 77 | Proof of other official documents
+79 | 78 | Presumption as to genuineness of certified copies
+80 | 79 | Presumption as to documents produced as record of evidence
+81 | 80 | Presumption as to Gazettes, newspapers and other documents
+81A | 81 | Presumption as to Gazettes in electronic or digital record
+83 | 82 | Presumption as to maps or plans made by authority of Government
+84 | 83 | Presumption as to collections of laws and reports of decisions
+85 | 84 | Presumption as to powers-of-attorney
+85A | 85 | Presumption as to electronic agreements
+85B | 86 | Presumption as to electronic records and electronic signatures
+85C | 87 | Presumption as to Electronic Signature Certificates
+86 | 88 | Presumption as to certified copies of foreign judicial records
+87 | 89 | Presumption as to books, maps and charts
+88A | 90 | Presumption as to electronic messages
+89 | 91 | Presumption as to due execution of documents not produced
+90 | 92 | Presumption as to documents thirty years old
+90A | 93 | Presumption as to electronic records five years old
+91 | 94 | Evidence of terms of contracts, grants and other dispositions of property
+92 | 95 | Exclusion of evidence of oral agreement
+93 | 96 | Exclusion of evidence to explain or amend ambiguous document
+94 | 97 | Exclusion of evidence against application of document to existing facts
+95 | 98 | Evidence as to document unmeaning in reference to existing facts
+96 | 99 | Evidence as to application of language which can apply to one only of several persons
+97 | 100 | Evidence as to application of language to one of two sets of facts
+98 | 101 | Evidence as to meaning of illegible characters
+99 | 102 | Who may give evidence of agreement varying terms of document
+100 | 103 | Saving of provisions of Indian Succession Act relating to wills
+101 | 104 | Burden of proof
+102 | 105 | On whom burden of proof lies
+103 | 106 | Burden of proof as to particular fact
+104 | 107 | Burden of proving fact to be proved to make evidence admissible
+105 | 108 | Burden of proving that case of accused comes within exceptions
+106 | 109 | Burden of proving fact especially within knowledge
+107 | 110 | Burden of proving death of person known to have been alive within thirty years
+108 | 111 | Burden of proving that person is alive who has not been heard of for seven years
+109 | 112 | Burden of proof as to relationship in cases of partners, landlord and tenant
+110 | 113 | Burden of proof as to ownership
+111 | 114 | Proof of good faith in transactions where one party is in relation of active confidence
+111A | 115 | Presumption as to certain offences
+112 | 116 | Birth during marriage, conclusive proof of legitimacy
+113A | 117 | Presumption as to abetment of suicide by a married woman
+113B | 118 | Presumption as to dowry death
+114 | 119 | Court may presume existence of certain facts
+114A | 120 | Presumption as to absence of consent in certain prosecution for rape
+115 | 121 | Estoppel
+116 | 122 | Estoppel of tenant and of licensee of person in possession
+117 | 123 | Estoppel of acceptor of bill of exchange, bailee or licensee
+118 | 124 | Who may testify
+119 | 125 | Witness unable to communicate verbally
+120 | 126 | Competency of husband and wife as witnesses in certain cases
+121 | 127 | Judges and Magistrates
+122 | 128 | Communications during marriage
+123 | 129 | Evidence as to affairs of State
+124 | 130 | Official communications
+125 | 131 | Information as to commission of offences
+126 | 132(1) & (2) | Professional communications
+127 | 132(3) | Professional communications to apply interpreters
+128 | 133 | Privilege not waived by volunteering evidence
+129 | 134 | Confidential communication with legal advisers
+130 | 135 | Production of title-deeds of witness not a party
+131 | 136 | Production of documents or electronic records which another person could refuse to produce
+132 | 137 | Witness not excused from answering on ground that answer will criminate
+133 | 138 | Accomplice
+134 | 139 | Number of witnesses
+135 | 140 | Order of production and examination of witnesses
+136 | 141 | Judge to decide as to admissibility of evidence
+137 | 142 | Examination of witnesses
+138 | 143 | Order of examinations
+139 | 144 | Cross-examination of person called to produce a document
+140 | 145 | Witnesses to character
+141 | 146(1) | Leading questions
+142 | 146(2) & (3) | When leading questions must not be asked
+143 | 146(4) | When leading questions may be asked
+144 | 147 | Evidence as to matters in writing
+145 | 148 | Cross-examination as to previous statements in writing
+146 | 149 | Questions lawful in cross-examination
+147 | 150 | When witness to be compelled to answer
+148 | 151 | Court to decide when question shall be asked and when witness compelled to answer
+149 | 152 | Question not to be asked without reasonable grounds
+150 | 153 | Procedure of Court in case of question being asked without reasonable grounds
+151 | 154 | Indecent and scandalous questions
+152 | 155 | Questions intended to insult or annoy
+153 | 156 | Exclusion of evidence to contradict answers to questions testing veracity
+154 | 157 | Question by party to his own witness
+155 | 158 | Impeaching credit of witness
+156 | 159 | Questions tending to corroborate evidence of relevant fact
+157 | 160 | Former statements of witness may be proved to corroborate later testimony
+158 | 161 | What matters may be proved in connection with proved statement relevant under section 26 or 27
+159 | 162 | Refreshing memory
+160 | 163 | Testimony to facts stated in document mentioned in section 162
+161 | 164 | Right of adverse party as to writing used to refresh memory
+162 | 165 | Production of documents
+163 | 166 | Giving, as evidence, of document called for and produced on notice
+164 | 167 | Using, as evidence, of document production of which was refused on notice
+165 | 168 | Judge's power to put questions or order production
+167 | 169 | No new trial for improper admission or rejection of evidence

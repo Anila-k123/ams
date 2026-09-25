@@ -3,48 +3,18 @@
   max-width: 1200px;
   margin: 0 auto;
 }
-
-.board-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-
-.board-header h2 {
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.board-sub {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.board-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
+.board-sub { margin: 0; color: var(--text-muted); font-size: 0.9rem; }
 
 /* Court accordion — one collapsible panel per court */
 .court-accordion {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   overflow: hidden;
-  background: var(--bg-secondary, #fff);
+  background: var(--card-bg);
 }
-
-.court-panel + .court-panel {
-  border-top: 1px solid var(--border-color, #e5e7eb);
-}
-
+.court-panel + .court-panel { border-top: 1px solid var(--card-border); }
 .court-panel-header {
   width: 100%;
   display: flex;
@@ -57,215 +27,56 @@
   cursor: pointer;
   text-align: left;
   color: var(--text-primary);
-  transition: background 0.15s ease;
 }
-
-.court-panel-header:hover { background: var(--bg-hover, rgba(0, 0, 0, 0.03)); }
-
-.court-panel.open .court-panel-header {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.03));
-  color: var(--accent);
-}
-
-.court-panel-title-group {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.court-panel-title {
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.court-panel-note {
-  font-size: 0.78rem;
-  font-weight: 400;
-  color: var(--text-muted);
-}
-
-.court-panel-chevron {
-  flex-shrink: 0;
-  font-size: 1.1rem;
-  color: var(--text-muted);
-  transition: transform 0.2s ease;
-}
-
-.court-panel.open .court-panel-chevron {
-  transform: rotate(180deg);
-  color: var(--accent);
-}
-
-.court-panel-body {
-  padding: 4px 20px 20px;
-}
-
-.board-refresh {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  padding: 4px 10px;
-  border: 1px solid var(--border-color, #d0d5dd);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-
-.board-refresh:hover { background: var(--bg-hover, rgba(0, 0, 0, 0.04)); }
-
-.board-vc {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 0.8rem;
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.board-vc:hover { text-decoration: underline; }
-
-/* Your own matter's position in that courtroom's list. Emphasised because it
-   is the one value on a public board that is specific to this practice - the
-   whole reason to be looking at the board on a hearing morning. */
-.board-your-item {
-  color: var(--accent);
-  font-weight: 700;
-}
+.court-panel-header:hover,
+.court-panel.open .court-panel-header { background: var(--table-row-hover); }
+.court-panel.open .court-panel-header { color: var(--primary); }
+.court-panel-title-group { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.court-panel-title { font-size: 1rem; font-weight: 600; }
+.court-panel-note { font-size: 0.78rem; color: var(--text-muted); }
+.court-panel-chevron { color: var(--text-muted); transition: transform 0.2s ease; }
+.court-panel.open .court-panel-chevron { transform: rotate(180deg); color: var(--primary); }
+.court-panel-body { padding: 4px 20px 20px; }
 
 .board-meta {
   display: flex;
-  gap: 20px;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 0;
+  font-size: 0.85rem;
   color: var(--text-muted);
-  font-size: 0.88rem;
-  margin-bottom: 14px;
 }
-
 .board-meta strong { color: var(--text-primary); }
-
-.board-auto { font-style: italic; opacity: 0.8; }
-
+.board-vc { color: var(--primary); font-weight: 600; text-decoration: none; }
+.board-vc:hover { text-decoration: underline; }
+.board-your-item { color: var(--primary); }
 .board-error {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--border-color);
-  border-left: 4px solid #e04f5f;
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  margin-bottom: 14px;
+  padding: 12px;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
 }
-
-.board-error button {
-  margin-left: auto;
-  padding: 6px 14px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.board-loading,
-.board-empty {
-  padding: 40px 16px;
-  text-align: center;
-  color: var(--text-muted);
-}
-
-.board-table-wrap {
-  overflow-x: auto;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-}
-
-.board-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-.board-table thead th {
-  position: sticky;
-  top: 0;
-  background: var(--bg-secondary);
-  color: var(--text-muted);
-  text-align: left;
-  font-weight: 600;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-color);
-  white-space: nowrap;
-}
-
-.board-table tbody td {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-color);
-  color: var(--text-primary);
-  vertical-align: top;
-}
-
-.board-table tbody tr:last-child td { border-bottom: none; }
-.board-table tbody tr:hover { background: var(--bg-secondary); }
-
-.board-table tr.row-over td { opacity: 0.6; }
-
-.board-court {
-  font-weight: 700;
-  white-space: nowrap;
-}
-
+.board-empty, .board-empty-note { padding: 18px; color: var(--text-secondary); font-size: 0.875rem; }
+.row-over td { opacity: 0.6; }
+.board-court { font-weight: 700; }
 .board-field-caseString { font-weight: 600; }
+.board-field-title, .board-field-judges, .board-field-advocates, .board-field-keptBack,
+.board-field-cino, .board-field-venue, .board-field-message, .board-field-stage,
+.board-field-listType, .board-field-progress, .board-field-reference { color: var(--text-muted); font-size: 0.85rem; }
+.board-field-advocates, .board-field-message, .board-field-progress { font-style: italic; }
 
-.board-field-title { color: var(--text-muted); font-size: 0.9rem; }
-
-.board-field-judges { color: var(--text-muted); }
-.board-field-judges div { line-height: 1.4; }
-
-.board-field-advocates { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
-
-.board-field-keptBack { color: var(--text-muted); font-size: 0.85rem; }
-
-.board-field-cino { color: var(--text-muted); font-size: 0.85rem; }
-
-.board-field-venue { color: var(--text-muted); font-size: 0.85rem; }
-
-.board-field-message { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
-
-.board-field-stage { color: var(--text-muted); font-size: 0.85rem; text-align: center; }
-
-.board-field-listType { color: var(--text-muted); font-size: 0.85rem; }
-
-.board-field-progress { color: var(--text-muted); font-size: 0.85rem; font-style: italic; }
-
-.board-field-reference { color: var(--text-muted); font-size: 0.85rem; text-align: center; }
-
-@media (max-width: 640px) {
-  .board-container { padding: 16px; }
-  .board-header { flex-direction: column; }
-  .board-controls { width: 100%; }
-}
-
-
-/* ─── Your matters today ───────────────────────────────────────────────────
-   The one part of this page that is specific to the practice, so it is the
-   part that reads first. Rows are buttons: clicking one jumps to that court's
-   board, which is what you want next after seeing you are listed. */
+/* ─── Daily Causelist ─── */
 .listed-today {
   background: var(--card-bg);
-  backdrop-filter: var(--card-blur);
-  -webkit-backdrop-filter: var(--card-blur);
   border: 1px solid var(--card-border);
-  border-left: 4px solid var(--accent);
+  border-left: 4px solid var(--primary);
   border-radius: var(--radius);
   padding: 16px 20px;
-  margin-bottom: 18px;
 }
-
 .listed-today h3 {
   display: flex;
   align-items: center;
@@ -275,62 +86,22 @@
   font-weight: 700;
   color: var(--text-primary);
 }
-
-.listed-today-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .listed-today-row {
   display: grid;
   grid-template-columns: minmax(140px, 1.4fr) auto auto minmax(120px, 1.6fr);
   gap: 14px;
   align-items: center;
-  width: 100%;
-  text-align: left;
   padding: 10px 14px;
   border: 1px solid var(--card-border);
-  border-radius: 8px;
-  background: transparent;
-  cursor: pointer;
+  border-radius: var(--radius);
   font-size: 0.875rem;
   color: var(--text-primary);
+  text-decoration: none;
 }
-
-.listed-today-row:hover { border-color: var(--accent); }
-
-/* A listing plus its per-row "alert client" action, side by side. */
-.dc-row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-.dc-row-main { flex: 1; text-decoration: none; }
-.dc-alert-btn {
-  flex-shrink: 0;
-  align-self: center;
-  padding: 8px 14px;
-  border: 1px solid var(--card-border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--accent);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.dc-alert-btn:hover:not(:disabled) { border-color: var(--accent); }
-.dc-alert-btn:disabled { color: var(--text-secondary); opacity: 0.5; cursor: not-allowed; }
-
+.listed-today-row:hover { border-color: var(--primary); }
 .lt-court { font-weight: 600; }
-.lt-room  { color: var(--text-secondary); white-space: nowrap; }
-/* The number the whole feature exists to show. */
-.lt-item  { font-weight: 700; color: var(--accent); white-space: nowrap; }
-.lt-case  { color: var(--text-secondary); }
-
-/* Absence is information too: "nothing listed" and "we have no cause list for
-   this court" mean different things, and the copy distinguishes them. */
+.lt-room { color: var(--text-secondary); white-space: nowrap; }
+.lt-case { color: var(--text-secondary); }
 .listed-today-empty {
   display: flex;
   align-items: center;
@@ -339,63 +110,8 @@
   color: var(--text-secondary);
   font-size: 0.875rem;
 }
-
-/* ─── Daily Causelist page ─── */
-.dc-date {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-}
-.dc-date input {
-  padding: 7px 10px;
-  border: 1px solid var(--card-border);
-  border-radius: 8px;
-  background: var(--bg-primary, transparent);
-  color: var(--text-primary);
-  font-size: 0.85rem;
-}
-.dc-groups { display: flex; flex-direction: column; gap: 14px; }
-
-/* ─── My Forums / All Forums ─── */
-.board-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--card-border);
-}
-
-.board-tabs button {
-  padding: 9px 16px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.board-tabs button.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.board-tabs button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.board-empty-note {
-  padding: 18px;
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-}
+.dc-date { display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-secondary); }
 
 @media (max-width: 720px) {
-  .listed-today-row {
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
+  .listed-today-row { grid-template-columns: 1fr; gap: 4px; }
 }

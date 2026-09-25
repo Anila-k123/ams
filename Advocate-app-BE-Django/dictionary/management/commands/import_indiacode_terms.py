@@ -24,13 +24,33 @@ from dictionary.models import LegalTerm
 TERM_RE = re.compile(
     r'["““]([^"””\n]{1,80})["””]\s*'
     r'(means and includes|means or includes|shall mean and include|shall mean|'
-    r'shall include|means|includes)\b',
+    r'shall include|shall be construed as|means|includes|denotes)\b',
     re.I)
 
 # Start of the NEXT lettered/numbered clause that introduces a quoted term,
 # e.g. `; (f) "sapinda relationship"` — used to cut a definition cleanly even when
 # the next clause's connective isn't one we match.
 CLAUSE_BOUNDARY = re.compile(r';?\s*\(\s*[a-z0-9ivx]{1,4}\s*\)\s*["““]', re.I)
+
+# When a term is defined in several Acts, prefer the current / most-cited one rather
+# than merely the longest definition — otherwise a repealed Act's verbose clause hides
+# the live BNS/BNSS/BSA or key commercial-Act version. Higher weight wins.
+PRIORITY_ACTS = [
+    ('bharatiya nyaya', 100), ('bharatiya nagarik', 100), ('bharatiya sakshya', 100),
+    ('digital personal data', 95), ('general clauses', 90),
+    ('indian contract', 85), ('companies act', 85), ('transfer of property', 85),
+    ('arbitration', 85), ('information technology', 85), ('negotiable instruments', 82),
+    ('code of civil procedure', 80), ('specific relief', 80), ('sale of goods', 80),
+    ('indian evidence', 70), ('indian penal', 60), ('code of criminal procedure', 60),
+]
+
+
+def _act_weight(title):
+    t = (title or '').lower()
+    for kw, w in PRIORITY_ACTS:
+        if kw in t:
+            return w
+    return 10
 
 
 def _clean(s):
@@ -60,13 +80,15 @@ class Command(BaseCommand):
         if o['central_only']:
             secs = secs.filter(act__source_state_name__iexact='CENTRAL')
 
-        best = {}  # term_norm -> (def_len, term, full_definition)
+        best = {}  # term_norm -> (weight, def_len, term, full_definition)
         scanned = 0
         for sec in secs.iterator():
             scanned += 1
             text = _clean(sec.content)
             if not text:
                 continue
+            act_title = sec.act.title if sec.act_id and sec.act else ''
+            weight = _act_weight(act_title)
             matches = list(TERM_RE.finditer(text))
             for i, m in enumerate(matches):
                 term = m.group(1).strip(' .,"“”')
@@ -81,16 +103,16 @@ class Command(BaseCommand):
                 definition = text[m.start(2):end].strip().rstrip(';, ').strip()
                 if len(definition) < 6:
                     continue
-                definition = definition[:1200]
-                act_title = sec.act.title if sec.act_id and sec.act else ''
-                full = definition + (f'\n\n— {act_title}, s. {sec.number}' if act_title else '')
+                full = definition[:1200]
                 key = term.lower()
-                if key not in best or len(definition) > best[key][0]:
-                    best[key] = (len(definition), term, full)
+                # Prefer a higher-priority Act; within the same priority, the fuller def.
+                prev = best.get(key)
+                if prev is None or (weight, len(definition)) > (prev[0], prev[1]):
+                    best[key] = (weight, len(definition), term, full)
 
         LegalTerm.objects.filter(source=o['source']).delete()
         batch, total = [], 0
-        for key, (_, term, full) in best.items():
+        for key, (_, _, term, full) in best.items():
             batch.append(LegalTerm(term=term, term_norm=key, definition=full,
                                     letter=term[:1].upper(), source=o['source']))
             if len(batch) >= o['batch']:

@@ -47,6 +47,13 @@ class CaseTask(models.Model):
     # it. NULL assigned_to_id is treated as "assigned to the creator".
     assigned_to_id = models.BigIntegerField(db_index=True, null=True, blank=True)
     assigned_by_id = models.BigIntegerField(null=True, blank=True)
+    # Senior review of delegated work (see workspace/review.py). NULL = no review
+    # yet; SUBMITTED -> APPROVED (task completes) or CHANGES_REQUESTED -> resubmit.
+    review_status = models.CharField(max_length=20, null=True, blank=True)
+    review_note = models.TextField(null=True, blank=True)       # reviewer's comment
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by_id = models.BigIntegerField(null=True, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'case_task'

@@ -24,6 +24,22 @@ def _role_map(r):
     return {'id': r.id, 'name': r.name, 'description': r.description}
 
 
+# Client logins (clientaccess) are managed only from the client's "Client logins"
+# dialog. User / Role Management must neither show nor change them, and the Client
+# role must never be granted permissions or assigned to firm staff.
+def _client_role(role_id):
+    from clientaccess.gate import client_role_ids
+    return int(role_id) in client_role_ids()
+
+
+def _client_user(pk):
+    from clientaccess.gate import is_client_id
+    return is_client_id(pk)
+
+
+_NOT_HERE = {'error': 'Client logins are managed from the client\'s "Client logins".'}
+
+
 # Editing roles or their permission sets is the escalation path — anyone able
 # to do it can grant themselves anything, so it needs ROLE_MANAGE. Merely
 # READING the role/permission catalogue is also needed by User Management (to
@@ -36,7 +52,8 @@ ROLE_OR_USER_READ = [RequirePermission('ROLE_MANAGE', 'USER_MANAGE')]
 @permission_classes(ROLE_OR_USER_READ)
 def list_roles(request):
     if request.method == 'GET':
-        return Response([_role_map(r) for r in Role.objects.all().order_by('id')])
+        from clientaccess.gate import client_role_ids
+        return Response([_role_map(r) for r in Role.objects.exclude(id__in=client_role_ids()).order_by('id')])
     # POST — creating a role is an escalation path, so it needs ROLE_MANAGE
     # even though listing does not.
     if 'ROLE_MANAGE' not in request.user.permission_codes():
@@ -45,7 +62,8 @@ def list_roles(request):
     name = (request.data.get('name') or '').strip()
     if not name:
         return Response({'error': 'name is required.'}, status=status.HTTP_400_BAD_REQUEST)
-    if Role.objects.filter(name__iexact=name).exists():
+    from clientaccess.gate import CLIENT_ROLE
+    if name.lower() == CLIENT_ROLE.lower() or Role.objects.filter(name__iexact=name).exists():
         return Response({'error': 'A role with that name already exists.'},
                         status=status.HTTP_409_CONFLICT)
     role = Role.objects.create(name=name, description=request.data.get('description') or '')
@@ -56,7 +74,7 @@ def list_roles(request):
 @permission_classes(ROLE_MANAGE)
 def role_detail(request, role_id):
     role = Role.objects.filter(id=role_id).first()
-    if role is None:
+    if role is None or _client_role(role_id):
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
     if request.method == 'GET':
         return Response(_role_map(role))
@@ -98,6 +116,8 @@ def list_permissions(request):
 @api_view(['GET', 'PUT'])
 @permission_classes(ROLE_MANAGE)
 def role_permissions(request, role_id):
+    if _client_role(role_id):
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
     if request.method == 'GET':
         perm_ids = RolePermission.objects.filter(role_id=role_id).values_list('permission_id', flat=True)
         perms = Permission.objects.filter(id__in=list(perm_ids)).order_by('module', 'name')
@@ -163,7 +183,7 @@ def _resolve_practice_owner(owner_value, target_id=None):
     if target_id and oid == target_id:
         return None, 'A user cannot report to themselves.'
     owner = Advocate.objects.filter(id=oid).first()
-    if owner is None:
+    if owner is None or _client_user(oid):
         return None, 'Chosen practice head does not exist.'
     if owner.left_on is not None:
         return None, 'Chosen practice head has left the firm.'
@@ -193,7 +213,8 @@ class UsersView(APIView):
     permission_classes = USER_MANAGE
 
     def get(self, request):
-        return Response([_user_map(a) for a in Advocate.objects.all().order_by('id')])
+        from clientaccess.gate import client_advocate_ids
+        return Response([_user_map(a) for a in Advocate.objects.exclude(id__in=client_advocate_ids()).order_by('id')])
 
     def post(self, request):
         d = request.data
@@ -243,13 +264,13 @@ class UserDetailView(APIView):
 
     def get(self, request, pk):
         adv = Advocate.objects.filter(id=pk).first()
-        if adv is None:
+        if adv is None or _client_user(pk):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         return Response(_user_map(adv))
 
     def put(self, request, pk):
         adv = Advocate.objects.filter(id=pk).first()
-        if adv is None:
+        if adv is None or _client_user(pk):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         d = request.data
         for attr, key in [('full_name', 'fullName'), ('phone', 'phone'), ('email', 'email'),
@@ -300,7 +321,7 @@ class UserDetailView(APIView):
         loses access, the practice keeps the cases, clients and invoices.
         """
         adv = Advocate.objects.filter(id=pk).first()
-        if adv is None:
+        if adv is None or _client_user(pk):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         if adv.id == request.user.id:
             return Response({'error': 'You cannot remove your own account.'},
@@ -335,12 +356,16 @@ class UserRolesView(APIView):
     permission_classes = USER_MANAGE
 
     def get(self, request, pk):
+        if _client_user(pk):
+            return Response(_NOT_HERE, status=status.HTTP_404_NOT_FOUND)
         role_ids = AdvocateRole.objects.filter(advocate_id=pk).values_list('role_id', flat=True)
         roles = Role.objects.filter(id__in=list(role_ids)).order_by('id')
         return Response([{'id': r.id, 'name': r.name, 'description': r.description} for r in roles])
 
     def put(self, request, pk):
         new_ids = _parse_ids(request.data, 'roleIds')
+        if _client_user(pk) or any(_client_role(r) for r in new_ids):
+            return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
         AdvocateRole.objects.filter(advocate_id=pk).delete()
         AdvocateRole.objects.bulk_create([
             AdvocateRole(advocate_id=pk, role_id=rid) for rid in new_ids
@@ -352,10 +377,14 @@ class UserRoleItemView(APIView):
     permission_classes = USER_MANAGE
 
     def post(self, request, pk, role_id):
+        if _client_user(pk) or _client_role(role_id):
+            return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
         if not AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).exists():
             AdvocateRole.objects.create(advocate_id=pk, role_id=role_id)
         return Response({'message': 'Role assigned.'})
 
     def delete(self, request, pk, role_id):
+        if _client_user(pk):
+            return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
         AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).delete()
         return Response({'message': 'Role removed.'})

@@ -31,4 +31,8 @@ urlpatterns = [
     path('api/', include('acts.urls')),
     path('api/', include('dictionary.urls')),
     path('api/', include('lawcodes.urls')),
+    # Legal drafting (merged from InstaDraft). Own prefix: its routes (clients, projects…)
+    # would otherwise collide with AMS's /api/clients.
+    path('api/drafting/', include('drafting.urls')),
+    path('api/', include('clientaccess.urls')),
 ]

@@ -8,6 +8,9 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     document.body.classList.toggle('dark-mode', theme === 'dark');
+    // PrimeReact's matching theme (public/themes, linked in index.html).
+    const link = document.getElementById('prime-theme');
+    if (link) link.setAttribute('href', `/themes/lara-${theme === 'dark' ? 'dark' : 'light'}-blue/theme.css`);
     localStorage.setItem('theme', theme);
   }, [theme]);
 

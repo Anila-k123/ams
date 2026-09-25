@@ -6,18 +6,7 @@
 .ac-topbar { margin-bottom: 20px; }
 .ac-topbar h2 { margin: 8px 0 0; color: var(--text-primary); font-size: 1.6rem; }
 
-.ac-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 0.85rem;
-  padding: 0;
-}
-.ac-link:hover { color: var(--accent); }
+.ac-link.p-button { padding: 4px 0; font-size: 0.85rem; }
 
 /* Step 1 — forum select */
 .ac-select-grid {
@@ -44,27 +33,6 @@
 }
 .ac-panel-body { padding: 16px 20px; }
 
-.ac-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 0 12px;
-  background: var(--bg-primary);
-  color: var(--text-muted);
-  margin-bottom: 12px;
-}
-.ac-search input {
-  flex: 1;
-  height: 42px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  outline: none;
-  font-size: 0.92rem;
-}
-
 .ac-forum-list { list-style: none; margin: 0; padding: 0; }
 .ac-forum-item {
   display: flex;
@@ -82,7 +50,7 @@
   border-radius: 6px;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.ac-forum-item:hover { background: var(--accent); color: #fff; }
+.ac-forum-item:hover { background: var(--accent); color: var(--text-on-accent, #fff); }
 .ac-forum-list li:last-child .ac-forum-item { border-bottom: none; }
 .ac-empty { padding: 14px 12px; color: var(--text-muted); }
 .ac-hint { margin: 14px 2px 0; font-size: 0.82rem; color: var(--text-muted); line-height: 1.5; }
@@ -107,17 +75,6 @@
   color: var(--text-primary);
   font-size: 1.05rem;
 }
-.ac-clear {
-  display: inline-flex;
-  border: none;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
-}
-.ac-clear:hover { color: #e04f5f; }
-
 .ac-search-form {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -126,25 +83,11 @@
 @media (max-width: 720px) { .ac-search-form { grid-template-columns: 1fr; } }
 
 .ac-field { display: flex; flex-direction: column; gap: 6px; }
+.ac-field-error, .ac-field-warning { display: block; }
 .ac-field label { font-size: 0.82rem; font-weight: 600; color: var(--text-muted); }
-.ac-field input,
-.ac-field select,
-.ac-field textarea {
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 0.92rem;
-  padding: 0 12px;
-  height: 44px;
-}
-.ac-field textarea { height: auto; padding: 10px 12px; resize: vertical; }
-.ac-field input:focus,
-.ac-field select:focus,
-.ac-field textarea:focus { outline: none; border-color: var(--accent); }
-.ac-input-error { border-color: #e04f5f !important; }
-.ac-field-error { color: #e04f5f; font-size: 0.78rem; }
-.ac-field-warning { display: block; margin-top: 4px; color: #d97706; font-size: 0.78rem; }
+.ac-input-error { border-color: var(--danger) !important; }
+.ac-field-error { color: var(--danger); font-size: 0.78rem; }
+.ac-field-warning { display: block; margin-top: 4px; color: var(--warning); font-size: 0.78rem; }
 
 /* Case form */
 .ac-form-grid {
@@ -157,25 +100,8 @@
 
 .ac-actions { display: flex; justify-content: center; margin-top: 22px; }
 
-.ac-search-btn,
-.ac-save {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 26px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.ac-search-btn:disabled,
-.ac-save:disabled { opacity: 0.55; cursor: not-allowed; }
-
-.ac-error { color: #e04f5f; font-size: 0.85rem; margin: 14px 0 0; text-align: center; }
-.ac-warning { color: #d97706; font-size: 0.8rem; margin: 6px 2px 0; line-height: 1.4; }
+.ac-error { color: var(--danger); font-size: 0.85rem; margin: 14px 0 0; text-align: center; }
+.ac-warning { color: var(--warning); font-size: 0.8rem; margin: 6px 2px 0; line-height: 1.4; }
 
 .ac-banner {
   display: flex;
@@ -184,7 +110,7 @@
   padding: 12px 16px;
   margin-bottom: 16px;
   border: 1px solid var(--border-color);
-  border-left: 4px solid #e0a800;
+  border-left: 4px solid var(--warning);
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -203,14 +129,6 @@
   color: var(--text-primary);
   margin-bottom: 12px;
 }
-.ac-rsec { margin-bottom: 20px; }
-.ac-rsec h4 {
-  margin: 0 0 8px;
-  font-size: 0.9rem;
-  color: var(--text-primary);
-  border-left: 3px solid var(--accent);
-  padding-left: 8px;
-}
 .ac-kv { margin: 0; }
 .ac-kv-row {
   display: grid;
@@ -222,31 +140,7 @@
 .ac-kv-row:last-child { border-bottom: none; }
 .ac-kv-row dt { color: var(--text-muted); font-size: 0.84rem; font-weight: 600; }
 .ac-kv-row dd { margin: 0; color: var(--text-primary); font-size: 0.88rem; word-break: break-word; }
-.ac-prayer {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 0.88rem;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
 .ac-rtable-wrap { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 8px; }
-.ac-rtable { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
-.ac-rtable th {
-  text-align: left;
-  padding: 9px 12px;
-  background: var(--bg-primary);
-  color: var(--text-muted);
-  font-weight: 600;
-  border-bottom: 1px solid var(--border-color);
-  white-space: nowrap;
-}
-.ac-rtable td {
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--border-color);
-  color: var(--text-primary);
-  vertical-align: top;
-}
-.ac-rtable tr:last-child td { border-bottom: none; }
 .ac-record-note { margin: 8px 2px 0; font-size: 0.78rem; font-style: italic; color: var(--text-muted); }
 
 /* SCI: party names under the "Case details from the Supreme Court" heading */
@@ -270,22 +164,6 @@
 
 @media (max-width: 720px) { .ac-kv-row { grid-template-columns: 1fr; gap: 2px; } }
 
-/* eCourts: one block per matched case */
-.ac-rcase {
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-bottom: 16px;
-}
-.ac-rcase-head {
-  font-weight: 700;
-  color: var(--text-primary);
-  font-size: 0.92rem;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
-}
-
 /* Import review: save bar under the fetched record */
 .ac-savebar {
   margin-top: 22px;
@@ -295,21 +173,7 @@
 }
 .ac-savebar .ac-actions { justify-content: flex-start; }
 
-/* eCourts search mode toggle (Case Number vs CNR) */
-.ac-mode-toggle { display: flex; gap: 0; margin-bottom: 18px; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; max-width: 420px; }
-.ac-mode-toggle button {
-  flex: 1; padding: 10px 14px; border: none; background: var(--bg-primary);
-  color: var(--text-muted); cursor: pointer; font-size: 0.88rem; font-weight: 600;
-}
-.ac-mode-toggle button.active { background: var(--accent); color: #fff; }
-
 /* eCourts search-type tabs */
-.ac-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 18px; border-bottom: 1px solid var(--border-color); }
-.ac-tabs button {
-  padding: 9px 14px; border: none; background: transparent; color: var(--text-muted);
-  cursor: pointer; font-size: 0.86rem; font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px;
-}
-.ac-tabs button:hover { color: var(--text-primary); }
-.ac-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.ac-tabs { margin: 4px 0 18px; }
 .ac-status { display: flex; gap: 14px; align-items: center; height: 44px; }
 .ac-status label { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); font-size: 0.88rem; font-weight: 400; }

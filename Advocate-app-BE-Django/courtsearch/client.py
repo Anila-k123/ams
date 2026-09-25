@@ -57,7 +57,18 @@ def _detail(resp: requests.Response) -> str:
         return resp.text
 
 
+def _is_json(resp: requests.Response) -> bool:
+    return 'json' in (resp.headers.get('Content-Type') or '').lower()
+
+
 def _handle(resp: requests.Response):
+    # The scraper always answers JSON. Anything else (e.g. an HTML 404 page) means
+    # COURT_API_BASE points at some other server, so treat it as unreachable rather
+    # than passing that page on to the user.
+    if not _is_json(resp):
+        log.warning('Court API at %s answered %s with non-JSON (%s); is COURT_API_BASE right?',
+                    COURT_API_BASE, resp.status_code, resp.headers.get('Content-Type'))
+        raise ScraperUnavailable(f'non-JSON response {resp.status_code} from {resp.url}')
     if resp.status_code == 200:
         return resp.json()
     raise ScraperError(resp.status_code, _detail(resp))

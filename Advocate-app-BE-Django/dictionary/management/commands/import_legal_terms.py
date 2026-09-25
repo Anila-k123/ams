@@ -19,6 +19,7 @@ import urllib.request
 from django.core.management.base import BaseCommand
 
 from dictionary.models import LegalTerm
+from dictionary.refine import refine_definition
 
 TERM_KEYS = ('term', 'title', 'word', 'name')
 DEF_KEYS = ('definition', 'body', 'def', 'meaning', 'text')
@@ -86,9 +87,10 @@ class Command(BaseCommand):
             definition = _clean(dfn)
             if not term or not definition:
                 continue
+            refined = refine_definition(definition) or definition   # strip inline citations
             batch.append(LegalTerm(
-                term=term, term_norm=term.lower().strip(), definition=definition,
-                letter=term[:1].upper(), source=source))
+                term=term, term_norm=term.lower().strip(), definition=refined,
+                definition_raw=definition, letter=term[:1].upper(), source=source))
             if len(batch) >= o['batch']:
                 LegalTerm.objects.bulk_create(batch)
                 total += len(batch)

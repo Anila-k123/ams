@@ -25,7 +25,6 @@ INSTALLED_APPS = [
     # Third-party
     'rest_framework',
     'corsheaders',
-    'channels',
     # Local
     'core',
     'accounts',
@@ -50,6 +49,8 @@ INSTALLED_APPS = [
     'courtsearch',
     'acts',
     'dictionary',
+    'drafting',
+    'clientaccess',
     'lawcodes',
 ]
 
@@ -75,7 +76,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'advocate_backend.urls'
 WSGI_APPLICATION = 'advocate_backend.wsgi.application'
-ASGI_APPLICATION = 'advocate_backend.asgi.application'
 
 TEMPLATES = [
     {
@@ -95,8 +95,25 @@ DATABASES = {
         'PASSWORD': config('DB_PASSWORD', default='psql_password'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
-    }
+        # Reuse a connection across requests instead of opening one per request.
+        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=60, cast=int),
+        'CONN_HEALTH_CHECKS': True,
+    },
+    # The drafting app (merged from InstaDraft) keeps its own database for now:
+    # InstaDraft's existing one (templates, documents, drafts, in schema "drf",
+    # pgvector). DraftingRouter sends only the drafting app here.
+    'drafting': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': config('DRAFTING_DB_NAME', default='pactpro'),
+        'USER': config('DRAFTING_DB_USER', default=config('DB_USER', default='postgres')),
+        'PASSWORD': config('DRAFTING_DB_PASSWORD', default=config('DB_PASSWORD', default='psql_password')),
+        'HOST': config('DRAFTING_DB_HOST', default=config('DB_HOST', default='localhost')),
+        'PORT': config('DRAFTING_DB_PORT', default=config('DB_PORT', default='5432')),
+        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=60, cast=int),
+        'CONN_HEALTH_CHECKS': True,
+    },
 }
+DATABASE_ROUTERS = ['drafting.router.DraftingRouter']
 
 # --- Django REST Framework ---
 # Every request is authenticated via our custom JWT auth (loads the Advocate row);
@@ -119,18 +136,16 @@ REST_FRAMEWORK = {
 JWT_ALGORITHM = 'HS256'
 JWT_EXPIRATION = timedelta(milliseconds=config('JWT_EXPIRATION_MS', default=86400000, cast=int))
 
-# --- CORS: allow the Vite dev server (5173 taken by another project, so 5174 too) ---
+# --- Client role (clientaccess app): where set-password links point (the AMS frontend) ---
+CLIENT_APP_URL = config('CLIENT_APP_URL', default='http://localhost:5173')
+
+# --- CORS: the frontend origin(s). Dev: the Vite server; production: set CORS_ORIGINS ---
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ORIGINS',
     default='http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174',
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
-
-# --- Channels (wired for parity with pact-pro-draft; WebSockets deferred) ---
-CHANNEL_LAYERS = {
-    'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
-}
 
 # --- Document storage: reuse the existing Spring uploads folder so the 30
 # already-uploaded documents download/preview, and new uploads land beside them. ---
@@ -234,9 +249,78 @@ LOGGING = {
     'handlers': {'console': {'class': 'logging.StreamHandler'}},
     'loggers': {
         'accounts': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
+        'drafting': {'handlers': ['console'], 'level': 'INFO', 'propagate': False},
     },
 }
 
 # Max upload size ~ 25MB per file (matches Spring config)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
 FILE_UPLOAD_MAX_MEMORY_SIZE = 26214400
+
+# =============================================================================
+# Drafting (merged from InstaDraft) — consumed ONLY through drafting/providers/.
+# Environment variables are prefixed DRAFTING_: the AMS assistant (assistant/llm.py)
+# already reads LLM_PROVIDER / LLM_MODEL / GEMINI_* / OPENAI_* with a different
+# meaning, so the two must not share names. The Django setting names below are the
+# ones InstaDraft's code reads, so that code is unchanged.
+# =============================================================================
+def _d(name, default='', cast=None):
+    return config(f'DRAFTING_{name}', default=default, **({'cast': cast} if cast else {}))
+
+
+# LLM_PROVIDER: 'anthropic' | 'openai' (OpenAI-compatible /v1) | 'ollama' (native)
+LLM_PROVIDER = _d('LLM_PROVIDER', 'anthropic')
+LLM_MODEL = _d('LLM_MODEL', 'claude-sonnet-4-6')
+LLM_BASE_URL = _d('LLM_BASE_URL', '')
+LLM_OPENAI_PATH = _d('LLM_OPENAI_PATH', '/v1/chat/completions')
+LLM_API_KEY = _d('LLM_API_KEY', '')
+LLM_TEMPERATURE = _d('LLM_TEMPERATURE', 0.2, float)
+LLM_SEED = _d('LLM_SEED', '')
+ANTHROPIC_API_KEY = _d('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL = _d('ANTHROPIC_MODEL', 'claude-sonnet-4-6')
+GEMINI_API_KEY = _d('GEMINI_API_KEY', '')
+GEMINI_MODEL = _d('GEMINI_MODEL', 'gemini-2.0-flash')
+GEMINI_BASE_URL = _d('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/openai')
+OPENAI_API_KEY = _d('OPENAI_API_KEY', '')
+OPENAI_MODEL = _d('OPENAI_MODEL', 'gpt-4o')
+OPENAI_BASE_URL = _d('OPENAI_BASE_URL', 'https://api.openai.com')
+# Active LLM for drafting + playbooks ('openai' | 'gemini' | 'local').
+LLM_ACTIVE = _d('LLM_ACTIVE', 'openai')
+LLM_PLAYBOOK = LLM_ACTIVE
+# EMBED_DIM MUST equal SampleClause.embedding's VectorField dimension (768).
+EMBED_MODEL = _d('EMBED_MODEL', 'nomic-ai/nomic-embed-text-v1')
+EMBED_DIM = _d('EMBED_DIM', 768, int)
+USE_DOCLING = _d('USE_DOCLING', True, bool)
+OLLAMA_BASE_URL = _d('OLLAMA_BASE_URL', 'http://ollama-server:11434')
+SARVAM_API_KEY = _d('SARVAM_API_KEY', '')
+SARVAM_MODEL = _d('SARVAM_MODEL', 'sarvam-translate:v1')
+SARVAM_MODE = _d('SARVAM_MODE', 'formal')
+GOOGLE_TRANSLATE_API_KEY = _d('GOOGLE_TRANSLATE_API_KEY', '')
+HF_TOKEN = _d('HF_TOKEN', '')
+if HF_TOKEN:
+    import os as _os
+    _os.environ.setdefault('HF_TOKEN', HF_TOKEN)
+    _os.environ.setdefault('HUGGING_FACE_HUB_TOKEN', HF_TOKEN)
+
+# Uploaded drafting files (templates, reference documents). Defaults to InstaDraft's
+# media folder, where the existing files in the drafting database live.
+MEDIA_URL = '/media/'
+MEDIA_ROOT = _d('MEDIA_ROOT', str(BASE_DIR.parent.parent / 'Desktop' / 'pact-pro-draft' / 'backend' / 'media'))
+
+# Drafting background jobs (drafting/jobs.py, docs/OPERATIONS.md).
+# PERMANENT SOLUTION: Redis + a Celery worker, with CELERY_TASK_ALWAYS_EAGER=False.
+# STOPGAP until then (True): jobs run in a separate worker process on this machine
+# (DRAFTING_JOB_RUNNER=process), not in the web server, so pages stay responsive.
+CELERY_TASK_ALWAYS_EAGER = config('CELERY_TASK_ALWAYS_EAGER', default=True, cast=bool)
+DRAFTING_JOB_RUNNER = config('DRAFTING_JOB_RUNNER', default='process')   # 'process' | 'thread'
+DRAFTING_JOB_WORKERS = config('DRAFTING_JOB_WORKERS', default=1, cast=int)
+CELERY_TASK_EAGER_PROPAGATES = False
+CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = config('REDIS_URL', default='redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Asia/Kolkata'
+
+# Let the frontend read download filenames (DOCX export).
+CORS_EXPOSE_HEADERS = ['Content-Disposition']

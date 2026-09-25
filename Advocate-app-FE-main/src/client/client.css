@@ -1,0 +1,102 @@
+/* Client view (Client role). Uses the global theme variables (assets/styles/themes.css), so it
+   follows light/dark like the rest of AMS. */
+
+.cl-shell, .cl-auth {
+  min-height: 100vh;
+  background: var(--bg-gradient, var(--bg-primary, #f8fafc));
+  color: var(--text-primary, #1e293b);
+  font-size: 14px;
+}
+
+/* ---- sign-in pages ---- */
+.cl-auth { display: flex; align-items: center; justify-content: center; padding: 24px 16px; box-sizing: border-box; }
+.cl-auth-card {
+  width: 100%; max-width: 400px; box-sizing: border-box; padding: 28px;
+  background: var(--card-bg); border: 1px solid var(--card-border, rgba(0,0,0,.08));
+  border-radius: 14px; box-shadow: var(--card-shadow, 0 4px 16px rgba(0,0,0,.06));
+}
+.cl-auth-brand { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--primary, #3b82f6); }
+.cl-auth-card h1 { font-size: 22px; margin: 6px 0 4px; }
+
+.cl-form { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.cl-form.narrow { max-width: 360px; }
+.cl-form label { font-size: 13px; font-weight: 600; }
+
+
+.cl-link { color: var(--primary, #3b82f6); font-size: 13px; text-decoration: none; align-self: flex-start; }
+.cl-link:hover { text-decoration: underline; }
+
+/* ---- signed-in shell ---- */
+.cl-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 14px 24px; background: var(--card-bg); border-bottom: 1px solid var(--card-border, rgba(0,0,0,.08));
+}
+.cl-firm { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.cl-firm img { height: 40px; width: auto; max-width: 120px; object-fit: contain; }
+.cl-nav {
+  display: flex; gap: 4px; padding: 8px 24px; overflow-x: auto;
+  border-bottom: 1px solid var(--card-border, rgba(0,0,0,.08));
+}
+.cl-nav-link {
+  padding: 7px 12px; border-radius: 8px; font-weight: 600; font-size: 13px; white-space: nowrap;
+  color: var(--text-secondary, #64748b); text-decoration: none;
+}
+.cl-nav-link:hover { color: var(--text-primary, #1e293b); }
+.cl-nav-link.active { color: var(--primary, #3b82f6); background: color-mix(in srgb, var(--primary, #3b82f6) 10%, transparent); }
+.cl-main { max-width: 1040px; margin: 0 auto; padding: 24px; box-sizing: border-box; }
+.cl-main h2 { font-size: 22px; margin: 8px 0 4px; }
+.cl-main h3 { font-size: 15px; margin: 0 0 12px; }
+.cl-footer { text-align: center; padding: 24px; font-size: 12px; color: var(--text-muted, #94a3b8); }
+
+.cl-card {
+  background: var(--card-bg); border: 1px solid var(--card-border, rgba(0,0,0,.08));
+  border-radius: 12px; padding: 18px; margin-top: 16px; box-shadow: var(--card-shadow, none);
+  display: block; color: inherit; text-decoration: none;
+}
+.cl-stack .cl-card { margin-top: 12px; }
+.cl-muted { color: var(--text-secondary, #64748b); font-size: 13px; }
+.cl-strong { font-weight: 700; color: inherit; text-decoration: none; }
+a.cl-strong:hover { color: var(--primary, #3b82f6); }
+.cl-lead { font-size: 16px; margin: 0 0 4px; }
+.cl-pad { padding: 16px 0; }
+.cl-empty { color: var(--text-muted, #94a3b8); font-size: 13px; padding: 8px 0; }
+.cl-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.cl-title-row { justify-content: flex-start; margin-top: 8px; }
+.cl-title-row h2 { margin: 0; }
+.cl-grow { flex: 1; min-width: 0; }
+
+.cl-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 16px; }
+.cl-stat {
+  display: flex; flex-direction: column; gap: 2px; padding: 16px; border-radius: 12px; text-decoration: none;
+  background: var(--card-bg); border: 1px solid var(--card-border, rgba(0,0,0,.08));
+  color: var(--text-secondary, #64748b); font-size: 13px;
+}
+.cl-stat span { font-size: 22px; font-weight: 700; color: var(--text-primary, #1e293b); font-variant-numeric: tabular-nums; }
+a.cl-stat:hover { border-color: var(--primary, #3b82f6); }
+
+.cl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 8px; }
+.cl-grid .cl-card { margin-top: 0; }
+.cl-case { display: flex; flex-direction: column; gap: 6px; }
+.cl-case:hover { border-color: var(--primary, #3b82f6); }
+
+.cl-list { list-style: none; margin: 0; padding: 0; }
+.cl-list li { display: flex; gap: 16px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border-light, rgba(0,0,0,.05)); }
+.cl-list li:first-child { border-top: none; }
+.cl-list.compact li { flex-direction: column; gap: 2px; }
+.cl-date { width: 110px; flex-shrink: 0; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cl-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.cl-pill { font-size: 11px; text-transform: capitalize; }
+
+
+.cl-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 12px; }
+.cl-dl dt { color: var(--text-secondary, #64748b); }
+.cl-dl dd { margin: 0; }
+.cl-message { white-space: pre-wrap; font: inherit; margin: 8px 0 0; color: var(--text-secondary, #64748b); }
+
+@media (max-width: 640px) {
+  .cl-header, .cl-nav, .cl-main { padding-left: 16px; padding-right: 16px; }
+  .cl-list li { flex-direction: column; gap: 4px; }
+  .cl-date { width: auto; }
+  .cl-actions { align-self: stretch; }
+}

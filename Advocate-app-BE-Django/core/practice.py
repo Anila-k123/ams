@@ -90,19 +90,18 @@ def practice_ids(user):
     root = practice_root(user)
     ids = {root, user.id}
     try:
-        if has_firm_wide_scope(user):
-            # Firm-wide roles (Super Admin, and the common Accountant/
-            # Receptionist) span every team; their other permissions still gate
-            # what they can actually open.
-            ids = set(Advocate.objects.values_list('id', flat=True))
-        else:
-            # Deliberately NOT filtered on left_on: a former member's work
-            # belongs to the practice, so their id stays in scope after they
-            # leave. They lose access at authentication, not by having their
-            # rows hidden.
-            ids.update(
-                Advocate.objects.filter(parent_advocate_id=root)
-                .values_list('id', flat=True))
+        # Scope to the practice tree (the FIRM) only. In the shared multi-tenant
+        # deployment the practice is the tenant boundary, so visibility must never
+        # cross into another firm. Firm-wide roles (Super Admin / Accountant /
+        # Receptionist) legitimately see the WHOLE firm — which is exactly the
+        # practice tree — but not other firms' data.
+        #
+        # Deliberately NOT filtered on left_on: a former member's work belongs to
+        # the practice, so their id stays in scope after they leave. They lose
+        # access at authentication, not by having their rows hidden.
+        ids.update(
+            Advocate.objects.filter(parent_advocate_id=root)
+            .values_list('id', flat=True))
     except Exception:                                        # noqa: BLE001
         # If the column is missing (the DDL command has not been run yet) fall
         # back to the old single-advocate scope rather than failing the request.

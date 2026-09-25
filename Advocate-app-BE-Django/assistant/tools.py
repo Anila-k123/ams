@@ -1,16 +1,20 @@
 """Read-only tools the AI assistant may call to answer questions about the
-logged-in advocate's own data. Every function is scoped to `advocate_id`, so the
-assistant can never read another advocate's cases. Nothing here writes.
+advocate's practice data. Every function is scoped via `_scope(advocate_id)` to the
+advocate's whole PRACTICE — the same visibility as the case list and reports — so a
+junior can query a senior's shared cases, but no one can read another practice's data.
+Nothing here writes.
 
 Each tool returns plain JSON-serializable data. `TOOLS` is the Claude tool-schema
 list; `run_tool(name, args, advocate_id)` dispatches and enforces ownership.
 """
 
 import datetime
+from functools import lru_cache
 
 from django.db.models import Count, Q, Sum
 
-from core.models import Case, Client, CaseEvent, Document, Expense, Invoice, ClientPayment
+from core.models import Case, Client, CaseEvent, Document, Expense, Invoice, ClientPayment, Advocate
+from core.practice import practice_ids
 from workspace.models import CaseNote, CaseTag, CaseTask
 
 
@@ -18,20 +22,30 @@ def _iso(d):
     return d.isoformat() if d else ""
 
 
+@lru_cache(maxsize=512)
+def _scope(advocate_id):
+    """Advocate ids this user may reach — their whole practice (owner + members),
+    matching the Cases list / Reports visibility so a junior can query a senior's
+    shared cases. Cached per process (practice membership is stable; a newly-added
+    member may take a restart to appear)."""
+    adv = Advocate.objects.filter(id=advocate_id).first()
+    return practice_ids(adv) if adv else [advocate_id]
+
+
 def _owned_case(advocate_id, case_id):
-    """Return the case if it belongs to this advocate (and isn't archived), else None."""
+    """Return the case if it's in this user's practice (and isn't archived), else None."""
     try:
         cid = int(case_id)
     except (TypeError, ValueError):
         return None
-    return Case.objects.filter(id=cid, advocate_id=advocate_id, deleted=False).select_related('client').first()
+    return Case.objects.filter(id=cid, advocate_id__in=_scope(advocate_id), deleted=False).select_related('client').first()
 
 
 # --- tool implementations -------------------------------------------------
 
 def find_case(advocate_id, query):
     q = (query or '').strip()
-    qs = Case.objects.select_related('client').filter(advocate_id=advocate_id, deleted=False).filter(
+    qs = Case.objects.select_related('client').filter(advocate_id__in=_scope(advocate_id), deleted=False).filter(
         Q(case_number__icontains=q) | Q(case_title__icontains=q) | Q(status__icontains=q)
     )[:10]
     return {'cases': [{
@@ -44,7 +58,7 @@ def find_client(advocate_id, query):
     """Search clients by name/email/phone - mirrors the assistant router's
     own _search_clients() and the Client Directory's own search."""
     q = (query or '').strip()
-    qs = Client.objects.filter(advocate_id=advocate_id, deleted=False).filter(
+    qs = Client.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False).filter(
         Q(name__icontains=q) | Q(email__icontains=q) | Q(phone__icontains=q)
     )[:5]
     return {'clients': [{
@@ -56,7 +70,7 @@ def list_cases_for_client(advocate_id, client_id):
     """All of one client's cases as light rows (not full detail) - grounds a
     "what are the cases of client X" style question without the per-case
     detail-fetching cost get_case_summary()/etc. carry."""
-    qs = Case.objects.filter(advocate_id=advocate_id, client_id=client_id, deleted=False).order_by('-created_at')[:20]
+    qs = Case.objects.filter(advocate_id__in=_scope(advocate_id), client_id=client_id, deleted=False).order_by('-created_at')[:20]
     return {'cases': [{
         'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title, 'status': c.status,
     } for c in qs]}
@@ -74,7 +88,7 @@ def caseload_breakdown(advocate_id):
     level. Cheap (two GROUP BYs) and always complete, so "how many High Court
     cases do I have" is answered from a real aggregate rather than from
     whichever cases happened to keyword-match the question."""
-    base = Case.objects.filter(advocate_id=advocate_id, deleted=False)
+    base = Case.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False)
     by_status, by_court = {}, {}
     for row in base.values('status').annotate(n=Count('id')):
         by_status[(row['status'] or 'Unspecified')] = row['n']
@@ -91,7 +105,7 @@ def list_cases(advocate_id, court_level=None, status=None, client_id=None,
     match count BEFORE the limit, so a truncated list can never be mistaken
     for a complete one.
     """
-    qs = Case.objects.select_related('client').filter(advocate_id=advocate_id, deleted=False)
+    qs = Case.objects.select_related('client').filter(advocate_id__in=_scope(advocate_id), deleted=False)
     if court_level:
         qs = qs.filter(court_level__icontains=court_level)
     if status:
@@ -118,12 +132,12 @@ def overdue_tasks(advocate_id, limit=30):
     rows are readable without a join per task."""
     today = datetime.date.today()
     qs = CaseTask.objects.filter(
-        advocate_id=advocate_id, completed=False, deadline__lt=today
+        advocate_id__in=_scope(advocate_id), completed=False, deadline__lt=today
     ).exclude(deadline=None).order_by('deadline')
     total = qs.count()
     rows = list(qs[:limit])
     numbers = dict(Case.objects.filter(
-        advocate_id=advocate_id, id__in=[t.case_id for t in rows if t.case_id]
+        advocate_id__in=_scope(advocate_id), id__in=[t.case_id for t in rows if t.case_id]
     ).values_list('id', 'case_number'))
     return {
         'total': total,
@@ -141,11 +155,11 @@ def overdue_tasks(advocate_id, limit=30):
 def client_financials(advocate_id, client_id):
     """Billed / paid / outstanding for ONE client across all their cases —
     the per-client sibling of get_case_financials()."""
-    invoices = list(Invoice.objects.filter(advocate_id=advocate_id, client_id=client_id))
+    invoices = list(Invoice.objects.filter(advocate_id__in=_scope(advocate_id), client_id=client_id))
     billed = sum((i.amount or 0) for i in invoices)
     unpaid = [i for i in invoices if (i.status or '').upper() != 'PAID']
     paid = sum((p.amount or 0) for p in
-               ClientPayment.objects.filter(advocate_id=advocate_id, client_id=client_id))
+               ClientPayment.objects.filter(advocate_id__in=_scope(advocate_id), client_id=client_id))
     return {
         'totalBilled': billed,
         'totalPaid': paid,
@@ -164,7 +178,7 @@ def list_documents(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
         return {'error': 'Case not found or not accessible.'}
-    qs = Document.objects.filter(advocate_id=advocate_id, case_id=c.id).order_by('-upload_date')
+    qs = Document.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id).order_by('-upload_date')
     total = qs.count()
     rows = qs[:20]
     return {
@@ -188,7 +202,7 @@ def pending_invoices(advocate_id, limit=25):
     """
     today = datetime.date.today()
     qs = (Invoice.objects.select_related('client')
-          .filter(advocate_id=advocate_id).exclude(status__iexact='PAID')
+          .filter(advocate_id__in=_scope(advocate_id)).exclude(status__iexact='PAID')
           .order_by('due_date'))
     total = qs.count()
     rows = list(qs[:limit])
@@ -223,7 +237,7 @@ def expense_summary(advocate_id, limit=15):
     """
     today = datetime.date.today()
     this_start, last_start, last_end = _month_bounds(today)
-    base = Expense.objects.filter(advocate_id=advocate_id)
+    base = Expense.objects.filter(advocate_id__in=_scope(advocate_id))
 
     def window(start, end):
         qs = base.filter(payment_date__gte=start, payment_date__lte=end)
@@ -254,7 +268,7 @@ def income_summary(advocate_id, limit=15):
     """
     today = datetime.date.today()
     this_start, last_start, last_end = _month_bounds(today)
-    base = ClientPayment.objects.select_related('client').filter(advocate_id=advocate_id)
+    base = ClientPayment.objects.select_related('client').filter(advocate_id__in=_scope(advocate_id))
 
     def window(start, end):
         qs = base.filter(payment_date__gte=start, payment_date__lte=end)
@@ -276,12 +290,12 @@ def clients_by_case_count(advocate_id, limit=10):
     """Top clients by number of live cases — answers "which client has the
     most cases" from a real aggregate. Capped, with the true client total
     reported so a partial ranking is never mistaken for the whole book."""
-    rows = (Case.objects.filter(advocate_id=advocate_id, deleted=False, client_id__isnull=False)
+    rows = (Case.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False, client_id__isnull=False)
             .values('client_id', 'client__name')
             .annotate(n=Count('id')).order_by('-n')[:limit])
     return {
         'totalClientsWithCases': Case.objects.filter(
-            advocate_id=advocate_id, deleted=False, client_id__isnull=False
+            advocate_id__in=_scope(advocate_id), deleted=False, client_id__isnull=False
         ).values('client_id').distinct().count(),
         'topClients': [{
             'clientId': r['client_id'], 'name': r['client__name'], 'caseCount': r['n'],
@@ -307,7 +321,7 @@ def get_hearings(advocate_id, case_id):
     if c is None:
         return {'error': 'Case not found or not accessible.'}
     today = datetime.date.today()
-    qs = CaseEvent.objects.filter(advocate_id=advocate_id, case_id=c.id).order_by('date')
+    qs = CaseEvent.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id).order_by('date')
     rows = [{'title': e.title, 'type': e.event_type, 'date': _iso(e.date),
              'time': str(e.time) if e.time else '', 'upcoming': bool(e.date and e.date >= today)}
             for e in qs]
@@ -321,7 +335,7 @@ def get_parties(advocate_id, case_id):
         return {'error': 'Case not found or not accessible.'}
     # CaseParty lives in the workspace app; import lazily to avoid a hard dep here.
     from workspace.models import CaseParty
-    qs = CaseParty.objects.filter(advocate_id=advocate_id, case_id=c.id)
+    qs = CaseParty.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id)
     return {'parties': [{'name': p.name, 'role': p.role, 'counsel': p.counsel,
                          'contact': p.contact, 'isOpponent': p.is_opponent} for p in qs]}
 
@@ -330,16 +344,16 @@ def get_notes(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
         return {'error': 'Case not found or not accessible.'}
-    qs = CaseNote.objects.filter(advocate_id=advocate_id, case_id=c.id)[:20]
+    qs = CaseNote.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id)[:20]
     return {'notes': [{'body': n.body, 'createdAt': _iso(n.created_at)} for n in qs],
-            'tags': list(CaseTag.objects.filter(advocate_id=advocate_id, case_id=c.id).values_list('label', flat=True))}
+            'tags': list(CaseTag.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id).values_list('label', flat=True))}
 
 
 def get_tasks(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
         return {'error': 'Case not found or not accessible.'}
-    qs = CaseTask.objects.filter(advocate_id=advocate_id, case_id=c.id)
+    qs = CaseTask.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id)
     return {'tasks': [{'title': t.title, 'priority': t.priority, 'deadline': _iso(t.deadline),
                        'completed': t.completed} for t in qs]}
 
@@ -348,10 +362,10 @@ def get_case_financials(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
         return {'error': 'Case not found or not accessible.'}
-    invoices = Invoice.objects.filter(advocate_id=advocate_id, case_id=c.id)
+    invoices = Invoice.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id)
     inv_rows = [{'invoiceNumber': i.invoice_number, 'amount': i.amount, 'status': i.status,
                  'dueDate': _iso(i.due_date)} for i in invoices]
-    paid = sum((p.amount or 0) for p in ClientPayment.objects.filter(advocate_id=advocate_id, case_id=c.id))
+    paid = sum((p.amount or 0) for p in ClientPayment.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id))
     unpaid = sum((i.amount or 0) for i in invoices if (i.status or '').upper() != 'PAID')
     return {'agreedAmount': c.amount, 'invoices': inv_rows,
             'totalPaid': paid, 'outstanding': unpaid}
@@ -365,7 +379,7 @@ def list_upcoming_hearings(advocate_id, days=14):
     today = datetime.date.today()
     end = today + datetime.timedelta(days=days)
     qs = CaseEvent.objects.select_related('case').filter(
-        advocate_id=advocate_id, date__gte=today, date__lte=end,
+        advocate_id__in=_scope(advocate_id), date__gte=today, date__lte=end,
         event_type__iexact='HEARING').order_by('date')[:30]
     return {'hearings': [{
         'caseNumber': e.case.case_number if e.case_id and e.case else 'N/A',
@@ -375,11 +389,11 @@ def list_upcoming_hearings(advocate_id, days=14):
 
 def dashboard_summary(advocate_id):
     today = datetime.date.today()
-    total = Case.objects.filter(advocate_id=advocate_id, deleted=False).count()
-    active = Case.objects.filter(advocate_id=advocate_id, deleted=False, status__iexact='Active').count()
-    clients = Client.objects.filter(advocate_id=advocate_id, deleted=False).count()
-    upcoming = CaseEvent.objects.filter(advocate_id=advocate_id, date__gte=today).count()
-    pending = sum(1 for i in Invoice.objects.filter(advocate_id=advocate_id) if (i.status or '').upper() != 'PAID')
+    total = Case.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False).count()
+    active = Case.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False, status__iexact='Active').count()
+    clients = Client.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False).count()
+    upcoming = CaseEvent.objects.filter(advocate_id__in=_scope(advocate_id), date__gte=today).count()
+    pending = sum(1 for i in Invoice.objects.filter(advocate_id__in=_scope(advocate_id)) if (i.status or '').upper() != 'PAID')
     return {'totalCases': total, 'activeCases': active, 'clients': clients,
             'upcomingHearings': upcoming, 'pendingInvoices': pending}
 

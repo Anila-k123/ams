@@ -33,6 +33,7 @@ urlpatterns = [
     path('workspace/tasks/<int:pk>/priority', views.UpdateTaskPriorityView.as_view()),
     path('workspace/tasks/<int:pk>/cancel', views.CancelTaskView.as_view()),
     path('workspace/tasks/<int:pk>/toggle', views.ToggleCaseTaskView.as_view()),
+    path('workspace/tasks/<int:pk>/review', views.ReviewTaskView.as_view()),
     path('workspace/tasks/<int:pk>', views.DeleteCaseTaskView.as_view()),
 
     # Parties / opponents

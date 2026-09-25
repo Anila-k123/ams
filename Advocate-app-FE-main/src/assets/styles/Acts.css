@@ -1,574 +1,64 @@
-.acts-container {
-  padding: 24px;
-  max-width: 1200px;
-  margin: 0 auto;
+.acts-container { padding: 4px 2px; color: var(--text-primary); }
+
+.acts-field-chips { flex-wrap: wrap; display: flex; }
+.acts-filter-warning {
+  margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  color: var(--text-secondary); background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.acts-container code {
+  font-size: 12px; padding: 1px 5px; border-radius: 4px;
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
 }
 
-.acts-container h2 {
-  margin: 0 0 16px;
-  color: var(--text-primary);
-}
-
-/* ---- Search bar ---- */
-.acts-search-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  padding: 6px 8px 6px 16px;
-  margin-bottom: 12px;
-}
-
-.acts-search-icon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-
-.acts-search-bar input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 14px;
-  padding: 8px 4px;
-  outline: none;
-}
-
-.acts-search-bar select {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-/* ---- Field chips ---- */
-.acts-field-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-
-.acts-field-chips label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border-color);
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.acts-field-chips label.active {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-  font-weight: 600;
-}
-
-.acts-field-chips input {
-  display: none;
-}
-
-/* ---- Act list / cards ---- */
-.acts-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+.acts-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.acts-empty { text-align: center; padding: 32px 16px; }
+.acts-empty-hint { color: var(--text-muted); font-size: 13px; }
+.no-data { color: var(--text-muted); font-size: 14px; margin: 8px 0; }
 
 .act-card {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border, var(--border-color));
-  border-radius: 10px;
-  padding: 14px 16px;
-  cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s;
+  padding: 14px 18px; cursor: pointer;
+  background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius);
+  transition: border-color 150ms ease;
 }
-
-.act-card:hover {
-  border-color: var(--primary);
-  transform: translateY(-1px);
-}
-
-.act-card-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.act-card-title {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 14.5px;
-}
-
-.act-card-number {
-  color: var(--text-muted);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-
-.act-card-desc {
-  margin: 6px 0;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.act-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 20px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.act-card-meta strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-/* ---- Detail page ---- */
-.act-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 0 0 12px;
-}
-
-.act-back:hover {
-  color: var(--primary);
-}
+.act-card:hover { border-color: var(--primary); }
+.act-card-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.act-card-title { font-weight: 700; color: var(--primary); }
+.act-card-number { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.act-card-desc { margin: 6px 0; font-size: 13px; color: var(--text-secondary); }
+.act-card-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12px; color: var(--text-secondary); }
 
 .act-detail-card {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border, var(--border-color));
-  border-radius: 12px;
-  padding: 20px;
+  padding: 20px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--radius);
 }
-
-.act-detail-head {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.act-jurisdiction-badge {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
-  border-radius: 999px;
-  padding: 3px 10px;
-}
-
-.act-number-badge {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.act-view-pdf-btn {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary);
-  border: 1px solid var(--primary);
-  border-radius: 6px;
-  padding: 4px 10px;
-  text-decoration: none;
-}
-
-.act-view-pdf-btn:hover {
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-}
-
-.act-detail-body {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.act-detail-title {
-  margin: 0 0 6px;
-  color: var(--text-primary);
-  font-size: 19px;
-}
-
-.act-detail-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12.5px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.act-detail-meta strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.act-repealed-flag {
-  color: var(--danger);
-  font-weight: 700;
-}
-
-/* ---- Tabs ---- */
-.act-tabs {
-  display: flex;
-  gap: 4px;
-  margin-top: 16px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.act-tabs button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-muted);
-  font-size: 13.5px;
-  font-weight: 600;
-  padding: 10px 14px;
-  cursor: pointer;
-}
-
-.act-tabs button.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
-}
-
-.act-tab-count {
-  background: var(--text-primary);
-  color: var(--bg-primary);
-  font-size: 10.5px;
-  border-radius: 999px;
-  padding: 1px 7px;
-}
-
-.act-tab-panel {
-  padding-top: 16px;
-}
-
-/* ---- Sections ---- */
-.act-sections-grid {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 16px;
-}
-
-.act-chapters-col {
-  border-right: 1px solid var(--border-color);
-  padding-right: 12px;
-}
-
-.act-chapter-item {
-  font-size: 13px;
-  color: var(--text-primary);
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.act-sections-col-full {
-  width: 100%;
-}
-
-.act-section-row {
-  border-bottom: 1px solid var(--border-color);
-}
-
-.act-section-link {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--primary);
-  font-size: 13.5px;
-  padding: 10px 4px;
-  cursor: pointer;
-}
-
-.act-section-link:hover {
-  text-decoration: underline;
-}
-
-.act-section-body {
-  padding: 0 4px 14px;
-}
-
-.act-section-block-label {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  margin: 8px 0 4px;
-}
-
-.act-section-block {
-  background: var(--bg-secondary, var(--bg-primary));
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 13px;
-  color: var(--text-primary);
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-
-/* ---- Link Cases ---- */
-.act-link-cases-row {
-  display: flex;
-  justify-content: center;
-  padding: 16px 0 0;
-}
-
-.act-link-cases-btn {
-  background: none;
-  border: 1px solid var(--primary);
-  color: var(--primary);
-  border-radius: 8px;
-  padding: 8px 20px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.act-link-cases-btn:hover {
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
-}
-
-.act-cases-linked-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.act-cases-linked-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.act-cases-linked-row .act-section-link {
-  flex: 1;
-  padding: 0;
-}
-
-.act-cases-linked-date {
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.act-cases-unlink-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-}
-
-/* ---- Act Papers ---- */
-.act-papers-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.act-papers-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.act-papers-type {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-  background: var(--bg-secondary, var(--bg-primary));
-  border-radius: 4px;
-  padding: 2px 7px;
-  flex-shrink: 0;
-}
-
-.act-papers-row .act-section-link,
-.act-papers-title {
-  flex: 1;
-  padding: 0;
-  font-size: 13.5px;
-}
-
-.act-papers-title {
-  color: var(--text-primary);
-}
-
-.act-cases-unlink-btn:hover {
-  color: var(--danger);
-}
-
-.act-link-modal-hint {
-  color: var(--text-muted);
-  font-size: 13px;
-  margin: 0 0 12px;
-}
-
-/* ---- Modal (scoped like Cases.css does under its own container) ---- */
-.acts-container .modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 999;
-  animation: fadeIn 0.15s ease-out;
-}
-
-.acts-container .modal-content {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border, var(--border-color));
-  border-radius: var(--radius, 12px);
-  box-shadow: var(--shadow-lg);
-  padding: 28px;
-  width: 460px;
-  max-width: 90%;
-  animation: scaleIn 0.25s ease-out;
-}
-
-.acts-container .case-docs-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.acts-container .case-docs-header h3 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-primary);
-}
-
-.acts-container .close-btn {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--text-muted);
-}
-
-.acts-container .close-btn:hover {
-  color: var(--text-primary);
-}
-
-/* --- filter feedback ----------------------------------------------------- */
-/* Shown under the chips while an Act Year query cannot match anything. Amber,
-   not red: a half-typed year is a work in progress, not an error. */
-.acts-filter-warning {
-  margin: -4px 0 12px;
-  padding: 8px 12px;
-  font-size: 0.85rem;
-  line-height: 1.5;
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 6px;
-}
-
-.acts-filter-warning code,
-.acts-empty-hint code {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: rgba(148, 163, 184, 0.18);
-  font-size: 0.9em;
-}
-
-.acts-empty {
-  text-align: center;
-  padding: 28px 16px;
-}
-
-.acts-empty-hint {
-  margin: 6px 0 0;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  color: var(--text-muted, var(--text-secondary));
-}
-
-/* --- act detail summary -------------------------------------------------- */
-.act-detail-summary {
-  max-width: 560px;
-}
-
-/* One line by default. line-clamp rather than nowrap+ellipsis so the expanded
-   state is the same element with the clamp lifted, and so the collapsed line
-   still wraps to the column width instead of overflowing it. */
+.act-detail-body { display: grid; grid-template-columns: 1fr minmax(220px, 320px); gap: 20px; }
+@media (max-width: 820px) { .act-detail-body { grid-template-columns: 1fr; } }
+.act-detail-title { margin: 0 0 8px; font-size: 1.35rem; color: var(--text-primary); }
 .act-detail-desc {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13.5px;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
-  overflow: hidden;
+  margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.act-detail-desc.open { white-space: normal; }
+.act-detail-meta { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 
-.act-detail-desc.open {
-  display: block;
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
-  overflow: visible;
-  /* These summaries run to several hundred words; give the expanded form its
-     own scroll rather than letting it push the page down again. */
-  max-height: 260px;
-  overflow-y: auto;
-  line-height: 1.6;
-  padding-right: 6px;
+.act-sections-grid { display: grid; grid-template-columns: minmax(200px, 1fr) 2fr; gap: 16px; }
+@media (max-width: 820px) { .act-sections-grid { grid-template-columns: 1fr; } }
+.act-chapter-item { padding: 8px 10px; font-size: 13px; font-weight: 600; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); }
+.act-sections-col { display: flex; flex-direction: column; }
+.act-section-row { border-bottom: 1px solid var(--border-color); padding: 6px 0; }
+.act-section-link {
+  background: none; border: none; padding: 4px 0; cursor: pointer; text-align: left;
+  color: var(--primary); font-size: 13.5px; font-weight: 500; text-decoration: none;
 }
+.act-section-link:hover { text-decoration: underline; }
+.act-section-body { padding: 8px 0 8px 20px; }
+.act-section-block-label { font-size: 12px; font-weight: 700; color: var(--text-muted); margin: 8px 0 4px; text-transform: uppercase; }
+.act-section-block { font-size: 13.5px; line-height: 1.65; color: var(--text-primary); overflow-wrap: anywhere; }
+.muted-dash { color: var(--text-muted); }
 
-.act-detail-desc-toggle {
-  margin-top: 4px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--primary, #2563eb);
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
+.act-list-rows { display: flex; flex-direction: column; }
+.act-list-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-color);
 }
-
-.act-detail-desc-toggle:hover {
-  text-decoration: underline;
-}
+.act-list-row .act-section-link, .act-papers-title { flex: 1; }
+.act-row-date { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.act-link-modal-hint { margin: 0 0 12px; color: var(--text-secondary); font-size: 13px; }

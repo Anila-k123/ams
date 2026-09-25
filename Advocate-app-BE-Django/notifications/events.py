@@ -192,8 +192,9 @@ PRODUCERS = (upcoming_hearings, overdue_invoices, task_deadlines)
 
 def scan_due_notifications(advocate_id=None):
     """Run every producer for one advocate, or for all of them."""
+    from clientaccess.gate import client_advocate_ids
     advocates = (Advocate.objects.filter(id=advocate_id) if advocate_id
-                 else Advocate.objects.all())
+                 else Advocate.objects.all()).exclude(id__in=client_advocate_ids())
     queued = []
     for advocate in advocates:
         before = len(queued)

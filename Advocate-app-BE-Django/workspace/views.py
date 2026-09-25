@@ -320,6 +320,9 @@ class TaskDocumentsView(APIView):
             task_id=task_id, document_id=document_id,
             defaults={'advocate_id': request.user.id},
         )
+        # The assignee attaching their work = submitting it for review.
+        from . import review
+        review.submit(task, request.user)
         return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
 
@@ -342,8 +345,46 @@ class ToggleCaseTaskView(APIView):
         task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        # On a delegated task the assignee can't just tick it done: that submits
+        # it for the assigner's review (workspace/review.py), who approves it.
+        from . import review
+        if not task.completed and review.needs_review(task) and review.is_assignee(task, request.user):
+            review.submit(task, request.user)
+            return Response(CaseTaskSerializer(task).data)
         task.completed = not task.completed
         task.save(update_fields=['completed'])
+        return Response(CaseTaskSerializer(task).data)
+
+
+class ReviewTaskView(APIView):
+    """POST /api/workspace/tasks/<pk>/review {action: approve | request_changes, note}
+
+    The assigner (or another practice member with TASK_ASSIGN, never the assignee)
+    approves submitted work, which completes the task, or sends it back with a note.
+    """
+    permission_classes = [RequirePermission()]
+
+    def post(self, request, pk):
+        from . import review
+        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        if task is None:
+            return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not review.can_review(task, request.user):
+            return Response({'error': 'You cannot review this task.'}, status=status.HTTP_403_FORBIDDEN)
+        if task.review_status != review.SUBMITTED:
+            return Response({'error': 'This task has not been submitted for review.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        action = (request.data.get('action') or '').strip()
+        note = (request.data.get('note') or '').strip()
+        if action == 'approve':
+            review.approve(task, request.user, note)
+        elif action == 'request_changes':
+            if not note:
+                return Response({'error': 'Say what needs to change.'}, status=status.HTTP_400_BAD_REQUEST)
+            review.request_changes(task, request.user, note)
+        else:
+            return Response({'error': 'action must be approve or request_changes'},
+                            status=status.HTTP_400_BAD_REQUEST)
         return Response(CaseTaskSerializer(task).data)
 
 

@@ -3,56 +3,22 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  animation: fadeIn 0.3s ease-out, slideUp 0.3s ease-out;
 }
-
-.calendar-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.calendar-header h2 {
-  margin: 0;
-  font-size: 24px;
+.event-label {
+  font-size: 11px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: -8px;
 }
-
-.calendar-header-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.calendar-header-actions button {
-  background: var(--btn-secondary-bg);
-  border: none;
-  color: var(--text-primary);
-  padding: 10px 20px;
+.modal-error {
+  color: var(--danger);
+  border: 1px solid var(--danger);
   border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 12px;
   font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all var(--transition);
-  box-shadow: var(--shadow-sm);
-}
-
-.calendar-header-actions button:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-glow);
-}
-
-.calendar-header-actions button.add-event-btn {
-  background: var(--btn-primary-bg);
-  color: #fff;
-}
-
-.calendar-header-actions button.active-view {
-  background: var(--btn-primary-bg);
-  color: #fff;
-  box-shadow: var(--shadow-glow);
 }
 
 .rbc-calendar {
@@ -140,38 +106,3 @@
   font-size: 11px !important;
 }
 
-.event-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.event-form input,
-.event-form select,
-.event-form textarea {
-  padding: 10px 14px;
-  border: 1px solid var(--input-border);
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  outline: none;
-  background: var(--input-bg);
-  color: var(--text-primary);
-  width: 100%;
-  transition: all var(--transition-fast);
-}
-
-.event-form input:focus,
-.event-form select:focus,
-.event-form textarea:focus {
-  border-color: var(--input-focus-border);
-  box-shadow: var(--input-focus-shadow);
-}
-
-.event-form label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: -10px;
-}

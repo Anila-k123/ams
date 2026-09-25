@@ -113,6 +113,10 @@ class AuditLogMiddleware:
         # authenticated call has a real advocate; anonymous ones are skipped
         # (there is nobody to attribute the action to).
         user = getattr(request, 'user', None)
+        # Client users' actions are recorded against their firm by the client API
+        # itself (clientaccess/views.py), not under the client's own advocate id.
+        if getattr(request, 'client_id', None) is not None:
+            return
         advocate_id = getattr(user, 'id', None) if getattr(user, 'is_authenticated', False) else None
         if advocate_id is None:
             return

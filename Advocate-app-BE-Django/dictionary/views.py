@@ -1,9 +1,16 @@
+from django.db.models import Case, When, IntegerField
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
 from core.permissions import RequirePermission
 from .models import LegalTerm
+
+# India-first ranking: the official Legal Glossary, then India Code.
+_SOURCE_RANK = Case(
+    When(source='legal-glossary-in', then=0),
+    When(source='india-code', then=1),
+    default=2, output_field=IntegerField())
 
 
 def _snippet(text, n=200):
@@ -25,11 +32,14 @@ class LegalTermSearchView(APIView):
             limit = 20
 
         # Hide entries whose definition refined to empty (whole body was references).
-        base = LegalTerm.objects.exclude(definition='').exclude(definition__isnull=True)
-        results = list(base.filter(term_norm__startswith=q)[:limit])
+        # India Code ranks above Black's within each tier (prefix match, then contains).
+        base = (LegalTerm.objects.exclude(definition='').exclude(definition__isnull=True)
+                .annotate(_rank=_SOURCE_RANK))
+        results = list(base.filter(term_norm__startswith=q).order_by('_rank', 'term_norm')[:limit])
         if len(results) < limit:
             seen = {t.id for t in results}
-            extra = base.filter(term_norm__contains=q).exclude(id__in=seen)[:limit - len(results)]
+            extra = (base.filter(term_norm__contains=q).exclude(id__in=seen)
+                     .order_by('_rank', 'term_norm')[:limit - len(results)])
             results.extend(extra)
         return Response([
             {'id': t.id, 'term': t.term, 'snippet': _snippet(t.definition), 'source': t.source}

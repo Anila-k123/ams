@@ -1,3 +1,5 @@
+/* Pop-ups open from inside PrimeReact dialogs (document summary), whose z-index starts
+   at 10000 and rises per open dialog (main.jsx PrimeReactProvider), so stay above them. */
 .def-word { cursor: help; border-radius: 2px; transition: background 120ms ease; }
 .def-word:hover {
   text-decoration: underline dotted;
@@ -6,12 +8,12 @@
 }
 
 .def-pop-backdrop {
-  position: fixed; inset: 0; z-index: 10000; background: transparent;
+  position: fixed; inset: 0; z-index: 20000; background: transparent;
 }
 .def-pop {
-  position: fixed; z-index: 10001;
+  position: fixed; z-index: 20001;
   width: 320px; max-height: 220px; overflow-y: auto;
-  background: var(--card-bg, #fff);
+  background: var(--card-bg);
   border: 1px solid var(--border-color, rgba(148,163,184,0.3));
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0,0,0,0.25);

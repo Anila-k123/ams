@@ -77,5 +77,7 @@ export function logoutAndRedirect(showAlert = true) {
 function performLogout() {
   localStorage.removeItem("token");
   localStorage.removeItem("email");
+  localStorage.removeItem("role");
+  localStorage.removeItem("fullName");
   window.location.href = "/login";
 }

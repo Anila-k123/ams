@@ -13,6 +13,7 @@ from rest_framework.response import Response
 from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Document
 from core.permissions import RequirePermission
 from .llm import stream_answer
+from .tools import _scope   # practice-wide advocate scope (owner + members)
 
 
 class AssistantChatView(APIView):
@@ -104,7 +105,7 @@ def _client_cases_query(clean: str, advocate_id=None) -> str:
     name = next((g for g in m.groups() if g), '').strip()
     if not name or advocate_id is None:
         return ''
-    exists = Client.objects.filter(advocate_id=advocate_id, deleted=False,
+    exists = Client.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False,
                                    name__icontains=name).exists()
     return name if exists else ''
 
@@ -165,13 +166,13 @@ class AssistantQueryView(APIView):
             if _any(clean, 'monthly income', 'income this month', 'revenue this month', 'monthly revenue'):
                 return self._income(aid)
             if _any(clean, 'how many active cases', 'active cases count', 'number of active cases'):
-                n = Case.objects.filter(advocate_id=aid, deleted=False, status__iexact='Active').count()
+                n = Case.objects.filter(advocate_id__in=_scope(aid), deleted=False, status__iexact='Active').count()
                 return _answer(f'There are **{n}** active cases currently.')
             if _any(clean, 'how many clients', 'total clients', 'number of clients', 'client count'):
-                n = Client.objects.filter(advocate_id=aid).count()
+                n = Client.objects.filter(advocate_id__in=_scope(aid)).count()
                 return _answer(f'You have **{n}** clients registered.')
             if _any(clean, 'how many hearings today', 'hearings count today', 'number of hearings today'):
-                n = CaseEvent.objects.filter(advocate_id=aid, date=datetime.date.today()).count()
+                n = CaseEvent.objects.filter(advocate_id__in=_scope(aid), date=datetime.date.today()).count()
                 return _answer(f'There are **{n}** hearings scheduled for today.')
 
         # Searches (prefix-based) - startswith is inherently safe regardless
@@ -218,11 +219,11 @@ class AssistantQueryView(APIView):
     # --- builders ---
     def _summary(self, aid):
         today = datetime.date.today()
-        total = Case.objects.filter(advocate_id=aid, deleted=False).count()
-        active = Case.objects.filter(advocate_id=aid, deleted=False, status__iexact='Active').count()
-        clients = Client.objects.filter(advocate_id=aid, deleted=False).count()
-        upcoming = CaseEvent.objects.filter(advocate_id=aid, date__gte=today).count()
-        pending = sum(1 for i in Invoice.objects.filter(advocate_id=aid)
+        total = Case.objects.filter(advocate_id__in=_scope(aid), deleted=False).count()
+        active = Case.objects.filter(advocate_id__in=_scope(aid), deleted=False, status__iexact='Active').count()
+        clients = Client.objects.filter(advocate_id__in=_scope(aid), deleted=False).count()
+        upcoming = CaseEvent.objects.filter(advocate_id__in=_scope(aid), date__gte=today).count()
+        pending = sum(1 for i in Invoice.objects.filter(advocate_id__in=_scope(aid))
                       if (i.status or '').upper() != 'PAID')
         return {
             'intent': 'SHOW_SUMMARY', 'action': 'SHOW_DATA', 'route': '/dashboard',
@@ -238,7 +239,7 @@ class AssistantQueryView(APIView):
         start = today + datetime.timedelta(days=start_off)
         end = today + datetime.timedelta(days=end_off)
         qs = CaseEvent.objects.select_related('case', 'case__client').filter(
-            advocate_id=aid, date__gte=start, date__lte=end, event_type__iexact='HEARING').order_by('date')[:10]
+            advocate_id__in=_scope(aid), date__gte=start, date__lte=end, event_type__iexact='HEARING').order_by('date')[:10]
         results = [{
             'id': h.id, 'title': h.title, 'date': h.date.isoformat() if h.date else '',
             'time': str(h.time) if h.time else '',
@@ -253,7 +254,7 @@ class AssistantQueryView(APIView):
         }
 
     def _pending_invoices(self, aid):
-        invs = [i for i in Invoice.objects.select_related('client').filter(advocate_id=aid)
+        invs = [i for i in Invoice.objects.select_related('client').filter(advocate_id__in=_scope(aid))
                 if (i.status or '').upper() in ('UNPAID', 'OVERDUE')][:10]
         results = [{
             'id': i.id, 'invoiceNumber': i.invoice_number, 'amount': i.amount, 'status': i.status,
@@ -269,7 +270,7 @@ class AssistantQueryView(APIView):
         }
 
     def _expenses(self, aid, start, end, label):
-        qs = Expense.objects.filter(advocate_id=aid, payment_date__gte=start, payment_date__lte=end).order_by('-payment_date')[:10]
+        qs = Expense.objects.filter(advocate_id__in=_scope(aid), payment_date__gte=start, payment_date__lte=end).order_by('-payment_date')[:10]
         results = [{'id': e.id, 'title': e.title, 'amount': e.amount, 'category': e.category,
                     'date': e.payment_date.isoformat() if e.payment_date else ''} for e in qs]
         total = sum(e.amount or 0 for e in qs)
@@ -284,7 +285,7 @@ class AssistantQueryView(APIView):
         start = datetime.date.today().replace(day=1)
         end = datetime.date.today()
         total = sum(p.amount or 0 for p in ClientPayment.objects.filter(
-            advocate_id=aid, payment_date__gte=start, payment_date__lte=end))
+            advocate_id__in=_scope(aid), payment_date__gte=start, payment_date__lte=end))
         return {
             'intent': 'SHOW_INCOME', 'action': 'SHOW_DATA', 'route': '/dashboard',
             'message': f"💰 This month's income (payments received): **₹{total:.0f}**.",
@@ -292,7 +293,7 @@ class AssistantQueryView(APIView):
         }
 
     def _search_clients(self, aid, name):
-        qs = Client.objects.filter(advocate_id=aid, deleted=False).filter(
+        qs = Client.objects.filter(advocate_id__in=_scope(aid), deleted=False).filter(
             Q(name__icontains=name) | Q(email__icontains=name) | Q(phone__icontains=name))[:10]
         results = [{'id': c.id, 'name': c.name, 'email': c.email, 'phone': c.phone} for c in qs]
         return {
@@ -307,7 +308,7 @@ class AssistantQueryView(APIView):
         # Includes client name so "cases of client X" / "find case X" resolve
         # the same way the Cases page's own search (cases/views.py's
         # SearchCasesView) already does.
-        qs = Case.objects.select_related('client').filter(advocate_id=aid, deleted=False).filter(
+        qs = Case.objects.select_related('client').filter(advocate_id__in=_scope(aid), deleted=False).filter(
             Q(case_number__icontains=kw) | Q(case_title__icontains=kw) | Q(status__icontains=kw) |
             Q(client__name__icontains=kw))[:10]
         results = [{'id': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title,
@@ -321,7 +322,7 @@ class AssistantQueryView(APIView):
         }
 
     def _search_invoices(self, aid, kw):
-        qs = Invoice.objects.select_related('client').filter(advocate_id=aid).filter(
+        qs = Invoice.objects.select_related('client').filter(advocate_id__in=_scope(aid)).filter(
             Q(invoice_number__icontains=kw) | Q(status__icontains=kw))[:10]
         results = [{'id': i.id, 'invoiceNumber': i.invoice_number, 'amount': i.amount,
                     'status': i.status, 'clientName': i.client.name if i.client_id and i.client else 'N/A'} for i in qs]

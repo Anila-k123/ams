@@ -42,9 +42,15 @@ class AdvocateJWTAuthentication(authentication.BaseAuthentication):
             raise exceptions.AuthenticationFailed(
                 'This account is no longer active.')
 
+        # Client users (the Client role) may only reach the allowlisted client API;
+        # everything else is refused here, for every endpoint at once.
+        from clientaccess.gate import enforce
+        enforce(request, advocate)
+
         # Cache permissions/roles on the request to avoid recomputing per check.
         request._advocate_permissions = advocate.permission_codes()
         return (advocate, token)
 
     def authenticate_header(self, request):
         return self.keyword
+

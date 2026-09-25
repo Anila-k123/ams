@@ -1,9 +1,7 @@
 import os
 import json
-import uuid
 import logging
 import datetime
-import mimetypes
 
 import jwt
 from django.conf import settings
@@ -21,6 +19,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import DocumentSerializer
 from .models import DocumentSummary, DocumentVersion
+from .storage import add_version, create_document
 from core.practice import practice_ids
 
 log = logging.getLogger(__name__)
@@ -29,8 +28,11 @@ SORT_MAP = {'uploadDate': 'upload_date', 'documentName': 'document_name',
             'fileSize': 'file_size', 'id': 'id'}
 
 
-def _base(request_user_id):
-    return Document.objects.select_related('case', 'client').filter(advocate_id=request_user_id)
+def _base(user):
+    """Documents this user may read: everything in their practice. Documents belong
+    to the matter, not the uploader, the same as cases/tasks; the views gate on
+    DOCUMENT_VIEW."""
+    return Document.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(user))
 
 
 class DocumentListView(APIView):
@@ -38,7 +40,7 @@ class DocumentListView(APIView):
 
     def get(self, request):
         p = request.query_params
-        qs = _base(request.user.id)
+        qs = _base(request.user)
         if p.get('keyword'):
             kw = p['keyword']
             qs = qs.filter(Q(document_name__icontains=kw) | Q(original_name__icontains=kw) |
@@ -63,7 +65,7 @@ class DocumentSimpleListView(APIView):
 
     def get(self, request):
         kw = request.query_params.get('keyword')
-        qs = _base(request.user.id)
+        qs = _base(request.user)
         if kw:
             qs = qs.filter(Q(document_name__icontains=kw) | Q(original_name__icontains=kw) |
                            Q(category__icontains=kw) | Q(description__icontains=kw))
@@ -76,7 +78,7 @@ class DocumentFilterView(APIView):
 
     def get(self, request):
         p = request.query_params
-        qs = _base(request.user.id)
+        qs = _base(request.user)
         if p.get('category'):
             qs = qs.filter(category=p['category'])
         if p.get('status'):
@@ -90,7 +92,7 @@ class DocumentStatsView(APIView):
     permission_classes = [RequirePermission('DOCUMENT_VIEW')]
 
     def get(self, request):
-        qs = _base(request.user.id)
+        qs = _base(request.user)
         total = qs.count()
         total_bytes = qs.aggregate(s=Sum('file_size'))['s'] or 0
         cat_counts = {}
@@ -108,7 +110,7 @@ class DocumentsByCaseView(APIView):
     permission_classes = [RequirePermission('DOCUMENT_VIEW')]
 
     def get(self, request, case_id):
-        qs = _base(request.user.id).filter(case_id=case_id).order_by('-upload_date')
+        qs = _base(request.user).filter(case_id=case_id).order_by('-upload_date')
         return Response(DocumentSerializer(qs, many=True).data)
 
 
@@ -116,7 +118,7 @@ class DocumentsByClientView(APIView):
     permission_classes = [RequirePermission('DOCUMENT_VIEW')]
 
     def get(self, request, client_id):
-        qs = _base(request.user.id).filter(client_id=client_id).order_by('-upload_date')
+        qs = _base(request.user).filter(client_id=client_id).order_by('-upload_date')
         return Response(DocumentSerializer(qs, many=True).data)
 
 
@@ -127,47 +129,17 @@ class UploadDocumentView(APIView):
         f = request.FILES.get('file')
         if f is None:
             return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
-        original_name = f.name
-        ext = os.path.splitext(original_name)[1]
-        stored_name = f"{uuid.uuid4()}{ext}"
-        docs_dir = os.path.join(settings.DOCUMENT_UPLOAD_DIR, 'documents')
-        os.makedirs(docs_dir, exist_ok=True)
-        abs_path = os.path.join(docs_dir, stored_name)
-        with open(abs_path, 'wb') as out:
-            for chunk in f.chunks():
-                out.write(chunk)
-
         case_id = request.data.get('caseId') or None
         client_id = request.data.get('clientId') or None
         case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first() if case_id else None
         client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first() if client_id else None
-        file_type = f.content_type or mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
-        now = datetime.datetime.now()
-        doc = Document.objects.create(
-            document_name=request.data.get('documentName') or original_name,
-            original_name=original_name,
-            stored_name=stored_name,
-            file_path=abs_path,
-            file_size=f.size,
-            file_type=file_type,
-            category=request.data.get('category') or None,
-            description=request.data.get('description') or None,
-            version=1,
-            download_count=0,
-            status='ACTIVE',
-            upload_date=now,
-            updated_at=now,
-            advocate_id=request.user.id,
-            case=case,
-            client=client,
+        doc = create_document(
+            request.user, f,
+            document_name=request.data.get('documentName'),
+            category=request.data.get('category'),
+            description=request.data.get('description'),
+            case=case, client=client,
         )
-        # Kick off background AI summarization (non-blocking). Never let a
-        # summary failure break the upload itself.
-        try:
-            from .summarizer import enqueue_and_run
-            enqueue_and_run(doc)
-        except Exception:
-            log.exception('summary enqueue failed for doc %s', doc.id)
         return Response(DocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
 
 
@@ -182,7 +154,7 @@ class DocumentDetailView(APIView):
         return [RequirePermission('DOCUMENT_VIEW')()]
 
     def get(self, request, pk):
-        doc = _base(request.user.id).filter(id=pk).first()
+        doc = _base(request.user).filter(id=pk).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         return Response(DocumentSerializer(doc).data)
@@ -248,7 +220,7 @@ class DocumentSummaryView(APIView):
     permission_classes = [RequirePermission('DOCUMENT_VIEW')]
 
     def get(self, request, pk):
-        doc = _base(request.user.id).filter(id=pk).first()
+        doc = _base(request.user).filter(id=pk).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         row = DocumentSummary.objects.filter(document_id=pk).first()
@@ -284,7 +256,7 @@ class DocumentVersionsView(APIView):
         return [RequirePermission('DOCUMENT_VIEW')()]
 
     def get(self, request, pk):
-        doc = _base(request.user.id).filter(id=pk).first()
+        doc = _base(request.user).filter(id=pk).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         rows = {v.version: v for v in DocumentVersion.objects.filter(document_id=pk)}
@@ -327,58 +299,7 @@ class DocumentVersionsView(APIView):
 
         note = (request.data.get('note') or '').strip() or None
 
-        # 1) Archive the CURRENT file as a past version (keeps its own note, if any).
-        DocumentVersion.objects.get_or_create(
-            document_id=doc.id, version=doc.version or 1,
-            defaults={
-                'stored_name': doc.stored_name,
-                'file_path': doc.file_path,
-                'file_size': doc.file_size,
-                'file_type': doc.file_type,
-                'original_name': doc.original_name,
-                'uploaded_by_id': doc.advocate_id,
-            })
-
-        # 2) Write the new file to disk.
-        original_name = f.name
-        ext = os.path.splitext(original_name)[1]
-        stored_name = f"{uuid.uuid4()}{ext}"
-        docs_dir = os.path.join(settings.DOCUMENT_UPLOAD_DIR, 'documents')
-        os.makedirs(docs_dir, exist_ok=True)
-        abs_path = os.path.join(docs_dir, stored_name)
-        with open(abs_path, 'wb') as out:
-            for chunk in f.chunks():
-                out.write(chunk)
-
-        # 3) Point the document at the new file and bump the version.
-        doc.original_name = original_name
-        doc.stored_name = stored_name
-        doc.file_path = abs_path
-        doc.file_size = f.size
-        doc.file_type = f.content_type or mimetypes.guess_type(original_name)[0] or 'application/octet-stream'
-        doc.version = (doc.version or 1) + 1
-        doc.updated_at = datetime.datetime.now()
-        doc.save()
-
-        # 4) Record the NEW version (with the user's note) in the history.
-        DocumentVersion.objects.update_or_create(
-            document_id=doc.id, version=doc.version,
-            defaults={
-                'stored_name': doc.stored_name,
-                'file_path': doc.file_path,
-                'file_size': doc.file_size,
-                'file_type': doc.file_type,
-                'original_name': doc.original_name,
-                'note': note,
-                'uploaded_by_id': request.user.id,
-            })
-
-        # 5) The old summary is stale — re-summarize the new file.
-        try:
-            from .summarizer import enqueue_and_run
-            enqueue_and_run(doc)
-        except Exception:
-            log.exception('summary enqueue failed for doc %s after new version', doc.id)
+        add_version(doc, f, request.user, note)
         return Response(DocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
 
 
@@ -405,14 +326,35 @@ def _advocate_from_request(request):
     except jwt.PyJWTError:
         return None
     aid = payload.get('advocateId')
-    return Advocate.objects.filter(id=aid).first()
+    advocate = Advocate.objects.filter(id=aid).first()
+    # Same gate as AdvocateJWTAuthentication: someone who has left the practice
+    # must not keep downloading its documents with an old ?token= link.
+    if advocate is not None and getattr(advocate, 'left_on', None) is not None:
+        return None
+    # Client users download through /api/client/documents, never these firm endpoints.
+    from clientaccess.gate import is_client
+    if is_client(advocate):
+        return None
+    return advocate
+
+
+def _readable_file(advocate, pk):
+    """The document if `advocate` may download it: in their practice, and their own
+    upload or they hold DOCUMENT_VIEW. These endpoints are AllowAny (token may be in
+    the query string), so the permission is checked here rather than by DRF."""
+    doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(advocate)).first()
+    if doc is None:
+        return None
+    if doc.advocate_id != advocate.id and 'DOCUMENT_VIEW' not in advocate.permission_codes():
+        return None
+    return doc
 
 
 def _serve(request, pk, as_attachment):
     advocate = _advocate_from_request(request)
     if advocate is None:
         return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)
-    doc = Document.objects.filter(id=pk, advocate_id=advocate.id).first()
+    doc = _readable_file(advocate, pk)
     if doc is None or not doc.file_path or not os.path.exists(doc.file_path):
         raise Http404('Document file not found')
     if as_attachment:
@@ -446,7 +388,7 @@ def download_document_version(request, pk, version):
     advocate = _advocate_from_request(request)
     if advocate is None:
         return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)
-    doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(advocate)).first()
+    doc = _readable_file(advocate, pk)
     if doc is None:
         raise Http404('Document not found')
     if version == (doc.version or 1):

@@ -1,0 +1,17 @@
+/* Senior review of delegated tasks (components/TaskReview.tsx). */
+.task-review-chip { font-size: 11px; white-space: nowrap; }
+
+.task-review-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 8px;
+  border-left: 3px solid var(--success);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--success) 6%, transparent);
+}
+.task-review-note.changes {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+.task-review-btn.p-button { white-space: nowrap; }

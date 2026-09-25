@@ -178,6 +178,13 @@ class Document(models.Model):
     advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, db_column='advocate_id')
     case = models.ForeignKey(Case, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='case_id')
     client = models.ForeignKey(Client, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='client_id')
+    # Id of the record in another system this document came from (InstaDraft
+    # session id). Re-sending the same ref adds a version instead of a new document.
+    # Column added by documents/migrations/0004 (table is Spring-owned).
+    external_ref = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    # Shared with the client in the client portal (portal/scope.py). Off unless the
+    # firm switches it on for this document. Column added by documents/migrations/0005.
+    client_visible = models.BooleanField(default=False)
 
     class Meta:
         managed = False

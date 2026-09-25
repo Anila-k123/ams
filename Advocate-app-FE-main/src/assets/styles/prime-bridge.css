@@ -1,0 +1,46 @@
+/* PrimeReact inside AMS (merge phase 04).
+   The PrimeReact theme (lara light/dark, swapped by ThemeContext) supplies component
+   styling; this file only lines it up with AMS: the app font, AMS's primary colour,
+   and surfaces that follow the AMS light/dark tokens (themes.css). */
+
+:root {
+  --font-family: inherit;
+}
+
+[data-theme="dark"],
+[data-theme="light"] {
+  --primary-color: var(--primary);
+}
+
+.p-component,
+.p-inputtext,
+.p-button,
+.p-dropdown-item,
+.p-datatable {
+  font-family: inherit;
+}
+
+/* AMS pages sit on AMS's own background, so PrimeReact cards and tables should
+   use the AMS card surface rather than the theme's flat white/black. */
+.p-card,
+.p-datatable .p-datatable-wrapper,
+.p-panel .p-panel-content {
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.p-card { border: 1px solid var(--card-border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+
+/* Stacking order (dialogs, dropdown panels, toasts) is set once in main.jsx's
+   PrimeReactProvider zIndex, so panels opened from a dialog appear above it. */
+
+/* Search fields written as <span class="p-input-icon-left"><i/><InputText/></span>.
+   PrimeReact 10's themes no longer style that wrapper (they moved to IconField), so
+   without this the icon sits on top of the typed text. */
+.p-input-icon-left { position: relative; display: inline-block; }
+.p-input-icon-left > i,
+.p-input-icon-left > svg {
+  position: absolute; top: 50%; left: 0.75rem; margin-top: -0.5rem;
+  color: var(--text-muted); pointer-events: none; z-index: 1;
+}
+.p-input-icon-left > .p-inputtext { padding-left: 2.25rem; }

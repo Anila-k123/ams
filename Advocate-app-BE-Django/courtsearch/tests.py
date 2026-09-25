@@ -11,7 +11,7 @@ is listed today". These examples are the contract between them.
 
 import datetime
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from core.models import Advocate, Case, Client
 from courtsearch.matching import case_identity, find_listings, normalise_case
@@ -160,3 +160,34 @@ class FindListingsTests(TestCase):
 
     def test_no_listing_on_a_day_the_case_is_not_up(self):
         self.assertEqual(find_listings(self.case, TODAY + datetime.timedelta(days=1)), [])
+
+
+class ScraperClientResponseTest(SimpleTestCase):
+    """client._handle: only the scraper's JSON answers get through."""
+
+    def response(self, status, body, content_type):
+        import requests
+        resp = requests.Response()
+        resp.status_code = status
+        resp._content = body.encode()
+        resp.headers['Content-Type'] = content_type
+        resp.url = 'http://localhost:8000/courts'
+        return resp
+
+    def test_json_passes_through(self):
+        from . import client
+        self.assertEqual(client._handle(self.response(200, '[{"court_id": "mhc"}]', 'application/json')),
+                         [{'court_id': 'mhc'}])
+
+    def test_json_error_is_a_scraper_error(self):
+        from . import client
+        with self.assertRaises(client.ScraperError) as ctx:
+            client._handle(self.response(404, '{"detail": "No case"}', 'application/json'))
+        self.assertEqual((ctx.exception.status, ctx.exception.detail), (404, 'No case'))
+
+    def test_another_servers_html_page_counts_as_unavailable(self):
+        # COURT_API_BASE pointing at the wrong server (e.g. an HTML 404 page) must not
+        # reach the user as raw HTML; the views turn this into their 503 message.
+        from . import client
+        with self.assertRaises(client.ScraperUnavailable):
+            client._handle(self.response(404, '<!doctype html><title>Page not found</title>', 'text/html'))

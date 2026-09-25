@@ -1,0 +1,4 @@
+/* Firm-side client-portal access dialog (components/ClientPortalAccess.tsx). */
+.cpa { font-size: 13px; }
+.cpa-muted { color: var(--text-secondary); font-size: 12px; margin: 0; }
+.cpa-strong { font-weight: 600; color: var(--text-primary); }

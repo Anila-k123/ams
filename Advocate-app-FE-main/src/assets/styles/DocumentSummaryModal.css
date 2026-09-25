@@ -1,161 +1,23 @@
-/* AI Document Summary modal — renders inside the shared Modal shell. */
-
-/* Widen the shared modal shell for the summary — about half the window — so long
-   legal text is readable instead of clipped. Scoped via :has() so other modals
-   keep their default 520px width. */
-.modal-container:has(.ds-modal) {
-  max-width: 50vw;
-  width: 50vw;
-}
-
-@media (max-width: 900px) {
-  .modal-container:has(.ds-modal) {
-    max-width: 92vw;
-    width: 92vw;
-  }
-}
-
-.ds-modal {
-  width: 100%;
-}
-
-.ds-summary,
-.ds-text,
-.ds-list li {
-  overflow-wrap: anywhere;
-}
-
-/* --- transient / empty states --- */
+/* AI Document Summary dialog (components/DocumentSummaryModal.tsx). */
+.ds-modal { width: 100%; }
+.ds-summary, .ds-text, .ds-list li { overflow-wrap: anywhere; }
 .ds-state {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 18px 4px;
-  color: var(--text-muted, #94a3b8);
-  font-size: 0.95rem;
-  line-height: 1.5;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+  padding: 18px 4px; color: var(--text-muted); font-size: 0.95rem; line-height: 1.5;
 }
-
-.ds-state svg {
-  flex-shrink: 0;
-}
-
-.ds-state-error {
-  color: var(--danger, #ef4444);
-}
-
-.ds-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid color-mix(in srgb, #8b5cf6 40%, transparent);
-  border-top-color: #8b5cf6;
-  border-radius: 50%;
-  animation: ds-spin 0.7s linear infinite;
-  display: inline-block;
-}
-
-@keyframes ds-spin {
-  to { transform: rotate(360deg); }
-}
-
-/* --- buttons --- */
-.ds-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.3));
-  border-radius: var(--radius-sm, 8px);
-  background: transparent;
-  color: var(--text-primary, #fff);
-  cursor: pointer;
-  font-size: 0.88rem;
-  transition: all 150ms ease;
-}
-
-.ds-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, #8b5cf6 12%, transparent);
-  border-color: color-mix(in srgb, #8b5cf6 35%, transparent);
-}
-
-.ds-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.ds-btn-primary {
-  background: #8b5cf6;
-  border-color: #8b5cf6;
-  color: #fff;
-}
-
-.ds-btn-primary:hover:not(:disabled) {
-  background: #7c4ff0;
-  border-color: #7c4ff0;
-}
-
-/* --- ready content --- */
-.ds-content {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.ds-doctype {
-  align-self: flex-start;
-  background: color-mix(in srgb, #8b5cf6 18%, transparent);
-  color: #8b5cf6;
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 999px;
-  margin-bottom: 8px;
-}
-
-.ds-summary {
-  color: var(--text-primary, #fff);
-  line-height: 1.6;
-  margin: 0 0 8px;
-}
-
-.ds-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
+.ds-state-error { color: var(--danger); }
+.ds-content { display: flex; flex-direction: column; gap: 4px; }
+.ds-doctype { align-self: flex-start; margin-bottom: 8px; }
+.ds-summary { color: var(--text-primary); line-height: 1.6; margin: 0 0 8px; }
+.ds-sections { display: flex; flex-direction: column; gap: 14px; }
 .ds-section-label {
-  margin: 0 0 4px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted, #94a3b8);
+  margin: 0 0 4px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-muted);
 }
-
-.ds-text {
-  margin: 0;
-  color: var(--text-primary, #fff);
-  line-height: 1.55;
-}
-
-.ds-list {
-  margin: 0;
-  padding-left: 18px;
-  color: var(--text-primary, #fff);
-  line-height: 1.55;
-}
-
-.ds-list li {
-  margin-bottom: 4px;
-}
-
+.ds-text { margin: 0; color: var(--text-primary); line-height: 1.55; }
+.ds-list { margin: 0; padding-left: 18px; color: var(--text-primary); line-height: 1.55; }
+.ds-list li { margin-bottom: 4px; }
 .ds-footer {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-color);
+  display: flex; justify-content: flex-end; gap: 10px;
 }

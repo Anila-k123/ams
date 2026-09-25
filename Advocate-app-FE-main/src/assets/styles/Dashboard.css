@@ -302,39 +302,15 @@
   transform: scale(0.92);
 }
 
-.hamburger-icon {
-  width: 22px;
-  height: 18px;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
 
-.hamburger-icon span {
-  display: block;
-  width: 100%;
-  height: 2.5px;
-  background: var(--text-primary);
-  border-radius: 2px;
-  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1);
-  transform-origin: center;
-}
 
-.hamburger-icon.active span:nth-child(1) {
-  transform: rotate(45deg) translate(5px, 5px);
-  width: 100%;
-}
 
-.hamburger-icon.active span:nth-child(2) {
-  opacity: 0;
-  transform: scaleX(0);
-}
 
-.hamburger-icon.active span:nth-child(3) {
-  transform: rotate(-45deg) translate(5px, -5px);
-  width: 100%;
-}
+
+
+
+
+
 
 /* ───── Top Left with Hamburger ───── */
 .top-left {
@@ -1244,17 +1220,11 @@
 .mini-invoice-row .inv-client { color: var(--text-muted); flex: 1; margin-left: 10px; }
 .mini-invoice-row .inv-amt { font-weight: 700; margin-right: 10px; }
 
-.status-pill-mini {
-  font-size: 8px;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
 
-.status-pill-mini.paid { background-color: rgba(34,197,94,0.1); color: var(--success); }
-.status-pill-mini.unpaid { background-color: rgba(245,158,11,0.1); color: var(--warning); }
-.status-pill-mini.overdue { background-color: rgba(239,68,68,0.1); color: var(--danger); }
+
+
+
+
 
 .dashboard-row-four {
   display: grid;
@@ -1315,28 +1285,16 @@
   padding-bottom: 6px;
 }
 
-.task-checkbox-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  font-size: 14px;
-}
+
 
 .task-text-dash { flex: 1; font-weight: 500; }
 .task-text-dash.crossed { text-decoration: line-through; color: var(--text-muted); }
 
-.priority-badge-dash {
-  font-size: 8px;
-  font-weight: 750;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
 
-.priority-badge-dash.high { background-color: rgba(239,68,68,0.1); color: var(--danger); }
-.priority-badge-dash.medium { background-color: rgba(245,158,11,0.1); color: var(--warning); }
-.priority-badge-dash.low { background-color: rgba(79,124,255,0.1); color: var(--primary); }
+
+
+
+
 
 .dashboard-footer-main {
   display: flex;
@@ -2099,4 +2057,21 @@ tr.highlight-row, .highlight-row {
 }
 @media (prefers-reduced-motion: reduce) {
   .dashboard-live-indicator .live-dot { animation: none; }
+}
+
+/* Top-bar account button: a plain <button>, so reset the browser's default grey. */
+.user-dropdown-trigger {
+  background: transparent; border: 1px solid var(--border-color); border-radius: 999px;
+  padding: 0.2rem 0.6rem 0.2rem 0.2rem; color: var(--text-primary); cursor: pointer; font: inherit;
+}
+.user-dropdown-trigger:hover { background: var(--sidebar-active-bg); }
+
+/* Unread count on the bell (NotificationBell): pulled onto the icon's corner so it
+   isn't cut off by the top bar, with a ring in the page colour to separate it. */
+.live-notif-bell-wrapper.p-overlay-badge .live-notif-count {
+  top: 6px; right: 6px; transform: translate(50%, -50%);
+  min-width: 1.15rem; height: 1.15rem; line-height: 1.15rem;
+  font-size: 0.68rem; padding: 0 0.3rem;
+  box-shadow: 0 0 0 2px var(--topbar-bg, var(--card-bg));
+  pointer-events: none;
 }

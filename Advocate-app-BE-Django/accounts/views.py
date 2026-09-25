@@ -27,6 +27,16 @@ class LoginView(APIView):
         if advocate is None or not verify_password(password, advocate.password):
             return Response({'error': 'Invalid email or password!'},
                             status=status.HTTP_401_UNAUTHORIZED)
+        # A token would be refused on the next call anyway (core/auth.py); say so now.
+        if advocate.left_on is not None:
+            return Response({'error': 'This account is no longer active.'},
+                            status=status.HTTP_401_UNAUTHORIZED)
+        from clientaccess.gate import client_link
+        link = client_link(advocate)
+        if link is not None:
+            from django.utils import timezone
+            link.last_login_at = timezone.now()
+            link.save(update_fields=['last_login_at'])
         token = generate_token(advocate)
         return Response({
             'token': token,

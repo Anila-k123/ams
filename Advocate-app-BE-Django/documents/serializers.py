@@ -15,13 +15,15 @@ class DocumentSerializer(serializers.ModelSerializer):
     updatedAt = serializers.DateTimeField(source='updated_at')
     caseEntity = serializers.SerializerMethodField()
     client = serializers.SerializerMethodField()
+    # Shared with the client in the client portal.
+    clientVisible = serializers.BooleanField(source='client_visible', read_only=True)
 
     class Meta:
         model = Document
         fields = [
             'id', 'documentName', 'originalName', 'storedName', 'filePath', 'fileSize',
             'fileType', 'category', 'description', 'version', 'downloadCount', 'status',
-            'uploadDate', 'updatedAt', 'caseEntity', 'client',
+            'uploadDate', 'updatedAt', 'caseEntity', 'client', 'clientVisible',
         ]
 
     def get_caseEntity(self, obj):

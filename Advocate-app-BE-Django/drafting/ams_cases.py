@@ -49,7 +49,7 @@ class AmsCasesView(APIView):
 def link_case(case):
     """The drafting Client + Project for this AMS case (names re-synced each time)."""
     name = ' — '.join(x for x in (case.case_number, case.case_title) if x) or f'Case {case.id}'
-    with transaction.atomic(using='drafting'):
+    with transaction.atomic():
         if case.client_id:
             client, _ = Client.objects.update_or_create(
                 ams_client_id=case.client_id, defaults={'name': case.client.name or f'Client {case.client_id}'})

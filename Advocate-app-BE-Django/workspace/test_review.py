@@ -18,7 +18,7 @@ INTERN = ('CASE_VIEW', 'DOCUMENT_VIEW', 'TASK_VIEW', 'DRAFT_VIEW', 'DRAFT_CREATE
 
 @mock.patch('workspace.review._notify')
 class TaskReviewTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     @classmethod
     def setUpClass(cls):

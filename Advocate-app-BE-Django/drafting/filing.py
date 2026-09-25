@@ -18,9 +18,8 @@ as plain Python:
 
   GET /api/drafting/drafts/<id>/ams-task/  -> {task: {...review state} | null}
 
-The AMS document lives in the default database and the session in the drafting
-database. Two databases can't share one transaction, so the AMS side commits first,
-and only then is the session marked as synced.
+The AMS document, the task link and the session's "filed" marker are written in one
+transaction: AMS and drafting share one database (schema public / drf).
 """
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -127,11 +126,10 @@ class SendToAmsView(APIView):
                 CaseTaskDocument.objects.get_or_create(
                     task_id=task.id, document_id=doc.id, defaults={'advocate_id': user.id})
                 review.submit(task, user)
-
-        session.ams_document_id = doc.id
-        session.ams_document_version = doc.version
-        session.ams_synced_at = timezone.now()
-        session.save(update_fields=['ams_document_id', 'ams_document_version', 'ams_synced_at'])
+            session.ams_document_id = doc.id
+            session.ams_document_version = doc.version
+            session.ams_synced_at = timezone.now()
+            session.save(update_fields=['ams_document_id', 'ams_document_version', 'ams_synced_at'])
         if task is not None:
             task.refresh_from_db()
         return Response({'documentId': doc.id, 'version': doc.version, 'taskLinked': task is not None,

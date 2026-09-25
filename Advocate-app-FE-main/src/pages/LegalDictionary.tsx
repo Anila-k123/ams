@@ -11,6 +11,8 @@ export default function LegalDictionary() {
   const [selected, setSelected] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  // Official Hindi from the Legal Glossary (dictionary/import_glossary_hindi), when the term has it.
+  const [showHindi, setShowHindi] = useState(false);
   const debounce = useRef<any>(null);
 
   const runSearch = useCallback(async (q: string) => {
@@ -38,6 +40,7 @@ export default function LegalDictionary() {
     try {
       const res = await api.get(`/api/dictionary/term/${id}`);
       setSelected(res.data);
+      setShowHindi(false);
     } catch (err) {
       console.error("Dictionary term error:", err);
     }
@@ -83,7 +86,10 @@ export default function LegalDictionary() {
               className={`ld-result-item ${selected?.id === r.id ? "active" : ""}`}
               onClick={() => openTerm(r.id)}
             >
-              <span className="ld-result-term">{r.term}</span>
+              <span className="ld-result-term">
+                {r.term}
+                {r.hasHindi && <span className="ld-hi-tag" title="Hindi available">हिं</span>}
+              </span>
               <span className="ld-result-snippet">{r.snippet}</span>
             </button>
           ))}
@@ -92,12 +98,34 @@ export default function LegalDictionary() {
         <div className="ld-detail">
           {selected ? (
             <>
-              <h3 className="ld-term-title">{selected.term}</h3>
-              <div className="ld-term-def">
-                {(selected.definition || "").split(/\n{2,}/).filter(Boolean).map((para: string, i: number) => (
-                  <p key={i}>{para}</p>
-                ))}
+              <div className="flex align-items-start justify-content-between gap-3">
+                {showHindi && selected.hindi ? (
+                  <div>
+                    <h3 className="ld-term-title ld-hindi" lang="hi">{selected.hindi.split(" ; ")[0]}</h3>
+                    <div className="ld-muted text-sm">English: {selected.term}</div>
+                  </div>
+                ) : (
+                  <h3 className="ld-term-title">{selected.term}</h3>
+                )}
+                {selected.hindi && (
+                  <Button size="small" outlined label={showHindi ? "English" : "हिंदी"}
+                    icon="pi pi-language" onClick={() => setShowHindi((v) => !v)}
+                    aria-label={showHindi ? "Show in English" : "Show in Hindi"} />
+                )}
               </div>
+              {showHindi && selected.hindi ? (
+                <div className="ld-term-def ld-hindi" lang="hi">
+                  <ul className="ld-hindi-list">
+                    {selected.hindi.split(" ; ").map((h: string, i: number) => <li key={i}>{h}</li>)}
+                  </ul>
+                </div>
+              ) : (
+                <div className="ld-term-def">
+                  {(selected.definition || "").split(/\n{2,}/).filter(Boolean).map((para: string, i: number) => (
+                    <p key={i}>{para}</p>
+                  ))}
+                </div>
+              )}
             </>
           ) : (
             <div className="ld-detail-empty">

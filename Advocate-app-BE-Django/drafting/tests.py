@@ -15,7 +15,7 @@ from .models import Client, DraftSession, Project, Sample, Template
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
 @mock.patch('drafting.views._dispatch')      # no parsing / LLM calls in tests
 class DraftingAuthTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def setUp(self):
         self.senior = make_advocate(permissions=ALL_PERMISSIONS)
@@ -69,7 +69,7 @@ JUNIOR = INTERN + ('DRAFT_EXPORT',)
 
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
 class DraftingPermissionTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def setUp(self):
         self.senior = make_advocate(permissions=ALL_PERMISSIONS)
@@ -119,7 +119,7 @@ class DraftingPermissionTest(TestCase):
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
 @mock.patch('drafting.views._dispatch')
 class DraftingAmsInProcessTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def setUp(self):
         from core.testing import make_case, make_client as make_ams_client
@@ -211,7 +211,7 @@ class DraftingAmsInProcessTest(TestCase):
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
 @mock.patch('drafting.views._dispatch')
 class DraftingUploadCaseTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def setUp(self):
         from core.testing import make_case, make_client as make_ams_client
@@ -255,7 +255,7 @@ class DraftingUploadCaseTest(TestCase):
 @mock.patch('drafting.views._dispatch')
 @mock.patch('drafting.serializers._dispatch', create=True)
 class DraftSessionCreateTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def setUp(self):
         from core.testing import make_case, make_client as make_ams_client
@@ -297,7 +297,7 @@ class DraftSessionCreateTest(TestCase):
 
 # drafting/jobs.py: where background jobs run.
 class JobDispatchTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def test_celery_when_not_eager(self):
         from drafting import jobs
@@ -335,7 +335,7 @@ class JobDispatchTest(TestCase):
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
 @mock.patch('drafting.views._dispatch')
 class DraftReviewAccessTest(TestCase):
-    databases = {'default', 'drafting'}
+    databases = {'default'}
 
     def setUp(self):
         from core.testing import make_case

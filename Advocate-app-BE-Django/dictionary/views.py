@@ -42,7 +42,8 @@ class LegalTermSearchView(APIView):
                      .order_by('_rank', 'term_norm')[:limit - len(results)])
             results.extend(extra)
         return Response([
-            {'id': t.id, 'term': t.term, 'snippet': _snippet(t.definition), 'source': t.source}
+            {'id': t.id, 'term': t.term, 'snippet': _snippet(t.definition), 'source': t.source,
+             'hasHindi': bool(t.hindi)}
             for t in results
         ])
 
@@ -56,4 +57,4 @@ class LegalTermView(APIView):
         if t is None:
             return Response({'error': 'Term not found'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'id': t.id, 'term': t.term, 'definition': t.definition,
-                         'letter': t.letter, 'source': t.source})
+                         'letter': t.letter, 'source': t.source, 'hindi': t.hindi or None})

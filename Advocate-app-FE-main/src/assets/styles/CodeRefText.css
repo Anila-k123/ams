@@ -24,3 +24,6 @@
   background: color-mix(in srgb, #f59e0b 12%, transparent); color: var(--text-secondary);
 }
 .cr-pop-muted { color: var(--text-muted); font-size: 13px; padding-right: 18px; }
+
+/* Solid, so the dialog behind never shows through (card-bg is translucent). */
+.cr-pop { background: var(--bg-primary); }

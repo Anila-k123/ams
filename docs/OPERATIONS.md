@@ -16,19 +16,16 @@ Drafting is a feature inside AMS, served under `/api/drafting/` and on the front
 | Celery worker | `celery -A advocate_backend worker -l info` | the permanent job setup (`CELERY_TASK_ALWAYS_EAGER=False`); until then the API starts its own stopgap worker process |
 | Redis | any Redis at `REDIS_URL` | only with the worker |
 
-## Databases
+## Database
 
-There are two PostgreSQL databases (`advocate_backend/settings.py`):
-- `default`: AMS, using the `DB_*` settings.
-- `drafting`: drafting, using `DRAFTING_DB_NAME` (default `pactpro`) and the `DB_*` credentials unless the `DRAFTING_DB_*` settings override them.
-  - It needs the `pgvector` extension, and it keeps its tables in schema `drf`.
-  - `drafting/router.py` sends only the drafting app there.
+There is **one** PostgreSQL database, `PactPro_db` (`DB_NAME`), with two schemas:
+- `public`: AMS. The Spring-era tables are `managed=False`, and Django-owned apps (workspace, documents, clientaccess, …) sit alongside.
+- `drf`: drafting (merged from InstaDraft). Its tables are named `"drf"."..."` and use the `pgvector` extension.
 
-Migrations run per database:
+The extensions needed are `vector`, `pg_trgm` and `pgcrypto`. Migrations run once:
 
 ```
 python manage.py migrate
-python manage.py migrate drafting --database drafting
 ```
 
 After a fresh install, create the drafting permission codes and give them to the chamber roles (safe to re-run):
@@ -36,6 +33,14 @@ After a fresh install, create the drafting permission codes and give them to the
 ```
 python manage.py seed_drafting_permissions
 ```
+
+**History:**
+- Until 2026-09-25, AMS used `advocate_db` and drafting used `pactpro`, behind a database router.
+- Both were merged into `PactPro_db`: AMS's `public` plus drafting's `drf`, with every row count checked.
+- The router and the second connection were removed, so filing a draft to AMS is now one transaction.
+- The old databases were left untouched as backups. InstaDraft's retired login tables (`pactpro.public`) were not carried over.
+
+Note: the name has capitals, so write it quoted in `psql` / pgAdmin (`"PactPro_db"`).
 
 ## Files
 

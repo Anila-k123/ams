@@ -113,7 +113,7 @@ def import_document(user, doc):
     from .tasks import process_sample
     from .views import _dispatch
     ext = os.path.splitext(doc.original_name or '')[1].lower() or '.pdf'
-    with transaction.atomic(using='drafting'):
+    with transaction.atomic():
         sample = existing or Sample(uploaded_by_id=user.id, ams_document_id=doc.id)
         sample.name = _display_name(doc)
         sample.ams_version = version

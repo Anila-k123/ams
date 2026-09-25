@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import api from "../api/client";
+import { topZIndex } from "../utils/topZIndex";
 import "../assets/styles/DefinableText.css";
 
 /**
@@ -22,7 +23,7 @@ export default function DefinableText({ text, className }: { text: string; class
       const s = await api.get(`/api/dictionary/search?q=${encodeURIComponent(q)}&limit=1`);
       if (!s.data || s.data.length === 0) { setPop({ ...anchor, word: q, notFound: true }); return; }
       const d = await api.get(`/api/dictionary/term/${s.data[0].id}`);
-      setPop({ ...anchor, term: d.data.term, definition: d.data.definition });
+      setPop({ ...anchor, term: d.data.term, definition: d.data.definition, hindi: d.data.hindi || null });
     } catch {
       setPop({ ...anchor, word: q, notFound: true });
     }
@@ -44,6 +45,9 @@ export default function DefinableText({ text, className }: { text: string; class
 }
 
 function DefinePopover({ pop, onClose }: { pop: any; onClose: () => void }) {
+  // Official Hindi from the Legal Glossary (dictionary app), when the term has it.
+  const [showHindi, setShowHindi] = useState(false);
+  useEffect(() => setShowHindi(false), [pop.term]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -52,6 +56,8 @@ function DefinePopover({ pop, onClose }: { pop: any; onClose: () => void }) {
 
   // Sit directly below the clicked word, clamped to the viewport. If there is not
   // enough room below, flip it above the word instead.
+  // Above whatever dialog it was opened from (see utils/topZIndex).
+  const [z] = useState(() => topZIndex());
   const POP_W = 320, POP_H = 220, GAP = 6;
   const left = Math.max(12, Math.min(pop.left, window.innerWidth - POP_W - 12));
   const below = pop.top + GAP;
@@ -62,17 +68,35 @@ function DefinePopover({ pop, onClose }: { pop: any; onClose: () => void }) {
   // backdrop-filter containing block and anchors to the real viewport.
   return createPortal(
     <>
-      <div className="def-pop-backdrop" onClick={onClose} />
-      <div className="def-pop" style={{ left, top }} onClick={(e) => e.stopPropagation()}>
+      <div className="def-pop-backdrop" style={{ zIndex: z }} onClick={onClose} />
+      <div className="def-pop" style={{ left, top, zIndex: z + 1 }} onClick={(e) => e.stopPropagation()}>
         <button className="def-pop-close" onClick={onClose}><i className="pi pi-times" style={{ fontSize: 12 }} /></button>
         {pop.loading && <div className="def-pop-muted">Looking up “{pop.word}”…</div>}
         {pop.notFound && <div className="def-pop-muted">No dictionary entry for “{pop.word}”.</div>}
         {pop.term && (
           <>
-            <div className="def-pop-term">{pop.term}</div>
-            <div className="def-pop-def">
-              {(pop.definition || "").split(/\n{2,}/).filter(Boolean).map((l, i) => <p key={i}>{l}</p>)}
+            <div className="def-pop-head">
+              {showHindi && pop.hindi
+                ? <div className="def-pop-term def-pop-hindi" lang="hi">{pop.hindi.split(" ; ")[0]}</div>
+                : <div className="def-pop-term">{pop.term}</div>}
+              {pop.hindi && (
+                <button type="button" className="def-pop-lang" onClick={() => setShowHindi((v) => !v)}
+                  aria-label={showHindi ? "Show in English" : "Show in Hindi"}>
+                  {showHindi ? "English" : "हिंदी"}
+                </button>
+              )}
             </div>
+            {showHindi && pop.hindi ? (
+              <div className="def-pop-def def-pop-hindi" lang="hi">
+                <div className="def-pop-muted">English: {pop.term}</div>
+                <ul>{pop.hindi.split(" ; ").map((h: string, i: number) => <li key={i}>{h}</li>)}</ul>
+                <div className="def-pop-muted">Official Hindi — Legal Glossary, Legislative Department.</div>
+              </div>
+            ) : (
+              <div className="def-pop-def">
+                {(pop.definition || "").split(/\n{2,}/).filter(Boolean).map((l, i) => <p key={i}>{l}</p>)}
+              </div>
+            )}
           </>
         )}
       </div>

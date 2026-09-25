@@ -1,6 +1,7 @@
 import { useState, useEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
 import api from "../api/client";
+import { topZIndex } from "../utils/topZIndex";
 import "../assets/styles/CodeRefText.css";
 
 /**
@@ -81,6 +82,8 @@ function CodeRefPopover({ pop, onClose }: { pop: any; onClose: () => void }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Above whatever dialog it was opened from (see utils/topZIndex).
+  const [z] = useState(() => topZIndex());
   const POP_W = 300, POP_H = 180, GAP = 6;
   const left = Math.max(12, Math.min(pop.left, window.innerWidth - POP_W - 12));
   const below = pop.top + GAP;
@@ -90,8 +93,8 @@ function CodeRefPopover({ pop, onClose }: { pop: any; onClose: () => void }) {
   const d = pop.data;
   return createPortal(
     <>
-      <div className="cr-pop-backdrop" onClick={onClose} />
-      <div className="cr-pop" style={{ left, top }} onClick={(e) => e.stopPropagation()}>
+      <div className="cr-pop-backdrop" style={{ zIndex: z }} onClick={onClose} />
+      <div className="cr-pop" style={{ left, top, zIndex: z + 1 }} onClick={(e) => e.stopPropagation()}>
         <button className="cr-pop-close" onClick={onClose}><i className="pi pi-times" style={{ fontSize: 12 }} /></button>
         {pop.loading && <div className="cr-pop-muted">Looking up {pop.act} §{pop.section}…</div>}
         {!pop.loading && (!d || !d.found) && (

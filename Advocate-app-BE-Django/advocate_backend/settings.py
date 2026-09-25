@@ -2,7 +2,7 @@
 Django settings for the advocate_backend project.
 
 This is a drop-in replacement for the original Spring Boot backend. It talks to
-the SAME PostgreSQL database (advocate_db) using unmanaged models, and reproduces
+the same PostgreSQL database (now PactPro_db, which also holds drafting) using unmanaged models, and reproduces
 the exact REST contract the React frontend already depends on. Config is read from
 a .env file via python-decouple.
 """
@@ -86,11 +86,15 @@ TEMPLATES = [
     },
 ]
 
-# --- Database: the existing advocate_db (models are managed=False) ---
+# --- Database: one database for the whole app (PactPro_db) ---
+# AMS tables live in schema "public" (Spring-era tables are managed=False); the drafting
+# app (merged from InstaDraft) keeps its tables in schema "drf" (db_table '"drf"."..."'),
+# with pgvector. Until 2026-09-25 drafting had its own database (pactpro) behind a
+# router; both were merged into this one (docs/OPERATIONS.md, "Databases").
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='advocate_db'),
+        'NAME': config('DB_NAME', default='PactPro_db'),
         'USER': config('DB_USER', default='postgres'),
         'PASSWORD': config('DB_PASSWORD', default='psql_password'),
         'HOST': config('DB_HOST', default='localhost'),
@@ -99,21 +103,7 @@ DATABASES = {
         'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=60, cast=int),
         'CONN_HEALTH_CHECKS': True,
     },
-    # The drafting app (merged from InstaDraft) keeps its own database for now:
-    # InstaDraft's existing one (templates, documents, drafts, in schema "drf",
-    # pgvector). DraftingRouter sends only the drafting app here.
-    'drafting': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DRAFTING_DB_NAME', default='pactpro'),
-        'USER': config('DRAFTING_DB_USER', default=config('DB_USER', default='postgres')),
-        'PASSWORD': config('DRAFTING_DB_PASSWORD', default=config('DB_PASSWORD', default='psql_password')),
-        'HOST': config('DRAFTING_DB_HOST', default=config('DB_HOST', default='localhost')),
-        'PORT': config('DRAFTING_DB_PORT', default=config('DB_PORT', default='5432')),
-        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=60, cast=int),
-        'CONN_HEALTH_CHECKS': True,
-    },
 }
-DATABASE_ROUTERS = ['drafting.router.DraftingRouter']
 
 # --- Django REST Framework ---
 # Every request is authenticated via our custom JWT auth (loads the Advocate row);

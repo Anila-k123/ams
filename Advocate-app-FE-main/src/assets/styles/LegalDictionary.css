@@ -37,3 +37,12 @@
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 12px; color: var(--text-muted); height: 200px; text-align: center;
 }
+
+/* Hindi view (official Legal Glossary equivalents). */
+.ld-hindi { font-family: 'Noto Sans Devanagari', 'Mangal', 'Nirmala UI', inherit; }
+.ld-hindi-list { margin: 0; padding-left: 1.2rem; line-height: 1.9; }
+.ld-hi-tag {
+  display: inline-block; margin-left: 0.4rem; padding: 0 0.35rem; border-radius: 6px;
+  font-size: 0.7rem; font-weight: 600; vertical-align: middle;
+  color: var(--primary); background: rgba(var(--primary-rgb), 0.1);
+}

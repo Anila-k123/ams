@@ -29,3 +29,16 @@
 .def-pop-def { color: var(--text-primary); font-size: 13px; line-height: 1.55; }
 .def-pop-def p { margin: 0 0 6px; }
 .def-pop-muted { color: var(--text-muted); font-size: 13px; padding-right: 18px; }
+
+/* Hindi toggle in the definition pop-up (official Legal Glossary equivalents). */
+.def-pop-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding-right: 18px; }
+.def-pop-lang {
+  flex: none; border: 1px solid var(--primary); color: var(--primary); background: transparent;
+  border-radius: 6px; padding: 1px 8px; font-size: 12px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.def-pop-lang:hover { background: rgba(var(--primary-rgb), 0.1); }
+.def-pop-hindi { font-family: 'Noto Sans Devanagari', 'Mangal', 'Nirmala UI', inherit; }
+.def-pop-hindi ul { margin: 4px 0; padding-left: 18px; line-height: 1.8; }
+
+/* Solid, so the dialog behind never shows through (card-bg is translucent). */
+.def-pop { background: var(--bg-primary); }

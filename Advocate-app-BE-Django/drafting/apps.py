@@ -1,30 +1,22 @@
 from django.apps import AppConfig
-from django.db.backends.signals import connection_created
+from django.db.models.signals import pre_migrate
 
 
-_checked_databases = set()
-
-
-def _ensure_drafting_schema(sender, connection, **kwargs):
-    """Drafting tables live in schema "drf" and use pgvector. Make sure both exist on
-    the drafting database (a fresh or test database has neither). Once per database
-    per process, not per connection: the dev server opens a connection per request."""
-    if connection.alias != 'drafting':
-        return
-    name = connection.settings_dict.get('NAME')
-    if name in _checked_databases:
-        return
-    with connection.cursor() as cur:
+def _ensure_drafting_schema(sender, using='default', **kwargs):
+    """Drafting's tables live in schema "drf" and use pgvector. Migration 0001 creates
+    both, but the test runner (core/test_runner.py) builds the test database from the
+    models with migrations switched off, so make sure of them before any migrate."""
+    from django.db import connections
+    with connections[using].cursor() as cur:
         cur.execute('CREATE SCHEMA IF NOT EXISTS drf')
         cur.execute('CREATE EXTENSION IF NOT EXISTS vector')
-    _checked_databases.add(name)
 
 
 class DraftingConfig(AppConfig):
-    """Legal drafting (merged from InstaDraft). Its models are in the separate
-    `drafting` database (settings.DATABASES / drafting.router.DraftingRouter)."""
+    """Legal drafting (merged from InstaDraft). Its tables live in schema "drf" of the
+    one app database, and use pgvector."""
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'drafting'
 
     def ready(self):
-        connection_created.connect(_ensure_drafting_schema, dispatch_uid='drafting_schema')
+        pre_migrate.connect(_ensure_drafting_schema, sender=self, dispatch_uid='drafting_schema')

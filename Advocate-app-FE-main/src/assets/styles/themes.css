@@ -394,7 +394,8 @@ select.input { cursor: pointer; }
 .flex-col { flex-direction: column; }
 .flex-center { align-items: center; justify-content: center; }
 .flex-between { justify-content: space-between; align-items: center; }
-.grid { display: grid; }
+/* No global .grid here: `grid` is PrimeFlex's 12-column flex grid (col-12 md:col-4 ...).
+   A legacy `.grid { display: grid }` overrode it and stacked every such row. */
 
 .w-full { width: 100%; }
 

@@ -15,6 +15,12 @@ import re
 from celery import shared_task
 from django.conf import settings
 
+
+def _clean_heading(heading):
+    """Clause headings copied from reference documents often space words with tabs or
+    runs of spaces ("IN	THE	COURT"), which the editor shows as wide gaps."""
+    return re.sub(r'\s+', ' ', heading or '').strip()
+
 logger = logging.getLogger(__name__)
 
 # Number of candidate source clauses offered to the model per slot (Stage B).
@@ -432,7 +438,7 @@ def _failed_block(session, position, block_type, heading):
     """Placeholder block when a clause couldn't be generated (LLM unavailable)."""
     from .models import DraftBlock
     return DraftBlock(
-        session=session, position=position, block_type=block_type, heading=heading,
+        session=session, position=position, block_type=block_type, heading=_clean_heading(heading),
         text='[This clause could not be generated — the LLM was unavailable. '
              'Please regenerate this draft.]',
         source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None,
@@ -597,7 +603,7 @@ def _generate_blocks(session, llm, system_prompt, specs, verify_citation, struct
                     block.text = _preserve_clause_heading(block.text, src)
         else:
             block = DraftBlock(
-                session=session, position=s['position'], block_type=s['block_type'], heading=s['heading'],
+                session=session, position=s['position'], block_type=s['block_type'], heading=_clean_heading(s['heading']),
                 text=raw.strip(), source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None,
             )
         block.text = _strip_markdown(block.text)  # never let Markdown (**bold**, #) leak into the doc
@@ -859,7 +865,7 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
         )
         if is_divider:
             dividers.append(DraftBlock(
-                session=session, position=position, block_type=block_type, heading=heading or _single,
+                session=session, position=position, block_type=block_type, heading=_clean_heading(heading or _single),
                 text=clause.text, source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None))
             continue
 
@@ -1006,7 +1012,7 @@ def _verified_block(session, position, block_type, heading, raw, by_id, verify_c
         source, source_clause = DraftBlock.Source.GENERATED, None
 
     return DraftBlock(
-        session=session, position=position, block_type=block_type, heading=heading,
+        session=session, position=position, block_type=block_type, heading=_clean_heading(heading),
         text=generated_text, source=source, source_clause=source_clause,
         verified=verified, similarity_score=score,
     )

@@ -17,9 +17,12 @@
 
 .doc-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));   /* 4 documents per row */
   gap: 16px;
 }
+@media (max-width: 1280px) { .doc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 960px)  { .doc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px)  { .doc-grid { grid-template-columns: 1fr; } }
 
 .doc-card {
   display: flex;

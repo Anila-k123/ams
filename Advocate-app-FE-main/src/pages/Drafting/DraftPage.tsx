@@ -137,6 +137,14 @@ const textToHtml = (t: string) =>
 // Normalise a heading for matching: lower-case, collapsed spaces, trailing punctuation dropped.
 const titleNorm = (s: string) => (s || '').toLowerCase().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '').trim()
 
+/** A clause heading as shown: whitespace tidied (reference PDFs often space words with
+ *  tabs, which render as wide gaps), and dropped when it only repeats the document title
+ *  already shown above as the H1. */
+function displayHeading(heading: string | null | undefined, docTitle = ''): string {
+  const h = (heading || '').replace(/\s+/g, ' ').trim()
+  return docTitle && titleNorm(h) === titleNorm(docTitle) ? '' : h
+}
+
 // Recognise a legal-document title (so we can promote it to the heading, not leave it in body).
 const DOC_TITLE_RE = /\b(agreement|deed|nda|mou|memorandum|affidavit|vakalatnama|vakalathnama|contract|lease|power of attorney|undertaking)\b/i
 
@@ -223,14 +231,14 @@ function buildContentHtml(blocks: DraftBlock[], docTitle = ''): string {
     const body = convertTokens(b.content_html?.trim() ? b.content_html : textToHtml(plain))
     const hStyle = b.style_json?.heading
     const hAttr = hStyle ? ` data-heading-style="${escAttr(JSON.stringify(hStyle))}"` : ''
-    return `<section data-clause data-block-id="${b.id}" data-heading="${escAttr(b.heading || '')}"${hAttr} `
+    return `<section data-clause data-block-id="${b.id}" data-heading="${escAttr(displayHeading(b.heading, docTitle))}"${hAttr} `
       + `data-source="${b.source}" data-verified="${b.verified}">${body}</section>`
   }).join('')
 }
 
 // ── read-only Preview renderer (the filled document, diff-highlighted) ─────────
 function PreviewClause({ block, docTitle = '' }: { block: DraftBlock; docTitle?: string }) {
-  const heading = block.heading?.trim()
+  const heading = displayHeading(block.heading, docTitle)
   const body = stripMd(stripDocTitle(stripLeadingHeading(block.text, block.heading || ''), docTitle))
   const source = block.source_clause_detail?.text
   const rendered = source

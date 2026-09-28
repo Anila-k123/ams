@@ -364,9 +364,12 @@ def render_session_docx(session, branding=None):
     if title:
         doc.add_paragraph(title, style='Title').alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+    norm = lambda t: re.sub(r'\s+', ' ', t or '').strip().rstrip('.,;:').lower()   # noqa: E731
     for block in session.blocks.order_by('position'):
-        if block.heading:
-            doc.add_paragraph(block.heading, style='Heading 2')
+        heading = re.sub(r'\s+', ' ', block.heading or '').strip()   # tabs from reference PDFs
+        # Not again under the title when it only repeats it (same rule as the editor).
+        if heading and norm(heading) != norm(title):
+            doc.add_paragraph(heading, style='Heading 2')
         body = html_to_blocks(block.content_html) if (block.content_html or '').strip() \
             else _text_to_blocks(block.text)
         _write_blocks(doc, doc, body)

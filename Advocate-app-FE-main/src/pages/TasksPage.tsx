@@ -8,7 +8,7 @@ import { Dialog } from "primereact/dialog";
 import { SelectButton } from "primereact/selectbutton";
 import { Tag } from "primereact/tag";
 import { DRAFTING, newDraftUrl } from "./Drafting/routes";
-import { ReviewActions, ReviewChip, ReviewNote } from "../components/TaskReview";
+import { ReviewActions, ReviewChip, ReviewNote, SubmissionHistory, SubmitWork } from "../components/TaskReview";
 import { canReviewTask } from "../utils/taskReview";
 import "../assets/styles/TasksPage.css";
 import { useLoading } from "../contexts/LoadingContext";
@@ -165,13 +165,13 @@ export default function TasksPage() {
 
   const handleToggle = async (id: any) => {
     try {
-      const res = await api.put(`/api/workspace/tasks/${id}/toggle`, {});
-      // On a delegated task the assignee's tick submits it for review instead.
-      if (!res.data?.completed && res.data?.reviewStatus === "SUBMITTED") {
-        success(`Submitted to ${res.data.assignedByName || "the assigner"} for review.`);
-      }
+      await api.put(`/api/workspace/tasks/${id}/toggle`, {});
       fetchTasks();
-    } catch (err) { console.error("Error toggling task:", err); }
+    } catch (err: any) {
+      // A delegated task is handed back through "Submit work", with a report.
+      if (err.response?.data?.submitRequired) error("Use Submit work to hand this task back with a report.");
+      else console.error("Error toggling task:", err);
+    }
   };
 
   const handleCancel = async (id: any, cancelled = true) => {
@@ -262,7 +262,10 @@ export default function TasksPage() {
             <div className="col-12 md:col-6 task-field">
               <label htmlFor="task-deadline">Deadline</label>
               <Calendar inputId="task-deadline" value={deadline ? new Date(`${deadline}T00:00:00`) : null}
-                onChange={(e) => setDeadline(toISODate(e.value as Date))} dateFormat="dd/mm/yy" showIcon showButtonBar appendTo="self" />
+                onChange={(e) => setDeadline(toISODate(e.value as Date))} dateFormat="dd/mm/yy" showIcon showButtonBar
+                // On the body, not inside the dialog: "self" let the dialog's
+                // scroll area clip the header and stretch the panel to the field.
+                appendTo={document.body} />
             </div>
           </div>
           <div className="task-field">
@@ -270,7 +273,7 @@ export default function TasksPage() {
             <Dropdown value={linkedCase} options={caseOptions} onChange={(e) => setLinkedCase(e.value ?? null)}
               placeholder="Link case (optional)" filter showClear appendTo={document.body} />
           </div>
-          <div className="grid">
+          {hasPermission("DOCUMENT_UPLOAD") && <div className="grid">
             <div className="col-12 md:col-6 task-field">
               <label>Documents</label>
               <label className="task-attach-btn" title="Attach documents">
@@ -285,7 +288,7 @@ export default function TasksPage() {
               <Dropdown inputId="task-doc-category" value={docCategory} placeholder="Select category" showClear
                 options={DOC_CATEGORIES.map((c) => ({ value: c, label: c }))} onChange={(e) => setDocCategory(e.value || "")} />
             </div>
-          </div>
+          </div>}
           {files.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {files.map((f, i) => (
@@ -338,6 +341,7 @@ export default function TasksPage() {
               <Button className="p-button-rounded p-button-text"
                 icon={task.completed ? "pi pi-check-square" : "pi pi-stop"}
                 onClick={() => handleToggle(task.id)} aria-label="Toggle complete"
+                disabled={!hasPermission("TASK_EDIT") && task.assignedToId !== myId}
                 tooltip={task.needsReview && task.assignedToId === myId && !task.completed ? "Submit for review" : undefined} />
               <div className="task-content">
                 <span className="task-title">{task.title}</span>
@@ -370,17 +374,21 @@ export default function TasksPage() {
                   <ReviewChip task={task} />
                 </div>
                 <ReviewNote task={task} />
+                <SubmissionHistory task={task} />
               </div>
               <div className="flex align-items-center flex-wrap gap-1 justify-content-end">
-                <Dropdown className="p-inputtext-sm" value={task.priority || "MEDIUM"} options={PRIORITY_SHORT}
-                  onChange={(e) => handleChangePriority(task.id, e.value)} tooltip="Change priority" />
+                {hasPermission("TASK_EDIT") ? (
+                  <Dropdown className="p-inputtext-sm" value={task.priority || "MEDIUM"} options={PRIORITY_SHORT}
+                    onChange={(e) => handleChangePriority(task.id, e.value)} tooltip="Change priority" />
+                ) : <Tag value={task.priority || "MEDIUM"} />}
                 {canAssign && (
                   <Dropdown className="p-inputtext-sm" value={task.assignedToId || ""} tooltip="Reassign task"
                     options={[{ value: myId, label: "Me" }, ...assigneeOptions]}
                     onChange={(e) => handleReassign(task.id, e.value)} />
                 )}
+                <SubmitWork task={task} myId={myId} toast={toast} onDone={() => fetchTasks()} />
                 <ReviewActions task={task} myId={myId} canAssign={canAssign} toast={toast} onDone={() => fetchTasks()} />
-                {!task.completed && !task.cancelled && (
+                {!task.completed && !task.cancelled && hasPermission("DRAFT_CREATE") && (
                   <Button icon="pi pi-pencil" className="p-button-rounded p-button-text" tooltip="Draft for this task" aria-label="Draft for this task"
                     onClick={() => navigate(newDraftUrl({ caseId: task.caseId, taskId: task.id }))} />
                 )}

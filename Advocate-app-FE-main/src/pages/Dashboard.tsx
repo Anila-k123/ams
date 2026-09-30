@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState, useRef, useCallback, type ReactNode } from 'react';
+import { ASSISTANT_NAME } from '../constants/assistant';
 import { useNavigate, NavLink, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import { Button } from 'primereact/button';
 import { Menu } from 'primereact/menu';
@@ -36,7 +37,10 @@ import ActivityFeed from '../components/ActivityFeed';
 import HearingAlertPopup from '../components/HearingAlertPopup';
 import GlobalSearchModal from '../components/GlobalSearchModal';
 import QuickActionsModal from '../components/QuickActionsModal';
+import DraftingCard from '../components/DraftingCard';
+import { DRAFTING } from './Drafting/routes';
 import { SearchProvider } from '../contexts/SearchContext';
+import { requestPageModal } from '../utils/pageModal';
 
 // Nested sub-pages (lazy-loaded)
 const Cases = lazy(() => import('./Cases'));
@@ -141,25 +145,36 @@ export default function Dashboard() {
 
   return (
     <DashboardFilterProvider token={token}>
-      <AssistantProvider token={token}>
-        <WebSocketProvider>
-          <SidebarProvider>
-            <PermissionProvider>
+      {/* Outermost, so the assistant can also tailor itself to the user's role. */}
+      <PermissionProvider>
+        <AssistantProvider token={token}>
+          <WebSocketProvider>
+            <SidebarProvider>
               <DashboardShell />
-            </PermissionProvider>
-          </SidebarProvider>
-        </WebSocketProvider>
-      </AssistantProvider>
+            </SidebarProvider>
+          </WebSocketProvider>
+        </AssistantProvider>
+      </PermissionProvider>
     </DashboardFilterProvider>
   );
 }
 
 // ====== Permission-gated wrapper ======
-function IfPermitted({ perm, children }: { perm: string; children: ReactNode }) {
+// Shows children when the user holds `perm`, or any one of a list of perms.
+function IfPermitted({ perm, children }: { perm: string | string[]; children: ReactNode }) {
   const { hasPermission, loading } = usePermission() as any;
   if (loading) return null;
-  return hasPermission(perm) ? <>{children}</> : null;
+  const perms = Array.isArray(perm) ? perm : [perm];
+  return perms.some((p) => hasPermission(p)) ? <>{children}</> : null;
 }
+
+// Appeal alerts and the legal reference (Acts, Dictionary, Law Codes) are tools
+// for legal work: shown to those who edit cases or draft, not reception/accounts.
+const LEGAL_WORK_PERMS = ['CASE_EDIT', 'DRAFT_VIEW'];
+// The practice-wide delivery log (Notifications) and client communication
+// (Communication): for the admin, seniors and the accountant. Everyone keeps
+// their own alerts in the bell.
+const COMMS_PERMS = ['SETTINGS_EDIT', 'TASK_ASSIGN', 'INVOICE_CREATE'];
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -208,6 +223,7 @@ function SideLink({ to, icon, text, title, end, sub }: { to: string; icon: strin
 
 // ====== INNER SHELL (has access to context) ======
 function DashboardShell() {
+  const { hasPermission } = usePermission() as any;
   const navigate = useNavigate();
   const auth = useAuth();
   const { theme, toggleTheme } = useTheme() as any;
@@ -314,7 +330,7 @@ function DashboardShell() {
 
   // Document stats (kept live by the polling effect below)
   const fetchDocData = useCallback(async () => {
-    if (!auth.token) return;
+    if (!auth.token || !hasPermission('DOCUMENT_VIEW')) return;
     const [statsRes, listRes] = await Promise.allSettled([
       api.get('/api/documents/stats'),
       api.get('/api/documents/list'),
@@ -322,6 +338,7 @@ function DashboardShell() {
     if (statsRes.status === 'fulfilled') setDocStats(statsRes.value.data);
     if (listRes.status === 'fulfilled' && Array.isArray(listRes.value.data)) setRecentDocs(listRes.value.data.slice(0, 5));
     if (statsRes.status === 'rejected' && listRes.status === 'rejected') console.error('Error fetching doc stats:', statsRes.reason);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.token]);
 
   useEffect(() => { fetchDocData(); }, [fetchDocData]);
@@ -393,15 +410,13 @@ function DashboardShell() {
     if (routes[type]) navigate(routes[type], { state: { search, id } });
   };
 
-  // Quick Actions: navigate, then open the target page's "add" form once it has mounted.
+  // Quick Actions: navigate, and ask the target page to open its "add" form.
+  // The request waits for the page to mount (utils/pageModal), rather than
+  // firing on a timer the lazy-loaded page could miss.
   const handleQuickAction = (route: string, modalToOpen?: string) => {
     setQuickActionsOpen(false);
+    if (modalToOpen) requestPageModal(modalToOpen);
     navigate(route);
-    if (modalToOpen) {
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('assistant-open-modal', { detail: modalToOpen }));
-      }, 450);
-    }
   };
 
   const avatar = (size?: 'large') => branding.profilePhotoUrl
@@ -451,22 +466,26 @@ function DashboardShell() {
               </div>
               <div className="card-icon-box"><i className="pi pi-users" /></div>
             </Link>
-            <Link to="/dashboard/hearings" className="stat-card-main purple">
-              <div className="card-left">
-                <span className="card-title">Upcoming Hearings</span>
-                <h3 className="card-val"><CountUp value={dash.upcomingHearingsCount} /></h3>
-                <span className="card-subtext">Next 30 days</span>
-              </div>
-              <div className="card-icon-box"><i className="pi pi-calendar" /></div>
-            </Link>
-            <Link to="/dashboard/invoices" className="stat-card-main red">
-              <div className="card-left">
-                <span className="card-title">Pending Invoices</span>
-                <h3 className="card-val"><CountUp value={dash.recentInvoices.filter((i: any) => i.status !== 'PAID').length} /></h3>
-                <span className="card-subtext">{formatCurrency(dash.invoiceStats?.unpaid ?? 0)}</span>
-              </div>
-              <div className="card-icon-box"><i className="pi pi-file" /></div>
-            </Link>
+            <IfPermitted perm="EVENT_VIEW">
+              <Link to="/dashboard/hearings" className="stat-card-main purple">
+                <div className="card-left">
+                  <span className="card-title">Upcoming Hearings</span>
+                  <h3 className="card-val"><CountUp value={dash.upcomingHearingsCount} /></h3>
+                  <span className="card-subtext">Next 30 days</span>
+                </div>
+                <div className="card-icon-box"><i className="pi pi-calendar" /></div>
+              </Link>
+            </IfPermitted>
+            <IfPermitted perm="INVOICE_VIEW">
+              <Link to="/dashboard/invoices" className="stat-card-main red">
+                <div className="card-left">
+                  <span className="card-title">Pending Invoices</span>
+                  <h3 className="card-val"><CountUp value={dash.recentInvoices.filter((i: any) => i.status !== 'PAID').length} /></h3>
+                  <span className="card-subtext">{formatCurrency(dash.invoiceStats?.unpaid ?? 0)}</span>
+                </div>
+                <div className="card-icon-box"><i className="pi pi-file" /></div>
+              </Link>
+            </IfPermitted>
           </>
         )}
       </div>
@@ -527,39 +546,41 @@ function DashboardShell() {
           )}
         </div>
 
-        <div className="row-two-card">
-          <h4>Income vs Expense</h4>
-          {loading ? (
-            <Skeleton height="180px" />
-          ) : dash.incomeExpenseData.length === 0 ? (
-            <EmptyState icon="pi-chart-bar" title="No Financial Data" desc="Income and expense trends will appear here once you add invoices and expenses." />
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={dash.incomeExpenseData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} />
-                <Tooltip cursor={{ fill: 'rgba(59,130,246,0.08)' }} {...TOOLTIP_PROPS} />
-                <Area type="monotone" dataKey="income" stroke="#10b981" fill="url(#colorIncome)" strokeWidth={2} name="Income" />
-                <Area type="monotone" dataKey="expense" stroke="#ef4444" fill="url(#colorExpense)" strokeWidth={2} name="Expense" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-          <div className="chart-legends-mini">
-            <span className="legend-item"><span className="legend-dot green" /> Income</span>
-            <span className="legend-item"><span className="legend-dot red" /> Expense</span>
+        <IfPermitted perm="PAYMENT_VIEW">
+          <div className="row-two-card">
+            <h4>Income vs Expense</h4>
+            {loading ? (
+              <Skeleton height="180px" />
+            ) : dash.incomeExpenseData.length === 0 ? (
+              <EmptyState icon="pi-chart-bar" title="No Financial Data" desc="Income and expense trends will appear here once you add invoices and expenses." />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={dash.incomeExpenseData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                  <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip cursor={{ fill: 'rgba(59,130,246,0.08)' }} {...TOOLTIP_PROPS} />
+                  <Area type="monotone" dataKey="income" stroke="#10b981" fill="url(#colorIncome)" strokeWidth={2} name="Income" />
+                  <Area type="monotone" dataKey="expense" stroke="#ef4444" fill="url(#colorExpense)" strokeWidth={2} name="Expense" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+            <div className="chart-legends-mini">
+              <span className="legend-item"><span className="legend-dot green" /> Income</span>
+              <span className="legend-item"><span className="legend-dot red" /> Expense</span>
+            </div>
           </div>
-        </div>
+        </IfPermitted>
       </div>
 
       {/* Row 3 */}
@@ -594,44 +615,46 @@ function DashboardShell() {
           )}
         </div>
 
-        <div className="row-three-card hearings-card">
-          <div className="card-header-row">
-            <h4>Upcoming Hearings</h4>
-            <Link to="/dashboard/hearings" className="view-all-link">View Calendar</Link>
-          </div>
-          {loading ? (
-            <div className="flex flex-column gap-3">
-              {[1, 2, 3, 4].map((i) => <Skeleton key={i} height="3.5rem" />)}
+        <IfPermitted perm="EVENT_VIEW">
+          <div className="row-three-card hearings-card">
+            <div className="card-header-row">
+              <h4>Upcoming Hearings</h4>
+              <Link to="/dashboard/hearings" className="view-all-link">View Calendar</Link>
             </div>
-          ) : (
-            <div className="hearings-list-box">
-              {dash.hearings.length === 0 ? (
-                <EmptyState icon="pi-calendar" title="No Hearings Scheduled" desc="Hearings will appear here once you schedule them from the Hearings module." />
-              ) : (
-                dash.hearings.map((h: any, idx: number) => {
-                  const dateObj = new Date(h.date);
-                  return (
-                    <div key={h.id || idx} className="hearing-list-item">
-                      <div className="date-badge-box">
-                        <span className="lbl-month">{dateObj.toLocaleString('en-US', { month: 'short' }).toUpperCase()}</span>
-                        <span className="lbl-day">{dateObj.getDate()}</span>
+            {loading ? (
+              <div className="flex flex-column gap-3">
+                {[1, 2, 3, 4].map((i) => <Skeleton key={i} height="3.5rem" />)}
+              </div>
+            ) : (
+              <div className="hearings-list-box">
+                {dash.hearings.length === 0 ? (
+                  <EmptyState icon="pi-calendar" title="No Hearings Scheduled" desc="Hearings will appear here once you schedule them from the Hearings module." />
+                ) : (
+                  dash.hearings.map((h: any, idx: number) => {
+                    const dateObj = new Date(h.date);
+                    return (
+                      <div key={h.id || idx} className="hearing-list-item">
+                        <div className="date-badge-box">
+                          <span className="lbl-month">{dateObj.toLocaleString('en-US', { month: 'short' }).toUpperCase()}</span>
+                          <span className="lbl-day">{dateObj.getDate()}</span>
+                        </div>
+                        <div className="hearing-info">
+                          <h5>{h.title}</h5>
+                          <p>Case: {h.caseEntity?.caseNumber || 'N/A'}</p>
+                          <span className="client-lbl">Client: {h.caseEntity?.client?.name || 'N/A'}</span>
+                        </div>
+                        <div className="hearing-time">{h.time || 'N/A'}</div>
                       </div>
-                      <div className="hearing-info">
-                        <h5>{h.title}</h5>
-                        <p>Case: {h.caseEntity?.caseNumber || 'N/A'}</p>
-                        <span className="client-lbl">Client: {h.caseEntity?.client?.name || 'N/A'}</span>
-                      </div>
-                      <div className="hearing-time">{h.time || 'N/A'}</div>
-                    </div>
-                  );
-                })
-              )}
+                    );
+                  })
+                )}
+              </div>
+            )}
+            <div className="card-footer-center">
+              <Link to="/dashboard/hearings" className="view-all-btn">View All Hearings</Link>
             </div>
-          )}
-          <div className="card-footer-center">
-            <Link to="/dashboard/hearings" className="view-all-btn">View All Hearings</Link>
           </div>
-        </div>
+        </IfPermitted>
 
         <div className="row-three-card recent-clients-card">
           <div className="card-header-row">
@@ -670,119 +693,130 @@ function DashboardShell() {
 
       {/* Row 4 */}
       <div className="dashboard-row-four">
-        <div className="row-four-card invoices-summary-widget">
-          <div className="card-header-row">
-            <h4>Invoices Summary</h4>
-            <Link to="/dashboard/invoices" className="view-all-link">View All</Link>
-          </div>
-          {loading ? (
-            <div className="flex flex-column gap-3">
-              <div className="grid">
-                {[1, 2, 3].map((i) => <div key={i} className="col-4"><Skeleton height="50px" /></div>)}
-              </div>
-              {[1, 2, 3].map((i) => <Skeleton key={i} height="1.75rem" />)}
+        <IfPermitted perm="INVOICE_VIEW">
+          <div className="row-four-card invoices-summary-widget">
+            <div className="card-header-row">
+              <h4>Invoices Summary</h4>
+              <Link to="/dashboard/invoices" className="view-all-link">View All</Link>
             </div>
-          ) : (
-            <>
-              <div className="invoices-grid-stats">
-                <div className="grid-stat-box paid"><span>Paid</span><strong>{formatCurrency(dash.invoiceStats?.paid ?? 0)}</strong></div>
-                <div className="grid-stat-box unpaid"><span>Unpaid</span><strong>{formatCurrency(dash.invoiceStats?.unpaid ?? 0)}</strong></div>
-                <div className="grid-stat-box overdue"><span>Overdue</span><strong>{formatCurrency(dash.invoiceStats?.overdue ?? 0)}</strong></div>
+            {loading ? (
+              <div className="flex flex-column gap-3">
+                <div className="grid">
+                  {[1, 2, 3].map((i) => <div key={i} className="col-4"><Skeleton height="50px" /></div>)}
+                </div>
+                {[1, 2, 3].map((i) => <Skeleton key={i} height="1.75rem" />)}
               </div>
-              <div className="recent-invoices-mini-list">
-                <h5>Recent Invoices</h5>
-                {dash.recentInvoices.map((inv: any) => (
-                  <div key={inv.id} className="mini-invoice-row">
-                    <span className="inv-num">{inv.invoiceNumber}</span>
-                    <span className="inv-client">{inv.client?.name}</span>
-                    <span className="inv-amt">{formatCurrency(inv.amount)}</span>
-                    {inv.status && <Tag value={inv.status} severity={severityFor(inv.status)} />}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <div className="invoices-grid-stats">
+                  <div className="grid-stat-box paid"><span>Paid</span><strong>{formatCurrency(dash.invoiceStats?.paid ?? 0)}</strong></div>
+                  <div className="grid-stat-box unpaid"><span>Unpaid</span><strong>{formatCurrency(dash.invoiceStats?.unpaid ?? 0)}</strong></div>
+                  <div className="grid-stat-box overdue"><span>Overdue</span><strong>{formatCurrency(dash.invoiceStats?.overdue ?? 0)}</strong></div>
+                </div>
+                <div className="recent-invoices-mini-list">
+                  <h5>Recent Invoices</h5>
+                  {dash.recentInvoices.map((inv: any) => (
+                    <div key={inv.id} className="mini-invoice-row">
+                      <span className="inv-num">{inv.invoiceNumber}</span>
+                      <span className="inv-client">{inv.client?.name}</span>
+                      <span className="inv-amt">{formatCurrency(inv.amount)}</span>
+                      {inv.status && <Tag value={inv.status} severity={severityFor(inv.status)} />}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </IfPermitted>
 
         <div className="row-four-card">
           <ActivityFeed maxItems={8} />
         </div>
 
-        <div className="row-four-card tasks-card">
-          <div className="card-header-row">
-            <h4>Tasks</h4>
-            <Link to="/dashboard/tasks" className="view-all-link">View All</Link>
+        <IfPermitted perm="TASK_VIEW">
+          <div className="row-four-card tasks-card">
+            <div className="card-header-row">
+              <h4>Tasks</h4>
+              <Link to="/dashboard/tasks" className="view-all-link">View All</Link>
+            </div>
+            {loading ? (
+              <div className="flex flex-column gap-2">
+                {[1, 2, 3].map((i) => <Skeleton key={i} height="1.75rem" />)}
+              </div>
+            ) : (
+              <div className="dashboard-tasks-checklist">
+                {dash.tasks.length === 0 ? (
+                  <p className="no-data">No active tasks reminders.</p>
+                ) : (
+                  dash.tasks.map((task: any) => (
+                    <div key={task.id} className="dashboard-task-item flex align-items-center gap-2">
+                      <Checkbox inputId={`dash-task-${task.id}`} checked={!!task.completed} onChange={() => handleToggleTask(task.id)}
+                        disabled={!hasPermission('TASK_EDIT')} />
+                      <label htmlFor={`dash-task-${task.id}`} className={`task-text-dash flex-1 ${task.completed ? 'crossed' : ''}`}>{task.title}</label>
+                      {task.priority && <Tag value={task.priority} severity={severityFor(task.priority)} />}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
-          {loading ? (
-            <div className="flex flex-column gap-2">
-              {[1, 2, 3].map((i) => <Skeleton key={i} height="1.75rem" />)}
-            </div>
-          ) : (
-            <div className="dashboard-tasks-checklist">
-              {dash.tasks.length === 0 ? (
-                <p className="no-data">No active tasks reminders.</p>
-              ) : (
-                dash.tasks.map((task: any) => (
-                  <div key={task.id} className="dashboard-task-item flex align-items-center gap-2">
-                    <Checkbox inputId={`dash-task-${task.id}`} checked={!!task.completed} onChange={() => handleToggleTask(task.id)} />
-                    <label htmlFor={`dash-task-${task.id}`} className={`task-text-dash flex-1 ${task.completed ? 'crossed' : ''}`}>{task.title}</label>
-                    {task.priority && <Tag value={task.priority} severity={severityFor(task.priority)} />}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
+        </IfPermitted>
+
+        <IfPermitted perm="DRAFT_VIEW">
+          <DraftingCard />
+        </IfPermitted>
       </div>
 
       {/* Row 5 - Document Stats */}
-      <div className="dashboard-row-five">
-        <div className="row-five-card doc-stats-card">
-          <div className="card-header-row">
-            <h4>Documents</h4>
-            <Link to="/dashboard/documents">View All</Link>
+      <IfPermitted perm="DOCUMENT_VIEW">
+        <div className="dashboard-row-five">
+          <div className="row-five-card doc-stats-card">
+            <div className="card-header-row">
+              <h4>Documents</h4>
+              <Link to="/dashboard/documents">View All</Link>
+            </div>
+            <div className="doc-stats-grid">
+              <div className="doc-stat-box">
+                <span className="doc-stat-value">{docStats.totalDocuments || 0}</span>
+                <span className="doc-stat-label">Total Files</span>
+              </div>
+              <div className="doc-stat-box">
+                <span className="doc-stat-value">{((docStats.totalStorageBytes || 0) / (1024 * 1024)).toFixed(1)} MB</span>
+                <span className="doc-stat-label">Storage Used</span>
+              </div>
+              <div className="doc-stat-box">
+                <span className="doc-stat-value">{Object.keys(docStats.categoryCounts || {}).length}</span>
+                <span className="doc-stat-label">Categories</span>
+              </div>
+            </div>
           </div>
-          <div className="doc-stats-grid">
-            <div className="doc-stat-box">
-              <span className="doc-stat-value">{docStats.totalDocuments || 0}</span>
-              <span className="doc-stat-label">Total Files</span>
+          <div className="row-five-card recent-docs-card">
+            <div className="card-header-row">
+              <h4>Recent Documents</h4>
+              <Link to="/dashboard/documents">View All</Link>
             </div>
-            <div className="doc-stat-box">
-              <span className="doc-stat-value">{((docStats.totalStorageBytes || 0) / (1024 * 1024)).toFixed(1)} MB</span>
-              <span className="doc-stat-label">Storage Used</span>
-            </div>
-            <div className="doc-stat-box">
-              <span className="doc-stat-value">{Object.keys(docStats.categoryCounts || {}).length}</span>
-              <span className="doc-stat-label">Categories</span>
-            </div>
+            {recentDocs.length === 0 ? (
+              <p className="no-data">No documents uploaded yet.</p>
+            ) : (
+              <div className="recent-docs-list">
+                {recentDocs.map((d) => (
+                  <Link key={d.id} to="/dashboard/documents" className="recent-doc-item">
+                    <span className="recent-doc-icon"><i className="pi pi-file" /></span>
+                    <div className="recent-doc-info">
+                      <span className="recent-doc-name">{d.documentName}</span>
+                      <span className="recent-doc-case">{d.caseEntity?.caseNumber || d.category || 'General'}</span>
+                    </div>
+                    <span className="recent-doc-date">{new Date(d.uploadDate).toLocaleDateString()}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-        <div className="row-five-card recent-docs-card">
-          <div className="card-header-row">
-            <h4>Recent Documents</h4>
-            <Link to="/dashboard/documents">View All</Link>
-          </div>
-          {recentDocs.length === 0 ? (
-            <p className="no-data">No documents uploaded yet.</p>
-          ) : (
-            <div className="recent-docs-list">
-              {recentDocs.map((d) => (
-                <Link key={d.id} to="/dashboard/documents" className="recent-doc-item">
-                  <span className="recent-doc-icon"><i className="pi pi-file" /></span>
-                  <div className="recent-doc-info">
-                    <span className="recent-doc-name">{d.documentName}</span>
-                    <span className="recent-doc-case">{d.caseEntity?.caseNumber || d.category || 'General'}</span>
-                  </div>
-                  <span className="recent-doc-date">{new Date(d.uploadDate).toLocaleDateString()}</span>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      </IfPermitted>
 
       <footer className="dashboard-footer-main">
-        <span>© 2026 AMS. All rights reserved.</span>
+        <span>© 2026 PactPro. All rights reserved.</span>
         <span>Version 1.0.0</span>
       </footer>
     </div>
@@ -796,7 +830,7 @@ function DashboardShell() {
       <aside className="left-sidebar">
         <div className="brand">
           <div className="brand-logo"><img src={LOGO_RE} alt="logo" /></div>
-          <div><div className="brand-name">AMS</div></div>
+          <div><div className="brand-name">PactPro</div></div>
         </div>
 
         <div className="sidebar-search-btn" role="button" tabIndex={0} onClick={() => setSearchOpen(true)}>
@@ -812,47 +846,67 @@ function DashboardShell() {
         <nav className="nav">
           <ul>
             <SideLink to="/dashboard" end icon="pi-th-large" text="Dashboard" />
-            <li className="nav-group">
-              <button type="button" className="nav-link nav-group-toggle" onClick={() => setCasesOpen((o) => !o)} title="Cases" aria-expanded={casesOpen}>
-                <span className="nav-icon"><i className="pi pi-briefcase" /></span>
-                <span className="nav-text">Cases</span>
-                <i className={`pi pi-chevron-down nav-group-chevron ${casesOpen ? 'open' : ''}`} />
-              </button>
-              {casesOpen && (
-                <ul className="nav-submenu">
-                  <SideLink to="/dashboard/cases" end sub icon="pi-inbox" text="Workspace" />
-                  <SideLink to="/dashboard/daily-causelist" sub icon="pi-calendar" text="Daily Causelist" />
-                  <SideLink to="/dashboard/display-board" sub icon="pi-desktop" text="Display Board" />
-                </ul>
-              )}
-            </li>
-            <SideLink to="/dashboard/clients" icon="pi-users" text="Clients" />
-            <SideLink to="/dashboard/hearings" icon="pi-calendar" text="Hearings & Events" />
-            <SideLink to="/dashboard/invoices" icon="pi-indian-rupee" text="Invoices" />
-            <SideLink to="/dashboard/expenses" icon="pi-wallet" text="Expenses" />
-            <SideLink to="/dashboard/documents" icon="pi-folder" text="Documents" />
-            <SideLink to="/dashboard/tasks" icon="pi-check-square" text="Tasks" />
-            <IfPermitted perm="DRAFT_VIEW">
-              <SideLink to="/dashboard/drafting" icon="pi-pencil" text="Drafting" />
+            <IfPermitted perm="CASE_VIEW">
+              <li className="nav-group">
+                <button type="button" className="nav-link nav-group-toggle" onClick={() => setCasesOpen((o) => !o)} title="Cases" aria-expanded={casesOpen}>
+                  <span className="nav-icon"><i className="pi pi-briefcase" /></span>
+                  <span className="nav-text">Cases</span>
+                  <i className={`pi pi-chevron-down nav-group-chevron ${casesOpen ? 'open' : ''}`} />
+                </button>
+                {casesOpen && (
+                  <ul className="nav-submenu">
+                    <SideLink to="/dashboard/cases" end sub icon="pi-inbox" text="Workspace" />
+                    <SideLink to="/dashboard/daily-causelist" sub icon="pi-calendar" text="Daily Causelist" />
+                    <SideLink to="/dashboard/display-board" sub icon="pi-desktop" text="Display Board" />
+                  </ul>
+                )}
+              </li>
             </IfPermitted>
-            <SideLink to="/dashboard/reports" icon="pi-chart-line" text="Reports" />
-            <SideLink to="/dashboard/notifications" icon="pi-envelope" text="Notifications" />
-            <SideLink to="/dashboard/appeal-alert" icon="pi-bell" text="Appeal Alert" />
-            <SideLink to="/dashboard/acts" icon="pi-book" text="Acts" />
-            <SideLink to="/dashboard/legal-dictionary" icon="pi-bookmark" text="Legal Dictionary" />
-            <SideLink to="/dashboard/law-codes" icon="pi-sitemap" text="Law Codes" title="Law Codes (IPC → BNS)" />
+            <IfPermitted perm="CLIENT_VIEW">
+              <SideLink to="/dashboard/clients" icon="pi-users" text="Clients" />
+            </IfPermitted>
+            <IfPermitted perm="EVENT_VIEW">
+              <SideLink to="/dashboard/hearings" icon="pi-calendar" text="Hearings & Events" />
+            </IfPermitted>
+            <IfPermitted perm="INVOICE_VIEW">
+              <SideLink to="/dashboard/invoices" icon="pi-indian-rupee" text="Invoices" />
+            </IfPermitted>
+            <IfPermitted perm="EXPENSE_VIEW">
+              <SideLink to="/dashboard/expenses" icon="pi-wallet" text="Expenses" />
+            </IfPermitted>
+            <IfPermitted perm="DOCUMENT_VIEW">
+              <SideLink to="/dashboard/documents" icon="pi-folder" text="Documents" />
+            </IfPermitted>
+            <IfPermitted perm="TASK_VIEW">
+              <SideLink to="/dashboard/tasks" icon="pi-check-square" text="Tasks" />
+            </IfPermitted>
+            <IfPermitted perm="REPORT_VIEW">
+              <SideLink to="/dashboard/reports" icon="pi-chart-line" text="Reports" />
+            </IfPermitted>
+            <IfPermitted perm={COMMS_PERMS}>
+              <SideLink to="/dashboard/notifications" icon="pi-envelope" text="Notifications" />
+            </IfPermitted>
+            <IfPermitted perm={LEGAL_WORK_PERMS}>
+              <SideLink to="/dashboard/appeal-alert" icon="pi-bell" text="Appeal Alert" />
+              <SideLink to="/dashboard/acts" icon="pi-book" text="Acts" />
+              <SideLink to="/dashboard/legal-dictionary" icon="pi-bookmark" text="Legal Dictionary" />
+              <SideLink to="/dashboard/law-codes" icon="pi-sitemap" text="Law Codes" title="Law Codes (IPC → BNS)" />
+            </IfPermitted>
             <li>
-              <Link to="#" className="nav-link" title="AI Assistant"
+              <Link to="#" className="nav-link" title={`${ASSISTANT_NAME} · AI assistant`}
                 onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('assistant-toggle-open')); }}>
                 <span className="nav-icon"><i className="pi pi-comments" /></span>
-                <span className="nav-text">AI Assistant</span>
+                <span className="nav-text">{ASSISTANT_NAME}</span>
               </Link>
             </li>
             <SideLink to="/dashboard/settings" icon="pi-cog" text="Settings" />
             <IfPermitted perm="BACKUP_MANAGE">
               <SideLink to="/dashboard/backup" icon="pi-lock" text="Backup" />
             </IfPermitted>
-            <li className="nav-section-label">Administration</li>
+            {/* The heading only shows when there is at least one admin page below it. */}
+            <IfPermitted perm={['AUDIT_VIEW', 'USER_MANAGE', 'ROLE_MANAGE']}>
+              <li className="nav-section-label">Administration</li>
+            </IfPermitted>
             <IfPermitted perm="AUDIT_VIEW">
               <SideLink to="/dashboard/activity" icon="pi-history" text="System Activity" />
             </IfPermitted>
@@ -862,27 +916,46 @@ function DashboardShell() {
             <IfPermitted perm="ROLE_MANAGE">
               <SideLink to="/dashboard/roles" icon="pi-shield" text="Roles" title="Role Management" />
             </IfPermitted>
-            <li className="nav-section-label">Communication</li>
-            {/* "Overview", not "Dashboard": the sidebar already has one. */}
-            <SideLink to="/dashboard/communication" end icon="pi-send" text="Overview" title="Communication Overview" />
-            <SideLink to="/dashboard/communication/settings" icon="pi-sliders-h" text="Settings" title="Communication Settings" />
-            <SideLink to="/dashboard/communication/history" icon="pi-list" text="History" title="Communication History" />
+            <IfPermitted perm={COMMS_PERMS}>
+              <li className="nav-section-label">Communication</li>
+              {/* "Overview", not "Dashboard": the sidebar already has one. */}
+              <SideLink to="/dashboard/communication" end icon="pi-send" text="Overview" title="Communication Overview" />
+              <IfPermitted perm="SETTINGS_EDIT">
+                <SideLink to="/dashboard/communication/settings" icon="pi-sliders-h" text="Settings" title="Communication Settings" />
+              </IfPermitted>
+              <SideLink to="/dashboard/communication/history" icon="pi-list" text="History" title="Communication History" />
+            </IfPermitted>
+            {/* DRAFTING - the drafting workspace (formerly InstaDraft), its own section. */}
+            <IfPermitted perm="DRAFT_VIEW">
+              <li className="nav-section-label nav-section-drafting">Drafting</li>
+              {/* Drafts, with a "+" beside it to start a new draft. */}
+              <li className="nav-item-with-action">
+                <NavLink to={DRAFTING.drafts} title="Drafts"
+                  className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+                  <span className="nav-icon"><i className="pi pi-file-edit" /></span>
+                  <span className="nav-text">Drafts</span>
+                </NavLink>
+                <IfPermitted perm="DRAFT_CREATE">
+                  <button type="button" className="nav-side-action" title="New draft" aria-label="New draft"
+                    onClick={() => navigate(DRAFTING.newDraft)}>
+                    <i className="pi pi-plus" />
+                  </button>
+                </IfPermitted>
+              </li>
+              <SideLink to={DRAFTING.templates} icon="pi-clone" text="Templates" />
+              <SideLink to={DRAFTING.samples} icon="pi-folder-open" text="Draft Documents" />
+              <SideLink to={DRAFTING.playbooks} icon="pi-shield" text="Playbooks" />
+            </IfPermitted>
           </ul>
         </nav>
 
-        <div className="sidebar-profile-card">
-          <div className="profile-avatar">{avatar()}</div>
-          <div className="profile-details">
-            <span className="profile-name">{fullName}</span>
-            <span className="profile-email">{email}</span>
-          </div>
-          <Button text rounded icon="pi pi-sign-out" className="sidebar-logout-btn" aria-label="Logout" tooltip="Logout" onClick={handleLogout} />
-        </div>
       </aside>
 
       {/* ===== MAIN AREA ===== */}
       <main className="main-area">
-        <HearingAlertPopup onView={() => navigate('/dashboard/hearings')} />
+        <IfPermitted perm="EVENT_VIEW">
+          <HearingAlertPopup onView={() => navigate('/dashboard/hearings')} />
+        </IfPermitted>
         <header className="topbar">
           <div className="top-left">
             <Button text rounded icon="pi pi-bars" className="hamburger-btn" onClick={toggleSidebar} aria-label="Toggle sidebar"
@@ -931,26 +1004,26 @@ function DashboardShell() {
           }>
             <Routes>
               <Route path="/" element={home} />
-              <Route path="/cases" element={<Cases />} />
-              <Route path="/cases/new" element={<AddCase />} />
+              <Route path="/cases" element={<PermissionRoute permissions="CASE_VIEW"><Cases /></PermissionRoute>} />
+              <Route path="/cases/new" element={<PermissionRoute permissions="CASE_CREATE"><AddCase /></PermissionRoute>} />
               <Route path="/display-board" element={<DisplayBoard />} />
               <Route path="/daily-causelist" element={<DailyCauselist />} />
-              <Route path="/cases/:id" element={<CaseDetail />} />
-              <Route path="/clients" element={<Clients />} />
-              <Route path="/expenses" element={<Expenses />} />
+              <Route path="/cases/:id" element={<PermissionRoute permissions="CASE_VIEW"><CaseDetail /></PermissionRoute>} />
+              <Route path="/clients" element={<PermissionRoute permissions="CLIENT_VIEW"><Clients /></PermissionRoute>} />
+              <Route path="/expenses" element={<PermissionRoute permissions="EXPENSE_VIEW"><Expenses /></PermissionRoute>} />
               <Route path="/calendar" element={<Navigate to="/dashboard/hearings" replace />} />
-              <Route path="/hearings" element={<HearingsPage />} />
-              <Route path="/documents" element={<DocumentsPanel />} />
-              <Route path="/invoices" element={<InvoicesPanel />} />
+              <Route path="/hearings" element={<PermissionRoute permissions="EVENT_VIEW"><HearingsPage /></PermissionRoute>} />
+              <Route path="/documents" element={<PermissionRoute permissions="DOCUMENT_VIEW"><DocumentsPanel /></PermissionRoute>} />
+              <Route path="/invoices" element={<PermissionRoute permissions="INVOICE_VIEW"><InvoicesPanel /></PermissionRoute>} />
               <Route path="/settings" element={<ProfilePage />} />
-              <Route path="/reports" element={<ReportsCenter />} />
-              <Route path="/tasks" element={<TasksPage />} />
-              <Route path="/notifications" element={<NotificationsCenter />} />
-              <Route path="/appeal-alert" element={<AppealAlert />} />
-              <Route path="/acts" element={<Acts />} />
-              <Route path="/acts/:id" element={<ActDetail />} />
-              <Route path="/legal-dictionary" element={<LegalDictionary />} />
-              <Route path="/law-codes" element={<LawCodes />} />
+              <Route path="/reports" element={<PermissionRoute permissions="REPORT_VIEW"><ReportsCenter /></PermissionRoute>} />
+              <Route path="/tasks" element={<PermissionRoute permissions="TASK_VIEW"><TasksPage /></PermissionRoute>} />
+              <Route path="/notifications" element={<PermissionRoute permissions={COMMS_PERMS}><NotificationsCenter /></PermissionRoute>} />
+              <Route path="/appeal-alert" element={<PermissionRoute permissions={LEGAL_WORK_PERMS}><AppealAlert /></PermissionRoute>} />
+              <Route path="/acts" element={<PermissionRoute permissions={LEGAL_WORK_PERMS}><Acts /></PermissionRoute>} />
+              <Route path="/acts/:id" element={<PermissionRoute permissions={LEGAL_WORK_PERMS}><ActDetail /></PermissionRoute>} />
+              <Route path="/legal-dictionary" element={<PermissionRoute permissions={LEGAL_WORK_PERMS}><LegalDictionary /></PermissionRoute>} />
+              <Route path="/law-codes" element={<PermissionRoute permissions={LEGAL_WORK_PERMS}><LawCodes /></PermissionRoute>} />
               <Route path="/activity" element={<PermissionRoute permissions="AUDIT_VIEW"><SystemActivity /></PermissionRoute>} />
               <Route path="/backup" element={<PermissionRoute permissions="BACKUP_MANAGE"><BackupPage /></PermissionRoute>} />
               {/* Admin routes are permission-gated, not just hidden from the sidebar (codes match rbac/views.py). */}
@@ -958,9 +1031,9 @@ function DashboardShell() {
               <Route path="/roles" element={<PermissionRoute permissions="ROLE_MANAGE"><RoleManagement /></PermissionRoute>} />
               {/* Drafting (merged from InstaDraft, merge phase 04). */}
               <Route path="/drafting/*" element={<PermissionRoute permissions="DRAFT_VIEW"><DraftingRoutes /></PermissionRoute>} />
-              <Route path="/communication" element={<CommunicationDashboard />} />
-              <Route path="/communication/settings" element={<CommunicationSettings />} />
-              <Route path="/communication/history" element={<CommunicationHistory />} />
+              <Route path="/communication" element={<PermissionRoute permissions={COMMS_PERMS}><CommunicationDashboard /></PermissionRoute>} />
+              <Route path="/communication/settings" element={<PermissionRoute permissions="SETTINGS_EDIT"><CommunicationSettings /></PermissionRoute>} />
+              <Route path="/communication/history" element={<PermissionRoute permissions={COMMS_PERMS}><CommunicationHistory /></PermissionRoute>} />
             </Routes>
           </Suspense>
         </section>

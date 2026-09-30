@@ -148,3 +148,47 @@ class AuthRequiredTest(TestCase):
             self.assertIn(
                 res.status_code, (401, 403),
                 '%s answered %s without a token' % (url, res.status_code))
+
+
+class RecipientDefaultsTest(TestCase):
+    """The invoice form pre-fills the recipient's GST details from the client."""
+
+    def setUp(self):
+        import json as _json
+        from clients.models import ClientProfile
+        from core.testing import make_case, make_client
+        self.json = _json
+        self.adv = _make('billing@test.local', ALL_PERMISSIONS)
+        self.client_row = make_client(self.adv, 'R. Murugan',
+                                      address='No. 3, Gandhi Street, Tambaram, Tamil Nadu - 600045')
+        ClientProfile.objects.create(client_id=self.client_row.id, gstin='33abcde1234f1z5',
+                                     state='Tamil Nadu')
+        self.case = make_case(self.adv, self.client_row)
+
+    def test_defaults_come_from_the_client_record(self):
+        resp = self.client.get('/api/invoices/recipient-defaults',
+                               {'caseId': self.case.id}, **auth(self.adv))
+        self.assertEqual(resp.status_code, 200, resp.content[:200])
+        d = resp.json()
+        self.assertEqual(d['recipientGstin'], '33ABCDE1234F1Z5')
+        self.assertEqual(d['recipientStateCode'], '33')     # from the GSTIN
+        self.assertEqual(d['recipientState'], 'Tamil Nadu')
+        self.assertIn('Gandhi Street', d['recipientAddress'])
+
+    def test_another_practices_case_is_not_found(self):
+        other = _make('other-billing@test.local', ALL_PERMISSIONS)
+        resp = self.client.get('/api/invoices/recipient-defaults',
+                               {'caseId': self.case.id}, **auth(other))
+        self.assertEqual(resp.status_code, 404)
+
+    def test_a_blank_invoice_is_filled_from_the_client(self):
+        from invoices.models import InvoiceTaxDetail
+        resp = self.client.post('/api/invoices/create', data=self.json.dumps({
+            'caseEntity': {'id': self.case.id},
+            'particulars': [{'description': 'Professional fee', 'amount': 10000}],
+            'invoiceDate': '2026-09-30', 'dueDate': '2026-10-30'}),
+            content_type='application/json', **auth(self.adv))
+        self.assertIn(resp.status_code, (200, 201), resp.content[:300])
+        tax = InvoiceTaxDetail.objects.order_by('-id').first()
+        self.assertEqual((tax.recipient_gstin, tax.recipient_state_code), ('33ABCDE1234F1Z5', '33'))
+        self.assertEqual(tax.place_of_supply, 'Tamil Nadu - 33')

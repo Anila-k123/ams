@@ -10,6 +10,7 @@ import { Card } from "primereact/card";
 import { ProgressSpinner } from "primereact/progressspinner";
 import api, { apiUrl, authHeaders } from "../api/client";
 import { useLoading } from "../contexts/LoadingContext";
+import { usePermission } from "../contexts/PermissionContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import ReportService from "../services/ReportService";
 import { useDownload } from "../hooks/useDownload";
@@ -69,11 +70,12 @@ function StatCard({ label, value, color, icon }: any) {
 }
 
 function Section({ title, onCsv, children }: any) {
+  const { hasPermission } = usePermission() as any;
   return (
     <Card className="mb-4">
       <div className="flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
         <h3 className="rc-section-title">{title}</h3>
-        <Button size="small" outlined icon="pi pi-download" label="CSV" onClick={onCsv} />
+        {hasPermission("REPORT_EXPORT") && <Button size="small" outlined icon="pi pi-download" label="CSV" onClick={onCsv} />}
       </div>
       {children}
     </Card>
@@ -92,6 +94,7 @@ function ChartBox({ title, children, half }: any) {
 }
 
 export default function ReportsCenter() {
+  const { hasPermission } = usePermission() as any;
   const { withLoading } = useLoading() as any;
   const { isDownloading, withDownload } = useDownload() as any;
   const [filter, setFilter] = useState("this-month");
@@ -176,7 +179,7 @@ export default function ReportsCenter() {
               <Calendar value={fromYmd(customEnd)} onChange={(e) => setCustomEnd(toYmd(e.value))} dateFormat="dd/mm/yy" showIcon placeholder="End" />
             </div>
           )}
-          <Button icon="pi pi-file-pdf" label="Export PDF" onClick={handleExportPdf} />
+          {hasPermission("REPORT_EXPORT") && <Button icon="pi pi-file-pdf" label="Export PDF" onClick={handleExportPdf} />}
         </div>
       </div>
 
@@ -327,34 +330,36 @@ export default function ReportsCenter() {
             )}
           </Section>
 
-          <Section title="Hearing Overview" onCsv={() => handleExportCsv("hearings")}>
-            {hearings ? (
-              <>
-                <div className="rc-metrics-grid rc-metrics-grid-sm">
-                  <StatCard icon="pi-calendar" label="Today" value={hearings.today} color="#3B82F6" />
-                  <StatCard icon="pi-clock" label="Upcoming" value={hearings.upcoming} color="#10B981" />
-                  <StatCard icon="pi-times-circle" label="Missed" value={hearings.missed} color="#EF4444" />
-                </div>
-                {hearings.courtWise && hearings.courtWise.length > 0 && (
-                  <div className="grid mt-2">
-                    <ChartBox title="Court-wise Hearings">
-                      <ResponsiveContainer width="100%" height={260}>
-                        <BarChart data={hearings.courtWise}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                          <XAxis dataKey="name" tick={axisTick} stroke="var(--text-muted)" />
-                          <YAxis tick={axisTick} stroke="var(--text-muted)" />
-                          <Tooltip contentStyle={TOOLTIP_STYLE} />
-                          <Bar dataKey="count" fill="#F59E0B" radius={[4, 4, 0, 0]} name="Hearings" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </ChartBox>
+          {hasPermission("EVENT_VIEW") && (
+            <Section title="Hearing Overview" onCsv={() => handleExportCsv("hearings")}>
+              {hearings ? (
+                <>
+                  <div className="rc-metrics-grid rc-metrics-grid-sm">
+                    <StatCard icon="pi-calendar" label="Today" value={hearings.today} color="#3B82F6" />
+                    <StatCard icon="pi-clock" label="Upcoming" value={hearings.upcoming} color="#10B981" />
+                    <StatCard icon="pi-times-circle" label="Missed" value={hearings.missed} color="#EF4444" />
                   </div>
-                )}
-              </>
-            ) : (
-              <div className="rc-section-empty">Hearing data unavailable.</div>
-            )}
-          </Section>
+                  {hearings.courtWise && hearings.courtWise.length > 0 && (
+                    <div className="grid mt-2">
+                      <ChartBox title="Court-wise Hearings">
+                        <ResponsiveContainer width="100%" height={260}>
+                          <BarChart data={hearings.courtWise}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                            <XAxis dataKey="name" tick={axisTick} stroke="var(--text-muted)" />
+                            <YAxis tick={axisTick} stroke="var(--text-muted)" />
+                            <Tooltip contentStyle={TOOLTIP_STYLE} />
+                            <Bar dataKey="count" fill="#F59E0B" radius={[4, 4, 0, 0]} name="Hearings" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </ChartBox>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rc-section-empty">Hearing data unavailable.</div>
+              )}
+            </Section>
+          )}
         </>
       )}
     </div>

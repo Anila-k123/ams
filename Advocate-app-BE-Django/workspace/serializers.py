@@ -41,6 +41,8 @@ class CaseTaskSerializer(serializers.ModelSerializer):
     # The drafting session written for this task (drafting/filing.py), so a reviewer
     # can open it in the editor. Latest one if the task has several.
     draftSessionId = serializers.SerializerMethodField()
+    # What the assignee reported at each hand-back, newest first.
+    submissions = serializers.SerializerMethodField()
 
     class Meta:
         model = CaseTask
@@ -48,7 +50,17 @@ class CaseTaskSerializer(serializers.ModelSerializer):
                   'deadline', 'completed', 'cancelled', 'createdAt', 'documents',
                   'createdById', 'assignedToId', 'assignedToName', 'assignedById',
                   'assignedByName', 'needsReview', 'reviewStatus', 'reviewNote',
-                  'submittedAt', 'reviewedAt', 'reviewedByName', 'draftSessionId']
+                  'submittedAt', 'reviewedAt', 'reviewedByName', 'draftSessionId',
+                  'submissions']
+
+    def get_submissions(self, obj):
+        from .models import TaskSubmission
+        return [{
+            'id': s.id, 'note': s.note,
+            'hours': float(s.hours) if s.hours is not None else None,
+            'submittedByName': self._name(s.submitted_by_id),
+            'createdAt': s.created_at.isoformat() if s.created_at else None,
+        } for s in TaskSubmission.objects.filter(task_id=obj.id)]
 
     def _name(self, advocate_id):
         if not advocate_id:

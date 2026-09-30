@@ -209,9 +209,15 @@
   transition: transform 220ms ease, color 220ms ease;
 }
 
-.dashboard-root.sidebar-collapsed .nav-text,
-.dashboard-root.sidebar-collapsed .nav-section-label {
+.dashboard-root.sidebar-collapsed .nav-text {
   display: none;
+}
+
+/* Collapsed: keep only the divider line, so the sections still read in icon mode. */
+.dashboard-root.sidebar-collapsed .nav-section-label {
+  font-size: 0;
+  padding: 0;
+  margin: 8px 12px;
 }
 
 .dashboard-root.sidebar-collapsed .sub-nav-icon {
@@ -570,6 +576,8 @@
 
 .nav-section-label {
   padding: 16px 16px 4px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border-light);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -577,6 +585,41 @@
   color: #94A3B8;
   opacity: 0.5;
   pointer-events: none;
+}
+
+/* A sidebar link with a small action button on its right (Drafts -> "+ new draft"). */
+.nav-item-with-action {
+  position: relative;
+}
+.nav-side-action {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sidebar-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+}
+.nav-side-action:hover {
+  background: var(--sidebar-active-bg);
+  color: var(--primary);
+}
+.dashboard-root.sidebar-collapsed .nav-side-action {
+  display: none;
+}
+
+/* Drafting is its own product area inside PactPro - give its heading an accent. */
+.nav-section-label.nav-section-drafting {
+  color: var(--primary);
+  opacity: 0.9;
 }
 
 .badge-sidebar {

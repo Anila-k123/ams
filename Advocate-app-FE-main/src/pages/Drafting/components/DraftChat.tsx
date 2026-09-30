@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ASSISTANT_NAME } from '../../../constants/assistant'
 import { InputTextarea } from 'primereact/inputtextarea'
 import { Button } from 'primereact/button'
 import { Dialog } from 'primereact/dialog'
@@ -348,7 +349,7 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
   if (expanded) {
     return (
       <Dialog
-        header={<span className="pp-chat-dialog-title"><i className="pi pi-sparkles mr-2" />AI drafting assistant</span>}
+        header={<span className="pp-chat-dialog-title"><i className="pi pi-sparkles mr-2" />{ASSISTANT_NAME} · drafting assistant</span>}
         visible
         onHide={() => setExpanded(false)}
         maximizable
@@ -364,7 +365,7 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
   return (
     <div className="pp-chat">
       <div className="pp-chat-head">
-        <span><i className="pi pi-sparkles mr-2" />AI drafting assistant</span>
+        <span><i className="pi pi-sparkles mr-2" />{ASSISTANT_NAME} · drafting assistant</span>
         <Button icon="pi pi-window-maximize" text rounded severity="secondary" size="small"
           onClick={() => setExpanded(true)} tooltip="Expand" tooltipOptions={{ position: 'left' }}
           aria-label="Expand chat" />

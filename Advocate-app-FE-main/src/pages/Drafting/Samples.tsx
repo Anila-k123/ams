@@ -85,7 +85,7 @@ export default function Samples() {
   const load = () => fromAms
     ? Promise.all([draftingApi.getAllSamples(), allAmsDocuments()])
         .then(([s, d]) => { setSamples(s); setAmsDocs(d) })
-        .catch(() => toast.current?.show({ severity: 'error', summary: 'Could not load your AMS documents', life: 5000 }))
+        .catch(() => toast.current?.show({ severity: 'error', summary: 'Could not load your PactPro documents', life: 5000 }))
     : draftingApi.getAllSamples().then(setSamples)
 
   // A sample has background work in flight if it's still parsing, or a translation
@@ -109,7 +109,7 @@ export default function Samples() {
       await amsDocumentsApi.prepare(d.id)
       await load()
     } catch {
-      toast.current?.show({ severity: 'error', summary: 'Could not open it from AMS', detail: amsDocName(d), life: 5000 })
+      toast.current?.show({ severity: 'error', summary: 'Could not open the document', detail: amsDocName(d), life: 5000 })
     } finally {
       setPreparing(prev => { const next = new Set(prev); next.delete(d.id); return next })
     }
@@ -288,7 +288,7 @@ export default function Samples() {
       {!loading && (fromAms ? amsCards.length === 0 : filtered.length === 0) && (
         <div className="pp-card text-center text-color-secondary">
           {fromAms
-            ? <>No PDF or Word documents in your AMS yet — click <strong>Upload Documents</strong> to add one.</>
+            ? <>No PDF or Word documents in PactPro yet — click <strong>Upload Documents</strong> to add one.</>
             : <>No documents yet — click <strong>Upload Documents</strong> to add a PDF or DOCX.</>}
         </div>
       )}
@@ -313,7 +313,7 @@ export default function Samples() {
                     </div>
                   </div>
                   {s && current ? statusTag(s.status)
-                    : <Tag value={s ? `Update to v${d.version}` : 'In AMS'} severity={s ? 'warning' : 'info'} />}
+                    : <Tag value={s ? `Update to v${d.version}` : 'In PactPro'} severity={s ? 'warning' : 'info'} />}
                 </div>
                 {s && current && s.status !== 'failed' ? actions(s, false) : (
                   <div className="flex flex-wrap gap-2 mt-3">
@@ -321,7 +321,7 @@ export default function Samples() {
                       label={s ? (s.status === 'failed' ? 'Try again' : `Update to v${d.version}`) : 'Prepare for drafting'}
                       onClick={() => prepare(d)} />
                     <span className="text-xs text-color-secondary align-self-center">
-                      Reads the file from AMS so you can translate and draft from it.
+                      Reads the file from your documents so you can translate and draft from it.
                     </span>
                   </div>
                 )}
@@ -360,7 +360,7 @@ export default function Samples() {
           <CaseField value={amsCase} onChange={setAmsCase} disabled={busy} />
           {fromAms && (
             <Message severity="info" className="w-full"
-              text="It is prepared for drafting here. (Filing uploads into AMS Documents comes with merge phase 07.)" />
+              text="It is prepared for drafting here. (Filing uploads into PactPro Documents comes with merge phase 07.)" />
           )}
           {!fromAms && <div className="flex flex-column gap-2">
             <label className="font-medium text-sm">Contract type</label>

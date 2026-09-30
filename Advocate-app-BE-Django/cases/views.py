@@ -44,17 +44,19 @@ def _extract_client_id(data):
 
 
 class CaseTimelineView(APIView):
-    """Read-only activity timeline for a case, newest first.
+    """Activity timeline for a case, newest first.
 
-    Reads the Spring-era `case_timeline_event` table directly (it has no Django
-    model). Supports ?search= (title/description) and ?eventType=A,B filtering
-    plus page/size pagination, returned in the Spring response shape the
-    frontend CaseTimeline component expects.
+    Built from the case's own records (cases/timeline.py), filtered to what the
+    viewer may see. Supports ?search= (title/description) and ?eventType=A,B
+    plus page/size pagination, in the Spring response shape the frontend
+    CaseTimeline component expects.
     """
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        if not Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists():
+        from .timeline import build_timeline
+        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
+        if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
 
         try:
@@ -65,40 +67,20 @@ class CaseTimelineView(APIView):
             size = min(max(int(request.query_params.get('size', 20)), 1), 100)
         except (TypeError, ValueError):
             size = 20
-        search = (request.query_params.get('search') or '').strip()
-        event_types = [t.strip() for t in (request.query_params.get('eventType') or '').split(',') if t.strip()]
+        search = (request.query_params.get('search') or '').strip().lower()
+        event_types = {t.strip() for t in (request.query_params.get('eventType') or '').split(',') if t.strip()}
 
-        where = ['case_id = %s']
-        params = [case_id]
+        rows = build_timeline(case, request.user)
         if search:
-            where.append('(title ILIKE %s OR description ILIKE %s)')
-            params += ['%' + search + '%', '%' + search + '%']
+            rows = [r for r in rows if search in (r['title'] or '').lower()
+                    or search in (r['description'] or '').lower()]
         if event_types:
-            where.append('event_type IN (' + ','.join(['%s'] * len(event_types)) + ')')
-            params += event_types
-        where_sql = ' AND '.join(where)
+            rows = [r for r in rows if r['eventType'] in event_types]
 
-        with connection.cursor() as cur:
-            cur.execute('SELECT count(*) FROM case_timeline_event WHERE ' + where_sql, params)
-            total = cur.fetchone()[0]
-            cur.execute(
-                'SELECT id, title, description, created_at, event_type, color, icon, '
-                'reference_type, reference_id, performed_by '
-                'FROM case_timeline_event WHERE ' + where_sql +
-                ' ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s',
-                params + [size, page * size])
-            rows = cur.fetchall()
-
-        content = [{
-            'id': r[0], 'title': r[1], 'description': r[2],
-            'createdAt': r[3].isoformat() if r[3] else None,
-            'eventType': r[4], 'color': r[5], 'icon': r[6],
-            'referenceType': r[7], 'referenceId': r[8], 'performedBy': r[9],
-        } for r in rows]
-
+        total = len(rows)
         total_pages = (total + size - 1) // size if size else 0
         return Response({
-            'content': content,
+            'content': rows[page * size:(page + 1) * size],
             'number': page,
             'size': size,
             'totalElements': total,

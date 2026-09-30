@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePermission } from '../../contexts/PermissionContext'
 import { Button } from 'primereact/button'
 import { Dialog } from 'primereact/dialog'
 import { InputText } from 'primereact/inputtext'
@@ -32,6 +33,7 @@ interface ClauseEditorProps {
 }
 
 function ClauseEditor({ clause, onSaved, onDeleted }: ClauseEditorProps) {
+  const { hasPermission } = usePermission() as any
   const [clauseType, setClauseType]         = useState(clause.clause_type)
   const [standardText, setStandardText]     = useState(clause.standard_text)
   const [redLines, setRedLines]             = useState<RedLine[]>(clause.red_lines)
@@ -196,13 +198,15 @@ function ClauseEditor({ clause, onSaved, onDeleted }: ClauseEditorProps) {
       {/* Actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         borderTop: '1px solid var(--pp-border)', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
-        <Button label="Delete clause" icon="pi pi-trash" text size="small" severity="danger"
-          loading={deleting} disabled={saving}
-          onClick={remove} />
-        <Button label={saving ? 'Saving…' : 'Save'}
-          icon={saving ? 'pi pi-spin pi-spinner' : 'pi pi-check'}
-          size="small" disabled={!isDirty || saving} loading={saving}
-          onClick={save} />
+        {hasPermission('DRAFT_MANAGE') && <>
+          <Button label="Delete clause" icon="pi pi-trash" text size="small" severity="danger"
+            loading={deleting} disabled={saving}
+            onClick={remove} />
+          <Button label={saving ? 'Saving…' : 'Save'}
+            icon={saving ? 'pi pi-spin pi-spinner' : 'pi pi-check'}
+            size="small" disabled={!isDirty || saving} loading={saving}
+            onClick={save} />
+        </>}
       </div>
     </div>
   )
@@ -211,6 +215,7 @@ function ClauseEditor({ clause, onSaved, onDeleted }: ClauseEditorProps) {
 // ── Add-clause inline form ─────────────────────────────────────────────────────
 
 function AddClauseForm({ playbookId, onAdded }: { playbookId: number; onAdded: (c: PlaybookClause) => void }) {
+  const { hasPermission } = usePermission() as any
   const [open, setOpen]           = useState(false)
   const [clauseType, setClauseType] = useState('')
   const [standardText, setStandard] = useState('')
@@ -238,6 +243,7 @@ function AddClauseForm({ playbookId, onAdded }: { playbookId: number; onAdded: (
     }
   }
 
+  if (!hasPermission('DRAFT_MANAGE')) return null
   if (!open) {
     return (
       <div style={{ textAlign: 'center', paddingTop: '0.5rem' }}>
@@ -349,6 +355,7 @@ function PlaybookDetail({ playbook: initial, onClose }: { playbook: Playbook; on
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function Playbooks() {
+  const { hasPermission } = usePermission() as any
   const [playbooks, setPlaybooks] = useState<PlaybookListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')  // search-box filter (name / category)
@@ -488,8 +495,10 @@ export default function Playbooks() {
           <i className="pi pi-search" />
           <InputText value={query} onChange={e => setQuery(e.target.value)} placeholder="Search playbooks" />
         </span>
-        <Button label="Create New" icon="pi pi-plus" onClick={() => setShowChooser(true)}
-          style={{ flexShrink: 0 }} />
+        {hasPermission('DRAFT_MANAGE') && (
+          <Button label="Create New" icon="pi pi-plus" onClick={() => setShowChooser(true)}
+            style={{ flexShrink: 0 }} />
+        )}
       </div>
 
       {/* Loading */}
@@ -573,9 +582,11 @@ export default function Playbooks() {
                     severity={pb.status === 'failed' ? 'warning' : 'secondary'}
                     onClick={() => handleReprocess(pb)} outlined />
                 )}
-                <Button size="small" icon="pi pi-trash" severity="danger" text
-                  tooltip="Delete" tooltipOptions={{ position: 'top' }}
-                  onClick={() => handleDelete(pb)} />
+                {hasPermission('DRAFT_MANAGE') && (
+                  <Button size="small" icon="pi pi-trash" severity="danger" text
+                    tooltip="Delete" tooltipOptions={{ position: 'top' }}
+                    onClick={() => handleDelete(pb)} />
+                )}
               </div>
             </div>
           ))}

@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
+import { ASSISTANT_NAME } from '../constants/assistant';
 import { Button } from 'primereact/button';
 import { useAssistant } from '../contexts/AssistantContext';
 import AssistantMessage from './AssistantMessage';
@@ -64,8 +65,8 @@ export default function AssistantPanel() {
 
   if (!isOpen) {
     return (
-      <Button rounded className="assistant-fab" icon="pi pi-comments" aria-label="AI Advocate Assistant"
-        tooltip="AI Advocate Assistant" tooltipOptions={{ position: 'left' }} onClick={() => setIsOpen(true)} />
+      <Button rounded className="assistant-fab" icon="pi pi-comments" aria-label={`Ask ${ASSISTANT_NAME}`}
+        tooltip={`Ask ${ASSISTANT_NAME}`} tooltipOptions={{ position: 'left' }} onClick={() => setIsOpen(true)} />
     );
   }
 
@@ -76,7 +77,7 @@ export default function AssistantPanel() {
         <div className="assistant-header-left">
           <span className="assistant-header-icon"><i className="pi pi-sparkles" /></span>
           <div>
-            <h3>AI Advocate Assistant</h3>
+            <h3>{ASSISTANT_NAME} <span className="assistant-subtitle">· AI legal assistant</span></h3>
             <span className="assistant-status"><span className="status-dot" /> Online</span>
           </div>
         </div>

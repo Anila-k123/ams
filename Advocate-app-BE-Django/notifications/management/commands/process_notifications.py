@@ -230,7 +230,7 @@ class Command(BaseCommand):
     <div style="font-weight:600;color:#334155;">{office}</div>
     {contact}
     <div style="color:#94a3b8;font-size:11px;margin-top:8px;">
-      Sent via the Advocate Management System.
+      Sent via PactPro.
     </div>
   </div>
 </div>"""

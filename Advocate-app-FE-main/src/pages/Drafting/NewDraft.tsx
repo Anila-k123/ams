@@ -17,6 +17,7 @@ import AmsCasePicker from './components/AmsCasePicker'
 import SlotFieldInput from './components/SlotFieldInput'
 import AddDocumentsDialog from './components/AddDocumentsDialog'
 import NewDraftScratch from './NewDraftScratch'
+import NewDraftDialog from './components/NewDraftDialog'
 
 const STEPS = [
   { label: 'Documents' },
@@ -31,9 +32,13 @@ const STEPS = [
 export default function NewDraft() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  // The "Type facts directly" chooser routes here with ?begin=scratch → Mode 3.
-  if (params.get('begin') === 'scratch') return <NewDraftScratch />
-  return <NewDraftReference navigate={navigate} />
+  // Every way into a new draft (sidebar +, Quick Actions, dashboard, case and task
+  // buttons) lands here. Without a choice yet, ask first: reference files or
+  // typing the facts. The chooser keeps any caseId/taskId and adds ?begin=.
+  const begin = params.get('begin')
+  if (begin === 'scratch') return <NewDraftScratch />
+  if (begin === 'reference') return <NewDraftReference navigate={navigate} />
+  return <NewDraftDialog visible onHide={() => navigate(DRAFTING.drafts)} />
 }
 
 function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
@@ -71,7 +76,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
     setAmsLinking(true); setAmsError('')
     amsApi.linkCase(caseId, taskId)
       .then(link => { setAmsLink(link); setAmsFilled(new Set()) })
-      .catch(() => setAmsError('Could not load the AMS case. You can continue without it, or try again from AMS.'))
+      .catch(() => setAmsError('Could not load the case details. You can continue without them, or try again.'))
       .finally(() => setAmsLinking(false))
   }
   const unlinkAms = () => { setAmsLink(null); setAmsFilled(new Set()) }
@@ -200,7 +205,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
         <Steps model={STEPS} activeIndex={step} className="mb-5" />
         {error && <Message severity="error" text={error} className="mb-3 w-full" />}
         {amsLinking && (
-          <Message severity="info" className="mb-3 w-full" icon="pi pi-spin pi-spinner" text="Loading the AMS case…" />
+          <Message severity="info" className="mb-3 w-full" icon="pi pi-spin pi-spinner" text="Loading the PactPro case…" />
         )}
         {amsError && <Message severity="warn" text={amsError} className="mb-3 w-full" />}
         {amsLink && (
@@ -208,7 +213,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
             <div className="flex align-items-center gap-3 w-full">
               <i className="pi pi-link" />
               <div className="flex-1">
-                <div className="font-medium">Linked to AMS case {amsCaseLabel(amsLink.case)}</div>
+                <div className="font-medium">Linked to PactPro case {amsCaseLabel(amsLink.case)}</div>
                 {amsLink.task && <div className="text-sm">Task: {amsLink.task.title}</div>}
               </div>
               <Button label="Unlink" size="small" text severity="secondary" onClick={unlinkAms} />
@@ -221,7 +226,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
           <div className="flex flex-column gap-3">
             {!amsLink && !amsLinking && (
               <div className="flex flex-column gap-2 mb-2">
-                <label className="font-medium">Link an AMS case <span className="text-color-secondary font-normal">(optional)</span></label>
+                <label className="font-medium">Link a PactPro case <span className="text-color-secondary font-normal">(optional)</span></label>
                 <AmsCasePicker onPick={(c: AmsCase) => linkAmsCase(c.id)} />
               </div>
             )}
@@ -304,7 +309,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
           <div className="flex flex-column gap-3">
             {slotFields.map(field => (
               <SlotFieldInput key={field.key} field={field} value={facts[field.key] ?? ''}
-                badge={fromAms(field.key) ? 'from AMS' : undefined}
+                badge={fromAms(field.key) ? 'from case details' : undefined}
                 onChange={v => setFacts(prev => ({ ...prev, [field.key]: v }))} />
             ))}
 
@@ -352,7 +357,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
               </div>
               {amsLink && (
                 <div className="col-12">
-                  <span className="pp-stat-label">AMS case</span>
+                  <span className="pp-stat-label">PactPro case</span>
                   <div className="font-medium">
                     {amsCaseLabel(amsLink.case)}{amsLink.task && ` · Task: ${amsLink.task.title}`}
                   </div>

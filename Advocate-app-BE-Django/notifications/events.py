@@ -26,6 +26,7 @@ from core.audit import record_system_action
 from core.models import (Advocate, Case, CaseEvent, Invoice,
                          NotificationHistory, NotificationQueue)
 from workspace.models import CaseTask
+from core.practice import case_alert_permission
 from notifications import service
 
 log = logging.getLogger(__name__)
@@ -83,24 +84,46 @@ def fanout(owner, event_type, subject, body, since, *, entity, entity_id,
     Puts a senior and their team in the same loop: a case belongs to the whole
     team, so an alert reaches every team member - each on their own channels,
     once each. `require_permission` keeps only members whose role grants it, so
-    each role gets only what concerns it (a hearing alert -> CASE_VIEW holders,
+    each role gets only what concerns it (a hearing alert -> CASE_ALERTS holders,
     not the receptionist). `include_firm_wide` also reaches the common staff
     (e.g. accountants) across every team, for firm-wide matters like invoices.
     A solo advocate resolves to just themselves, so nothing changes for them.
     """
-    from core.practice import alert_members, firm_wide_members
+    from core.practice import alert_members, firm_wide_members, practice_root
 
     cache = {}
     recipients = alert_members(owner, permission=require_permission, perm_cache=cache)
     if include_firm_wide:
         seen = {m.id for m in recipients}
-        for member in firm_wide_members(permission=require_permission, perm_cache=cache):
+        for member in firm_wide_members(practice_root(owner),
+                                        permission=require_permission,
+                                        perm_cache=cache):
             if member.id not in seen:
                 seen.add(member.id)
                 recipients.append(member)
 
     queued = []
     for member in recipients:
+        if _already_notified(member.id, event_type, entity_id, since):
+            continue
+        queued += service.notify(
+            member.id, event_type, subject, body,
+            channels=_channels(member), entity=entity, entity_id=entity_id, **kw)
+    return queued
+
+
+def _task_people(task):
+    """The assignee plus the assigner/creator, active and distinct."""
+    ids = [task.assigned_to_id, task.assigned_by_id or task.advocate_id]
+    ids = list(dict.fromkeys(i for i in ids if i))
+    return list(Advocate.objects.filter(id__in=ids, left_on__isnull=True))
+
+
+def _notify_people(people, event_type, subject, body, since, *, entity,
+                   entity_id, **kw):
+    """Queue one reminder to each of `people`, deduped per recipient."""
+    queued = []
+    for member in people:
         if _already_notified(member.id, event_type, entity_id, since):
             continue
         queued += service.notify(
@@ -132,7 +155,7 @@ def upcoming_hearings(advocate, today=None):
         queued += fanout(
             advocate, 'HEARING_REMINDER', subject, body, since,
             entity='CaseEvent', entity_id=ev.id, case_id=ev.case_id,
-            require_permission='CASE_VIEW', triggered_by='SCHEDULED')
+            require_permission=case_alert_permission(), triggered_by='SCHEDULED')
     return queued
 
 
@@ -167,7 +190,7 @@ def task_deadlines(advocate, today=None):
     queued = []
     tasks = (CaseTask.objects
              .filter(advocate_id=advocate.id, completed=False,
-                     deadline__lte=today)
+                     cancelled=False, deadline__lte=today)
              .exclude(deadline=None).order_by('deadline'))
     for t in tasks:
         overdue = (today - t.deadline).days
@@ -180,10 +203,12 @@ def task_deadlines(advocate, today=None):
         body = ('Task     : {}\nPriority : {}\nDeadline : {} ({})\n'
                 'Case     : {}\n').format(
             t.title, t.priority, t.deadline, when, case_no or 'not linked')
-        queued += fanout(
-            advocate, 'TASK_DEADLINE_REMINDER', subject, body, since,
+        # A task reminder is for the people on the task - whoever it is
+        # assigned to, and whoever handed it out - not the whole team.
+        queued += _notify_people(
+            _task_people(t), 'TASK_DEADLINE_REMINDER', subject, body, since,
             entity='CaseTask', entity_id=t.id, case_id=t.case_id,
-            require_permission='TASK_VIEW', triggered_by='SCHEDULED')
+            triggered_by='SCHEDULED')
     return queued
 
 

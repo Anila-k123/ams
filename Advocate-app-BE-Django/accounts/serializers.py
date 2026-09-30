@@ -57,6 +57,9 @@ class FullProfileSerializer(serializers.ModelSerializer):
     officeLogoUrl = serializers.SerializerMethodField()
     signatureUrl = serializers.SerializerMethodField()
     officeSealUrl = serializers.SerializerMethodField()
+    # The firm's office details and branding are read from the practice owner's
+    # profile (invoices, letterheads), so only the owner's are ever used.
+    isPracticeOwner = serializers.SerializerMethodField()
 
     class Meta:
         model = Advocate
@@ -69,7 +72,11 @@ class FullProfileSerializer(serializers.ModelSerializer):
             'primaryBrandColor', 'secondaryBrandColor', 'theme', 'language', 'timeZone',
             'currency', 'dateFormat', 'autoLogoutDuration', 'defaultDashboardFilter',
             'role', 'whatsappEnabled', 'emailNotificationsEnabled', 'browserNotificationsEnabled',
+            'isPracticeOwner',
         ]
+
+    def get_isPracticeOwner(self, obj):
+        return obj.parent_advocate_id is None
 
     def get_profilePhotoUrl(self, obj):
         return _branding_url(obj.profile_photo_path, self.context)

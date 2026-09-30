@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { DataTable } from "primereact/datatable";
 import { Column } from "primereact/column";
@@ -20,6 +20,7 @@ import { usePermission } from "../contexts/PermissionContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import usePagination from "../hooks/usePagination";
 import "../assets/styles/InvoicesPanel.css";
+import { usePageModal } from "../utils/pageModal";
 
 const EMPTY_INVOICE = {
   invoiceDate: "",
@@ -108,15 +109,8 @@ export default function InvoicesPanel() {
     fetchSummary();
   }, []);
 
-  useEffect(() => {
-    const handler = (e: any) => {
-      if (e.detail === "create-invoice") {
-        setShowModal(true);
-      }
-    };
-    window.addEventListener("assistant-open-modal", handler);
-    return () => window.removeEventListener("assistant-open-modal", handler);
-  }, []);
+  // Quick Actions / Lisa: open Generate Invoice.
+  usePageModal(["create-invoice"], () => setShowModal(true));
 
   // Global Search navigation — read incoming state
   useEffect(() => {
@@ -139,10 +133,40 @@ export default function InvoicesPanel() {
     setNewInvoice({ ...newInvoice, [e.target.name]: e.target.value });
   };
 
+  // Recipient fields filled in from the client (field -> value we put there),
+  // so picking a different case replaces our suggestions but never what the
+  // user typed over them.
+  const prefilled = useRef<Record<string, string>>({});
+  const RECIPIENT_FIELDS = ["kindAttn", "recipientGstin", "recipientState", "recipientStateCode", "recipientAddress"];
+  const selectCase = async (caseId: any) => {
+    setNewInvoice((prev: any) => ({ ...prev, caseId }));
+    if (!caseId) return;
+    let defaults: any = {};
+    try {
+      defaults = (await api.get("/api/invoices/recipient-defaults", { params: { caseId } })).data || {};
+    } catch { /* the form still works; the server fills blanks on save */ }
+    setNewInvoice((prev: any) => {
+      if (String(prev.caseId) !== String(caseId)) return prev;   // user moved on
+      const next = { ...prev };
+      const filled: Record<string, string> = {};
+      for (const f of RECIPIENT_FIELDS) {
+        const ours = prefilled.current[f];
+        const untouched = !prev[f] || (ours !== undefined && prev[f] === ours);
+        if (untouched) {
+          next[f] = defaults[f] || "";
+          if (defaults[f]) filled[f] = defaults[f];
+        }
+      }
+      prefilled.current = filled;
+      return next;
+    });
+  };
+
   const handleClose = () => {
     if (submitting) return;
     setShowModal(false);
     setNewInvoice(EMPTY_INVOICE);
+    prefilled.current = {};
   };
 
   const setParticular = (i: number, field: string, value: any) =>
@@ -319,8 +343,10 @@ export default function InvoicesPanel() {
                 {inv.status !== "PAID" && hasPermission("INVOICE_EDIT") && (
                   <Button size="small" outlined severity="success" icon="pi pi-check-circle" label="Mark Paid" onClick={() => handlePay(inv.id)} />
                 )}
-                <Button size="small" outlined icon="pi pi-download" label="Export" tooltip="Download PDF"
-                  onClick={() => handleDownloadPDF(inv.id, inv.invoiceNumber)} />
+                {hasPermission("REPORT_EXPORT") && (
+                  <Button size="small" outlined icon="pi pi-download" label="Export" tooltip="Download PDF"
+                    onClick={() => handleDownloadPDF(inv.id, inv.invoiceNumber)} />
+                )}
               </div>
             )} />
           </DataTable>
@@ -338,7 +364,7 @@ export default function InvoicesPanel() {
           <div className="inv-form-group">
             <label htmlFor="inv-caseId">Associated Case</label>
             <Dropdown inputId="inv-caseId" value={newInvoice.caseId} options={caseOptions} filter autoFocus
-              placeholder="Select a case..." onChange={(e) => setNewInvoice({ ...newInvoice, caseId: e.value })} />
+              placeholder="Select a case..." onChange={(e) => selectCase(e.value)} />
           </div>
 
           <div className="inv-form-row">

@@ -31,7 +31,7 @@ export default function CommunicationSettings() {
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<any>(null);
-  const [testEmail, setTestEmail] = useState({ recipient: "", subject: "Test Email", message: "This is a test email from AMS." });
+  const [testEmail, setTestEmail] = useState({ recipient: "", subject: "Test Email", message: "This is a test email from PactPro." });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
 

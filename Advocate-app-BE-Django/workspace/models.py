@@ -60,6 +60,25 @@ class CaseTask(models.Model):
         ordering = ['completed', 'deadline', 'id']
 
 
+class TaskSubmission(models.Model):
+    """One hand-back of a delegated task: what the assignee reports they did.
+
+    Kept per submission (not overwritten), so a task sent back for changes
+    shows each round - the report, then the reviewer's note, then the revised
+    report - like a conversation.
+    """
+    id = models.BigAutoField(primary_key=True)
+    task_id = models.BigIntegerField(db_index=True)
+    submitted_by_id = models.BigIntegerField()
+    note = models.TextField(blank=True, default='')
+    hours = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'case_task_submission'
+        ordering = ['-created_at', '-id']
+
+
 class CaseTaskDocument(models.Model):
     """Links a task to a document from the shared documents store (many docs per task)."""
     id = models.BigAutoField(primary_key=True)

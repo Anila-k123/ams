@@ -12,7 +12,7 @@ from rest_framework.response import Response
 
 from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Document
 from core.permissions import RequirePermission
-from .llm import stream_answer
+from .llm import stream_answer, clean_history, clean_focus_ids
 from .tools import _scope   # practice-wide advocate scope (owner + members)
 
 
@@ -28,7 +28,10 @@ class AssistantChatView(APIView):
             def _empty():
                 yield 'data: {"type": "error", "message": "Please type a question."}\n\n'
             return StreamingHttpResponse(_empty(), content_type='text/event-stream')
-        resp = StreamingHttpResponse(stream_answer(question, aid), content_type='text/event-stream')
+        history = clean_history(request.data.get('history'))
+        focus = clean_focus_ids(request.data.get('focusCaseIds'))
+        resp = StreamingHttpResponse(stream_answer(question, aid, history, focus),
+                                     content_type='text/event-stream')
         resp['Cache-Control'] = 'no-cache'
         resp['X-Accel-Buffering'] = 'no'  # disable proxy buffering so tokens flush live
         return resp
@@ -188,14 +191,15 @@ class AssistantQueryView(APIView):
             # Create modals
             creates = [
                 (('create client', 'add client', 'new client', 'register client'), 'CREATE_CLIENT', 'Opening the New Client form.', '/dashboard/clients', 'create-client'),
-                (('create case', 'add case', 'new case', 'register case'), 'CREATE_CASE', 'Opening the New Case form.', '/dashboard/cases', 'create-case'),
+                # The full Add Case page (court search + import), not a pop-up.
+                (('create case', 'add case', 'new case', 'register case'), 'CREATE_CASE', 'Opening Add Case.', '/dashboard/cases/new', None),
                 (('create expense', 'add expense', 'new expense'), 'CREATE_EXPENSE', 'Opening the Add Expense form.', '/dashboard/expenses', 'create-expense'),
                 (('create hearing', 'add hearing', 'schedule hearing', 'new hearing'), 'CREATE_HEARING', 'Opening the Add Hearing form.', '/dashboard/hearings', 'create-hearing'),
                 (('create invoice', 'add invoice', 'generate invoice', 'new invoice'), 'CREATE_INVOICE', 'Opening the Invoice generator.', '/dashboard/invoices', 'create-invoice'),
             ]
             for phrases, intent, msg, route, modal in creates:
                 if _any(clean, *phrases):
-                    return _modal(intent, msg, route, modal)
+                    return _modal(intent, msg, route, modal) if modal else _page(intent, msg, route)
 
             if _any(clean, 'refresh dashboard', 'reload dashboard') or _bare(clean, 'refresh'):
                 return _page('REFRESH_DASHBOARD', 'Refreshing Dashboard data.', '/dashboard')

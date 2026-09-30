@@ -21,7 +21,7 @@ import { Skeleton } from "primereact/skeleton";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DRAFTING, newDraftUrl } from "./Drafting/routes";
-import { ReviewActions, ReviewChip, ReviewNote } from "../components/TaskReview";
+import { ReviewActions, ReviewChip, ReviewNote, SubmissionHistory, SubmitWork } from "../components/TaskReview";
 import CaseTimeline from "../components/CaseTimeline";
 import DocumentSummaryModal from "../components/DocumentSummaryModal";
 import CaseExtraDetails from "../components/CaseExtraDetails";
@@ -34,6 +34,12 @@ import "../assets/styles/CourtRecordView.css";
 import "../assets/styles/CaseDetail.css";
 
 const TABS = ["Parties", "Hearings", "Events", "Orders", "Expenses", "Invoices", "Tasks", "Notes", "Documents", "Related Cases", "Acts", "Extra Details", "Timeline"];
+// A tab only shows to someone allowed to see what is in it (the API refuses the rest).
+const TAB_PERMS: Record<string, string> = {
+  Hearings: "EVENT_VIEW", Events: "EVENT_VIEW",
+  Orders: "DOCUMENT_VIEW", Documents: "DOCUMENT_VIEW",
+  Expenses: "EXPENSE_VIEW", Invoices: "INVOICE_VIEW", Tasks: "TASK_VIEW",
+};
 
 // Same document categories offered on the main Documents upload, so a document
 // attached to a task is filed under the same taxonomy.
@@ -114,6 +120,9 @@ const prioSeverity = (p: string): any => (p === "HIGH" ? "danger" : p === "LOW" 
 // keep the field open on failure. `hideValue` shows only the pencil (e.g. next
 // to a badge that already renders the value).
 function InlineEdit({ value, display, type = "text", options, onSave, onStart, hideValue }: any) {
+  // Every inline field on this page edits the case, so without CASE_EDIT it is plain text.
+  const { hasPermission } = usePermission();
+  const canEdit = hasPermission("CASE_EDIT");
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState("");
   const [saving, setSaving] = useState(false);
@@ -126,8 +135,8 @@ function InlineEdit({ value, display, type = "text", options, onSave, onStart, h
     return (
       <span className="cd-inline">
         {!hideValue && <span className="cd-inline-val">{display ?? (value || "—")}</span>}
-        <Button icon="pi pi-pencil" rounded text size="small" className="cd-pencil" onClick={start} aria-label="Edit"
-          tooltip="Edit" tooltipOptions={{ position: "top" }} />
+        {canEdit && <Button icon="pi pi-pencil" rounded text size="small" className="cd-pencil" onClick={start} aria-label="Edit"
+          tooltip="Edit" tooltipOptions={{ position: "top" }} />}
       </span>
     );
   }
@@ -943,7 +952,10 @@ export default function CaseDetail() {
 
   // Load financials on mount too — the header "Amount" shows the total invoiced,
   // so it can't wait for the Expenses/Invoices tab to be opened.
-  useEffect(() => { fetchFinancials(); }, [fetchFinancials]);
+  useEffect(() => {
+    if (hasPermission("INVOICE_VIEW") || hasPermission("EXPENSE_VIEW")) fetchFinancials();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchFinancials]);
 
   const fetchCourtRecord = useCallback(async () => {
     setCourtRecordLoading(true);
@@ -1059,14 +1071,15 @@ export default function CaseDetail() {
 
   const toggleTask = async (taskId) => {
     try {
-      const res = await api.put(`/api/workspace/tasks/${taskId}/toggle`, {});
-      // On a delegated task the assignee's tick submits it for review instead.
-      if (!res.data?.completed && res.data?.reviewStatus === "SUBMITTED") {
-        success(`Submitted to ${res.data.assignedByName || "the assigner"} for review.`);
-      }
+      await api.put(`/api/workspace/tasks/${taskId}/toggle`, {});
       fetchTasks();
       fetchSummary();
-    } catch { error("Failed to update task."); }
+    } catch (err: any) {
+      // A delegated task is handed back through "Submit work", with a report.
+      error(err.response?.data?.submitRequired
+        ? "Use Submit work to hand this task back with a report."
+        : "Failed to update task.");
+    }
   };
 
   const changeTaskPriority = async (taskId, priority) => {
@@ -1175,14 +1188,15 @@ export default function CaseDetail() {
   const otherEvents = (events || []).filter((ev) => ev.eventType !== "HEARING");
 
   const actionItems = [
-    ...(courtRecord ? [{ label: "Refresh court data", icon: "pi pi-clock", command: refreshCourtData }] : []),
+    ...(courtRecord && hasPermission("CASE_EDIT") ? [{ label: "Refresh court data", icon: "pi pi-clock", command: refreshCourtData }] : []),
     // Only when you can edit AND there's actually someone to transfer to — a solo
     // advocate has no target, so it hides.
     ...(canTransfer ? [{ label: "Transfer case…", icon: "pi pi-users", command: openTransfer }] : []),
     ...(hasPermission("CASE_DELETE") ? [{ label: "Archive case", icon: "pi pi-trash", className: "cd-menu-danger", command: archiveCase }] : []),
   ];
 
-  const tabModel = TABS.map((t) => {
+  const visibleTabs = TABS.filter((t) => !TAB_PERMS[t] || hasPermission(TAB_PERMS[t]));
+  const tabModel = visibleTabs.map((t) => {
     const badge = t === "Notes" ? summary.noteCount : t === "Tasks" ? summary.taskCounts?.open : 0;
     return {
       label: t,
@@ -1261,10 +1275,12 @@ export default function CaseDetail() {
                     ...clients.map((c) => ({ value: String(c.id), label: c.name }))]}
                   onSave={(v) => patchCase({ clientId: v === "" ? null : Number(v) })} />
               </span>
-              <span title="Total invoiced for this case">
-                <strong>Amount:</strong>{" "}
-                {formatCurrency(financials?.totals?.totalInvoiced || 0)}
-              </span>
+              {hasPermission("INVOICE_VIEW") && (
+                <span title="Total invoiced for this case">
+                  <strong>Amount:</strong>{" "}
+                  {formatCurrency(financials?.totals?.totalInvoiced || 0)}
+                </span>
+              )}
             </div>
 
             {caseIdentity.length > 0 && (
@@ -1284,22 +1300,30 @@ export default function CaseDetail() {
                 <Tag key={t.id} className="cd-tag-chip" rounded>
                   <span className="flex align-items-center gap-1">
                     {t.label}
-                    <i className="pi pi-times cd-tag-x" role="button" title="Remove" onClick={() => removeTag(t.id)} />
+                    {hasPermission("CASE_EDIT") && (
+                      <i className="pi pi-times cd-tag-x" role="button" title="Remove" onClick={() => removeTag(t.id)} />
+                    )}
                   </span>
                 </Tag>
               ))}
-              <Dropdown value={null} placeholder="+ tag" className="cd-tag-select p-inputtext-sm"
-                options={TAG_OPTIONS.filter((t) => !(summary.tags || []).some((x) => x.label === t))}
-                onChange={(e) => { if (e.value) addTag(e.value); }} />
+              {hasPermission("CASE_EDIT") && (
+                <Dropdown value={null} placeholder="+ tag" className="cd-tag-select p-inputtext-sm"
+                  options={TAG_OPTIONS.filter((t) => !(summary.tags || []).some((x) => x.label === t))}
+                  onChange={(e) => { if (e.value) addTag(e.value); }} />
+              )}
             </div>
           </div>
 
           <div className="cd-header-side">
             <div className="flex gap-2 justify-content-end flex-wrap">
+              {hasPermission("DRAFT_CREATE") && (
+                <Button size="small" outlined icon="pi pi-pencil" label="Draft for this case"
+                  onClick={() => navigate(newDraftUrl({ caseId: Number(id) }))} />
+              )}
               {hasPermission("INVOICE_CREATE") && (
                 <Button size="small" icon="pi pi-indian-rupee" label="Raise Invoice" onClick={() => setShowInvoiceModal(true)} />
               )}
-              {(courtRecord || hasPermission("CASE_DELETE") || canTransfer) && (
+              {actionItems.length > 0 && (
                 <div className="cd-actions-wrap">
                   <Button size="small" outlined icon={refreshing ? "pi pi-spin pi-spinner" : "pi pi-chevron-down"} iconPos="right"
                     label={refreshing ? "Refreshing…" : "Actions"} onClick={() => setShowActions((s) => !s)} disabled={refreshing} />
@@ -1328,8 +1352,8 @@ export default function CaseDetail() {
       </Card>
 
       {/* Tabs */}
-      <TabMenu className="cd-tabs" model={tabModel} activeIndex={TABS.indexOf(tab)}
-        onTabChange={(e) => setTab(TABS[e.index])} />
+      <TabMenu className="cd-tabs" model={tabModel} activeIndex={visibleTabs.indexOf(tab)}
+        onTabChange={(e) => setTab(visibleTabs[e.index])} />
 
       <div className="cd-panel">
         {/* PARTIES */}
@@ -1358,7 +1382,7 @@ export default function CaseDetail() {
                 </div>
               ))}
             </div>
-            <div className="cd-add-row">
+            {hasPermission("CASE_EDIT") && <div className="cd-add-row">
               <InputText placeholder="Party name" value={partyForm.name}
                 onChange={(e) => setPartyForm({ ...partyForm, name: e.target.value })} />
               <Dropdown placeholder="Role" value={partyForm.role} options={PARTY_ROLES} showClear
@@ -1373,7 +1397,7 @@ export default function CaseDetail() {
                 <label htmlFor="party-opp">Opponent</label>
               </div>
               <Button icon="pi pi-plus" label="Add" onClick={addParty} />
-            </div>
+            </div>}
           </div>
         )}
 
@@ -1435,10 +1459,10 @@ export default function CaseDetail() {
                   <Column header="Actions" body={(h) => (
                     <div className="flex gap-1 flex-wrap">
                       <Button size="small" text label="Copy" onClick={() => copyHearing(h)} />
-                      <Button size="small" text label={alertBusy === `a${h._i}` ? "Sending…" : "Send Alert to Client"}
+                      {hasPermission("EVENT_CREATE") && <Button size="small" text label={alertBusy === `a${h._i}` ? "Sending…" : "Send Alert to Client"}
                         tooltip={summary.clientId ? "Email this hearing to the client" : "No client email on this case"}
                         tooltipOptions={{ position: "top", showOnDisabled: true }}
-                        disabled={!summary.clientId || alertBusy === `a${h._i}`} onClick={() => alertClient(h, h._i)} />
+                        disabled={!summary.clientId || alertBusy === `a${h._i}`} onClick={() => alertClient(h, h._i)} />}
                       {hasPermission("INVOICE_CREATE") && <Button size="small" text label="Raise Invoice" onClick={() => setShowInvoiceModal(true)} />}
                     </div>
                   )} />
@@ -1619,7 +1643,7 @@ export default function CaseDetail() {
         {/* TASKS */}
         {tab === "Tasks" && (
           <div>
-            <div className="cd-task-add grid formgrid p-fluid">
+            {hasPermission("TASK_CREATE") && <div className="cd-task-add grid formgrid p-fluid">
               <div className="field col-12 md:col-4">
                 <label>Task</label>
                 <InputText placeholder="Task title" value={newTask.title}
@@ -1634,7 +1658,7 @@ export default function CaseDetail() {
                 <label>Deadline</label>
                 <DateField value={newTask.deadline} onChange={(v) => setNewTask({ ...newTask, deadline: v })} />
               </div>
-              <div className="field col-6 md:col-2">
+              {hasPermission("DOCUMENT_UPLOAD") && <div className="field col-6 md:col-2">
                 <label>Documents</label>
                 <label className="cd-task-attach p-button p-button-outlined p-button-secondary" title="Attach documents">
                   <i className="pi pi-paperclip mr-2" />
@@ -1642,12 +1666,12 @@ export default function CaseDetail() {
                   <input type="file" multiple style={{ display: "none" }}
                     onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />
                 </label>
-              </div>
-              <div className="field col-6 md:col-2">
+              </div>}
+              {hasPermission("DOCUMENT_UPLOAD") && <div className="field col-6 md:col-2">
                 <label>Category</label>
                 <Dropdown value={newTask.category} options={DOC_CATEGORIES} placeholder="Select category" showClear
                   onChange={(e) => setNewTask({ ...newTask, category: e.value || "" })} />
-              </div>
+              </div>}
               {hasPermission("TASK_ASSIGN") && (
                 <div className="field col-6 md:col-3">
                   <label>Assign to</label>
@@ -1658,14 +1682,15 @@ export default function CaseDetail() {
                 </div>
               )}
               <div className="field col-6 md:col-2 flex align-items-end">
-                {hasPermission("TASK_CREATE") && <Button icon="pi pi-plus" label="Add" onClick={addTask} />}
+                <Button icon="pi pi-plus" label="Add" onClick={addTask} />
               </div>
-            </div>
+            </div>}
             {tasks.length === 0 ? (
               <p className="cd-muted">No tasks for this case.</p>
             ) : tasks.map((t) => (
               <div className={`cd-task ${t.completed ? "done" : ""}${t.cancelled ? " cancelled" : ""}`} key={t.id}>
                 <Button rounded text className="cd-task-check" onClick={() => toggleTask(t.id)}
+                  disabled={!hasPermission("TASK_EDIT") && t.assignedToId !== myId}
                   icon={t.completed ? "pi pi-check-circle" : "pi pi-circle"}
                   severity={t.completed ? "success" : "secondary"}
                   tooltip={t.needsReview && t.assignedToId === myId && !t.completed ? "Submit for review" : "Toggle"}
@@ -1673,6 +1698,7 @@ export default function CaseDetail() {
                 <div className="cd-task-main">
                   <span className="cd-task-title">{t.title}{t.cancelled && <span className="cd-task-cancelled"> Cancelled</span>}</span>
                   <ReviewNote task={t} />
+                  <SubmissionHistory task={t} />
                   {t.documents?.length > 0 && (
                     <div className="cd-task-docs">
                       {t.documents.map((d) => (
@@ -1684,6 +1710,8 @@ export default function CaseDetail() {
                   )}
                 </div>
                 <ReviewChip task={t} />
+                <SubmitWork task={t} myId={myId} toast={toast} caseId={Number(id)}
+                  onDone={() => { fetchTasks(); fetchSummary(); }} />
                 <ReviewActions task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast}
                   onDone={() => { fetchTasks(); fetchSummary(); }} />
                 {t.assignedToName && (
@@ -1691,21 +1719,21 @@ export default function CaseDetail() {
                     <i className="pi pi-user" style={{ fontSize: 11 }} /> {t.assignedToName}
                   </span>
                 )}
-                <Dropdown
+                {hasPermission("TASK_EDIT") ? <Dropdown
                   className={`cd-task-prio p-inputtext-sm prio-${(t.priority || "medium").toLowerCase()}`}
                   value={t.priority || "MEDIUM"}
                   options={["HIGH", "MEDIUM", "LOW"]}
                   valueTemplate={(v) => <Tag value={v} severity={prioSeverity(v)} />}
                   onChange={(e) => changeTaskPriority(t.id, e.value)}
                   tooltip="Change priority" tooltipOptions={{ position: "top" }}
-                />
+                /> : <Tag value={t.priority || "MEDIUM"} severity={prioSeverity(t.priority || "MEDIUM")} />}
                 {t.deadline && <span className="cd-task-deadline"><i className="pi pi-clock" style={{ fontSize: 11 }} /> {fmtDate(t.deadline)}</span>}
-                {t.draftSessionId && (
+                {t.draftSessionId && hasPermission("DRAFT_VIEW") && (
                   <Button size="small" text icon="pi pi-eye" label="Open draft"
                     tooltip="Open the draft in the drafting editor" tooltipOptions={{ position: "top" }}
                     onClick={() => navigate(DRAFTING.draft(t.draftSessionId))} />
                 )}
-                {!t.completed && !t.cancelled && (
+                {!t.completed && !t.cancelled && hasPermission("DRAFT_CREATE") && (
                   <Button rounded text size="small" icon="pi pi-file-edit" aria-label="Draft for this task"
                     tooltip="Draft for this task" tooltipOptions={{ position: "top" }}
                     onClick={() => navigate(newDraftUrl({ caseId: Number(id), taskId: t.id }))} />
@@ -1725,16 +1753,16 @@ export default function CaseDetail() {
         {/* NOTES */}
         {tab === "Notes" && (
           <div>
-            <div className="flex flex-column gap-2 mb-3">
-              <InputTextarea rows={3} autoResize className="w-full"
-                placeholder="Write a case note (diary entry)..."
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-              />
-              {hasPermission("CASE_EDIT") && (
+            {hasPermission("CASE_EDIT") && (
+              <div className="flex flex-column gap-2 mb-3">
+                <InputTextarea rows={3} autoResize className="w-full"
+                  placeholder="Write a case note (diary entry)..."
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                />
                 <div className="flex justify-content-end"><Button icon="pi pi-plus" label="Add Note" onClick={addNote} /></div>
-              )}
-            </div>
+              </div>
+            )}
             {notes.length === 0 ? (
               <p className="cd-muted">No notes yet.</p>
             ) : notes.map((n) => (
@@ -1813,7 +1841,7 @@ export default function CaseDetail() {
                 <Button icon="pi pi-trash" rounded text severity="danger" size="small" aria-label="Unlink" onClick={() => deleteRelated(r.id)} />
               )))}
             </div>
-            <div className="cd-add-row">
+            {hasPermission("CASE_EDIT") && <div className="cd-add-row">
               <Dropdown value={relatedForm.relatedCaseId} placeholder="Select a case to link…" filter showClear
                 options={linkableCases.map((c) => ({ value: String(c.id), label: `${c.caseNumber} — ${c.caseTitle}` }))}
                 optionLabel="label" optionValue="value" className="cd-grow"
@@ -1823,7 +1851,7 @@ export default function CaseDetail() {
               <InputText placeholder="Note (optional)" value={relatedForm.note}
                 onChange={(e) => setRelatedForm({ ...relatedForm, note: e.target.value })} />
               <Button icon="pi pi-plus" label="Link" onClick={addRelated} />
-            </div>
+            </div>}
           </div>
         )}
 

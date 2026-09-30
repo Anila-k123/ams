@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { DRAFTING } from './routes'
+import { usePermission } from '../../contexts/PermissionContext'
 import { useNavigate } from 'react-router-dom'
 import { Button } from 'primereact/button'
 import { Tag } from 'primereact/tag'
@@ -21,6 +22,7 @@ import { draftingApi, type Template } from './api/drafting'
  *  and deleting. */
 export default function Templates() {
   const navigate = useNavigate()
+  const { hasPermission } = usePermission() as any
   const [templates, setTemplates] = useState<Template[]>([])  // the card grid contents
   const [loading, setLoading] = useState(true)                // true until the initial fetch resolves (shows skeletons)
   const [showUpload, setShowUpload] = useState(false)         // upload dialog open/closed
@@ -110,7 +112,9 @@ export default function Templates() {
           <i className="pi pi-search" />
           <InputText value={query} onChange={e => setQuery(e.target.value)} placeholder="Search templates" />
         </span>
-        <Button label="Upload Template" icon="pi pi-upload" onClick={() => { setError(''); setShowUpload(true) }} />
+        {hasPermission('DRAFT_MANAGE') && (
+          <Button label="Upload Template" icon="pi pi-upload" onClick={() => { setError(''); setShowUpload(true) }} />
+        )}
       </div>
 
       <div className="grid">
@@ -152,8 +156,10 @@ export default function Templates() {
                     <Button icon="pi pi-eye" rounded text severity="secondary" tooltip="View document"
                       tooltipOptions={{ position: 'top' }} onClick={() => view(t)} />
                   )}
-                  <Button icon="pi pi-trash" rounded text severity="danger" tooltip="Delete"
-                    tooltipOptions={{ position: 'top' }} onClick={() => confirmDelete(t)} />
+                  {hasPermission('DRAFT_MANAGE') && (
+                    <Button icon="pi pi-trash" rounded text severity="danger" tooltip="Delete"
+                      tooltipOptions={{ position: 'top' }} onClick={() => confirmDelete(t)} />
+                  )}
                 </div>
               </div>
             </div>

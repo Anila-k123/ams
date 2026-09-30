@@ -19,6 +19,7 @@ import { usePermission } from "../contexts/PermissionContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import usePagination from "../hooks/usePagination";
 import "../assets/styles/Cases.css";
+import { usePageModal } from "../utils/pageModal";
 
 const SORT_OPTIONS = [
   { value: "createdAt:desc", label: "Newest first" },
@@ -258,14 +259,13 @@ function Cases() {
     fetchCases();
   }, [fetchCases, token]);
 
-  // AI Assistant: open create-case modal + search
+  // "Create case" from anywhere opens the full Add Case page: the pop-up here
+  // only saves the case row, without the court record, parties or hearings.
+  // The pop-up is kept for Edit Case.
+  usePageModal(["create-case"], () => navigate("/dashboard/cases/new"));
+
+  // AI Assistant: search
   useEffect(() => {
-    const handleModal = (e: any) => {
-      if (e.detail === "create-case") {
-        setShowModal(true);
-        setEditCaseId(null);
-      }
-    };
     const handleSearch = (e: any) => {
       if (e.detail?.query) {
         const keyword = e.detail.query;
@@ -278,10 +278,8 @@ function Cases() {
           .then(res => setCases(res.data)).catch(() => {});
       }
     };
-    window.addEventListener("assistant-open-modal", handleModal);
     window.addEventListener("assistant-search", handleSearch);
     return () => {
-      window.removeEventListener("assistant-open-modal", handleModal);
       window.removeEventListener("assistant-search", handleSearch);
     };
   }, []);
@@ -631,7 +629,9 @@ function Cases() {
                 <Dropdown value={newCase.status || null} options={STATUS_OPTIONS} placeholder="Select Status"
                   onChange={(e) => setField("status", e.value || "")} />
 
-                <InputText type="number" name="amount" placeholder="Amount" value={newCase.amount} onChange={handleChange} />
+                {hasPermission("INVOICE_VIEW") && (
+                  <InputText type="number" name="amount" placeholder="Amount" value={newCase.amount} onChange={handleChange} />
+                )}
 
                 <Dropdown
                   options={clientOptions}
@@ -698,7 +698,7 @@ function Cases() {
               );
             }} />
             <Column header="Client" body={(c) => <span title={c.clientName || "N/A"}>{c.clientName || "N/A"}</span>} />
-            <Column header="Amount" body={(c) => formatCurrency(c.amount)} />
+            {hasPermission("INVOICE_VIEW") && <Column header="Amount" body={(c) => formatCurrency(c.amount)} />}
             <Column header="Actions" body={actionsBody} />
           </DataTable>
         )}
@@ -747,10 +747,12 @@ function Cases() {
                 ))}
               </div>
             )}
-            <div className="flex align-items-center gap-2 mt-3">
-              <input type="file" onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)} />
-              <Button icon="pi pi-upload" label="Upload" onClick={uploadCaseDoc} disabled={!uploadDocFile} />
-            </div>
+            {hasPermission("DOCUMENT_UPLOAD") && (
+              <div className="flex align-items-center gap-2 mt-3">
+                <input type="file" onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)} />
+                <Button icon="pi pi-upload" label="Upload" onClick={uploadCaseDoc} disabled={!uploadDocFile} />
+              </div>
+            )}
           </>
         )}
       </Dialog>

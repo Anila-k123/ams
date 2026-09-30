@@ -18,13 +18,13 @@ export default function AmsCasePicker({ onPick, disabled }: Props) {
     setError('')
     amsApi.cases(query)
       .then(r => setSuggestions(r.content))
-      .catch(() => { setSuggestions([]); setError('Could not reach AMS.') })
+      .catch(() => { setSuggestions([]); setError('Could not reach PactPro.') })
   }
 
   return (
     <div className="flex flex-column gap-1">
       <AutoComplete value={value} suggestions={suggestions} dropdown forceSelection disabled={disabled}
-        field="caseNumber" placeholder="Search AMS cases by number, title or client"
+        field="caseNumber" placeholder="Search PactPro cases by number, title or client"
         completeMethod={e => search(e.query)}
         itemTemplate={(c: AmsCase) => (
           <div>

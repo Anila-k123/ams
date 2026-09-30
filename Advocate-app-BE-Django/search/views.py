@@ -16,41 +16,45 @@ from workspace.serializers import CaseTaskSerializer
 MAX = 5
 
 
-def _global_search(advocate_id, q):
+def _global_search(user, q):
+    # The whole practice, like every list page - not only rows this user created.
+    from core.practice import practice_ids
+    from workspace.access import visible_tasks
+    scope = practice_ids(user)
     if not q:
         return {k: [] for k in ('clients', 'cases', 'documents', 'invoices',
                                 'expenses', 'tasks', 'events', 'payments')}
 
-    clients = Client.objects.filter(advocate_id=advocate_id, deleted=False).filter(
+    clients = Client.objects.filter(advocate_id__in=scope, deleted=False).filter(
         Q(name__icontains=q) | Q(email__icontains=q) | Q(phone__icontains=q) | Q(address__icontains=q)
     )[:MAX]
 
-    cases = Case.objects.select_related('client').filter(advocate_id=advocate_id, deleted=False).filter(
+    cases = Case.objects.select_related('client').filter(advocate_id__in=scope, deleted=False).filter(
         Q(case_number__icontains=q) | Q(case_title__icontains=q) | Q(case_type__icontains=q) |
         Q(court_level__icontains=q) | Q(status__icontains=q) | Q(client__name__icontains=q)
     )[:MAX]
 
-    documents = Document.objects.select_related('case', 'client').filter(advocate_id=advocate_id).filter(
+    documents = Document.objects.select_related('case', 'client').filter(advocate_id__in=scope).filter(
         Q(document_name__icontains=q) | Q(original_name__icontains=q) | Q(category__icontains=q)
     )[:MAX]
 
-    invoices = Invoice.objects.select_related('case', 'client').filter(advocate_id=advocate_id).filter(
+    invoices = Invoice.objects.select_related('case', 'client').filter(advocate_id__in=scope).filter(
         Q(invoice_number__icontains=q) | Q(status__icontains=q)
     )[:MAX]
 
-    expenses = Expense.objects.select_related('case').filter(advocate_id=advocate_id).filter(
+    expenses = Expense.objects.select_related('case').filter(advocate_id__in=scope).filter(
         Q(title__icontains=q) | Q(category__icontains=q) | Q(description__icontains=q)
     )[:MAX]
 
     # workspace.CaseTask, not the legacy core.Task table - that one is empty,
     # so searching for a task never matched anything.
-    tasks = CaseTask.objects.filter(advocate_id=advocate_id).filter(title__icontains=q)[:MAX]
+    tasks = visible_tasks(user).filter(title__icontains=q)[:MAX]
 
-    events = CaseEvent.objects.select_related('case').filter(advocate_id=advocate_id).filter(
+    events = CaseEvent.objects.select_related('case').filter(advocate_id__in=scope).filter(
         Q(title__icontains=q) | Q(description__icontains=q) | Q(event_type__icontains=q)
     )[:MAX]
 
-    payments = ClientPayment.objects.select_related('case', 'client').filter(advocate_id=advocate_id).filter(
+    payments = ClientPayment.objects.select_related('case', 'client').filter(advocate_id__in=scope).filter(
         Q(description__icontains=q) | Q(payment_mode__icontains=q) | Q(reference_number__icontains=q)
     )[:MAX]
 
@@ -66,7 +70,21 @@ def _global_search(advocate_id, q):
     }
 
 
+# Each result group needs the permission its own page needs, so search can't
+# show a junior the invoices, or the accountant the documents.
+GROUP_PERMS = {
+    'clients': 'CLIENT_VIEW', 'cases': 'CASE_VIEW', 'documents': 'DOCUMENT_VIEW',
+    'invoices': 'INVOICE_VIEW', 'expenses': 'EXPENSE_VIEW', 'tasks': 'TASK_VIEW',
+    'events': 'EVENT_VIEW', 'payments': 'PAYMENT_VIEW',
+}
+
+
 @api_view(['GET'])
 def search(request):
     q = request.query_params.get('q') or request.query_params.get('keyword') or ''
-    return Response(_global_search(request.user.id, q))
+    results = _global_search(request.user, q)
+    perms = request.user.permission_codes()
+    for group, perm in GROUP_PERMS.items():
+        if perm not in perms:
+            results[group] = []
+    return Response(results)

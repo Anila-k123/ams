@@ -61,6 +61,10 @@ export default function ProfilePage() {
   const { updateProfile } = useAuth();
 
   const [activeTab, setActiveTab] = useState("general");
+  // Office details and branding feed the firm's invoices and letterheads, which
+  // use the practice owner's profile - so only the owner is shown those tabs.
+  const [isPracticeOwner, setIsPracticeOwner] = useState(false);
+  const visibleTabs = TABS.filter((t) => isPracticeOwner || (t.id !== "office" && t.id !== "branding"));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -98,6 +102,7 @@ export default function ProfilePage() {
   const fetchProfile = async () => {
     try {
       const { data: d } = await api.get("/api/profile");
+      setIsPracticeOwner(!!d.isPracticeOwner);
       setGeneral({
         fullName: d.fullName || "", phone: d.phone || "", specialization: d.specialization || "",
         experience: d.experience || 0, address: d.address || "",
@@ -496,7 +501,7 @@ export default function ProfilePage() {
         <aside className="col-12 md:col-3">
           <Card className="settings-tabs">
             <div className="flex flex-column gap-1">
-              {TABS.map((tab) => (
+              {visibleTabs.map((tab) => (
                 <Button
                   key={tab.id} type="button" icon={tab.icon} label={tab.label}
                   text={activeTab !== tab.id} className="justify-content-start"
@@ -509,8 +514,8 @@ export default function ProfilePage() {
         <main className="col-12 md:col-9">
           <Card>
             {activeTab === "general" && renderGeneral()}
-            {activeTab === "office" && renderOffice()}
-            {activeTab === "branding" && renderBranding()}
+            {activeTab === "office" && isPracticeOwner && renderOffice()}
+            {activeTab === "branding" && isPracticeOwner && renderBranding()}
             {activeTab === "security" && renderSecurity()}
             {activeTab === "preferences" && renderPreferences()}
           </Card>

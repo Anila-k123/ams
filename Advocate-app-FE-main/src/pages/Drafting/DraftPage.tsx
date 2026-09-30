@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { DRAFTING } from './routes'
+import { usePermission } from '../../contexts/PermissionContext'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ProgressSpinner } from 'primereact/progressspinner'
 import { Message } from 'primereact/message'
@@ -260,6 +261,7 @@ function PreviewClause({ block, docTitle = '' }: { block: DraftBlock; docTitle?:
  *  assistant stub) with a read-only Preview toggle and manual Save. Polls while
  *  the draft is still generating. */
 export default function DraftPage() {
+  const { hasPermission } = usePermission() as any
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
   const [session, setSession] = useState<DraftSession | null>(null)
@@ -559,13 +561,13 @@ export default function DraftPage() {
       if (r.reviewStatus) setAmsTask(prev => prev && ({ ...prev, reviewStatus: r.reviewStatus }))
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error
-      setError(msg || 'Could not save to AMS — your draft is safe here; please try again.')
+      setError(msg || 'Could not save to PactPro — your draft is safe here; please try again.')
     } finally {
       setSendingAms(false)
     }
   }
   const amsSyncedLabel = session?.ams_synced_at
-    ? `${amsTask?.reviewStatus === 'SUBMITTED' ? 'Submitted for review' : 'Saved to AMS'}`
+    ? `${amsTask?.reviewStatus === 'SUBMITTED' ? 'Submitted for review' : 'Saved to PactPro'}`
       + `${session.ams_document_version ? ` · v${session.ams_document_version}` : ''} · `
       + new Date(session.ams_synced_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
     : ''
@@ -778,22 +780,24 @@ export default function DraftPage() {
           <Menu popup ref={downloadMenu} model={[
             { label: 'Download PDF', icon: 'pi pi-file-pdf', command: downloadPdf },
             { label: 'Download Word (.docx)', icon: 'pi pi-file-word', command: () => downloadDocx() },
-            { label: 'Word on AMS letterhead', icon: 'pi pi-id-card', command: () => downloadDocx(true) },
+            { label: 'Word on PactPro letterhead', icon: 'pi pi-id-card', command: () => downloadDocx(true) },
           ]} />
           {/* File on the AMS case / task (drafting/filing.py). Author only. */}
           {!isReviewer && <>
               {amsSyncedLabel && (
-                <span className="pp-chip verified" title="Last copy filed in AMS">
+                <span className="pp-chip verified" title="Last copy filed in PactPro">
                   <i className="pi pi-check" /> {amsSyncedLabel}
                 </span>
               )}
-              <Button label={session?.ams_task_id ? 'Submit to task' : 'Save to AMS'} icon="pi pi-send"
+              <Button label={session?.ams_task_id ? 'Submit to task' : 'Save to PactPro'} icon="pi pi-send"
                 size="small" outlined loading={sendingAms} onClick={() => sendToAms()}
-                tooltip={session?.case_id ? undefined : 'Pick the AMS case to file this draft on'} />
+                tooltip={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'} />
           </>}
-          <Button label="Download" icon="pi pi-download" size="small" outlined severity="secondary"
-            loading={exporting}
-            onClick={e => downloadMenu.current?.toggle(e)} />
+          {hasPermission('DRAFT_EXPORT') && (
+            <Button label="Download" icon="pi pi-download" size="small" outlined severity="secondary"
+              loading={exporting}
+              onClick={e => downloadMenu.current?.toggle(e)} />
+          )}
           {isReviewer ? null : confirmRedraft ? (
             <div className="flex align-items-center gap-1">
               <span className="text-sm text-color-secondary">Re-draft? Existing content will be replaced.</span>
@@ -1001,10 +1005,10 @@ export default function DraftPage() {
             )}
           </aside>
         </div>
-      <Dialog header="Save to AMS — pick the case" visible={pickAmsCase} style={{ width: 'min(560px, 95vw)' }}
+      <Dialog header="Save to PactPro — pick the case" visible={pickAmsCase} style={{ width: 'min(560px, 95vw)' }}
         onHide={() => setPickAmsCase(false)}>
         <p className="mt-0 text-color-secondary text-sm">
-          This draft isn't linked to an AMS case yet. Choose the case to file it on.
+          This draft isn't linked to a PactPro case yet. Choose the case to file it on.
         </p>
         <AmsCasePicker onPick={c => sendToAms(c.id)} />
       </Dialog>

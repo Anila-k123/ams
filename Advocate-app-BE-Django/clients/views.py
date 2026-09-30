@@ -11,6 +11,7 @@ from core.pagination import SpringStylePagination
 from .serializers import ClientSerializer, ClientRequestSerializer
 from core.practice import practice_ids
 from notifications import client_events
+from . import handlers, profile
 
 SORT_MAP = {'createdAt': 'created_at', 'name': 'name', 'email': 'email', 'id': 'id'}
 
@@ -98,6 +99,37 @@ def _find_practice_duplicate(user, name, email, phone_digits):
     return active, archived
 
 
+def _save_profile(request, client):
+    """Store the form's extra fields and rebuild clients.address from its parts."""
+    line = profile.save(client, profile.sent_fields(request.data))
+    if line is not None and line != client.address:
+        client.address = line
+        client.save(update_fields=['address'])
+
+
+def _handler_or_error(request, d):
+    """(advocate, None) for a valid handlingAdvocateId, (None, None) when none
+    was given, or (None, error Response) for someone who can't take a case."""
+    aid = d.get('handlingAdvocateId')
+    if aid is None:
+        return None, None
+    advocate = handlers.resolve(request.user, aid)
+    if advocate is None:
+        return None, Response(
+            {'error': 'Choose an advocate from your practice who can take the case.'},
+            status=status.HTTP_400_BAD_REQUEST)
+    return advocate, None
+
+
+class ClientHandlersView(APIView):
+    """Who can be named as a client's handling advocate (for the client form)."""
+    permission_classes = [RequirePermission('CLIENT_CREATE', 'CLIENT_EDIT')]
+
+    def get(self, request):
+        return Response([{'id': p.id, 'name': p.full_name or p.email}
+                         for p in handlers.candidates(request.user)])
+
+
 class CreateClientView(APIView):
     permission_classes = [RequirePermission('CLIENT_CREATE')]
 
@@ -105,6 +137,11 @@ class CreateClientView(APIView):
         s = ClientRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         d = s.validated_data
+        # Checked before anything is saved, so a bad pick doesn't leave a
+        # client behind without a handler.
+        handler, error = _handler_or_error(request, d)
+        if error is not None:
+            return error
         name = (d['name'] or '').strip()
         email = (d.get('email') or '').strip().lower()
         phone_digits = _digits(d.get('phone'))
@@ -130,6 +167,9 @@ class CreateClientView(APIView):
                 archived.address = d.get('address')
                 archived.deleted = False
                 archived.save()
+                _save_profile(request, archived)
+                if handler is not None:
+                    handlers.assign(request.user, archived, handler)
                 return Response(ClientSerializer(archived).data,
                                 status=status.HTTP_200_OK)
 
@@ -137,7 +177,10 @@ class CreateClientView(APIView):
             name=d['name'], email=d.get('email'), phone=d.get('phone'),
             address=d.get('address'), deleted=False, advocate_id=request.user.id,
         )
+        _save_profile(request, client)
         client_events.client_registered(request.user, client)
+        if handler is not None:
+            handlers.assign(request.user, client, handler)
         return Response(ClientSerializer(client).data, status=status.HTTP_201_CREATED)
 
 
@@ -155,11 +198,25 @@ class UpdateClientView(APIView):
         s = ClientRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         d = s.validated_data
+        handler, error = _handler_or_error(request, d)
+        if error is not None:
+            return error
         client.name = d['name']
         client.email = d.get('email')
         client.phone = d.get('phone')
-        client.address = d.get('address')
+        # The form sends address parts, not `address`; only a caller that
+        # sends `address` itself replaces it (it used to be nulled on every edit).
+        if 'address' in request.data:
+            client.address = d.get('address')
         client.save()
+        _save_profile(request, client)
+        # Only touch the handler when the form sent the field: older callers
+        # that don't know about it must not wipe an existing assignment.
+        if 'handlingAdvocateId' in request.data:
+            if handler is not None:
+                handlers.assign(request.user, client, handler)
+            else:
+                handlers.clear(client)
         return Response(ClientSerializer(client).data)
 
 

@@ -46,12 +46,15 @@ export interface DocHandlers {
   onSummary?: (doc: any) => void;
   onVersions?: (doc: any) => void;
   onShareToggle?: (doc: any) => void;
+  onUseInDraft?: (doc: any) => void;
 }
 
 /** The per-document icon actions, shared by the grid card and the list table. */
-export function DocumentActions({ doc, onPreview, onDownload, onDelete, onEdit, onVersions, onShareToggle }: DocHandlers & { doc: any }) {
+export function DocumentActions({ doc, onPreview, onDownload, onDelete, onEdit, onVersions, onShareToggle, onUseInDraft }: DocHandlers & { doc: any }) {
   // Shared in the client portal? Only offered when the doc is on a case/client.
   const canShare = onShareToggle && (doc.caseEntity || doc.client);
+  // Drafting reads PDF and Word files only.
+  const draftable = onUseInDraft && /pdf|word|docx?$/i.test(`${doc.fileType || ''} ${doc.originalName || doc.documentName || ''}`);
   const btn = "p-button-rounded p-button-text p-button-sm";
   return (
     <div className="doc-card-actions flex align-items-center gap-1">
@@ -65,6 +68,7 @@ export function DocumentActions({ doc, onPreview, onDownload, onDelete, onEdit, 
           tooltip={doc.clientVisible ? "Shared with the client in the portal — click to stop sharing" : "Share with the client in the portal"}
           tooltipOptions={{ position: "top" }} />
       )}
+      {draftable && <Button icon="pi pi-file-edit" className={btn} onClick={() => onUseInDraft!(doc)} tooltip="Use in a draft" tooltipOptions={{ position: "top" }} aria-label="Use in a draft" />}
       {onEdit && <Button icon="pi pi-pencil" className={btn} onClick={() => onEdit(doc)} tooltip="Edit" tooltipOptions={{ position: "top" }} aria-label="Edit" />}
       {onDelete && <Button icon="pi pi-trash" className={`${btn} p-button-danger`} onClick={() => onDelete(doc)} tooltip="Delete" tooltipOptions={{ position: "top" }} aria-label="Delete" />}
     </div>

@@ -46,11 +46,18 @@ def can_review(task, user):
     return 'TASK_ASSIGN' in perms
 
 
-def submit(task, by):
-    """Mark a delegated task as submitted for review. No-op for self-assigned
-    tasks, for someone other than the assignee, and for approved tasks."""
+def submit(task, by, note='', hours=None):
+    """Mark a delegated task as submitted for review, with the assignee's report.
+
+    No-op for self-assigned tasks, for someone other than the assignee, and for
+    approved tasks. Every submission is kept (TaskSubmission), so resubmitting
+    after changes were requested adds a round rather than replacing the last.
+    """
     if not needs_review(task) or not is_assignee(task, by) or task.review_status == APPROVED:
         return False
+    from .models import TaskSubmission
+    TaskSubmission.objects.create(task_id=task.id, submitted_by_id=by.id,
+                                  note=(note or '').strip(), hours=hours)
     task.review_status = SUBMITTED
     task.submitted_at = timezone.now()
     task.save(update_fields=['review_status', 'submitted_at'])
@@ -91,10 +98,19 @@ def _notify(recipient_id, task, actor, event_type, subject, lead):
         if recipient is None:
             return
         case = Case.objects.filter(id=task.case_id).only('case_number').first() if task.case_id else None
+        report = ''
+        if event_type == 'TASK_SUBMITTED':
+            from .models import TaskSubmission
+            last = TaskSubmission.objects.filter(task_id=task.id).first()
+            if last and last.note:
+                report = f'\nReport:\n{last.note}\n'
+            if last and last.hours:
+                report += f'Hours: {last.hours}\n'
         body = (lead.format(actor.full_name or 'A colleague') + '\n\n'
                 f'Task : {task.title}\n'
                 f'Case : {case.case_number if case else "not linked"}\n'
-                + (f'Note : {task.review_note}\n' if task.review_note and event_type != 'TASK_SUBMITTED' else ''))
+                + (f'Note : {task.review_note}\n' if task.review_note and event_type != 'TASK_SUBMITTED' else '')
+                + report)
         channels = [service.IN_APP]
         if getattr(recipient, 'email_notifications_enabled', False):
             channels.append(service.EMAIL)

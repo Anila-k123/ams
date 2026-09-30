@@ -10,7 +10,7 @@ interface Props {
   field: SlotField
   value: string
   onChange: (value: string) => void
-  badge?: string // small tag beside the label, e.g. "from AMS" for a prefilled value
+  badge?: string // small tag beside the label, e.g. "from case details" for a value prefilled from the linked case
 }
 
 // Facts are stored as strings; dates use dd/mm/yyyy.

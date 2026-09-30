@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import { ASSISTANT_NAME } from '../constants/assistant';
 import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { useAssistant } from '../contexts/AssistantContext';
@@ -55,7 +56,7 @@ export default function AssistantInput() {
       </div>
 
       <form className="assistant-form flex gap-2" onSubmit={handleSubmit}>
-        <InputText ref={inputRef} className="assistant-input flex-1" placeholder="Ask me anything..."
+        <InputText ref={inputRef} className="assistant-input flex-1" placeholder={`Ask ${ASSISTANT_NAME} anything...`}
           value={inputValue} onChange={(e) => setInputValue(e.target.value)} disabled={isProcessing} />
         <Button type="submit" icon="pi pi-send" className="assistant-send-btn" aria-label="Send" disabled={!inputValue.trim() || isProcessing} />
       </form>

@@ -12,7 +12,7 @@ export default function CaseField({ value, onChange, disabled }: {
 }) {
   return (
     <div className="flex flex-column gap-2">
-      <label className="font-medium text-sm">AMS case <span className="text-color-secondary font-normal">(optional)</span></label>
+      <label className="font-medium text-sm">PactPro case <span className="text-color-secondary font-normal">(optional)</span></label>
       {value ? (
         <div className="flex align-items-center justify-content-between gap-2 p-2 border-round"
           style={{ border: '1px solid var(--card-border)' }}>

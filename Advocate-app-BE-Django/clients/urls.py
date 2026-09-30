@@ -7,6 +7,7 @@ urlpatterns = [
     path('clients/archived', views.ArchivedClientsView.as_view()),
     path('clients/search', views.SearchClientsView.as_view()),
     path('clients/create', views.CreateClientView.as_view()),
+    path('clients/handlers', views.ClientHandlersView.as_view()),
     path('clients/update/<int:pk>', views.UpdateClientView.as_view()),
     path('clients/delete/<int:pk>', views.DeleteClientView.as_view()),
     path('clients/restore/<int:pk>', views.RestoreClientView.as_view()),

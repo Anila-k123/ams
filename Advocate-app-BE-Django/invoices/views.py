@@ -77,6 +77,61 @@ def _parse_tax(data):
     }
 
 
+_TAX_KEYS = ('kind_attn', 'recipient_gstin', 'recipient_state',
+             'recipient_state_code', 'recipient_address', 'place_of_supply')
+
+
+def _recipient_defaults(client_id):
+    """Suggested recipient GST details for a client: the client's own record
+    first (GSTIN, state, address from the client form), then whatever their
+    most recent invoice used. Keys as in _parse_tax; '' where nothing is known.
+
+    The client record wins because it's what the office maintains; the last
+    invoice fills what it doesn't hold (kind attn, an older GSTIN)."""
+    from core.models import Client
+    from clients.models import ClientProfile
+    out = dict.fromkeys(_TAX_KEYS, '')
+    prev = (InvoiceTaxDetail.objects
+            .filter(invoice_id__in=Invoice.objects.filter(client_id=client_id)
+                    .values_list('id', flat=True))
+            .order_by('-id').first())
+    if prev:
+        out.update({k: getattr(prev, k) or '' for k in _TAX_KEYS})
+    profile = ClientProfile.objects.filter(client_id=client_id).first()
+    client = Client.objects.filter(id=client_id).first()
+    gstin = ((profile.gstin if profile else '') or '').strip().upper()
+    if gstin:
+        out['recipient_gstin'] = gstin
+        # A GSTIN starts with the two-digit state code (33 = Tamil Nadu).
+        if gstin[:2].isdigit():
+            out['recipient_state_code'] = gstin[:2]
+    if profile and profile.state:
+        out['recipient_state'] = profile.state.strip()
+        # The last invoice's place of supply may name an older state; blank
+        # lets create rebuild it from the state and code above.
+        out['place_of_supply'] = ''
+    if client and client.address:
+        out['recipient_address'] = client.address
+    return out
+
+
+class RecipientDefaultsView(APIView):
+    """What the invoice form should pre-fill for the case's client."""
+    permission_classes = [RequirePermission('INVOICE_CREATE')]
+
+    def get(self, request):
+        case = Case.objects.filter(id=request.query_params.get('caseId') or 0,
+                                   advocate_id__in=practice_ids(request.user)).first()
+        if case is None or case.client_id is None:
+            return Response({'error': 'Case not found'}, status=http.HTTP_404_NOT_FOUND)
+        d = _recipient_defaults(case.client_id)
+        return Response({'kindAttn': d['kind_attn'], 'recipientGstin': d['recipient_gstin'],
+                         'recipientState': d['recipient_state'],
+                         'recipientStateCode': d['recipient_state_code'],
+                         'recipientAddress': d['recipient_address'],
+                         'placeOfSupply': d['place_of_supply']})
+
+
 def _norm_state(s):
     return ''.join((s or '').lower().split())
 
@@ -203,17 +258,13 @@ class CreateInvoiceView(APIView):
             taxable = round(float(data.get('amount') or 0), 2)
 
         # Recipient GST/tax details, snapshotted on the invoice. Fields left blank are
-        # prefilled from this client's most recent invoice so repeat billing is quick.
+        # filled from the client's record, then their most recent invoice, so a
+        # caller that skips them still gets a proper tax invoice.
         tax = _parse_tax(data)
         if not all(tax.get(k) for k in ('recipient_gstin', 'recipient_state')):
-            prev = (InvoiceTaxDetail.objects
-                    .filter(invoice_id__in=Invoice.objects.filter(client_id=case.client_id)
-                            .values_list('id', flat=True))
-                    .order_by('-id').first())
-            if prev:
-                for k in ('kind_attn', 'recipient_gstin', 'recipient_state',
-                          'recipient_state_code', 'recipient_address', 'place_of_supply'):
-                    tax[k] = tax.get(k) or getattr(prev, k)
+            defaults = _recipient_defaults(case.client_id)
+            for k in _TAX_KEYS:
+                tax[k] = tax.get(k) or defaults[k]
         if not tax['place_of_supply'] and tax['recipient_state']:
             tax['place_of_supply'] = '{} - {}'.format(
                 tax['recipient_state'], tax['recipient_state_code']).strip(' -')

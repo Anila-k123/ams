@@ -15,6 +15,7 @@ import { usePermission } from "../contexts/PermissionContext";
 import "../assets/styles/HearingsPage.css";
 import { useLoading } from "../contexts/LoadingContext";
 import api from "../api/client";
+import { usePageModal } from "../utils/pageModal";
 
 const localizer = momentLocalizer(moment);
 
@@ -106,14 +107,8 @@ function HearingsPage() {
     setShowModal(true);
   };
 
-  // AI Assistant: open create-hearing modal
-  useEffect(() => {
-    const handler = (e: any) => {
-      if (e.detail === "create-hearing" || e.detail === "create-event") openModal();
-    };
-    window.addEventListener("assistant-open-modal", handler);
-    return () => window.removeEventListener("assistant-open-modal", handler);
-  }, []);
+  // Quick Actions / Lisa: open the Add New Event form.
+  usePageModal(["create-hearing", "create-event"], () => openModal());
 
   // Global Search navigation — read incoming state
   useEffect(() => {
@@ -242,11 +237,11 @@ function HearingsPage() {
             onChange={(e) => setField("eventType", e.value)} />
           <div className="grid">
             <div className="col-12 md:col-6">
-              <Calendar className="w-full" placeholder="Date" value={fromISODate(newEvent.date)} dateFormat="dd/mm/yy" showIcon appendTo="self"
+              <Calendar className="w-full" placeholder="Date" value={fromISODate(newEvent.date)} dateFormat="dd/mm/yy" showIcon appendTo={document.body}
                 onChange={(e) => setField("date", toISODate(e.value as Date))} />
             </div>
             <div className="col-12 md:col-6">
-              <Calendar className="w-full" placeholder="Time" value={fromHHMM(newEvent.time)} timeOnly hourFormat="24" appendTo="self"
+              <Calendar className="w-full" placeholder="Time" value={fromHHMM(newEvent.time)} timeOnly hourFormat="24" appendTo={document.body}
                 onChange={(e) => setField("time", toHHMM(e.value as Date))} />
             </div>
           </div>
@@ -263,7 +258,7 @@ function HearingsPage() {
               <InputText name="benchHall" placeholder="Bench / Hall no." value={newEvent.benchHall} onChange={handleChange} />
               <InputText name="judge" placeholder="Judge / Coram" value={newEvent.judge} onChange={handleChange} />
               <label className="event-label">Next hearing date</label>
-              <Calendar value={fromISODate(newEvent.nextDate)} dateFormat="dd/mm/yy" showIcon showButtonBar appendTo="self"
+              <Calendar value={fromISODate(newEvent.nextDate)} dateFormat="dd/mm/yy" showIcon showButtonBar appendTo={document.body}
                 onChange={(e) => setField("nextDate", toISODate(e.value as Date))} />
               <InputTextarea name="outcome" placeholder="Outcome / order (after the hearing)" value={newEvent.outcome} onChange={handleChange} rows={2} />
             </div>

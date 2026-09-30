@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Activity
-from workspace.models import CaseTask
+from workspace.access import visible_tasks
 from core.practice import practice_ids
 
 MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -81,7 +81,14 @@ class DashboardView(APIView):
         recent_clients = list(clients_qs.order_by('-created_at', '-id')[:4])
 
         # --- Financials ---
-        invoices = list(Invoice.objects.filter(advocate_id__in=advocate_ids))
+        # Only for people who may see the money. The dashboard is open to every
+        # signed-in staff member, so without this an intern or receptionist -
+        # who get 403 from /api/invoices - read the same figures here.
+        perms = request.user.permission_codes()
+        sees_invoices = 'INVOICE_VIEW' in perms
+        sees_money = sees_invoices and 'PAYMENT_VIEW' in perms and 'EXPENSE_VIEW' in perms
+        invoices = (list(Invoice.objects.filter(advocate_id__in=advocate_ids))
+                    if sees_invoices else [])
         paid = unpaid = overdue = 0
         for inv in invoices:
             if (inv.status or '').upper() == 'PAID':
@@ -92,11 +99,15 @@ class DashboardView(APIView):
                 unpaid += 1
 
         income_by_month = defaultdict(float)
-        for p in ClientPayment.objects.filter(advocate_id__in=advocate_ids):
+        payments = (ClientPayment.objects.filter(advocate_id__in=advocate_ids)
+                    if sees_money else ClientPayment.objects.none())
+        for p in payments:
             if p.payment_date:
                 income_by_month[p.payment_date.month] += (p.amount or 0)
         expense_by_month = defaultdict(float)
-        for e in Expense.objects.filter(advocate_id__in=advocate_ids):
+        expenses = (Expense.objects.filter(advocate_id__in=advocate_ids)
+                    if sees_money else Expense.objects.none())
+        for e in expenses:
             if e.payment_date:
                 expense_by_month[e.payment_date.month] += (e.amount or 0)
         ie_months = sorted(set(income_by_month) | set(expense_by_month))
@@ -119,6 +130,8 @@ class DashboardView(APIView):
             'courtStats': {'items': court_items},
             'monthlyCases': {'items': monthly_items},
             'incomeExpense': {'items': income_expense_items},
+            # Lets the page hide the finance widgets instead of showing zeros.
+            'canViewFinance': sees_invoices,
             'invoiceSummary': {'paid': paid, 'unpaid': unpaid, 'overdue': overdue},
             'hearings': [hearing_brief(e) for e in sorted(
                 upcoming, key=lambda e: e.date)[:10]],
@@ -145,7 +158,7 @@ class DashboardView(APIView):
                 'deadline': t.deadline.isoformat() if t.deadline else None,
                 'caseId': t.case_id,
             } for t in sorted(
-                CaseTask.objects.filter(advocate_id__in=advocate_ids, completed=False),
+                visible_tasks(request.user).filter(completed=False),
                 key=lambda t: (t.deadline is None, t.deadline or datetime.date.max),
             )[:5]],
             'recentClients': [{'id': c.id, 'name': c.name} for c in recent_clients],

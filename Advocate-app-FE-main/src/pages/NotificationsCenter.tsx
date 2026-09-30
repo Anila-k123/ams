@@ -298,7 +298,7 @@ export default function NotificationsCenter() {
         <Column body={(row) => (
           <div className="flex gap-2">
             <Button size="small" outlined label="View" onClick={(e) => { e.stopPropagation(); setSelected(row); }} />
-            {row.status === "FAILED" && (
+            {row.status === "FAILED" && row.channel === "EMAIL" && (
               <Button size="small" outlined severity="danger" label="Resend" onClick={(e) => { e.stopPropagation(); handleResend(row.id); }} />
             )}
           </div>

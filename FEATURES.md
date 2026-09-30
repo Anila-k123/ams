@@ -142,11 +142,13 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 
 - Client directory table: Name, Email, Phone, Address, City, GSTIN, Status, Actions.
 - Create/Edit modal: name, description, website, billing currency, GSTIN, email, phone, full structured address (building, street, city, district, state, pincode, country).
+  - The fields the Spring `clients` table has no columns for (description, website, billing currency, GSTIN and the address parts) are stored in the managed `client_profile` table (`clients.ClientProfile`). They used to be accepted and silently dropped. `clients.address` is rebuilt from the parts as one line (e.g. *No. 3, Gandhi Street, Tambaram, Chengalpattu, Tamil Nadu - 600045, India*), so reports, PDFs and the client portal keep reading it. A client saved before this keeps their old `address` when edited with empty parts; the edit form shows it as an editable *Saved address* field until the parts are filled in, which replaces it. An edit no longer wipes `address`, which it used to on every save.
 - Real-time keyword search; soft archive + restore; pagination.
+- **Handling advocate:** whoever adds or edits a client (often the front desk) can name the advocate who will take the matter. Only active practice members with `CASE_CREATE` are offered (`GET /api/clients/handlers`). That advocate gets an immediate in-app notice, plus email if their email notifications are on: *"New client assigned to you - <name>"*, with the client's contact details and who added them. The case details reach them outside the app for now; no case is created. Re-saving the same pick sends nothing, and an edit that doesn't send `handlingAdvocateId` leaves the pick alone. Stored in the managed `client_handler` table (`clients.ClientHandler`, one row per client). The list shows it in an **Advocate** column.
 - Inline document modal (view & upload documents for a client).
 - Client-scoped and firm-scoped visibility.
 
-**Endpoints:** `GET /api/clients`, `/my-clients`, `/archived`, `/search`, `/<id>`; `POST /api/clients/create`, `/restore/<id>`; `PUT /api/clients/update/<id>`; `DELETE /api/clients/delete/<id>`. (Guarded by `CLIENT_VIEW`.)
+**Endpoints:** `GET /api/clients`, `/my-clients`, `/archived`, `/search`, `/handlers`, `/<id>`; `POST /api/clients/create`, `/restore/<id>`; `PUT /api/clients/update/<id>`; `DELETE /api/clients/delete/<id>`. (Guarded by `CLIENT_VIEW`.)
 
 ---
 
@@ -205,7 +207,8 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 - **Pre-fill from past hearing dates** (one-click appearance billing).
 - List with status badges (Paid/Unpaid/Overdue); summary cards (paid, unpaid, overdue amounts & counts, monthly revenue).
 - Mark invoice as paid; PDF invoice + payment receipt generation.
-- **Endpoints:** `GET /api/invoices`, `/my-invoices`, `/summary`; `POST /api/invoices/create`, `/pay/<id>`.
+- **Recipient pre-fill:** picking the case in *Generate Invoice* fills the blank recipient fields from `GET /api/invoices/recipient-defaults?caseId=`. The client's record comes first: GSTIN, state, and the address from the client form, with the **state code taken from the GSTIN's first two digits** (33 = Tamil Nadu). The client's last invoice fills the rest (e.g. Kind Attn). Switching cases replaces the suggestions but keeps anything typed over them. `POST /create` applies the same defaults to blank fields, so API callers get them too.
+- **Endpoints:** `GET /api/invoices`, `/my-invoices`, `/summary`, `/recipient-defaults`; `POST /api/invoices/create`, `/pay/<id>`.
 
 **Expenses**
 - Case-centric view: pick a case → see its expenses & payments.
@@ -318,6 +321,8 @@ A floating chat panel with two modes:
 **LLM chat** (`/api/assistant/chat`) — streaming **SSE** conversation grounded strictly in the logged-in advocate's data (read-only context: caseload, case details, invoices, payments, tasks).
 - Pluggable provider: **local** (ngrok-hosted), **Google Gemini**, or **OpenAI**.
 - Temperature 0.2; system prompt forbids hallucination; context capped (≈2 cases/query) to stay within token budget.
+- **Case briefings:** asking about a case or client ("what is the R. Murugan case") gets a prose summary, then *Where it stands* and *Follow-up*. The summary draws on the court record saved at import (`get_court_record`: acts, stage, coram, next date, hearing history, orders, interim applications). It reads both record layouts: High Court (`hearings`, flat case numbers) and district court (`history`, a `case_details` table, and extra tables such as IA status and transfers). It flags a court "next date" that has already passed, since `today` is in the context. Cases can be found by their court registration number (e.g. "AS 700/2025") even though an import stores the CNR as the case number.
+- **Conversation memory (per browser, per user):** each question is sent with the last 3 exchanges with the model and the case ids its previous answer used (returned in the stream's final `done` frame). A follow-up that refers back ("its next hearing", "what did he file") and names no case number stays on that case. Naming another case switches to it. The server treats the history as untrusted: only user/assistant turns, at most 8 turns and 8,000 characters in total; every remembered case id is re-checked against the user's practice. Only the latest message carries case data, so facts always come from a fresh read. Short follow-ups after a model answer skip the keyword router. Chats are stored in the browser under `advocate-assistant-history:<advocateId>`, so a different login on the same browser never sees (or sends) someone else's chat. Nothing is stored on the server yet.
 
 ---
 
@@ -345,7 +350,10 @@ A floating chat panel with two modes:
 ## 18. Global Search & Quick Actions
 
 - **Ctrl+K global search** across cases, clients, documents, invoices, expenses, tasks, events, hearings, and payments — up to 5 results per category, each navigating to the right screen.
-- **Quick Actions modal:** one-click create for Case, Client, Invoice, Expense, Hearing, Task, and Document upload.
+- **Quick Actions modal:** one-click create for Client, Case, Hearing, Invoice, Document upload and Expense, plus New Draft / Open Drafts.
+  - **New Case** (and Lisa's "create case") opens the full **Add Case to Workspace** page (`/dashboard/cases/new`), which saves the court record, parties and upcoming hearings. The Cases-page pop-up only saves the case row, so it is kept for Edit Case only.
+  - The other actions open the target page's form through `utils/pageModal.ts`. The request is parked until the lazy-loaded page mounts (`usePageModal`), so a first visit can't miss it. It used to be a window event on a 400–450 ms timer, which a slow page load silently missed.
+  - **Add Expense** opened without a case shows a required case picker. Before, it saved the expense attached to no case.
 
 **Endpoints:** `GET /api/search?q=` (and `/search/global`).
 

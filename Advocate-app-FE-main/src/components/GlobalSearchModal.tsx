@@ -4,10 +4,17 @@ import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { ProgressSpinner } from 'primereact/progressspinner';
 import { useSearch } from '../contexts/SearchContext';
+import { usePermission } from '../contexts/PermissionContext';
 import SearchResultCard from './SearchResultCard';
 import '../assets/styles/SearchModal.css';
 
 const SECTIONS = ['clients', 'cases', 'hearings', 'invoices', 'expenses', 'documents', 'payments'];
+
+// What each section needs; the server leaves out groups the user can't see.
+const SECTION_PERMS: Record<string, string> = {
+  clients: 'CLIENT_VIEW', cases: 'CASE_VIEW', hearings: 'EVENT_VIEW', invoices: 'INVOICE_VIEW',
+  expenses: 'EXPENSE_VIEW', documents: 'DOCUMENT_VIEW', payments: 'PAYMENT_VIEW',
+};
 
 const SECTION_LABELS: Record<string, string> = {
   clients: 'Clients',
@@ -98,12 +105,16 @@ export default function GlobalSearchModal({ isOpen, onClose, onNavigate }: Props
     onNavigate(section, item);
   };
 
+  const { hasPermission } = usePermission() as any;
+  const searchable = SECTIONS.filter((sec) => hasPermission(SECTION_PERMS[sec]))
+    .map((sec) => SECTION_LABELS[sec].toLowerCase());
+
   return (
     <Dialog visible={isOpen} onHide={onClose} showHeader={false} dismissableMask closeOnEscape={false} position="top"
       className="global-search-modal" style={{ width: '40rem' }} breakpoints={{ '640px': '95vw' }} contentClassName="p-0">
       <div className="global-search-input flex align-items-center gap-2 p-3">
         <i className="pi pi-search global-search-input-icon" />
-        <InputText ref={inputRef} className="flex-1" placeholder="Search clients, cases, documents, payments..."
+        <InputText ref={inputRef} className="flex-1" placeholder={`Search ${searchable.slice(0, 4).join(', ')}...`}
           value={query} onChange={(e) => setQuery(e.target.value)} />
         {query && (
           <Button text rounded icon="pi pi-times" aria-label="Clear" className="global-search-clear"
@@ -139,7 +150,7 @@ export default function GlobalSearchModal({ isOpen, onClose, onNavigate }: Props
               </>
             ) : (
               <div className="global-search-hint">
-                Start typing to search across clients, cases, hearings, documents, invoices, expenses, and payments.
+                Start typing to search across {searchable.join(', ')}.
               </div>
             )}
           </div>

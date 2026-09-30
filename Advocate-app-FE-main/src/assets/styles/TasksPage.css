@@ -52,3 +52,4 @@
 .task-case-chip { color: var(--primary); }
 .task-doc-chip { color: var(--warning); }
 .task-case-chip:hover, .task-doc-chip:hover { text-decoration: underline; }
+

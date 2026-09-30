@@ -44,3 +44,28 @@
   color: var(--text-muted); pointer-events: none; z-index: 1;
 }
 .p-input-icon-left > .p-inputtext { padding-left: 2.25rem; }
+
+/* Date pickers, app-wide. The Lara theme's pop-up calendar is large (about
+   3rem day cells), and inside a dialog it grew past the dialog's edge. One
+   compact size for every pop-up picker; inline calendars keep the theme size,
+   and time-only pickers keep their natural width. The pop-ups are appended to
+   <body> (never appendTo="self" inside a dialog, which clips them). */
+.p-datepicker:not(.p-datepicker-inline) {
+  padding: 0.5rem;
+  font-size: 0.875rem;
+}
+.p-datepicker:not(.p-datepicker-inline):not(.p-datepicker-timeonly) {
+  width: 18rem !important;
+  min-width: 0 !important;
+}
+.p-datepicker:not(.p-datepicker-inline) .p-datepicker-header { padding: 0.25rem 0.25rem 0.5rem; }
+.p-datepicker:not(.p-datepicker-inline) .p-datepicker-calendar { margin: 0; }
+.p-datepicker:not(.p-datepicker-inline) .p-datepicker-calendar th,
+.p-datepicker:not(.p-datepicker-inline) .p-datepicker-calendar td { padding: 0.125rem; }
+.p-datepicker:not(.p-datepicker-inline) .p-datepicker-calendar td > span {
+  width: 2rem;
+  height: 2rem;
+}
+.p-datepicker:not(.p-datepicker-inline) .p-datepicker-buttonbar { padding: 0.5rem 0 0; }
+.p-datepicker:not(.p-datepicker-inline) .p-timepicker { padding: 0.25rem; }
+.p-datepicker:not(.p-datepicker-inline) .p-timepicker span { font-size: 1rem; }

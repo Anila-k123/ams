@@ -202,7 +202,7 @@ class DraftSessionCreateSerializer(serializers.ModelSerializer):
         attrs['client'] = project.client if project is not None else None
         if attrs.get('ams_task_id') and not getattr(project, 'case_id', None):
             raise serializers.ValidationError(
-                {'ams_task_id': 'Link an AMS case before attaching an AMS task.'})
+                {'ams_task_id': 'Link a case before attaching a task.'})
         # Drafting projects are shared rows: the case behind one, and the task, must be
         # in the caller's practice (the same scope as /api/drafting/link-case/).
         if request is not None and getattr(project, 'case_id', None):

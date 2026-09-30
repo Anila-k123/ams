@@ -10,7 +10,7 @@ the advocate who raises a bill and the accountant who collects it:
 Fires inline on the request (like client_events) and delivers immediately, so a
 new invoice reaches the accountant's bell/inbox at once. Never raises - a
 notification must not fail the invoice or payment it reports. Recipients are
-role-relevant (INVOICE_VIEW / CASE_VIEW) via the same helpers the scheduled
+role-relevant (INVOICE_VIEW / CASE_ALERTS) via the same helpers the scheduled
 reminders use, and the person who performed the action is not pinged about it.
 """
 
@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 
-from core.practice import alert_members, firm_wide_members
+from core.practice import (alert_members, case_alert_permission,
+                           firm_wide_members, practice_root)
 from notifications import service
 from notifications.events import _channels
 
@@ -57,7 +58,8 @@ def invoice_raised(actor, invoice, case):
     try:
         owner = case.advocate if (case and case.advocate_id) else actor
         recipients = (alert_members(owner, permission='INVOICE_VIEW')
-                      + firm_wide_members(permission='INVOICE_VIEW'))
+                      + firm_wide_members(practice_root(owner),
+                                              permission='INVOICE_VIEW'))
         number = getattr(invoice, 'invoice_number', None) or getattr(invoice, 'id', '')
         client = getattr(getattr(invoice, 'client', None), 'name', '') or 'client'
         subject = 'Invoice {} raised - to collect'.format(number)
@@ -79,12 +81,12 @@ def payment_settled(actor, ref, case, amount=None):
     """A payment was recorded -> tell the case's advocates it is settled.
 
     `ref` is the invoice or payment row (for its number/id). Reaches the case's
-    team advocates (CASE_VIEW); the person who recorded it is not pinged.
+    team advocates (CASE_ALERTS); the person who recorded it is not pinged.
     """
     try:
         if case is None or not getattr(case, 'advocate_id', None):
             return []
-        recipients = alert_members(case.advocate, permission='CASE_VIEW')
+        recipients = alert_members(case.advocate, permission=case_alert_permission())
         number = getattr(ref, 'invoice_number', None) or getattr(ref, 'id', '')
         subject = 'Payment received - {}'.format(
             getattr(case, 'case_number', '') or number)
@@ -106,7 +108,7 @@ def payment_settled(actor, ref, case, amount=None):
 def hearing_added_team(actor, event, case):
     """A hearing was added to a case -> tell the case's team immediately.
 
-    Reaches the case's team advocates (CASE_VIEW) in-app + email right away, so
+    Reaches the case's team advocates (CASE_ALERTS) in-app + email right away, so
     the whole team knows a date is set - not only when the scheduled look-ahead
     reminder fires near the date. The client is emailed separately (immediately)
     by client_events.hearing_scheduled. The person who added it is not pinged.
@@ -114,7 +116,7 @@ def hearing_added_team(actor, event, case):
     try:
         if case is None or not getattr(case, 'advocate_id', None):
             return []
-        recipients = alert_members(case.advocate, permission='CASE_VIEW')
+        recipients = alert_members(case.advocate, permission=case_alert_permission())
         title = getattr(event, 'title', '') or (getattr(event, 'event_type', '') or 'Hearing')
         tm = getattr(event, 'time', None)
         subject = 'New hearing - {}'.format(getattr(case, 'case_number', '') or title)
@@ -130,4 +132,33 @@ def hearing_added_team(actor, event, case):
             entity='CaseEvent', entity_id=getattr(event, 'id', None))
     except Exception:                                        # noqa: BLE001
         log.exception('hearing_added_team notification failed')
+        return []
+
+
+def client_assigned(actor, client, advocate):
+    """A client was added (or handed over) with a named handling advocate ->
+    tell that advocate at once, in-app + email per their preference.
+
+    The case details are passed on outside the app for now, so the notice only
+    says who the client is and who took them in. Saying so in the body keeps
+    the advocate from waiting for a case to appear. Not sent when the person
+    who added the client is the handler.
+    """
+    try:
+        if client is None or advocate is None:
+            return []
+        subject = 'New client assigned to you - {}'.format(client.name or 'client')
+        body = ('A new client has been assigned to you.\n\n'
+                'Client   : {}\nPhone    : {}\nEmail    : {}\nAddress  : {}\n'
+                'Added by : {}\n\n'
+                'The case details will be shared with you directly. Open the case in '
+                'AMS once you have them.\n').format(
+            client.name or '-', client.phone or '-', client.email or '-',
+            client.address or '-', getattr(actor, 'full_name', '') or '-')
+        return _fanout_now(
+            [advocate], 'CLIENT_REGISTERED', subject, body,
+            actor_id=getattr(actor, 'id', None), client_id=client.id,
+            entity='Client', entity_id=client.id)
+    except Exception:                                        # noqa: BLE001
+        log.exception('client_assigned notification failed')
         return []

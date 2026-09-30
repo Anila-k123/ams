@@ -59,7 +59,7 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
     const t = setTimeout(() => {
       amsDocumentsApi.list(query)
         .then(r => setAmsDocs(r.content))
-        .catch(() => setError('Could not load your AMS documents.'))
+        .catch(() => setError('Could not load your PactPro documents.'))
         .finally(() => setLoading(false))
     }, 300)
     return () => clearTimeout(t)
@@ -93,7 +93,7 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
       onAdd(samples)
       onHide()
     } catch {
-      setError('Could not open one of those documents from AMS — try again.')
+      setError('Could not open one of those documents — try again.')
     } finally {
       setBusy(false)
     }
@@ -145,7 +145,7 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
               borderBottom: `2px solid ${tab === t ? 'var(--primary-color)' : 'transparent'}`,
             }}>
             <i className={`mr-2 ${t === 'existing' ? 'pi pi-file' : 'pi pi-upload'}`} />
-            {t === 'existing' ? (fromAms ? 'My AMS Documents' : 'My Documents') : 'Upload New'}
+            {t === 'existing' ? (fromAms ? 'My PactPro Documents' : 'My Documents') : 'Upload New'}
           </button>
         ))}
       </div>
@@ -156,12 +156,12 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
           <span className="p-input-icon-left w-full mb-3 block">
             <i className="pi pi-search" />
             <InputText value={query} onChange={e => setQuery(e.target.value)}
-              placeholder="Search your AMS documents by name, case or client…" className="w-full" />
+              placeholder="Search your PactPro documents by name, case or client…" className="w-full" />
           </span>
           <div style={{ maxHeight: '46vh', overflow: 'auto' }}>
             {loading && <div className="text-color-secondary p-3">Loading…</div>}
             {!loading && amsDocs.length === 0 && (
-              <div className="text-color-secondary p-3">No PDF or Word documents in your AMS yet.</div>
+              <div className="text-color-secondary p-3">No PDF or Word documents in PactPro yet.</div>
             )}
             {!loading && amsDocs.map(d => {
               const already = !!d.sample && alreadySelected.includes(d.sample.id)
@@ -187,7 +187,7 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
             })}
           </div>
           <p className="text-xs text-color-secondary mt-2 mb-0">
-            Documents are read from AMS; the first time you use one it is prepared for drafting.
+            Documents come from your case files; the first time you use one it is prepared for drafting.
           </p>
         </div>
       ) : tab === 'existing' ? (

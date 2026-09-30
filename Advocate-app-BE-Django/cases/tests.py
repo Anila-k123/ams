@@ -105,3 +105,37 @@ class CaseNumberScopeTest(TestCase):
         self.assertFalse(mine.deleted, 'the archived row is revived, not duplicated')
         self.assertEqual(Case.objects.filter(advocate_id=self.firm_a.id,
                                              case_number=SHARED_NUMBER).count(), 1)
+
+
+class CaseTimelineTest(TestCase):
+    """The timeline is built from the case's records, filtered by permission."""
+
+    def setUp(self):
+        import datetime
+        from core.models import CaseEvent, Invoice
+        from core.testing import make_advocate, make_case
+        self.senior = make_advocate(permissions=('CASE_VIEW', 'EVENT_VIEW', 'INVOICE_VIEW'))
+        self.junior = make_advocate(permissions=('CASE_VIEW', 'EVENT_VIEW'),
+                                    parent_advocate_id=self.senior.id)
+        self.case = make_case(self.senior, created_at=datetime.date(2026, 9, 1))
+        CaseEvent.objects.create(case_id=self.case.id, advocate_id=self.senior.id,
+                                 title='Hearing', event_type='HEARING',
+                                 date=datetime.date(2026, 10, 5))
+        Invoice.objects.create(invoice_number='TL-INV-1', amount=1000.0,
+                               invoice_date=datetime.date(2026, 9, 10),
+                               due_date=datetime.date(2026, 9, 20), status='UNPAID',
+                               advocate_id=self.senior.id, case_id=self.case.id,
+                               client_id=self.case.client_id)
+
+    def _types(self, user):
+        from core.testing import auth
+        r = self.client.get('/api/cases/{}/timeline'.format(self.case.id), **auth(user))
+        self.assertEqual(r.status_code, 200)
+        return [row['eventType'] for row in r.json()['content']]
+
+    def test_built_newest_first(self):
+        self.assertEqual(self._types(self.senior),
+                         ['HEARING_CREATED', 'INVOICE_GENERATED', 'CASE_CREATED'])
+
+    def test_money_hidden_without_invoice_view(self):
+        self.assertNotIn('INVOICE_GENERATED', self._types(self.junior))

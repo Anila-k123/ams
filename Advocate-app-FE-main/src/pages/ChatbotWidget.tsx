@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { ASSISTANT_NAME } from "../constants/assistant";
 import { useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { InputText } from "primereact/inputtext";
@@ -10,7 +11,7 @@ export default function ChatbotWidget() {
   const [messages, setMessages] = useState<{ sender: string; text: string }[]>([
     {
       sender: "bot",
-      text: "⚖️ Hello! I am your Antigravity Legal Assistant. How can I help you manage your practice today?",
+      text: `⚖️ Hello! I'm ${ASSISTANT_NAME}, your AI legal assistant. How can I help you manage your practice today?`,
     },
   ]);
   const [input, setInput] = useState("");
@@ -121,8 +122,8 @@ export default function ChatbotWidget() {
           rounded
           icon="pi pi-comments"
           className="chatbot-bubble-btn"
-          aria-label="Ask AI Assistant"
-          tooltip="Ask AI Assistant"
+          aria-label={`Ask ${ASSISTANT_NAME}`}
+          tooltip={`Ask ${ASSISTANT_NAME}`}
           tooltipOptions={{ position: "left" }}
           onClick={() => setIsOpen(true)}
         />
@@ -134,7 +135,7 @@ export default function ChatbotWidget() {
             <div className="flex align-items-center gap-2">
               <span className="bot-avatar">⚖️</span>
               <div>
-                <h4>Advocate AI Assistant</h4>
+                <h4>{ASSISTANT_NAME} · AI legal assistant</h4>
                 <p>Online Practice Assistant</p>
               </div>
             </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { usePermission } from "../contexts/PermissionContext";
 import { useNavigate } from "react-router-dom";
 import { Button } from "primereact/button";
 import { Skeleton } from "primereact/skeleton";
@@ -8,6 +9,7 @@ import "../assets/styles/Communication.css";
 
 export default function CommunicationDashboard() {
   const navigate = useNavigate();
+  const { hasPermission } = usePermission() as any;
   const { token } = useAuth();
   const [settings, setSettings] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
@@ -115,7 +117,9 @@ export default function CommunicationDashboard() {
 
       <h3>Quick Actions</h3>
       <div className="flex gap-2 flex-wrap">
-        <Button outlined icon="pi pi-cog" label="Configure Settings" onClick={() => navigate("/dashboard/communication/settings")} />
+        {hasPermission("SETTINGS_EDIT") && (
+          <Button outlined icon="pi pi-cog" label="Configure Settings" onClick={() => navigate("/dashboard/communication/settings")} />
+        )}
         <Button outlined icon="pi pi-chart-line" label="View History" onClick={() => navigate("/dashboard/communication/history")} />
       </div>
     </div>

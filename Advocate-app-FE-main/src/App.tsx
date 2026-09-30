@@ -4,6 +4,8 @@ import { ProgressSpinner } from 'primereact/progressspinner';
 import ErrorBoundary from './components/ErrorBoundary';
 import { isTokenExpired, logoutAndRedirect } from './utils/auth';
 import { useAuth } from './context/AuthContext';
+import { PermissionProvider } from './contexts/PermissionContext';
+import PermissionRoute from './components/PermissionRoute';
 
 // Lazy-loaded route-level pages
 const Homepage = lazy(() => import('./pages/Homepage'));
@@ -71,8 +73,8 @@ function App() {
             <Route path="/cases" element={<ProtectedRoute><CasesForRole /></ProtectedRoute>} />
 
             {/* Drafting, full-screen. Clients are refused by the backend gate; send them home. */}
-            <Route path="/samples/:id/*" element={<ProtectedRoute><NotForClient><DraftingSampleTool /></NotForClient></ProtectedRoute>} />
-            <Route path="/draft/:sessionId" element={<ProtectedRoute><NotForClient><DraftingEditor /></NotForClient></ProtectedRoute>} />
+            <Route path="/samples/:id/*" element={<ProtectedRoute><NotForClient><PermissionProvider><PermissionRoute permissions="DRAFT_VIEW"><DraftingSampleTool /></PermissionRoute></PermissionProvider></NotForClient></ProtectedRoute>} />
+            <Route path="/draft/:sessionId" element={<ProtectedRoute><NotForClient><PermissionProvider><PermissionRoute permissions="DRAFT_VIEW"><DraftingEditor /></PermissionRoute></PermissionProvider></NotForClient></ProtectedRoute>} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

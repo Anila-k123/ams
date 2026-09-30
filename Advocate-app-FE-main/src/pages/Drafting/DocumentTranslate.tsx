@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { DRAFTING } from './routes'
+import { usePermission } from '../../contexts/PermissionContext'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { Button } from 'primereact/button'
 import { Dropdown } from 'primereact/dropdown'
@@ -103,6 +104,7 @@ const shell: CSSProperties = { height: '100vh', display: 'flex', flexDirection: 
  * polling, mirroring the summary view.
  */
 export default function DocumentTranslate() {
+  const { hasPermission } = usePermission() as any
   const { id } = useParams()
   const sampleId = Number(id)
   const navigate = useNavigate()
@@ -211,8 +213,10 @@ export default function DocumentTranslate() {
         <div style={paneStyle}>
           <div style={paneHead}>
             <span style={paneTitle}><i className="pi pi-language mr-2" />Translation</span>
-            <Button label="Download PDF" icon="pi pi-file-pdf" size="small" outlined
-              disabled={!(sample.translation_json?.length || sample.translation)} onClick={downloadPdf} />
+            {hasPermission('DRAFT_EXPORT') && (
+              <Button label="Download PDF" icon="pi pi-file-pdf" size="small" outlined
+                disabled={!(sample.translation_json?.length || sample.translation)} onClick={downloadPdf} />
+            )}
           </div>
 
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

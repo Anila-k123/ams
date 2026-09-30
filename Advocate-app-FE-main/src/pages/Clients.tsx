@@ -22,6 +22,7 @@ import ReportService from "../services/ReportService";
 import usePagination from "../hooks/usePagination";
 import "../assets/styles/Clients.css";
 import ClientPortalAccess from "../components/ClientPortalAccess";
+import { usePageModal } from "../utils/pageModal";
 
 const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED"].map((c) => ({ label: c, value: c }));
 
@@ -59,6 +60,15 @@ function Clients() {
   const { success, error } = toast;
   const [portalFor, setPortalFor] = useState<any>(null);   // client whose portal access is open
   const { hasPermission } = usePermission() as any;
+  // People who can take a new client's case, for the "Handling advocate" pick.
+  const [handlers, setHandlers] = useState<any[]>([]);
+  const canPickHandler = hasPermission("CLIENT_CREATE") || hasPermission("CLIENT_EDIT");
+  useEffect(() => {
+    if (!showModal || !canPickHandler || handlers.length) return;
+    api.get("/api/clients/handlers")
+      .then((res: any) => setHandlers(res.data || []))
+      .catch(() => { /* the form still works without the pick */ });
+  }, [showModal, canPickHandler, handlers.length]);
   const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived] });
   const searchedFromGlobalNav = useRef(!!(location.state as any)?.search);
 
@@ -106,25 +116,23 @@ function Clients() {
     fetchClients(searchKeyword);
   }, [fetchClients, searchKeyword]);
 
-  // AI Assistant: open create-client modal + search
+  // Quick Actions / Lisa: open the New Client form.
+  usePageModal(["create-client"], () => {
+    setNewClient(emptyClient);
+    setEditClientId(null);
+    setShowModal(true);
+  });
+
+  // AI Assistant: search
   useEffect(() => {
-    const handleModal = (e: any) => {
-      if (e.detail === "create-client") {
-        setNewClient(emptyClient);
-        setEditClientId(null);
-        setShowModal(true);
-      }
-    };
     const handleSearch = (e: any) => {
       if (e.detail?.query) {
         setSearchKeyword(e.detail.query);
         fetchClients(e.detail.query);
       }
     };
-    window.addEventListener("assistant-open-modal", handleModal);
     window.addEventListener("assistant-search", handleSearch);
     return () => {
-      window.removeEventListener("assistant-open-modal", handleModal);
       window.removeEventListener("assistant-search", handleSearch);
     };
   }, []);
@@ -158,13 +166,27 @@ function Clients() {
     setNewClient({ ...newClient, [e.target.name]: e.target.value });
   };
 
+  const ADDRESS_PARTS = ["building", "street", "city", "district", "state", "pincode", "country"];
+  // Decided when the dialog opens, not per keystroke, so the field doesn't
+  // vanish the moment the user starts typing a part.
+  const [legacyAddress, setLegacyAddress] = useState(false);
+  const openEdit = (c: any) => {
+    setNewClient({ ...c, handlingAdvocateId: c.handlingAdvocate?.id ?? null });
+    setLegacyAddress(!!(c.address && ADDRESS_PARTS.every((k) => !c[k])));
+    setEditClientId(c.id);
+    setShowModal(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // handlingAdvocate is the server's read-back; the write field is its id.
+      const { handlingAdvocate, ...rest } = newClient;
+      const payload = { ...rest, handlingAdvocateId: newClient.handlingAdvocateId ?? null };
       if (editClientId) {
-        await withLoading(api.put(`/api/clients/update/${editClientId}`, newClient), "Updating Client...");
+        await withLoading(api.put(`/api/clients/update/${editClientId}`, payload), "Updating Client...");
       } else {
-        await withLoading(api.post("/api/clients/create", newClient), "Saving Client...");
+        await withLoading(api.post("/api/clients/create", payload), "Saving Client...");
       }
       setNewClient(emptyClient);
       setShowModal(false);
@@ -280,7 +302,7 @@ function Clients() {
       ) : (
         <>
           {hasPermission("CLIENT_EDIT") && (
-            <Button size="small" text label="Edit" icon="pi pi-pencil" onClick={() => { setNewClient(c); setEditClientId(c.id); setShowModal(true); }} />
+            <Button size="small" text label="Edit" icon="pi pi-pencil" onClick={() => openEdit(c)} />
           )}
           {hasPermission("CLIENT_EDIT") && (
             <Button size="small" text label="Logins" icon="pi pi-users" tooltip="Logins for this client" onClick={() => setPortalFor(c)} />
@@ -290,8 +312,10 @@ function Clients() {
           )}
         </>
       )}
-      <Button size="small" text rounded icon="pi pi-file-pdf" tooltip="Export PDF" aria-label="Export PDF"
-        onClick={() => ReportService.downloadClientDetail(c.id, c.name)} />
+      {hasPermission("REPORT_EXPORT") && (
+        <Button size="small" text rounded icon="pi pi-file-pdf" tooltip="Export PDF" aria-label="Export PDF"
+          onClick={() => ReportService.downloadClientDetail(c.id, c.name)} />
+      )}
     </div>
   );
 
@@ -337,8 +361,32 @@ function Clients() {
             </div>
             {field("gstin", "GSTIN", "Enter GST number")}
           </div>
+          {canPickHandler && (
+            <div className="client-form-row">
+              <div className="client-form-field">
+                <label htmlFor="cf-handlingAdvocate">Handling Advocate</label>
+                <Dropdown inputId="cf-handlingAdvocate" value={newClient.handlingAdvocateId ?? null}
+                  options={handlers} optionLabel="name" optionValue="id" showClear filter
+                  placeholder="Who will take this client's case?"
+                  onChange={(e) => setNewClient({ ...newClient, handlingAdvocateId: e.value ?? null })} />
+                <small className="p-text-secondary">They're notified in the app and by email when you save.</small>
+              </div>
+            </div>
+          )}
 
           <p className="client-form-section">Client's Address (Primary)</p>
+          {/* Clients saved before the address was split into parts have only
+              this one line. Show it so it can be read and corrected; typing
+              the parts below replaces it on save. */}
+          {editClientId && legacyAddress && (
+            <div className="client-form-row">
+              <div className="client-form-field" style={{ flex: 1 }}>
+                <label htmlFor="cf-address">Saved address</label>
+                <InputText id="cf-address" name="address" value={newClient.address || ""} onChange={handleChange} />
+                <small className="p-text-secondary">Saved before the address had separate fields. Fill in the fields below to replace it.</small>
+              </div>
+            </div>
+          )}
           <div className="client-form-row">
             {field("building", "Building", "Name of Building")}
             {field("street", "Street", "Name of Street")}
@@ -373,6 +421,10 @@ function Clients() {
             <Column header="Name" body={cell("name")} />
             <Column header="Email" body={cell("email")} />
             <Column header="Phone" body={cell("phone")} />
+            <Column header="Advocate" body={(c: any) => {
+              const v = c.handlingAdvocate?.name || "—";
+              return <span className="clients-cell" title={v}>{v}</span>;
+            }} />
             <Column header="GSTIN" body={cell("gstin", true)} />
             <Column header="City" body={cell("city", true)} />
             <Column header="State" body={cell("state", true)} />
@@ -410,10 +462,12 @@ function Clients() {
                 ))}
               </div>
             )}
-            <div className="flex gap-2 align-items-center mt-3">
-              <input type="file" onChange={(e) => setUploadClientDocFile(e.target.files?.[0] || null)} />
-              <Button icon="pi pi-upload" label="Upload" onClick={uploadClientDoc} disabled={!uploadClientDocFile} />
-            </div>
+            {hasPermission("DOCUMENT_UPLOAD") && (
+              <div className="flex gap-2 align-items-center mt-3">
+                <input type="file" onChange={(e) => setUploadClientDocFile(e.target.files?.[0] || null)} />
+                <Button icon="pi pi-upload" label="Upload" onClick={uploadClientDoc} disabled={!uploadClientDocFile} />
+              </div>
+            )}
           </>
         )}
       </Dialog>

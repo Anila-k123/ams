@@ -32,6 +32,15 @@ def _scope(advocate_id):
     return practice_ids(adv) if adv else [advocate_id]
 
 
+def _tasks(advocate_id):
+    """Tasks this user may see - the same rule as the Tasks page (workspace.access)."""
+    from workspace.access import visible_tasks
+    adv = Advocate.objects.filter(id=advocate_id).first()
+    if adv is None:
+        return CaseTask.objects.none()
+    return visible_tasks(adv)
+
+
 def _owned_case(advocate_id, case_id):
     """Return the case if it's in this user's practice (and isn't archived), else None."""
     try:
@@ -45,9 +54,14 @@ def _owned_case(advocate_id, case_id):
 
 def find_case(advocate_id, query):
     q = (query or '').strip()
-    qs = Case.objects.select_related('client').filter(advocate_id__in=_scope(advocate_id), deleted=False).filter(
-        Q(case_number__icontains=q) | Q(case_title__icontains=q) | Q(status__icontains=q)
-    )[:10]
+    match = Q(case_number__icontains=q) | Q(case_title__icontains=q) | Q(status__icontains=q)
+    # A court import stores the CNR as case_number and puts the registration
+    # number ("AS /700/2025") only in the description, so "AS 700/2025" would
+    # otherwise find nothing. Number-like queries only: a plain word would match
+    # half the descriptions in the practice.
+    if any(ch.isdigit() for ch in q):
+        match |= Q(description__icontains=q)
+    qs = Case.objects.select_related('client').filter(advocate_id__in=_scope(advocate_id), deleted=False).filter(match)[:10]
     return {'cases': [{
         'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title,
         'status': c.status, 'client': c.client.name if c.client_id and c.client else None,
@@ -131,8 +145,8 @@ def overdue_tasks(advocate_id, limit=30):
     newest deadline last. Case numbers are resolved in one extra query so the
     rows are readable without a join per task."""
     today = datetime.date.today()
-    qs = CaseTask.objects.filter(
-        advocate_id__in=_scope(advocate_id), completed=False, deadline__lt=today
+    qs = _tasks(advocate_id).filter(
+        completed=False, deadline__lt=today
     ).exclude(deadline=None).order_by('deadline')
     total = qs.count()
     rows = list(qs[:limit])
@@ -316,6 +330,101 @@ def get_case_summary(advocate_id, case_id):
     }
 
 
+def _clean(v):
+    """A court-API string, or None when it's a placeholder like '' / '--' / '~~~~'."""
+    s = str(v or '').strip()
+    return s if s.strip('-~ ') else None
+
+
+_MAX_HISTORY = 15
+
+
+def _table(t):
+    """{'title', 'rows': [{header: cell}]} from a court-API table."""
+    rows = t.get('rows') or []
+    head = rows[0] if rows and isinstance(rows[0], list) else []
+    body = [dict(zip(head, r)) for r in rows[1:11] if isinstance(r, list)]
+    return {'title': _clean(t.get('title')), 'rows': body}
+
+
+def get_court_record(advocate_id, case_id):
+    """What the court itself says about the case, from the raw response saved
+    at import (courtsearch.ImportedCaseRecord): acts, stage, coram, next date,
+    hearing history, orders, filings. The cases row keeps only a few fields,
+    so without this the assistant can list fields but can't say what the case
+    is about or where it stands. Trimmed to what a summary needs - the raw
+    record is large and every token of it goes into the prompt."""
+    c = _owned_case(advocate_id, case_id)
+    if c is None:
+        return {'error': 'Case not found or not accessible.'}
+    from courtsearch.models import ImportedCaseRecord
+    rec = ImportedCaseRecord.objects.filter(case_id=c.id).order_by('-fetched_at').first()
+    if rec is None:
+        return {'available': False}
+    raw = rec.raw if isinstance(rec.raw, dict) else {}
+    first = (raw.get('cases') or [{}])[0] if isinstance(raw.get('cases'), list) else raw
+    d = first.get('detail') if isinstance(first.get('detail'), dict) else first
+    status = d.get('case_status') if isinstance(d.get('case_status'), dict) else {}
+
+    # High Court records list sittings under 'hearings' with 'business_on_date';
+    # district-court records use 'history', where 'business_date' is the day
+    # heard and 'hearing_date' the next date it was put off to.
+    hearings = []
+    for h in (d.get('hearings') or d.get('history') or [])[:_MAX_HISTORY]:
+        if not isinstance(h, dict):
+            continue
+        heard = h.get('business_on_date') or h.get('business_date')
+        row = {'date': _clean(heard or h.get('hearing_date')),
+               'purpose': _clean(h.get('purpose')), 'judge': _clean(h.get('judge'))}
+        if heard and _clean(h.get('hearing_date')):
+            row['nextDate'] = _clean(h.get('hearing_date'))
+        hearings.append(row)
+    # District records keep the case numbers in a 'case_details' table.
+    details = d.get('case_details') if isinstance(d.get('case_details'), dict) else {}
+
+    def detail(flat_key, table_key):
+        return _clean(d.get(flat_key)) or _clean(details.get(table_key))
+    orders = [{'date': _clean(o.get('order_date')), 'judge': _clean(o.get('judge')),
+               'orderNo': _clean(o.get('order_number'))}
+              for o in d.get('orders') or [] if isinstance(o, dict)]
+    filings = [{'document': _clean(x.get('Document Filed')), 'filedBy': _clean(x.get('Filed by')),
+                'date': _clean(x.get('Date of Receiving'))}
+               for x in (d.get('documents') or [])[:15] if isinstance(x, dict)]
+    return {
+        'available': True,
+        'court': rec.court_id,
+        'caseType': _clean(details.get('Case Type')),
+        'registrationNumber': detail('registration_number', 'Registration Number'),
+        'filingNumber': detail('filing_number', 'Filing Number'),
+        # "TNCH010015532025 (Note the CNR number for future reference)" -> the number.
+        'cnr': (detail('cnr_number', 'CNR Number') or '').split(' ')[0] or None,
+        'filingDate': detail('filing_date', 'Filing Date'),
+        'registrationDate': detail('registration_date', 'Registration Date'),
+        'acts': [' '.join(filter(None, [_clean(a.get('act')),
+                                        _clean(a.get('sections') or a.get('section'))]))
+                 for a in d.get('acts') or [] if isinstance(a, dict)],
+        'category': d.get('category') if isinstance(d.get('category'), dict) else None,
+        'stage': _clean(status.get('Case Stage')),
+        'coram': _clean(status.get('Coram') or status.get('Court Number and Judge')),
+        'firstHearingDate': _clean(status.get('First Hearing Date')),
+        'benchType': _clean(status.get('Bench Type')),
+        'district': _clean(status.get('District')),
+        'nextHearingDate': _clean(status.get('Next Hearing Date')),
+        'petitioners': d.get('petitioners') or [],
+        'respondents': d.get('respondents') or [],
+        'hearingHistory': hearings,
+        'orders': orders,
+        'filings': filings,
+        'filingsTotal': len(d.get('documents') or []),
+        'objections': [_clean(o.get('Objection')) for o in d.get('objections') or [] if isinstance(o, dict)],
+        'hearingsTotal': len(d.get('hearings') or d.get('history') or []),
+        # District records carry extra tables (IA status, transfers) as a
+        # header row plus data rows.
+        'otherTables': [_table(t) for t in (d.get('extra') or [])[:4] if isinstance(t, dict)],
+        'fetchedAt': _iso(rec.fetched_at),
+    }
+
+
 def get_hearings(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
@@ -353,7 +462,7 @@ def get_tasks(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
         return {'error': 'Case not found or not accessible.'}
-    qs = CaseTask.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id)
+    qs = _tasks(advocate_id).filter(case_id=c.id)
     return {'tasks': [{'title': t.title, 'priority': t.priority, 'deadline': _iso(t.deadline),
                        'completed': t.completed} for t in qs]}
 
@@ -407,6 +516,8 @@ TOOLS = [
      'input_schema': {'type': 'object', 'properties': {'query': {'type': 'string'}}, 'required': ['query']}},
     {'name': 'get_case_summary', 'description': 'Core details of one case (number, title, type, court, status, amount, client, description).',
      'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
+    {'name': 'get_court_record', 'description': "The court's own record for a case: acts, stage, coram, next date, hearing history, orders, filings.",
+     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
     {'name': 'get_hearings', 'description': 'All hearings/events for a case, past and upcoming, with the next hearing date.',
      'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
     {'name': 'get_parties', 'description': 'Petitioners, respondents, and their counsel for a case.',
@@ -426,6 +537,7 @@ TOOLS = [
 _DISPATCH = {
     'find_case': lambda aid, a: find_case(aid, a.get('query', '')),
     'get_case_summary': lambda aid, a: get_case_summary(aid, a.get('case_id')),
+    'get_court_record': lambda aid, a: get_court_record(aid, a.get('case_id')),
     'get_hearings': lambda aid, a: get_hearings(aid, a.get('case_id')),
     'get_parties': lambda aid, a: get_parties(aid, a.get('case_id')),
     'get_notes': lambda aid, a: get_notes(aid, a.get('case_id')),

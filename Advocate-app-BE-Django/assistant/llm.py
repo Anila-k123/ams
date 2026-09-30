@@ -33,7 +33,9 @@ Config (backend .env), mirroring pact-pro-draft:
     LLM_TIMEOUT      default 600 (seconds)
 """
 
+import datetime
 import json
+from django.conf import settings
 import logging
 import re
 import time
@@ -106,7 +108,9 @@ _RETRY_STATUS = {429, 502, 503, 504}
 _MAX_CASES_IN_CONTEXT = 2
 
 SYSTEM_PROMPT = (
-    "You are the AI assistant inside an Advocate (lawyer) Management System. You help an "
+    f"You are {getattr(settings, 'ASSISTANT_NAME', 'Lisa')}, the AI assistant inside an Advocate (lawyer) "
+    "Management System. If asked your name, you are "
+    f"{getattr(settings, 'ASSISTANT_NAME', 'Lisa')}. You help an "
     "advocate — or an assistant covering for them — understand their caseload quickly.\n\n"
     "Answer using ONLY the CONTEXT DATA provided in the user message. Never invent case "
     "facts, dates, names, or amounts. If the context doesn't contain the answer, say so "
@@ -130,11 +134,27 @@ SYSTEM_PROMPT = (
     "- When asked to list and the context holds the full set, enumerate EVERY item — never "
     "abbreviate to a few examples. Case titles from the court can be very long; shorten an "
     "individual title if you must, but never drop rows from the list.\n\n"
-    "When asked to summarise a case or what to follow up, produce:\n"
-    "1. A short plain-language summary (parties, type, court, current status/stage).\n"
-    "2. A clearly-labelled 'Follow-up' list of concrete things needing attention — the next "
-    "hearing date, pending/overdue tasks, outstanding dues or unpaid invoices, and anything "
-    "unresolved. Only include items supported by the context data.\n\n"
+    "When asked about a case or client ('what is this case', 'tell me about', 'summarise'), "
+    "explain it the way a senior would brief a colleague. Do NOT dump the data fields one per "
+    "line. Produce:\n"
+    "1. **Summary**: 3-5 sentences of plain prose. Say what the case is (e.g. a first appeal "
+    "under Section 96 CPC), who is appealing against whom and where it comes from (district), "
+    "which court and bench hears it, and how it has moved so far (filed, registered, orders, "
+    "hearings). Use the case's courtRecord for this when it is present. Name any interim "
+    "applications among its filings (stay petition, condone-delay petition and the like) and "
+    "the latest order with its date; routine papers (docket, index, court fee) aren't worth "
+    "mentioning.\n"
+    "2. **Where it stands**: the current stage, coram/judge and next hearing date. If the "
+    "court's next date is already in the past, say the listing needs checking with the court.\n"
+    "3. **Follow-up**: concrete things needing attention: the next hearing, pending or overdue "
+    "tasks, unpaid invoices, and anything unresolved. Only items supported by the context data.\n"
+    "Refer to the case by its registration number (e.g. AS/700/2025), not the CNR. Keep counsel "
+    "lists short: name the lead counsel only. Skip empty or placeholder values.\n\n"
+    "Earlier messages in this chat are conversation only. Use them to understand what the "
+    "user is referring to ('it', 'that case', 'him'), but take every fact from the CONTEXT "
+    "DATA of the latest message. If an earlier answer disagrees with it, the context data "
+    "is right. If a follow-up is ambiguous and the context doesn't settle it, ask which "
+    "case or client they mean.\n\n"
     "Be concise and practical. Use Indian rupees (₹) for money. Format with short markdown."
 )
 
@@ -143,7 +163,23 @@ _STOPWORDS = {
     'cases', 'client', 'hearing', 'hearings', 'follow', 'followup', 'follow-up', 'summary',
     'summarise', 'summarize', 'details', 'detail', 'need', 'needs', 'this', 'that', 'have',
     'any', 'all', 'from', 'please', 'next', 'upcoming', 'status', 'pending', 'due', 'dues',
+    # Pronouns and question words carry no case identity, but they do occur in
+    # titles ("... Rep by its Secretary"), so a follow-up like "when is its
+    # next hearing?" used to jump to that case.
+    'its', 'his', 'her', 'him', 'she', 'they', 'them', 'their', 'these', 'those', 'same',
+    'who', 'whom', 'whose', 'when', 'where', 'which', 'why', 'how', 'did', 'does', 'was',
+    'were', 'are', 'has', 'had', 'can', 'will', 'there', 'then', 'also', 'judge',
 }
+
+# A question that points back at the last answer. With one of these and no
+# case number in the question, the remembered case beats a stray keyword hit.
+_REFERS_BACK = re.compile(
+    r"\b(it|its|it's|this|that|these|those|he|him|his|she|her|they|them|their|same)\b", re.I)
+
+
+def _refers_back(question):
+    has_number = any(ch.isdigit() for ch in question or '')
+    return bool(_REFERS_BACK.search(question or '')) and not has_number
 
 
 # --- context building (replaces the tool-use loop for the local model) ----
@@ -209,9 +245,57 @@ def _resolve_client(advocate_id, question):
     return None
 
 
-def build_context(advocate_id, question):
-    """Assemble a compact, grounded data brief for the prompt (read-only, own cases)."""
-    ctx = {'dashboard': tools.dashboard_summary(advocate_id),
+# Conversation memory is sent by the browser, so it is untrusted input: only
+# these roles, and capped so a long chat can't crowd the context data out of
+# the prompt (or run up the token bill).
+_HISTORY_ROLES = {'user', 'assistant'}
+_HISTORY_MAX_TURNS = 8
+_HISTORY_MAX_CHARS = 1500
+_HISTORY_TOTAL_CHARS = 8000
+_MAX_FOCUS_IDS = 5
+
+
+def clean_history(raw):
+    """[{role, text}] from the request -> chat messages, newest turns kept."""
+    if not isinstance(raw, list):
+        return []
+    turns = []
+    for m in raw[-_HISTORY_MAX_TURNS:]:
+        if not isinstance(m, dict) or m.get('role') not in _HISTORY_ROLES:
+            continue
+        text = str(m.get('text') or m.get('content') or '').strip()
+        if text:
+            turns.append({'role': m['role'], 'content': text[:_HISTORY_MAX_CHARS]})
+    # Drop from the oldest end until the whole history fits.
+    while turns and sum(len(t['content']) for t in turns) > _HISTORY_TOTAL_CHARS:
+        turns.pop(0)
+    return turns
+
+
+def clean_focus_ids(raw):
+    """Case ids the previous answer was about, as ints. Ownership is checked
+    later by the tools (_owned_case), so a forged id just finds nothing."""
+    if not isinstance(raw, list):
+        return []
+    ids = []
+    for v in raw[:_MAX_FOCUS_IDS]:
+        try:
+            ids.append(int(v))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def build_context(advocate_id, question, focus_case_ids=None, history=None):
+    """Assemble a compact, grounded data brief for the prompt (read-only, own cases).
+
+    A follow-up ("when is its next hearing?") names no case, so when the
+    question itself matches nothing, fall back to the case(s) the previous
+    answer was about, then to whatever the last user turn matched."""
+    # The model has no clock; without today it can't tell an upcoming date
+    # from a stale one (court "next dates" are often long past).
+    ctx = {'today': datetime.date.today().isoformat(),
+           'dashboard': tools.dashboard_summary(advocate_id),
            # Exact whole-caseload counts, always present: lets "how many High
            # Court cases" be answered from a real aggregate instead of from
            # however many cases happened to keyword-match.
@@ -227,6 +311,15 @@ def build_context(advocate_id, question):
            'clientsByCaseCount': tools.clients_by_case_count(advocate_id)}
 
     case_ids, total_matched = _candidate_case_ids(advocate_id, question)
+    if focus_case_ids and _refers_back(question):
+        case_ids, total_matched = [], 0
+    if not case_ids and focus_case_ids:
+        case_ids = list(focus_case_ids)[:_MAX_CASES_IN_CONTEXT]
+        total_matched = len(case_ids)
+    if not case_ids and history:
+        last_user = next((t['content'] for t in reversed(history) if t['role'] == 'user'), '')
+        if last_user:
+            case_ids, total_matched = _candidate_case_ids(advocate_id, last_user)
     cases = []
     for cid in case_ids:
         summary = tools.get_case_summary(advocate_id, cid)
@@ -234,6 +327,7 @@ def build_context(advocate_id, question):
             continue
         cases.append({
             'summary': summary,
+            'courtRecord': tools.get_court_record(advocate_id, cid),
             'hearings': tools.get_hearings(advocate_id, cid),
             'parties': tools.get_parties(advocate_id, cid).get('parties', []),
             'tasks': tools.get_tasks(advocate_id, cid).get('tasks', []),
@@ -376,7 +470,12 @@ def complete_text(system_prompt, user_prompt, temperature=None, max_tokens=2000)
     raise AssistantUnavailable(str(last) if last else 'request failed')
 
 
-def stream_answer(question, advocate_id):
+def context_case_ids(ctx):
+    """Ids of the cases actually put in front of the model (all ownership-checked)."""
+    return [c['summary']['caseId'] for c in ctx.get('matchedCases', {}).get('cases', [])]
+
+
+def stream_answer(question, advocate_id, history=None, focus_case_ids=None):
     """Generator yielding SSE frames: {type:'text',text} deltas, then {type:'done'}
     (or {type:'error',message}). Builds context, then streams the local model."""
     backend = _backend()
@@ -386,11 +485,15 @@ def stream_answer(question, advocate_id):
         return
     base_url, openai_path, model, api_key = backend
 
-    ctx = build_context(advocate_id, question)
+    history = history or []
+    ctx = build_context(advocate_id, question, focus_case_ids, history)
     payload = {
         'model': model,
+        # Earlier turns go in as plain conversation; only the latest message
+        # carries CONTEXT DATA, so facts always come from a fresh read.
         'messages': [
             {'role': 'system', 'content': SYSTEM_PROMPT},
+            *history,
             {'role': 'user', 'content': _user_message(question, ctx)},
         ],
         'temperature': LLM_TEMPERATURE,
@@ -436,4 +539,6 @@ def stream_answer(question, advocate_id):
     if not got_text:
         yield _sse({'type': 'error', 'message': 'The model returned no response. Please try again.'})
     else:
-        yield _sse({'type': 'done'})
+        # caseIds lets the browser send "the case we were talking about" back
+        # with the next question, for follow-ups that don't name it.
+        yield _sse({'type': 'done', 'caseIds': context_case_ids(ctx)})

@@ -16,7 +16,7 @@ Guidance for Claude Code when working in this repository (AMS — Advocate Manag
 | `Advocate-app-FE-main/` | Frontend — React 19 + Vite 7 + TypeScript, PrimeReact, TipTap editor. Port **5173**. |
 | `Advocate-app-BE-main/` | Legacy Spring backend remnant — only `uploads/` remains. Do not add code here. |
 | `roadmap/` | InstaDraft ↔ AMS integration plan (`00-README.md` … `08-*`, `PROGRESS.md`). |
-| `docs/` | `DEPLOYMENT.md` (new-server setup, Windows + Linux), `DEMO_GUIDE.md`, `OPERATIONS.md`, `merge-plan/` (repo merge steps 00–08). |
+| `docs/` | `DEPLOYMENT.md` (new-server setup, Windows + Linux), `DEMO_GUIDE.md`, `DEMO_AS700_2025.md` (role-by-role demo, case built live), `DEMO_OS900_2025.md` (the meeting demo: one matter built from scratch through every role; reset with `manage.py reset_demo_client --name Kannan --firm rajesh@kumar-associates.demo --yes`), `OPERATIONS.md`, `merge-plan/` (repo merge steps 00–08). |
 | Root docs | `README.md`, `ARCHITECTURE.md` (court data integration), `FEATURES.md`, `LOCAL_DEVELOPMENT.md`, `NEXT_STEPS.md`, `AUDIT_ams.md`, `INSTADRAFT_INTEGRATION_PROMPT.md` |
 
 A third service, the **court scraper** (FastAPI, port 8000), lives in a **separate repo** (`SCRAPER_DIR`, default `C:\Users\ANILA\scrap`). While it is down, all court features (display board, cause lists, case import, Daily Status) return 503 — check port 8000 first.
@@ -44,7 +44,7 @@ API base: `VITE_API_BASE` (default `http://127.0.0.1:8080`, see `src/api/client.
 ## Backend architecture
 
 - Project package: `advocate_backend/` (settings, urls). One Django app per domain: `accounts`, `clients`, `cases`, `events`, `documents`, `dashboard`, `notifications`, `rbac`, `expenses`, `invoices` (GST), `payments`, `search`, `reports`, `audit`, `backup`, `communication`, `assistant` (LLM), `appeals`, `workspace` (display board, tasks/review), `courtsearch`, `acts`, `dictionary`, `drafting`, `clientaccess`, `lawcodes` (BNS), `core` (shared helpers, `practice.py` tenancy).
-- **Unmanaged models:** most models map onto tables from the original Spring app and are `managed = False` — no migrations for them; the DB must already exist. Newer tables are managed normally.
+- **Unmanaged models:** most models map onto tables from the original Spring app and are `managed = False` — no migrations for them; the DB must already exist. Newer tables are managed normally. To add data to a Spring-owned table, add a small managed side table keyed by the row id (e.g. `clients.ClientHandler` → `client_handler`) rather than altering it.
 - **Tests** use `core.test_runner.ManagedModelTestRunner`, which flips unmanaged models to managed and builds tables from models (not migrations). Live-DB CHECK constraints are *not* reproduced in tests.
 - **No scraping code in the backend.** It proxies/caches/stores/matches data from the scraper service (see `ARCHITECTURE.md`). Shared caches must never contain per-practice data — apply practice overlays after cache reads.
 - **LLM assistant** (`assistant/llm.py`, `tools.py`): OpenAI-compatible endpoint configured by `LLM_*` env vars (locally hosted model by default).

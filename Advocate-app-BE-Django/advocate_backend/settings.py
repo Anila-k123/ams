@@ -152,6 +152,10 @@ COURT_PDF_CACHE_DIR = config(
     default=str(BASE_DIR / 'court_pdf_cache'),
 )
 
+# --- AI assistant's name (what it calls itself; the frontend shows
+# src/constants/assistant.ts). ---
+ASSISTANT_NAME = config('ASSISTANT_NAME', default='Lisa')
+
 # --- Document AI summaries: on upload we extract text (PDF/DOCX/TXT) and ask the
 # assistant LLM (LLM_PROVIDER) for a structured legal summary, stored in the
 # document_summary table. Turn off with SUMMARY_ENABLED=False. ---
@@ -186,7 +190,7 @@ EMAIL_HOST_PASSWORD = config('MAIL_PASSWORD', default='')
 _USING_CONSOLE_MAIL = 'console' in EMAIL_BACKEND or 'filebased' in EMAIL_BACKEND
 EMAIL_CONFIGURED = _USING_CONSOLE_MAIL or bool(EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
 DEFAULT_FROM_EMAIL = (
-    config('NOTIFICATION_SENDER_NAME', default='Advocate Case Management System')
+    config('NOTIFICATION_SENDER_NAME', default='PactPro')
     + ' <' + (EMAIL_HOST_USER or 'no-reply@localhost') + '>')
 EMAIL_TIMEOUT = config('MAIL_TIMEOUT', default=15, cast=int)
 

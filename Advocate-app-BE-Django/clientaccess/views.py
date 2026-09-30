@@ -372,7 +372,7 @@ class ClientLoginsView(_FirmView):
         advocate = Advocate.objects.filter(email__iexact=email).first()
         link = ClientUser.objects.filter(advocate_id=advocate.id).first() if advocate else None
         if advocate is not None and (link is None or link.client_id != client.id):
-            return Response({'error': 'That email already has an AMS login.'}, status=409)
+            return Response({'error': 'That email already has a PactPro login.'}, status=409)
         full_name = (request.data.get('fullName') or '').strip()
         with transaction.atomic():
             if advocate is None:

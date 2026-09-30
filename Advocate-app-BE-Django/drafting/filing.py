@@ -94,7 +94,7 @@ class SendToAmsView(APIView):
 
         case = _case_for(session, user)
         if case is None:
-            return Response({'error': 'Link an AMS case first.'}, status=400)
+            return Response({'error': 'Link a case first.'}, status=400)
         if not session.blocks.exists():
             return Response({'error': 'The draft is empty.'}, status=400)
         task = _task_for(session, case, user)
@@ -115,7 +115,7 @@ class SendToAmsView(APIView):
                    .order_by('id').first())
             if doc is None:
                 doc = create_document(user, upload, document_name=name, category='Draft',
-                                      description='Drafted in AMS Drafting', case=case,
+                                      description='Drafted in PactPro Drafting', case=case,
                                       client=case.client, external_ref=ref)
             else:
                 add_version(doc, upload, user, note='Updated from Drafting')
@@ -125,7 +125,7 @@ class SendToAmsView(APIView):
             if task is not None:
                 CaseTaskDocument.objects.get_or_create(
                     task_id=task.id, document_id=doc.id, defaults={'advocate_id': user.id})
-                review.submit(task, user)
+                review.submit(task, user, note='Draft "{}" filed as version {}.'.format(name, doc.version))
             session.ams_document_id = doc.id
             session.ams_document_version = doc.version
             session.ams_synced_at = timezone.now()

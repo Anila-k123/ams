@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from 'react'
 import { DRAFTING } from '../routes'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Dialog } from 'primereact/dialog'
 import { Button } from 'primereact/button'
 import { Tag } from 'primereact/tag'
@@ -57,13 +57,20 @@ const iconTile: CSSProperties = {
  */
 export default function NewDraftDialog({ visible, onHide }: { visible: boolean; onHide: () => void }) {
   const navigate = useNavigate()
+  const [search] = useSearchParams()
   const [choice, setChoice] = useState<Choice | null>(null)
 
   const close = () => { setChoice(null); onHide() }
   const next = () => {
     if (!choice) return
-    close()
-    navigate(`${DRAFTING.newDraft}?begin=${choice}`)
+    // Not close(): onHide may navigate away (the /new page sends Cancel back to
+    // Drafts), which would race the navigation below.
+    setChoice(null)
+    // Keep whatever the entry point passed (caseId / taskId from a case or task),
+    // so the chosen wizard still opens linked to it.
+    const q = new URLSearchParams(search)
+    q.set('begin', choice)
+    navigate(`${DRAFTING.newDraft}?${q.toString()}`)
   }
 
   const footer = (

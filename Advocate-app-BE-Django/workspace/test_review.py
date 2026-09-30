@@ -120,18 +120,45 @@ class TaskReviewTest(TestCase):
     def test_who_may_review(self, notify):
         self.file_draft(self.intern)
         self.assertEqual(self.review(self.intern, 'approve').status_code, 403)          # own work
-        self.assertEqual(self.review(self.other_junior, 'approve').status_code, 403)    # no TASK_ASSIGN
+        # No TASK_ASSIGN and not on the task: they cannot even see it (workspace.access).
+        self.assertEqual(self.review(self.other_junior, 'approve').status_code, 404)
         partner = make_advocate(permissions=tuple(ALL_PERMISSIONS) + ('TASK_ASSIGN',),
                                 parent_advocate_id=self.senior.id)
         self.assertEqual(self.review(partner, 'approve').status_code, 200)              # TASK_ASSIGN
         outsider = make_advocate(permissions=ALL_PERMISSIONS)
         self.assertEqual(self.review(outsider, 'approve').status_code, 404)
 
-    def test_assignee_ticking_done_submits_instead_of_completing(self, notify):
-        body = self.client.put(f'/api/workspace/tasks/{self.task.id}/toggle', **auth(self.intern)).json()
-        self.assertEqual((body['completed'], body['reviewStatus']), (False, 'SUBMITTED'))
+    def submit(self, who, note='Filed the vakalat; diary no. 45/2026.', hours=None):
+        return self.client.post(f'/api/workspace/tasks/{self.task.id}/submit',
+                                {'note': note, 'hours': hours},
+                                content_type='application/json', **auth(who))
+
+    def test_assignee_tick_asks_for_a_report_instead_of_submitting(self, notify):
+        r = self.client.put(f'/api/workspace/tasks/{self.task.id}/toggle', **auth(self.intern))
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(r.json()['submitRequired'])
+        self.assertIsNone(self.refresh().review_status)
         body = self.client.put(f'/api/workspace/tasks/{self.task.id}/toggle', **auth(self.senior)).json()
         self.assertTrue(body['completed'])   # the assigner can still close it directly
+
+    def test_submit_work_with_a_report(self, notify):
+        body = self.submit(self.intern, hours=1.5).json()
+        self.assertEqual(body['reviewStatus'], 'SUBMITTED')
+        self.assertEqual(body['submissions'][0]['note'], 'Filed the vakalat; diary no. 45/2026.')
+        self.assertEqual(body['submissions'][0]['hours'], 1.5)
+        notify.assert_called()
+
+    def test_submit_needs_a_report_and_the_assignee(self, notify):
+        self.assertEqual(self.submit(self.intern, note='  ').status_code, 400)
+        self.assertEqual(self.submit(self.senior).status_code, 403)
+
+    def test_resubmitting_after_changes_keeps_every_round(self, notify):
+        self.submit(self.intern, note='First pass')
+        self.review(self.senior, 'request_changes', note='Add the diary number')
+        body = self.submit(self.intern, note='Diary no. 45/2026 added').json()
+        self.assertEqual([s['note'] for s in body['submissions']],
+                         ['Diary no. 45/2026 added', 'First pass'])
+        self.assertEqual(self.review(self.senior, 'approve').json()['completed'], True)
 
     def test_attaching_a_document_in_ams_submits(self, notify):
         doc = Document.objects.create(document_name='d', original_name='d.pdf', stored_name='d',

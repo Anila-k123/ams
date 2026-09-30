@@ -40,6 +40,23 @@ FIRM_WIDE_PERMISSION = 'FIRM_WIDE_SCOPE'
 FIRM_WIDE_ROLES = {'Super Admin', 'Accountant', 'Receptionist'}
 SUPER_ADMIN_ROLE = 'Super Admin'
 
+# Who is alerted about a case (hearings, cause-list listings, case payments).
+# Separate from CASE_VIEW: the accountant may view cases to bill them without
+# being put on every hearing alert. Seeded by `manage.py seed_alert_permissions`.
+CASE_ALERT_PERMISSION = 'CASE_ALERTS'
+
+
+def case_alert_permission():
+    """The permission that selects case-alert recipients.
+
+    CASE_ALERTS once it is seeded; CASE_VIEW before that, so case alerts never
+    go silent on an install where the seed has not run yet.
+    """
+    from core.models import Permission
+    if Permission.objects.filter(name=CASE_ALERT_PERMISSION).exists():
+        return CASE_ALERT_PERMISSION
+    return 'CASE_VIEW'
+
 
 def _perm_codes(advocate, cache=None):
     """This advocate's permission code set, optionally memoised in `cache`
@@ -196,8 +213,12 @@ def alert_members(advocate, permission=None, perm_cache=None):
     return unique
 
 
-def firm_wide_members(permission=None, perm_cache=None):
-    """Common staff who serve every team - for firm-wide alerts.
+def firm_wide_members(root_id, permission=None, perm_cache=None):
+    """Common staff who serve every team of one firm - for firm-wide alerts.
+
+    `root_id` is the firm (practice_root). Only that firm's staff are returned:
+    in the shared multi-tenant deployment an accountant at another firm must
+    never be told about this firm's invoices.
 
     These are the shared roles (Accountant, Receptionist): an overdue invoice is
     the firm's accountant's concern whichever team it belongs to, so a firm-wide
@@ -208,7 +229,10 @@ def firm_wide_members(permission=None, perm_cache=None):
     put on every team's alert loop, so their bell/inbox is not firm-wide noise.
     """
     out = []
-    for advocate in Advocate.objects.filter(left_on__isnull=True):
+    from django.db.models import Q
+    firm = Advocate.objects.filter(Q(id=root_id) | Q(parent_advocate_id=root_id),
+                                   left_on__isnull=True)
+    for advocate in firm:
         try:
             roles = set(advocate.role_names())
         except Exception:                                    # noqa: BLE001

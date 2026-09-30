@@ -15,3 +15,16 @@
   background: color-mix(in srgb, var(--danger) 6%, transparent);
 }
 .task-review-btn.p-button { white-space: nowrap; }
+
+/* Submit work reports (SubmissionHistory). */
+.task-submissions { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.task-submission {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--primary);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+.task-submission-head { color: var(--text-muted); }
+.task-submission-head .pi { font-size: 10px; margin-right: 2px; }
+.task-submission-note { white-space: pre-wrap; color: var(--text-primary); margin-top: 2px; }

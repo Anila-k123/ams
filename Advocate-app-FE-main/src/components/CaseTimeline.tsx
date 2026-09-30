@@ -5,19 +5,26 @@ import { MultiSelect } from "primereact/multiselect";
 import { Button } from "primereact/button";
 import { ProgressSpinner } from "primereact/progressspinner";
 import api from "../api/client";
+import { usePermission } from "../contexts/PermissionContext";
 import "../assets/styles/CaseTimeline.css";
 
-const FILTER_GROUPS = [
-  { label: "Payments", types: ["PAYMENT_RECEIVED", "PAYMENT_UPDATED", "PAYMENT_DELETED"] },
-  { label: "Expenses", types: ["EXPENSE_ADDED", "EXPENSE_UPDATED", "EXPENSE_DELETED"] },
-  { label: "Documents", types: ["DOCUMENT_UPLOADED", "DOCUMENT_DELETED"] },
-  { label: "Hearings", types: ["HEARING_CREATED", "HEARING_UPDATED", "HEARING_RESCHEDULED", "HEARING_COMPLETED"] },
-  { label: "Invoices", types: ["INVOICE_GENERATED", "INVOICE_PAID"] },
+// `perm`: the filter only shows to someone who can see those entries (the
+// server leaves them out of the timeline for everyone else).
+const ALL_FILTER_GROUPS: { label: string; perm?: string; types: string[] }[] = [
+  { label: "Payments", perm: "PAYMENT_VIEW", types: ["PAYMENT_RECEIVED", "PAYMENT_UPDATED", "PAYMENT_DELETED"] },
+  { label: "Expenses", perm: "EXPENSE_VIEW", types: ["EXPENSE_ADDED", "EXPENSE_UPDATED", "EXPENSE_DELETED"] },
+  { label: "Documents", perm: "DOCUMENT_VIEW", types: ["DOCUMENT_UPLOADED", "DOCUMENT_DELETED"] },
+  { label: "Hearings", perm: "EVENT_VIEW", types: ["HEARING_CREATED", "HEARING_UPDATED", "HEARING_RESCHEDULED", "HEARING_COMPLETED"] },
+  { label: "Invoices", perm: "INVOICE_VIEW", types: ["INVOICE_GENERATED", "INVOICE_PAID"] },
   { label: "Status Changes", types: ["CASE_CREATED", "CASE_UPDATED", "CASE_STATUS_CHANGED", "CASE_CLOSED", "CASE_REOPENED"] },
+  { label: "Tasks", types: ["TASK_ASSIGNED", "TASK_SUBMITTED", "TASK_APPROVED", "TASK_CHANGES_REQUESTED"] },
+  { label: "Notes", types: ["NOTE_ADDED"] },
   { label: "Communication", types: ["EMAIL_SENT", "WHATSAPP_SENT"] },
 ];
 
 export default function CaseTimeline({ caseId, caseNumber, onClose }: { caseId: any; caseNumber?: any; onClose: () => void }) {
+  const { hasPermission } = usePermission() as any;
+  const FILTER_GROUPS = ALL_FILTER_GROUPS.filter((g) => !g.perm || hasPermission(g.perm));
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

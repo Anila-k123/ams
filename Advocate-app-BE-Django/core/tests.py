@@ -89,6 +89,26 @@ class PracticeScopeTest(TestCase):
         self.assertIn(case.advocate_id, practice.practice_ids(self.owner))
 
 
+class FirmWideAlertScopeTest(TestCase):
+    """Firm-wide staff (accountants) are alerted about their own firm only."""
+
+    def setUp(self):
+        self.owner = make_advocate(permissions=('INVOICE_VIEW',))
+        self.accountant = make_advocate(
+            permissions=('INVOICE_VIEW', practice.FIRM_WIDE_PERMISSION),
+            parent_advocate_id=self.owner.id)
+        other_owner = make_advocate()
+        self.outsider = make_advocate(
+            permissions=('INVOICE_VIEW', practice.FIRM_WIDE_PERMISSION),
+            parent_advocate_id=other_owner.id)
+
+    def test_only_this_firms_staff_are_returned(self):
+        ids = {m.id for m in practice.firm_wide_members(
+            self.owner.id, permission='INVOICE_VIEW')}
+        self.assertIn(self.accountant.id, ids)
+        self.assertNotIn(self.outsider.id, ids)
+
+
 class NotificationsStayPersonalTest(TestCase):
     """A notification is addressed to one advocate, not to the practice."""
 
@@ -253,3 +273,101 @@ class UserDeletionTest(TestCase):
         res = self.client.delete('/api/admin/users/%d' % other.id,
                                  **auth(other))
         self.assertEqual(res.status_code, 400)
+
+
+class ResetDemoClientTest(TestCase):
+    """manage.py reset_demo_client removes one client and everything linked to
+    them - AMS rows, drafting rows and the portal login - and nothing else."""
+
+    def setUp(self):
+        import datetime
+        import tempfile
+        from django.test import override_settings
+        from clientaccess.models import ClientUser
+        from core.models import Document, Expense, Invoice
+        from drafting.models import Client as DrfClient, DraftBlock, DraftSession, Project
+        from workspace.models import CaseNote, CaseTask
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self._override = override_settings(DOCUMENT_UPLOAD_DIR=self._tmp.name)
+        self._override.enable()
+        today = datetime.date.today()
+
+        self.firm = make_advocate('reset-firm@test.local', ALL_PERMISSIONS)
+        self.kannan = make_client(self.firm, 'Kannan')
+        self.case = make_case(self.firm, self.kannan, case_title='Kannan vs Seetharaman')
+        task = CaseTask.objects.create(advocate_id=self.firm.id, case_id=self.case.id, title='Brief')
+        CaseNote.objects.create(advocate_id=self.firm.id, case_id=self.case.id, body='note')
+        Expense.objects.create(title='Court fee', expense_type='CLIENT_CASE', advocate=self.firm,
+                               case_id=self.case.id, client_id=self.kannan.id)
+        Invoice.objects.create(invoice_number='INV-T1', amount=100, invoice_date=today,
+                               due_date=today, status='UNPAID', advocate=self.firm,
+                               case=self.case, client=self.kannan)
+        self.upload = self._tmp.name + '/receipt.pdf'
+        with open(self.upload, 'wb') as fh:
+            fh.write(b'%PDF-1.4 test')
+        Document.objects.create(document_name='Receipt', original_name='receipt.pdf',
+                                stored_name='receipt.pdf', file_path=self.upload,
+                                upload_date=datetime.datetime.now(), advocate=self.firm,
+                                case_id=self.case.id)
+        login = make_advocate('kannan-login@test.local', role='CLIENT')
+        ClientUser.objects.create(advocate_id=login.id, client_id=self.kannan.id,
+                                  created_at=datetime.datetime.now())
+        self.login_id = login.id
+        drf_client = DrfClient.objects.create(name='Kannan', ams_client_id=self.kannan.id)
+        project = Project.objects.create(client=drf_client, name='OS 900', case_id=self.case.id)
+        session = DraftSession.objects.create(project=project, ams_task_id=task.id)
+        DraftBlock.objects.create(session=session, position=0, block_type='paragraph',
+                                  text='Background', source='user')
+
+        # Someone else's client in the same firm: must be untouched.
+        self.other = make_client(self.firm, 'Anand')
+        self.other_case = make_case(self.firm, self.other)
+
+    def tearDown(self):
+        self._override.disable()
+        self._tmp.cleanup()
+
+    def _run(self, *extra):
+        from django.core.management import call_command
+        from io import StringIO
+        out = StringIO()
+        call_command('reset_demo_client', '--name', 'Kannan', '--firm', self.firm.email,
+                     *extra, stdout=out)
+        return out.getvalue()
+
+    def test_a_dry_run_deletes_nothing(self):
+        from core.models import Case, Client
+        out = self._run()
+        self.assertIn('Dry run', out)
+        self.assertTrue(Client.objects.filter(id=self.kannan.id).exists())
+        self.assertTrue(Case.objects.filter(id=self.case.id).exists())
+
+    def test_yes_removes_the_client_and_everything_linked(self):
+        import os
+        from clientaccess.models import ClientUser
+        from core.models import Advocate, Case, Client, Document, Expense, Invoice
+        from drafting.models import Client as DrfClient, DraftBlock, DraftSession, Project
+        from workspace.models import CaseNote, CaseTask
+
+        self._run('--yes')
+        self.assertFalse(Client.objects.filter(id=self.kannan.id).exists())
+        self.assertFalse(Case.objects.filter(id=self.case.id).exists())
+        for model, filt in ((CaseTask, {'case_id': self.case.id}), (CaseNote, {'case_id': self.case.id}),
+                            (Expense, {'case_id': self.case.id}), (Invoice, {'client_id': self.kannan.id}),
+                            (Document, {'case_id': self.case.id}), (ClientUser, {'client_id': self.kannan.id}),
+                            (Project, {'case_id': self.case.id}), (DrfClient, {'ams_client_id': self.kannan.id})):
+            self.assertFalse(model.objects.filter(**filt).exists(), model.__name__)
+        self.assertEqual(DraftSession.objects.count(), 0)
+        self.assertEqual(DraftBlock.objects.count(), 0)
+        self.assertFalse(Advocate.objects.filter(id=self.login_id).exists())
+        self.assertFalse(os.path.exists(self.upload), 'the uploaded file was left on disk')
+        # The backup holds the rows and a copy of the file.
+        resets = os.path.join(self._tmp.name, 'demo-resets')
+        folder = os.path.join(resets, os.listdir(resets)[0])
+        self.assertIn('receipt.pdf', os.listdir(folder))
+        self.assertIn('rows.json', os.listdir(folder))
+        # The firm, its other client and case, are untouched.
+        self.assertTrue(Advocate.objects.filter(id=self.firm.id).exists())
+        self.assertTrue(Client.objects.filter(id=self.other.id).exists())
+        self.assertTrue(Case.objects.filter(id=self.other_case.id).exists())

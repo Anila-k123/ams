@@ -13,6 +13,7 @@ from expenses.serializers import ExpenseSerializer
 from invoices.serializers import InvoiceSerializer
 from payments.serializers import ClientPaymentSerializer
 from .models import CaseNote, CaseTag, CaseTask, CaseParty, RelatedCase, CaseTaskDocument, HearingDetail
+from .access import visible_tasks
 from .serializers import (CaseNoteSerializer, CaseTagSerializer, CaseTaskSerializer,
                           CasePartySerializer)
 
@@ -208,7 +209,7 @@ class CaseTasksView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        qs = CaseTask.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
+        qs = visible_tasks(request.user).filter(case_id=case_id)
         return Response(CaseTaskSerializer(qs, many=True).data)
 
     def post(self, request, case_id):
@@ -238,7 +239,7 @@ class MyTasksAllView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request):
-        qs = CaseTask.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('completed', 'deadline', 'id')
+        qs = visible_tasks(request.user).order_by('completed', 'deadline', 'id')
         return Response(CaseTaskSerializer(qs, many=True).data)
 
 
@@ -290,7 +291,7 @@ class AssignTaskView(APIView):
     permission_classes = [RequirePermission('TASK_ASSIGN')]
 
     def put(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         assignee_id, err = _resolve_assignee(request)
@@ -308,7 +309,7 @@ class TaskDocumentsView(APIView):
     permission_classes = [RequirePermission()]
 
     def post(self, request, task_id):
-        task = CaseTask.objects.filter(id=task_id, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=task_id).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         document_id = request.data.get('documentId')
@@ -320,9 +321,12 @@ class TaskDocumentsView(APIView):
             task_id=task_id, document_id=document_id,
             defaults={'advocate_id': request.user.id},
         )
-        # The assignee attaching their work = submitting it for review.
-        from . import review
-        review.submit(task, request.user)
+        # The assignee attaching their work = submitting it for review - unless
+        # this attach is part of the Submit work dialog ({submit: false}), which
+        # submits once, with the report, after its files are attached.
+        if request.data.get('submit', True) is not False:
+            from . import review
+            review.submit(task, request.user, note='Attached a document for review.')
         return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
 
@@ -330,6 +334,8 @@ class DeleteTaskDocumentView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, task_id, document_id):
+        if not visible_tasks(request.user).filter(id=task_id).exists():
+            return Response({'error': 'Attachment not found'}, status=status.HTTP_404_NOT_FOUND)
         link = CaseTaskDocument.objects.filter(
             task_id=task_id, document_id=document_id, advocate_id__in=practice_ids(request.user)).first()
         if link is None:
@@ -342,17 +348,54 @@ class ToggleCaseTaskView(APIView):
     permission_classes = [RequirePermission()]
 
     def put(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         # On a delegated task the assignee can't just tick it done: that submits
         # it for the assigner's review (workspace/review.py), who approves it.
         from . import review
         if not task.completed and review.needs_review(task) and review.is_assignee(task, request.user):
-            review.submit(task, request.user)
-            return Response(CaseTaskSerializer(task).data)
+            # A delegated task is handed back with a report of what was done,
+            # not a silent tick - the reviewer needs to know what they approve.
+            return Response({'error': 'Use Submit work to hand this task back with a report.',
+                             'submitRequired': True}, status=status.HTTP_400_BAD_REQUEST)
         task.completed = not task.completed
         task.save(update_fields=['completed'])
+        return Response(CaseTaskSerializer(task).data)
+
+
+class SubmitTaskView(APIView):
+    """POST /api/workspace/tasks/<pk>/submit {note, hours?}
+
+    The assignee hands a delegated task back for review with a written report of
+    what was done (and optionally the hours spent). Files are attached separately
+    through /tasks/<id>/documents. The assigner is notified with the report.
+    """
+    permission_classes = [RequirePermission()]
+
+    def post(self, request, pk):
+        from . import review
+        task = visible_tasks(request.user).filter(id=pk).first()
+        if task is None:
+            return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not review.needs_review(task) or not review.is_assignee(task, request.user):
+            return Response({'error': 'Only the person this task is assigned to can submit it.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        if task.review_status == review.APPROVED or task.cancelled:
+            return Response({'error': 'This task is already closed.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        note = (request.data.get('note') or '').strip()
+        if not note:
+            return Response({'error': 'Say what was done.'}, status=status.HTTP_400_BAD_REQUEST)
+        hours = request.data.get('hours')
+        try:
+            hours = round(float(hours), 2) if hours not in (None, '') else None
+        except (TypeError, ValueError):
+            return Response({'error': 'hours must be a number'}, status=status.HTTP_400_BAD_REQUEST)
+        if hours is not None and not (0 < hours <= 999):
+            return Response({'error': 'hours must be between 0 and 999'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        review.submit(task, request.user, note=note, hours=hours)
         return Response(CaseTaskSerializer(task).data)
 
 
@@ -366,7 +409,7 @@ class ReviewTaskView(APIView):
 
     def post(self, request, pk):
         from . import review
-        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         if not review.can_review(task, request.user):
@@ -396,7 +439,7 @@ class UpdateTaskPriorityView(APIView):
     _ALLOWED = {'LOW', 'MEDIUM', 'HIGH'}
 
     def put(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         priority = (request.data.get('priority') or '').strip().upper()
@@ -416,7 +459,7 @@ class CancelTaskView(APIView):
     permission_classes = [RequirePermission()]
 
     def put(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         # Only the person who assigned the task may cancel/restore it. For tasks
@@ -435,7 +478,7 @@ class DeleteCaseTaskView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        task = CaseTask.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
         task.delete()
@@ -562,7 +605,7 @@ class CaseSummaryView(APIView):
         next_ev = (CaseEvent.objects
                    .filter(advocate_id__in=practice_ids(request.user), case_id=case_id, date__gte=today)
                    .order_by('date', 'id').first())
-        tasks = CaseTask.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
+        tasks = visible_tasks(request.user).filter(case_id=case_id)
         open_tasks = tasks.filter(completed=False).count()
         done_tasks = tasks.filter(completed=True).count()
         tags = CaseTag.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)

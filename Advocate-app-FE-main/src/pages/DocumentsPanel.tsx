@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { DRAFTING } from "./Drafting/routes";
 import { Button } from "primereact/button";
 import { InputText } from "primereact/inputtext";
 import { InputTextarea } from "primereact/inputtextarea";
@@ -22,6 +23,7 @@ import { useLoading } from "../contexts/LoadingContext";
 import { usePermission } from "../contexts/PermissionContext";
 import { useToast } from "../contexts/ToastContext";
 import api from "../api/client";
+import { usePageModal } from "../utils/pageModal";
 
 const CATEGORIES = [
   "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
@@ -75,6 +77,7 @@ export default function DocumentsPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchedFromGlobalNav = useRef(!!(location.state as any)?.search);
   const { hasPermission } = usePermission();
+  const navigate = useNavigate();
   const toast = useToast();
   const { withLoading } = useLoading();
 
@@ -135,20 +138,18 @@ export default function DocumentsPanel() {
     const handleSearch = (e: any) => {
       if (e.detail?.query) setSearchText(e.detail.query);
     };
-    const handleModal = (e: any) => {
-      if (e.detail === "create-document" || e.detail === "upload-document") {
-        setShowUploadModal(true);
-        setUploadResults([]);
-        setUploadProgress({ current: 0, total: 0 });
-      }
-    };
     window.addEventListener("assistant-search", handleSearch);
-    window.addEventListener("assistant-open-modal", handleModal);
     return () => {
       window.removeEventListener("assistant-search", handleSearch);
-      window.removeEventListener("assistant-open-modal", handleModal);
     };
   }, []);
+
+  // Quick Actions / Lisa: open the upload dialog.
+  usePageModal(["create-document", "upload-document"], () => {
+    setShowUploadModal(true);
+    setUploadResults([]);
+    setUploadProgress({ current: 0, total: 0 });
+  });
 
   // Global Search navigation — read incoming state
   useEffect(() => {
@@ -285,6 +286,8 @@ export default function DocumentsPanel() {
     onDelete: hasPermission("DOCUMENT_DELETE") ? setDeleteConfirm : undefined,
     onEdit: hasPermission("DOCUMENT_EDIT") ? setEditDoc : undefined,
     onShareToggle: hasPermission("DOCUMENT_EDIT") ? handleShareToggle : undefined,
+    // Opens Draft Documents, where the file is prepared for drafting.
+    onUseInDraft: hasPermission("DRAFT_VIEW") ? () => navigate(DRAFTING.samples) : undefined,
   };
 
   if (loading && documents.length === 0) {

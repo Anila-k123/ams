@@ -566,3 +566,6 @@ body[style*="user-select: none"] .assistant-panel {
     right: 16px;
   }
 }
+
+/* "Lisa · AI legal assistant" header (constants/assistant.ts) */
+.assistant-subtitle { font-size: 0.75em; font-weight: 500; color: var(--text-muted); }

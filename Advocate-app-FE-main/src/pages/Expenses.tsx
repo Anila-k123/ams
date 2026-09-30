@@ -21,6 +21,7 @@ import { usePermission } from "../contexts/PermissionContext";
 import ReportService from "../services/ReportService";
 import { formatCurrency } from "../utils/formatCurrency";
 import "../assets/styles/Expenses.css";
+import { usePageModal } from "../utils/pageModal";
 
 const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"].map((c) => ({ label: c, value: c }));
 const PAYMENT_MODES = [
@@ -39,6 +40,7 @@ const dateOnly = (d: any) => d?.split?.("T")[0] ?? d;
 
 function Expenses() {
   const [cases, setCases] = useState<any[]>([]);
+  const [pickCase, setPickCase] = useState(false);
   const [filteredCases, setFilteredCases] = useState<any[]>([]);
   const [expenses, setExpenses] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
@@ -99,16 +101,9 @@ function Expenses() {
     fetchCases();
   }, [token]);
 
-  // AI Assistant / quick actions: open modals
-  useEffect(() => {
-    const handler = (e: any) => {
-      if (e.detail === "create-expense") {
-        handleAddExpense(null);
-      }
-    };
-    window.addEventListener("assistant-open-modal", handler);
-    return () => window.removeEventListener("assistant-open-modal", handler);
-  }, []);
+  // AI Assistant / quick actions: open the Add Expense form. It opens without
+  // a case, so the form shows a case picker (see pickCase).
+  usePageModal(["create-expense"], () => handleAddExpense(null));
 
   // Global Search navigation — read incoming state
   useEffect(() => {
@@ -165,7 +160,7 @@ function Expenses() {
     try {
       const [expRes, payRes] = await Promise.all([
         api.get(`/api/expenses/case/${caseId}`),
-        api.get(`/api/payments/case/${caseId}`),
+        hasPermission("PAYMENT_VIEW") ? api.get(`/api/payments/case/${caseId}`) : Promise.resolve({ data: [] }),
       ]);
       setExpenses(expRes.data || []);
       setPayments(payRes.data || []);
@@ -191,6 +186,9 @@ function Expenses() {
       caseId,
       expenseType: "CLIENT_CASE",
     });
+    // Opened from a case row the case is known; opened from Quick Actions or
+    // Lisa it isn't, and without a pick the expense was saved on no case.
+    setPickCase(!caseId);
     setEditExpenseId(null);
     setShowAddModal(true);
   };
@@ -205,6 +203,10 @@ function Expenses() {
     setSuccessMessage("");
     if (!newExpense.title || !newExpense.amount) {
       setErrorMessage("Title and amount are required.");
+      return;
+    }
+    if (pickCase && !newExpense.caseId) {
+      setErrorMessage("Choose the case this expense belongs to.");
       return;
     }
 
@@ -425,8 +427,8 @@ function Expenses() {
 
   const reportButtons = (printLabel: string, downloadLabel: string) => (
     <div className="flex justify-content-end gap-2 mt-3 no-print">
-      <Button outlined icon="pi pi-print" label={printLabel} onClick={handlePrint} />
-      <Button icon="pi pi-download" label={downloadLabel} onClick={handleDownloadPDF} />
+      {hasPermission("REPORT_EXPORT") && <Button outlined icon="pi pi-print" label={printLabel} onClick={handlePrint} />}
+      {hasPermission("REPORT_EXPORT") && <Button icon="pi pi-download" label={downloadLabel} onClick={handleDownloadPDF} />}
     </div>
   );
 
@@ -446,10 +448,12 @@ function Expenses() {
           <InputText className="w-full" placeholder="Search cases or clients..." value={searchText}
             onChange={(e) => setSearchText(e.target.value)} />
         </IconField>
-        <div className="flex gap-2">
-          <Button outlined icon="pi pi-calendar" label="Today’s Report" onClick={fetchTodayReport} />
-          <Button outlined icon="pi pi-chart-bar" label="Monthly Report" onClick={fetchMonthlyReport} />
-        </div>
+        {hasPermission("REPORT_VIEW") && hasPermission("PAYMENT_VIEW") && (
+          <div className="flex gap-2">
+            <Button outlined icon="pi pi-calendar" label="Today’s Report" onClick={fetchTodayReport} />
+            <Button outlined icon="pi pi-chart-bar" label="Monthly Report" onClick={fetchMonthlyReport} />
+          </div>
+        )}
       </div>
 
       <div className="cases-table-wrapper">
@@ -486,6 +490,11 @@ function Expenses() {
       <Dialog visible={showAddModal} onHide={() => setShowAddModal(false)} header={editExpenseId ? "Edit Expense" : "Add Expense"}
         modal style={{ width: "min(460px, 95vw)" }}>
         <form onSubmit={handleSubmit} className="expense-form">
+          {pickCase && !editExpenseId && (
+            <Dropdown value={newExpense.caseId || null} filter showClear placeholder="Select case"
+              options={cases.map((c: any) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle || ""}` }))}
+              onChange={(e) => setNewExpense({ ...newExpense, caseId: e.value ?? "" })} />
+          )}
           <InputText name="title" placeholder="Title" value={newExpense.title} onChange={handleChange} required />
           <InputText name="amount" type="number" placeholder="Amount" value={newExpense.amount} onChange={handleChange} required />
           <Dropdown value={newExpense.category} options={CATEGORIES} placeholder="Select Category" required

@@ -77,7 +77,7 @@ export default function NewDraftScratch() {
         setParties(ps => ps.map((row, i) => (names[i] && !row.name ? { ...row, name: names[i] as string } : row)))
         if (link.prefill.purpose) setPurpose(pv => pv || (link.prefill.purpose as string))
       })
-      .catch(() => { setError('Could not load that AMS case. You can continue without it.'); setAmsCase(null) })
+      .catch(() => { setError('Could not load that PactPro case. You can continue without it.'); setAmsCase(null) })
       .finally(() => setLinking(false))
   }
 
@@ -331,7 +331,7 @@ export default function NewDraftScratch() {
                 <div className="col-12"><span className="pp-stat-label">Document title</span><div className="font-medium">{title}</div></div>
               )}
               <div className="col-6"><span className="pp-stat-label">Agreement type</span><div className="font-medium">{docType}</div></div>
-              <div className="col-6"><span className="pp-stat-label">AMS case</span><div className="font-medium">{amsCase ? `${amsCase.caseNumber}${amsCase.clientName ? ` — ${amsCase.clientName}` : ''}` : '—'}</div></div>
+              <div className="col-6"><span className="pp-stat-label">PactPro case</span><div className="font-medium">{amsCase ? `${amsCase.caseNumber}${amsCase.clientName ? ` — ${amsCase.clientName}` : ''}` : '—'}</div></div>
               <div className="col-6">
                 <span className="pp-stat-label">Template</span>
                 <div className="font-medium">

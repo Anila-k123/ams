@@ -1,0 +1,24 @@
+# Binary files: never convert line endings. Without this, Git on Windows
+# (core.autocrlf) treated some PDFs as text and would rewrite their bytes on
+# checkout, corrupting them.
+*.pdf    binary
+*.docx   binary
+*.doc    binary
+*.xlsx   binary
+*.pptx   binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.mp3    binary
+*.zip    binary
+*.dump   binary
+
+# Windows scripts need CRLF to run reliably in cmd.exe.
+*.bat    text eol=crlf
+*.cmd    text eol=crlf

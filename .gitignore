@@ -1,47 +1,13 @@
 # ==========================
-# Backend
-# ==========================
-Advocate-app-BE-main/target/
-Advocate-app-BE-main/logs/
-Advocate-app-BE-main/*.log
-
-# Maven Wrapper Logs
-**/.mvn/wrapper/maven-wrapper.jar
-
-# ==========================
-# Frontend
-# ==========================
-Advocate-app-FE-main/node_modules/
-Advocate-app-FE-main/dist/
-Advocate-app-FE-main/.vite/
-
-# ==========================
-# Environment Files
+# Secrets (never commit). .env.example files are placeholders and ARE tracked.
 # ==========================
 **/.env
 **/.env.local
+**/.env.*.local
 **/.env.production
-
-# ==========================
-# IDE
-# ==========================
-.vscode/
-.idea/
-*.iml
-
-# ==========================
-# OS Files
-# ==========================
-Thumbs.db
-.DS_Store
-
-# ==========================
-# Logs
-# ==========================
-*.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
+recovery-codes.txt
+*.pem
+*.key
 
 # ==========================
 # Python / Django backend
@@ -51,30 +17,61 @@ pnpm-debug.log*
 **/__pycache__/
 *.py[cod]
 *.sqlite3
+.pytest_cache/
+.coverage
+htmlcov/
+celerybeat-schedule*
 Advocate-app-BE-Django/staticfiles/
 Advocate-app-BE-Django/media/
-
-# ==========================
-# Secrets / sensitive (never commit)
-# ==========================
-recovery-codes.txt
-**/.env
-*.pem
-*.key
-
-# ==========================
-# Tooling / local
-# ==========================
-.claude/
-Advocate-app-FE-main/node_modules/
-Advocate-app-FE-main/dist/
-
-# Runtime storage: uploaded documents, branding images and backup archives.
-# Never source. A stray test upload got committed once because this was only
-# ignored in the frontend .gitignore, which does not cover the backend path.
-Advocate-app-BE-Django/uploads/
-Advocate-app-BE-Django/logs/
-Advocate-app-BE-main/uploads/
-Advocate-app-BE-main/logs/
+# Cached court PDFs (re-fetchable)
+Advocate-app-BE-Django/court_pdf_cache/
 # Raw dictionary source dumps (imported into the DB; re-fetchable via import_legal_terms --url)
 Advocate-app-BE-Django/_data/
+
+# Runtime storage: uploaded client documents, branding images, backup
+# archives and demo-reset backups (uploads/demo-resets). Never source.
+Advocate-app-BE-Django/uploads/
+Advocate-app-BE-main/uploads/
+Advocate-app-BE-Django/logs/
+Advocate-app-BE-main/logs/
+
+# Database dumps (docs/DEPLOYMENT.md step 2 creates PactPro_db.dump). They
+# hold every client's data, so they must never reach the repository.
+*.dump
+*.backup
+*.sql.gz
+
+# ==========================
+# Frontend
+# ==========================
+Advocate-app-FE-main/node_modules/
+Advocate-app-FE-main/dist/
+Advocate-app-FE-main/.vite/
+Advocate-app-FE-main/coverage/
+
+# ==========================
+# Legacy Spring backend (only uploads/ remains)
+# ==========================
+Advocate-app-BE-main/target/
+**/.mvn/wrapper/maven-wrapper.jar
+
+# ==========================
+# Logs, temp files
+# ==========================
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.tmp
+*.bak
+~$*
+
+# ==========================
+# IDE / OS / tooling
+# ==========================
+.vscode/
+.idea/
+*.iml
+Thumbs.db
+.DS_Store
+.claude/

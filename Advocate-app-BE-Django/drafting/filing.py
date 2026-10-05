@@ -125,7 +125,15 @@ class SendToAmsView(APIView):
             if task is not None:
                 CaseTaskDocument.objects.get_or_create(
                     task_id=task.id, document_id=doc.id, defaults={'advocate_id': user.id})
-                review.submit(task, user, note='Draft "{}" filed as version {}.'.format(name, doc.version))
+                # Snapshot the draft, and compare it with the last one submitted,
+                # so the reviewer sees what this revision changed.
+                snapshot = [{'heading': b.heading or '', 'text': b.text or ''}
+                            for b in session.blocks.order_by('position')]
+                filed = 'Draft "{}" filed as version {}.'.format(name, doc.version)
+                own_note = (request.data.get('note') or '').strip()
+                review.submit(task, user, note=filed + ('\n' + own_note if own_note else ''),
+                              draft_snapshot=snapshot,
+                              changes=review.compare_drafts(review.previous_snapshot(task), snapshot))
             session.ams_document_id = doc.id
             session.ams_document_version = doc.version
             session.ams_synced_at = timezone.now()

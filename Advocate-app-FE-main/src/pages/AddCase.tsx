@@ -35,12 +35,69 @@ function Select({ options, value, onChange, placeholder, isLoading, isDisabled, 
   );
 }
 
-const COURT_LEVELS = ["District", "High Court", "Supreme Court"].map((v) => ({ value: v, label: v }));
+const COURT_LEVELS = ["District", "High Court", "Supreme Court", "Tribunal"].map((v) => ({ value: v, label: v === "Tribunal" ? "Tribunal / other forum" : v }));
+
+// Manual entry (backend: workspace/case_profile.py). An unfiled suit or
+// non-litigation work has no court number yet; the server assigns PRE/... or MAT/...
+const MATTER_TYPES = [
+  { value: "litigation", label: "Litigation (filed in a court or tribunal)" },
+  { value: "pre_filing", label: "Not filed yet (drafting / notice stage)" },
+  { value: "non_litigation", label: "Non-litigation (advisory, contract, notice)" },
+];
+// Which side the client is on, and what the other side is then called.
+const SIDES: Record<string, string> = {
+  Plaintiff: "Defendant", Petitioner: "Respondent", Appellant: "Respondent", Applicant: "Respondent",
+  Complainant: "Accused", Defendant: "Plaintiff", Respondent: "Petitioner", Accused: "Complainant",
+};
+const SIDE_OPTIONS = Object.keys(SIDES).map((v) => ({ value: v, label: v }));
 const CASE_STATUSES = ["Active", "Pending", "Closed"].map((v) => ({ value: v, label: v }));
+
+/**
+ * Save a fetched court record onto a case: the full record, its parties, and
+ * its upcoming hearings as events. Used when importing a case (Add Case) and
+ * when linking an existing manual case to its court record (Case Detail).
+ * `skipPartyNames` leaves out parties the case already has, so linking a
+ * manual case doesn't list the client twice. Every step is best-effort: the
+ * case is saved regardless.
+ */
+export async function persistCourtRecord(caseId: number, courtId: string, query: any, courtRecord: any,
+                                         skipPartyNames: string[] = []) {
+  const known = new Set(skipPartyNames.map((n) => n.trim().toLowerCase()));
+  // Persist the full court-API response (all fields/tables/orders) for later use.
+  try {
+    await api.post("/api/courtsearch/imported-records", {
+      caseId, courtId, query, raw: courtRecord,
+    });
+  } catch { /* case is saved regardless; record storage is best-effort */ }
+  // Populate the case's Parties from the court record (petitioners/respondents + counsel).
+  for (const p of buildParties(courtRecord, courtId).filter((p) => !known.has(String(p.name || "").trim().toLowerCase()))) {
+    try {
+      await api.post(`/api/workspace/cases/${caseId}/parties`, {
+        name: p.name, role: p.role, counsel: p.counsel, isOpponent: p.isOpponent,
+      });
+    } catch { /* best-effort */ }
+  }
+  // Populate only UPCOMING hearings as case events (so "Next Hearing" works).
+  // Past court hearings are NOT imported as events — they live, in full, in
+  // the case's read-only Court Hearing History, so importing them here would
+  // just duplicate that with messier calendar rows.
+  const _todayISO = new Date().toISOString().slice(0, 10);
+  for (const ev of buildEvents(courtRecord, courtId).filter((ev) => ev.date && ev.date >= _todayISO)) {
+    try {
+      await api.post("/api/events/create", {
+        caseId, title: ev.title, eventType: ev.eventType, description: ev.description, date: ev.date,
+      });
+    } catch { /* best-effort */ }
+  }
+}
 
 const EMPTY_CASE = {
   caseNumber: "", caseTitle: "", caseType: "", courtLevel: "",
   status: "", amount: "", description: "", clientId: "",
+  // Manual entry only (an import gets these from the court record).
+  matterType: "litigation", courtName: "", courtHall: "", judge: "", ourSide: "",
+  filingDate: "", caseYear: "", cnr: "", actsSections: "",
+  opponentName: "", opponentCounsel: "", nextHearingDate: "", nextHearingPurpose: "",
 };
 
 
@@ -1041,6 +1098,10 @@ export default function AddCase() {
 
   // The 16-digit rule is Madras HC's CNR format; eCourts / manual cases use other formats.
   const requires16 = selectedCourt?.id === "madras_hc";
+  const isManual = step === "manual";
+  const isLitigation = !isManual || newCase.matterType === "litigation";
+  // An unfiled or non-litigation matter has no court number; the server assigns one.
+  const numberRequired = isLitigation;
 
   // Soft, non-blocking CNR hint for the manual Case Number: only when the value
   // looks like an attempted CNR (16 chars) but breaks the pattern. Skipped when
@@ -1057,7 +1118,7 @@ export default function AddCase() {
     setNewCase((p) => ({ ...p, [name]: value }));
     if (name === "caseNumber") {
       if (requires16) setCaseNumberError(value.length !== 16 ? "Case Number must be exactly 16 digits." : "");
-      else setCaseNumberError(value.trim() ? "" : "Case Number is required.");
+      else setCaseNumberError(value.trim() || !numberRequired ? "" : "Case Number is required.");
     }
   };
 
@@ -1065,9 +1126,17 @@ export default function AddCase() {
     e.preventDefault();
     setSaveError("");
     if (!newCase.clientId) { setSaveError("Please choose a client for this case."); return; }
-    if (!newCase.caseNumber.trim()) { setCaseNumberError("Case Number is required."); return; }
+    if (numberRequired && !newCase.caseNumber.trim()) { setCaseNumberError("Case Number is required."); return; }
     // The court-level / status Dropdowns carry no native `required`, so check them here.
-    if (!newCase.courtLevel || !newCase.status) { setSaveError("Please select the court level and status."); return; }
+    // A matter that isn't in a court yet has no court level.
+    if ((isLitigation && !newCase.courtLevel) || !newCase.status) {
+      setSaveError(isLitigation ? "Please select the court level and status." : "Please select the status.");
+      return;
+    }
+    if (isManual && newCase.cnr && !/^[A-Za-z]{4}\d{12}$/.test(newCase.cnr.trim())) {
+      setSaveError("A CNR is 16 characters: 4 letters then 12 digits. Leave it blank if you don't have it.");
+      return;
+    }
     if (requires16 && newCase.caseNumber.length !== 16) { setCaseNumberError("Case Number must be exactly 16 digits."); return; }
     // The cases table caps these columns at varchar(255); the full record is kept separately.
     const cap = (v) => (typeof v === "string" && v.length > 255 ? v.slice(0, 255) : v);
@@ -1081,6 +1150,11 @@ export default function AddCase() {
       description: cap(newCase.description),
       amount: newCase.amount ? parseFloat(newCase.amount) : 0,
       client: { id: Number(newCase.clientId) },
+      ...(isManual ? {
+        matterType: newCase.matterType, courtName: newCase.courtName, courtHall: newCase.courtHall,
+        judge: newCase.judge, ourSide: newCase.ourSide, filingDate: newCase.filingDate || null,
+        caseYear: newCase.caseYear || null, cnr: newCase.cnr.trim(), actsSections: newCase.actsSections,
+      } : {}),
     };
     setSaving(true);
     try {
@@ -1105,33 +1179,34 @@ export default function AddCase() {
           } catch { /* keep the on-screen record if the full fetch fails */ }
         }
       }
-      if (courtRecord && caseId) {
-        // Persist the full court-API response (all fields/tables/orders) for later use.
-        try {
-          await api.post("/api/courtsearch/imported-records", {
-            caseId, courtId: selectedCourt?.id || "", query: fetchedQuery || {}, raw: courtRecord,
-          });
-        } catch { /* case is saved regardless; record storage is best-effort */ }
-        // Populate the case's Parties from the court record (petitioners/respondents + counsel).
-        for (const p of buildParties(courtRecord, selectedCourt?.id)) {
-          try {
-            await api.post(`/api/workspace/cases/${caseId}/parties`, {
-              name: p.name, role: p.role, counsel: p.counsel, isOpponent: p.isOpponent,
-            });
-          } catch { /* best-effort */ }
+      if (isManual && caseId) {
+        // What an import takes from the court record, a manual entry takes from
+        // the form: our client and the other side on the Parties tab, and the
+        // next hearing as an event, so reminders and "Next hearing" work.
+        const clientName = clients.find((c) => c.id === Number(newCase.clientId))?.name;
+        const parties = [
+          clientName && { name: clientName, role: newCase.ourSide || null, counsel: null, isOpponent: false },
+          newCase.opponentName.trim() && {
+            name: newCase.opponentName.trim(), role: SIDES[newCase.ourSide] || null,
+            counsel: newCase.opponentCounsel.trim() || null, isOpponent: true,
+          },
+        ].filter(Boolean);
+        for (const p of parties) {
+          try { await api.post(`/api/workspace/cases/${caseId}/parties`, p); } catch { /* best-effort */ }
         }
-        // Populate only UPCOMING hearings as case events (so "Next Hearing" works).
-        // Past court hearings are NOT imported as events — they live, in full, in
-        // the case's read-only Court Hearing History, so importing them here would
-        // just duplicate that with messier calendar rows.
-        const _todayISO = new Date().toISOString().slice(0, 10);
-        for (const ev of buildEvents(courtRecord, selectedCourt?.id).filter((ev) => ev.date && ev.date >= _todayISO)) {
+        if (isLitigation && newCase.nextHearingDate) {
           try {
             await api.post("/api/events/create", {
-              caseId, title: ev.title, eventType: ev.eventType, description: ev.description, date: ev.date,
+              caseId, eventType: "HEARING", date: newCase.nextHearingDate,
+              title: newCase.nextHearingPurpose ? `Hearing - ${newCase.nextHearingPurpose}` : "Hearing",
+              description: [newCase.courtName, newCase.courtHall && `Hall ${newCase.courtHall}`, newCase.judge]
+                .filter(Boolean).join(" · "),
             });
           } catch { /* best-effort */ }
         }
+      }
+      if (courtRecord && caseId) {
+        await persistCourtRecord(caseId, selectedCourt?.id || "", fetchedQuery || {}, courtRecord);
       }
       success && success("Case added to workspace.");
       navigate("/dashboard/cases");
@@ -1150,11 +1225,19 @@ export default function AddCase() {
   const renderCaseForm = () => (
     <form className="ac-form" onSubmit={handleSave}>
       <div className="ac-form-grid">
+        {isManual && (
+          <div className="ac-field ac-field-full">
+            <label>Matter type</label>
+            <Dropdown value={newCase.matterType} options={MATTER_TYPES} className="w-full"
+              onChange={(e) => { setNewCase((p) => ({ ...p, matterType: e.value })); setCaseNumberError(""); }} />
+          </div>
+        )}
         <div className="ac-field">
-          <label>Case Number{requires16 ? " (16 digits)" : ""}</label>
-          <InputText name="caseNumber" value={newCase.caseNumber} onChange={onField} required
+          <label>Case Number{requires16 ? " (16 digits)" : ""}{!numberRequired ? " (optional)" : ""}</label>
+          <InputText name="caseNumber" value={newCase.caseNumber} onChange={onField} required={numberRequired}
                  className={caseNumberError ? "ac-input-error" : ""}
-                 placeholder={requires16 ? "16-digit CNR" : "Case number"} />
+                 placeholder={requires16 ? "16-digit CNR" : numberRequired ? "e.g. O.S. No. 412/2025, OA 31/2026"
+                   : `Leave blank: assigned as ${newCase.matterType === "pre_filing" ? "PRE" : "MAT"}/${new Date().getFullYear()}/…`} />
           {caseNumberError && <span className="ac-field-error">{caseNumberError}</span>}
           {!caseNumberError && caseNumberCnrHint && <span className="ac-field-warning">{caseNumberCnrHint}</span>}
         </div>
@@ -1177,8 +1260,9 @@ export default function AddCase() {
             onChange={(e) => setNewCase((p) => ({ ...p, status: e.value || "" }))} />
         </div>
         <div className="ac-field">
-          <label>Amount</label>
-          <InputText type="number" name="amount" value={newCase.amount} onChange={onField} placeholder="0" />
+          <label>Agreed fee (₹)</label>
+          <InputText type="number" name="amount" value={newCase.amount} onChange={onField} placeholder="0" min={0} />
+          <small className="ac-field-hint">What the client is to pay; "pending from client" is worked out from it.</small>
         </div>
         <div className="ac-field">
           <label>Client</label>
@@ -1189,6 +1273,62 @@ export default function AddCase() {
             isClearable placeholder="Select Client"
           />
         </div>
+        {isManual && (<>
+          <div className="ac-field">
+            <label>Our client is the</label>
+            <Dropdown value={newCase.ourSide || null} options={SIDE_OPTIONS} placeholder="Select side" className="w-full" showClear
+              onChange={(e) => setNewCase((p) => ({ ...p, ourSide: e.value || "" }))} />
+          </div>
+          <div className="ac-field">
+            <label>Opposite party</label>
+            <InputText name="opponentName" value={newCase.opponentName} onChange={onField} placeholder="Other side" />
+          </div>
+          <div className="ac-field">
+            <label>Opposite party's counsel</label>
+            <InputText name="opponentCounsel" value={newCase.opponentCounsel} onChange={onField} placeholder="Optional" />
+          </div>
+          {isLitigation && (<>
+            <div className="ac-field">
+              <label>Court / tribunal / forum</label>
+              <InputText name="courtName" value={newCase.courtName} onChange={onField} placeholder="e.g. DRT-II Chennai, City Civil Court" />
+            </div>
+            <div className="ac-field">
+              <label>Court hall / bench</label>
+              <InputText name="courtHall" value={newCase.courtHall} onChange={onField} placeholder="e.g. Court 28" />
+            </div>
+            <div className="ac-field">
+              <label>Judge / presiding officer</label>
+              <InputText name="judge" value={newCase.judge} onChange={onField} placeholder="Optional" />
+            </div>
+            <div className="ac-field">
+              <label>Filing date</label>
+              <InputText type="date" name="filingDate" value={newCase.filingDate} onChange={onField} />
+            </div>
+            <div className="ac-field">
+              <label>Case year</label>
+              <InputText type="number" name="caseYear" value={newCase.caseYear} onChange={onField} placeholder="e.g. 2025" />
+            </div>
+            <div className="ac-field">
+              <label>CNR (optional)</label>
+              <InputText name="cnr" value={newCase.cnr} onChange={onField} maxLength={16} placeholder="16 characters, if known" />
+              <small className="ac-field-hint">With a CNR, the case can be linked to its court record later.</small>
+            </div>
+            <div className="ac-field">
+              <label>Next hearing date</label>
+              <InputText type="date" name="nextHearingDate" value={newCase.nextHearingDate} onChange={onField} />
+            </div>
+            <div className="ac-field">
+              <label>Next hearing purpose</label>
+              <InputText name="nextHearingPurpose" value={newCase.nextHearingPurpose} onChange={onField} placeholder="e.g. Counter, Arguments" />
+            </div>
+          </>)}
+          {newCase.matterType !== "non_litigation" && (
+            <div className="ac-field ac-field-full">
+              <label>Acts / sections</label>
+              <InputText name="actsSections" value={newCase.actsSections} onChange={onField} placeholder="e.g. CPC Order VII; SARFAESI Act s.17" />
+            </div>
+          )}
+        </>)}
         <div className="ac-field ac-field-full">
           <label>Description</label>
           <InputTextarea name="description" value={newCase.description} onChange={onField} rows={4} autoResize placeholder="Description" />
@@ -1262,7 +1402,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "left" }} aria-label="Change court" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
           </div>
           <div className="ac-search-form">
             <div className="ac-field">
@@ -1275,7 +1415,7 @@ export default function AddCase() {
             </div>
             <div className="ac-field">
               <label>Case Number</label>
-              <InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" />
+              <InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" />
             </div>
             <div className="ac-field">
               <label>Case Year</label>
@@ -1294,7 +1434,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "left" }} aria-label="Change court" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
           </div>
 
           <TabMenu className="ac-tabs" model={SCI_TABS.map(([, label]) => ({ label }))} activeIndex={SCI_TABS.findIndex(([k]) => k === sciMode)} onTabChange={(e) => onSciTab(SCI_TABS[e.index][0])} />
@@ -1304,7 +1444,7 @@ export default function AddCase() {
               <div className="ac-field"><label>Case Type</label>
                 <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isLoading={typesLoading}
                   placeholder={typesLoading ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" /></div>
+              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
               <div className="ac-field"><label>Case Year</label><InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
             </div>
           )}
@@ -1370,7 +1510,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "left" }} aria-label="Change court" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
           </div>
           {/* Cascade selectors — every mode except CNR needs the court location */}
           {ecMode !== "cnr" && (
@@ -1406,7 +1546,7 @@ export default function AddCase() {
               <div className="ac-field"><label>Case Type</label>
                 <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!cascadeReady} isLoading={cascadeBusy === "case-types"}
                   placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" /></div>
+              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
               <div className="ac-field"><label>Case Year</label><InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
             </div>
           )}
@@ -1503,7 +1643,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "left" }} aria-label="Change court" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
           </div>
           {/* Bench selectors — every HC search mode needs the High Court + bench */}
           <div className="ac-search-form">
@@ -1524,7 +1664,7 @@ export default function AddCase() {
               <div className="ac-field"><label>Case Type</label>
                 <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!hcReady} isLoading={cascadeBusy === "case-types"}
                   placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Enter case number" /></div>
+              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
               <div className="ac-field"><label>Case Year</label><InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
             </div>
           )}
@@ -1614,7 +1754,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>{resultRows.length} matching case{resultRows.length === 1 ? "" : "s"} — pick one to import</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("search")} tooltip="Back to search" tooltipOptions={{ position: "left" }} aria-label="Back to search" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("search")} tooltip="Back to search" tooltipOptions={{ position: "top" }} aria-label="Back to search" />
           </div>
           <div className="ac-rtable-wrap">
             <DataTable value={resultRows.map((row, i) => ({ ...row, __i: i }))} dataKey="__i" size="small" stripedRows>
@@ -1637,7 +1777,7 @@ export default function AddCase() {
           <div className="ac-selected">
             <span>{fetchedRecord ? <>Fetched from <strong>{selectedCourt?.name}</strong> — review and save</>
                                   : <>From <strong>{selectedCourt?.name}</strong> — review and save</>}</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep(resultRows.length ? "results" : "search")} tooltip="Back" tooltipOptions={{ position: "left" }} aria-label="Back" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep(resultRows.length ? "results" : "search")} tooltip="Back" tooltipOptions={{ position: "top" }} aria-label="Back" />
           </div>
 
           {fetchedRecord ? (
@@ -1745,7 +1885,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>Manual entry</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Back" tooltipOptions={{ position: "left" }} aria-label="Back" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Back" tooltipOptions={{ position: "top" }} aria-label="Back" />
           </div>
           {renderCaseForm()}
         </div>
@@ -1759,7 +1899,7 @@ export default function AddCase() {
         <div className="ac-card">
           <div className="ac-selected">
             <span>Search by CNR Number</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Back" tooltipOptions={{ position: "left" }} aria-label="Back" />
+            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Back" tooltipOptions={{ position: "top" }} aria-label="Back" />
           </div>
           <div className="ac-search-form">
             <div className="ac-field ac-field-full">

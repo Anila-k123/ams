@@ -32,6 +32,15 @@ After a fresh install, create the drafting permission codes and give them to the
 
 ```
 python manage.py seed_drafting_permissions
+python manage.py seed_invoice_permissions
+```
+
+`seed_invoice_permissions` creates `INVOICE_ISSUE` (Accountant, Super Admin), lets the Advocate role raise invoices for accounts to issue, and takes `INVOICE_ISSUE` / `PAYMENT_CREATE` / `INVOICE_EDIT` away from the Senior Advocate, so issuing, payments and corrections all stay with accounts (see FEATURES.md §9).
+
+The role hierarchy is **Super Admin > Senior Advocate > Advocate > Intern** (plus Accountant and Client). The middle role used to be called "Junior Advocate". On a database from before 2026-10-05, rename it once (it keeps its id, permissions and users; safe to re-run):
+
+```
+python manage.py rename_junior_role
 ```
 
 **History:**
@@ -84,6 +93,33 @@ Jobs then go to Redis, run in the worker, survive web restarts and can be scaled
 - **Packages:** drafting needs the AI stack in `requirements.txt` (langchain, sentence-transformers, transformers, docling, anthropic and others; about 2 GB with torch).
 - **Model downloads:** the embedding model (`DRAFTING_EMBED_MODEL`) is downloaded from Hugging Face on first use.
 - **Keys and model names:** they use `DRAFTING_`-prefixed names (`DRAFTING_GEMINI_API_KEY`, …), because the AMS assistant uses the plain `LLM_*` / `GEMINI_*` names with other meanings. See `.env.example`.
+
+## AI usage and cost
+
+Every LLM call is recorded in the `llm_usage` table (app `metering`): who made it, their firm, the feature, the model, and the input and output tokens.
+
+**Features** (the pricing buckets):
+
+| Feature | What it covers |
+|---|---|
+| `chat` | Lisa's answers |
+| `summary` | Document summaries |
+| `draft` | Everything in drafting: generate, edit, refine, consistency check, preparing documents and templates, playbooks, risks |
+| `translation` | Sarvam translation, measured in characters, not tokens |
+
+**Reading it:**
+```bat
+venv\Scripts\python.exe manage.py llm_usage                    &rem by feature, all time
+venv\Scripts\python.exe manage.py llm_usage --by user --from 2026-10-01 --to 2026-10-31
+venv\Scripts\python.exe manage.py llm_usage --by model
+```
+Groups: `feature`, `operation`, `user`, `firm`, `model`. The same figures are at `GET /api/usage/summary?by=&from=&to=` (Super Admin only).
+
+**Cost.** Set `LLM_PRICES` in `.env`: price per 1 million tokens, `[input, output]`, by model name, e.g. `{"gpt-4o-2024-08-06": [2.5, 10], "gemini-2.5-flash": [0.3, 2.5]}`. Set the currency with `LLM_PRICE_CURRENCY`. Prices are applied when the report runs, so they can change without touching recorded usage. Tokens on a model with no price are reported but left out of the cost.
+
+**Estimated rows.** Where a provider sends no token counts (the local Flask wrapper, or a server that ignores `stream_options`), tokens are estimated at about 4 characters per token, and the row is flagged `estimated`. The report shows how many calls were estimated.
+
+Embeddings run locally (HuggingFace) and cost nothing, so they aren't metered.
 
 ## Production settings checklist
 

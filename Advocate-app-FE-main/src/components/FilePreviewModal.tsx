@@ -41,7 +41,7 @@ export default function FilePreviewModal({ doc, onClose, onDownload }: {
   const header = (
     <div className="flex align-items-center justify-content-between gap-2 pr-2">
       <span className="text-overflow-ellipsis overflow-hidden white-space-nowrap">{doc.documentName}</span>
-      <Button icon="pi pi-download" className="p-button-rounded p-button-text" onClick={handleDownload} tooltip="Download" aria-label="Download" />
+      <Button icon="pi pi-download" className="p-button-rounded p-button-text" onClick={handleDownload} tooltip="Download" tooltipOptions={{ position: "top" }} aria-label="Download" />
     </div>
   );
   const footer = (

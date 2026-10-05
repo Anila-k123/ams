@@ -9,6 +9,7 @@ from rest_framework import status
 from core.models import Advocate
 from core.jwt import generate_token
 from core.passwords import verify_password, hash_password
+from core.validators import check_payload
 from .serializers import (
     AdvocateProfileSerializer, FullProfileSerializer, LoginSerializer, SignupSerializer,
 )
@@ -106,7 +107,10 @@ class SettingsView(APIView):
     """PUT /api/advocates/settings — update profile; optional newPassword."""
     def put(self, request):
         advocate = request.user
-        s = AdvocateProfileSerializer(advocate, data=request.data, partial=True)
+        data, bad = check_payload(request.data, {'email': 'email', 'phone': 'phone'})
+        if bad is not None:
+            return bad
+        s = AdvocateProfileSerializer(advocate, data=data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
         new_password = request.data.get('newPassword')
@@ -156,7 +160,12 @@ class FullProfileView(APIView):
         return Response(FullProfileSerializer(request.user, context={'request': request}).data)
 
     def put(self, request):
-        s = FullProfileSerializer(request.user, data=request.data, partial=True,
+        data, bad = check_payload(request.data, {
+            'phone': 'phone', 'officePhone': 'phone', 'officeEmail': 'email',
+            'pinCode': 'pincode', 'gstNumber': 'gstin', 'panNumber': 'pan'})
+        if bad is not None:
+            return bad
+        s = FullProfileSerializer(request.user, data=data, partial=True,
                                   context={'request': request})
         s.is_valid(raise_exception=True)
         s.save()

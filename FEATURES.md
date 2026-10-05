@@ -25,7 +25,7 @@ This document catalogues **every** capability of the application — from the sm
 13. [Appeal Detection & Alerts](#13-appeal-detection--alerts)
 14. [Legal Acts Library](#14-legal-acts-library)
 15. [Legal Dictionary](#15-legal-dictionary)
-16. [AI Assistant](#16-ai-assistant)
+16. [AI Assistant](#16-ai-assistant) (and [16a. AI usage metering](#16a-ai-usage-metering))
 17. [Notifications & Communication (Email / WhatsApp / In-App)](#17-notifications--communication-email--whatsapp--in-app)
 18. [Global Search & Quick Actions](#18-global-search--quick-actions)
 19. [RBAC — Roles, Permissions & User Management](#19-rbac--roles-permissions--user-management)
@@ -95,11 +95,29 @@ A single-shell dashboard with live-updating widgets.
 ## 3. Case Management
 
 **Creating a case — two modes:**
-1. **Manual entry** — type all details.
-2. **Court Record Import** — look up the official court database by court ID / case type / case number / year and **auto-prefill** the case.
+1. **Court Record Import** — look up the official court database by court ID / case type / case number / year and **auto-prefill** the case. Parties and upcoming hearings come with it.
+2. **Offline / Manual Entry** — for whatever the import can't fetch:
+   - forums not on eCourts (tribunals such as NCLT, DRT, consumer commissions and RERA; revenue courts; arbitration);
+   - matters **not filed yet**, and **non-litigation** work (notices, advisory, contracts);
+   - records that aren't online;
+   - cases with no CNR yet;
+   - times when the court site is down.
+
+   The form asks for:
+   - **Matter type:** Litigation, Not filed yet, or Non-litigation. A case number is required only for litigation; the others get `PRE/<year>/0001` or `MAT/<year>/0001`.
+   - **Our client is the** (Plaintiff / Petitioner / Appellant / Applicant / Complainant, or the opposite), plus the **opposite party** and their **counsel**.
+   - **For litigation:** court / tribunal / forum, court hall, judge, filing date, case year, an optional **CNR**, and the **next hearing date and purpose**.
+   - **Acts / sections**, and the **Agreed fee (₹)**, which drives "pending from client".
+
+   On save, the client and the opposite party go on the Parties tab and the next hearing becomes an event, as an import would do. The extra details are stored in `workspace.CaseProfile` (`case_profile`), at `GET/PUT /api/workspace/cases/<id>/profile`.
+3. **Link to court record** (Case Detail → Actions, for a case with no court record):
+   - Enter the CNR, check the record that's found, then **Link this record**.
+   - The court record, its parties (skipping ones already on the case) and its upcoming hearings are added to the **existing** case. Notes, tasks, documents and bills are kept.
+   - The CNR is saved on the case, and **importing the same CNR again is refused** (409), so no duplicate is created.
+   - Works for District and High Courts through the CNR lookup; Supreme Court CNRs aren't covered.
 
 **Case list:**
-- Columns: Case No., Title, Type, Status, Next Hearing, Tags, Client, Amount, Actions.
+- Columns: Case No., Title, Type, Status, Next Hearing, Tags, Client, Agreed fee, Actions.
 - Filters: status (Active/Pending/Closed), court level (District/High Court/Supreme Court), sort options.
 - Real-time keyword search (case number, client name, email).
 - Inline actions: View, Edit, Archive, Restore, Documents.
@@ -141,16 +159,33 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 ## 5. Client Management
 
 - Client directory table: Name, Email, Phone, Address, City, GSTIN, Status, Actions.
-- Create/Edit modal: name, description, website, billing currency, GSTIN, email, phone, full structured address (building, street, city, district, state, pincode, country).
+- Create/Edit modal: name, description, website, GSTIN, email, phone, full structured address (building, street, city, district, **state from a list of Indian states and UTs**, pincode, country, which defaults to India). Billing currency is always INR, with no picker; it's set by the form.
   - The fields the Spring `clients` table has no columns for (description, website, billing currency, GSTIN and the address parts) are stored in the managed `client_profile` table (`clients.ClientProfile`). They used to be accepted and silently dropped. `clients.address` is rebuilt from the parts as one line (e.g. *No. 3, Gandhi Street, Tambaram, Chengalpattu, Tamil Nadu - 600045, India*), so reports, PDFs and the client portal keep reading it. A client saved before this keeps their old `address` when edited with empty parts; the edit form shows it as an editable *Saved address* field until the parts are filled in, which replaces it. An edit no longer wipes `address`, which it used to on every save.
 - Real-time keyword search; soft archive + restore; pagination.
-- **Handling advocate:** whoever adds or edits a client (often the front desk) can name the advocate who will take the matter. Only active practice members with `CASE_CREATE` are offered (`GET /api/clients/handlers`). That advocate gets an immediate in-app notice, plus email if their email notifications are on: *"New client assigned to you - <name>"*, with the client's contact details and who added them. The case details reach them outside the app for now; no case is created. Re-saving the same pick sends nothing, and an edit that doesn't send `handlingAdvocateId` leaves the pick alone. Stored in the managed `client_handler` table (`clients.ClientHandler`, one row per client). The list shows it in an **Advocate** column.
+- **Handling advocate:** whoever adds or edits a client (the advocate who met them; there is no front-desk role) can name the advocate who will take the matter. Only active practice members with `CASE_CREATE` are offered (`GET /api/clients/handlers`). That advocate gets an immediate in-app notice, plus email if their email notifications are on: *"New client assigned to you - <name>"*, with the client's contact details and who added them. The case details reach them outside the app for now; no case is created. Re-saving the same pick sends nothing, and an edit that doesn't send `handlingAdvocateId` leaves the pick alone. Stored in the managed `client_handler` table (`clients.ClientHandler`, one row per client). The list shows it in an **Advocate** column.
 - Inline document modal (view & upload documents for a client).
 - Client-scoped and firm-scoped visibility.
 
 **Endpoints:** `GET /api/clients`, `/my-clients`, `/archived`, `/search`, `/handlers`, `/<id>`; `POST /api/clients/create`, `/restore/<id>`; `PUT /api/clients/update/<id>`; `DELETE /api/clients/delete/<id>`. (Guarded by `CLIENT_VIEW`.)
 
 ---
+
+## 5a. Format validation
+
+Every form field that takes a structured value is checked in the browser (as you leave the field, and again on save) and again on the server. The rules are the same on both sides (`src/utils/validators.ts`, `core/validators.py`).
+
+| Value | Rule | Where |
+|---|---|---|
+| **GSTIN** | 15 characters: state code, PAN, entity number, `Z`, check character. The state code must be real and the **check digit must match**. Saved uppercase | Client form, invoice recipient, firm GST number (Profile → Office) |
+| **PAN** | 5 letters, 4 digits, 1 letter; saved uppercase | Profile → Office |
+| **PIN code** | 6 digits, not starting with 0 | Client form, Profile → Office |
+| **Phone** | 10-digit Indian number (`+91` or a leading `0` optional), or an international number with its country code | Client form, Profile, Settings, User Management |
+| **Email** | A valid address; saved lowercase | Client form, Profile → Office, billing remittance email, User Management, client portal invite |
+| **IFSC** | 4 letters, `0`, 6 letters or digits; saved uppercase | Settings → Invoice billing |
+
+- **GSTIN fills in the state.** A valid GSTIN fills the State from its first two digits: on the client form, on the invoice (State and State Code), and for the office on the Profile page. If a different state is already chosen, an amber warning says the GSTIN belongs to another state.
+- **Empty is always allowed.** Whether a field is required is decided by the form.
+- **Server errors** come back as a 400 `{error, errors: {field: message}}`.
 
 ## 6. Hearings, Events & Calendar
 
@@ -160,6 +195,7 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 - Create/edit/delete events; each linked to a case.
 - "Today" and "Upcoming (30 days)" server views.
 - Deep-link navigation from global search to a specific date/view.
+- **Task deadlines on the calendar:** open tasks the user can see (the Tasks page's own list, `/api/workspace/tasks/all`) appear on their deadline date as outlined "✓ Task: …" items, red when overdue; clicking one opens it on the Tasks page. They are shown, not stored as events, so they never go stale or raise hearing reminders. They always show for users with `TASK_VIEW` (there is no toggle). The calendar views are Day, Week and Month, with the period on screen shown between Prev and Next.
 
 **Endpoints:** `GET /api/events`, `/my-events`, `/today`, `/upcoming`; `POST /api/events/create`; `PUT /api/events/update/<id>`; `DELETE /api/events/delete/<id>`.
 
@@ -191,10 +227,20 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 
 - Create tasks with title, **priority (LOW/MEDIUM/HIGH)**, deadline, optional case link, and attached documents (with category picker).
 - **Assign/delegate** to team members (gated by `TASK_ASSIGN`), with an assignable-advocate auto-complete.
+- **Only the task's owner changes its terms.** The owner is the person who assigned it, or the creator for a task with no assigner (`workspace.views.task_owner_id`). Only they can change the **priority**, **cancel / restore** or delete it. The assignee and the rest of the team see the priority but can't change it. The server enforces this (403); the Tasks page and Case Detail → Tasks only show the dropdown and cancel button to the owner.
 - Filters — status: In Progress / Completed / Canceled; scope: Team / Mine / Created.
+- **What to do first:**
+  - The deadline chip shows urgency on open tasks: **Overdue · N days** (red), **Due today** (orange), **Due tomorrow / in N days** within 3 days (amber), otherwise the date.
+  - Each card has a coloured left edge and a flag for its priority: High red, Medium amber, Low green.
+  - In Progress and To review list the most urgent first: overdue, today, soonest, then no deadline. Within a day, High comes before Medium before Low.
+  - A row of counts sits above the list: *N overdue · N due today · N due this week · N high priority*. Clicking one narrows the list; **Show all** clears it. All of this is worked out in the browser (`TasksPage.tsx`, `deadlineState`), with no API change.
 - Keyword search, pagination.
 - Actions: toggle completion, change priority, cancel (soft), attach/detach documents.
 - Task checklist surfaced on the dashboard and inside each case.
+- **Submitted work** on a delegated task shows as one summary line (who, when, hours, number of submissions) with **View work**. That opens *Submitted work — {task}*: task facts, the reviewer's note, every submission's full report (newest first), attachments and the draft link, and, for the reviewer, **Approve** / **Request changes**. It's the same on the Tasks page and on Case Detail → Tasks (`SubmissionHistory` in `components/TaskReview.tsx`).
+- **Draft revisions show what changed.** Each draft filed to a task (**Submit to task**) stores a snapshot of its sections (`TaskSubmission.draft_snapshot`, server-side only). The next submission is compared with it section by section (`workspace/review.compare_drafts`: matched by heading, then position), and the result is saved as `changes`: *edited*, *added* or *removed*, with before and after text.
+  - **For the junior:** resubmitting after **Changes requested** asks *What did you change?*, and the answer is added to the submission note.
+  - **For the senior:** the changes appear as a word-level diff (`components/DraftChanges.tsx`; added words green and underlined, removed words red with strikethrough), in **View work** and in the drafting editor's review bar (*Changed since the last version: Reliefs claimed (edited)* with **What changed**). He can check a revision without rereading the whole draft.
 
 **Endpoints:** `GET /api/workspace/tasks/all`, `/cases/<id>/tasks`, `/tasks/<id>/documents`, `/assignable-advocates`; `POST /api/workspace/tasks/create`, `/tasks/<id>/assign`, `/tasks/<id>/cancel`, `/tasks/<id>/toggle`; `PUT /api/workspace/tasks/<id>/priority`; `DELETE` for tasks and task documents.
 
@@ -202,13 +248,33 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 
 ## 9. Financials: Invoices, Expenses, Payments
 
+**Case money totals.** Each case keeps running totals (`total_paid_by_client`, `total_expenses_so_far`, `balance_in_account`, `pending_from_client`), shown in the Expenses list, the case workspace, the client portal and the dashboard's outstanding total. `core/finance.recalc_case_totals` recomputes them after every payment, every expense created, edited, moved or deleted, every invoice, and every change to the case fee.
+- balance = paid − expenses
+- pending = owed − paid (never below 0), where owed is the agreed fee if one is set, otherwise the case's invoice total.
+
+They were never updated before, so every case showed ₹0. `manage.py recalc_case_totals` rebuilds them for existing cases.
+
 **Invoices**
 - Create with line-item particulars (description + amount), invoice/due dates, case link.
 - **Pre-fill from past hearing dates** (one-click appearance billing).
-- List with status badges (Paid/Unpaid/Overdue); summary cards (paid, unpaid, overdue amounts & counts, monthly revenue).
-- Mark invoice as paid; PDF invoice + payment receipt generation.
+- List with status badges (Paid / Part-paid / Unpaid / Overdue / Cancelled), **Raised by** and **Handled by**. Summary cards show paid, unpaid and overdue amounts and counts, plus monthly revenue. Part-paid invoices count only their balance as outstanding.
+- PDF invoice + payment receipt generation.
 - **Recipient pre-fill:** picking the case in *Generate Invoice* fills the blank recipient fields from `GET /api/invoices/recipient-defaults?caseId=`. The client's record comes first: GSTIN, state, and the address from the client form, with the **state code taken from the GSTIN's first two digits** (33 = Tamil Nadu). The client's last invoice fills the rest (e.g. Kind Attn). Switching cases replaces the suggestions but keeps anything typed over them. `POST /create` applies the same defaults to blank fields, so API callers get them too.
-- **Endpoints:** `GET /api/invoices`, `/my-invoices`, `/summary`, `/recipient-defaults`; `POST /api/invoices/create`, `/pay/<id>`.
+- **Advocate raises, accounts issue.** Any advocate on the case's team, senior or not, can raise its invoice (`INVOICE_CREATE`). Issuing it takes `INVOICE_ISSUE`, which only the Accountant and Super Admin have, so every bill goes through accounts. Issuing is what numbers the invoice, counts it in the totals and sends it to the client.
+  - With `INVOICE_ISSUE`, *Generate Invoice* (and the case page's *Raise Invoice*) issues straight away.
+  - Without it, the button says **Send to Accounts**. The invoice is saved as an `invoice_request` (*With accounts*). It has no number and is not in any total, report, reminder or the client portal.
+  - Accounts are notified (`INVOICE_SUBMITTED`). On the Invoices page under **Waiting to be issued** they **Review** it. That card is always shown to those who issue ("Nothing waiting" when empty). They can correct any field, then **Issue Invoice**, or **Return to Advocate** with a note (required).
+  - A returned invoice notifies the advocate (`INVOICE_RETURNED`) and shows the note. The advocate uses **Edit & Resend**, which notifies accounts again. The advocate can also **Withdraw** it while it waits.
+  - On issue, the invoice's advocate is the one who raised it ("raised by"). That advocate is told its number (`INVOICE_GENERATED`), the client gets the usual invoice email, and accounts get the "to collect" notice.
+  - Setup: `manage.py seed_invoice_permissions` creates `INVOICE_ISSUE` and gives the Advocate role `INVOICE_VIEW` + `INVOICE_CREATE`.
+- **After issue, accounts own the invoice.** Recording payments (`PAYMENT_CREATE`), Mark Paid and Cancel (`INVOICE_EDIT`) belong to the Accountant and Super Admin. A Senior Advocate can do none of these, nor issue (`seed_invoice_permissions` removes them).
+  - **Record Payment** on an invoice row (`PAYMENT_CREATE`) records a client payment linked to that invoice (`payment_invoice`). The Expenses page's payment form can do the same with **Against invoice**. The amount defaults to the balance and can be lowered for a part-payment; more than the balance is refused.
+  - The invoice moves **Unpaid -> Part-paid -> Paid** on its own (`core.finance.recalc_invoice_status`). The row shows *Paid X · Due Y*.
+  - **Mark Paid** remains for money already recorded without a link. It is shown only while nothing has been paid against the invoice.
+  - **Cancel** (`INVOICE_EDIT`, reason required): an issued GST invoice is never edited or deleted. A wrong one is cancelled and a new one raised. The cancelled invoice keeps its number and shows its reason, but is out of every total, report, reminder, Lisa answer and the client portal's dues (`Invoice.objects.billable()` / `.open()`). An invoice with money received on it cannot be cancelled.
+  - **Issuing is what tells the client.** Under each invoice number: *Issued <date> · client emailed*, or *client not emailed* when the email was skipped (no email on file, or client email switched off). This is recorded in `invoice_handling.client_notified_at`.
+  - **Raised by** is the invoice's advocate. **Handled by** is whoever issued it (`invoice_handling.issued_by_id`), i.e. whom to ask about collecting it. Invoices from before this show their advocate.
+- **Endpoints:** `GET /api/invoices`, `/my-invoices`, `/summary`, `/recipient-defaults`; `POST /api/invoices/create` (`INVOICE_ISSUE`), `/pay/<id>`, `/<id>/cancel` (`INVOICE_EDIT`); `POST /api/payments/create` takes an optional `invoiceId`. Requests: `GET|POST /api/invoices/requests`, `PUT|DELETE /api/invoices/requests/<id>` (the raiser), `POST /api/invoices/requests/<id>/issue`, `/return` (`INVOICE_ISSUE`).
 
 **Expenses**
 - Case-centric view: pick a case → see its expenses & payments.
@@ -307,29 +373,59 @@ Deep integration with Indian court systems via an external scraper service, with
 
 ---
 
+## 16a. AI usage metering
+
+For future usage-based pricing, every LLM call is recorded (`metering` app, table `llm_usage`). Each row holds: user, firm, feature (`chat` / `summary` / `draft` / `translation`), operation (e.g. `draft.generate`, `draft.refine`), provider, model, input and output tokens, duration, success, and what it was for (draft session, document).
+
+- **Where it's captured.** Every call goes through one of two wrappers, so both record usage:
+  - `assistant/llm.py`: Lisa's streamed answers (with `stream_options.include_usage`), and `complete_text`, which document summaries use.
+  - `drafting/providers/llm.py` `LLMProvider.complete`, for every drafting call: Anthropic `usage`, the OpenAI/Gemini stream's final usage chunk, or Ollama's counts.
+
+  Sarvam translation is recorded in characters.
+- **Who it's charged to.** Context comes from `metering.usage.metering(...)`, set where the work starts:
+  - the chat view, as the signed-in user;
+  - the summarizer, as the document's advocate;
+  - each drafting background task, as the row's owner (the decorator in `drafting/tasks.py`);
+  - drafting's edit, refine and consistency actions, as the signed-in user.
+- **No usage from the provider.** Tokens are estimated (about 4 characters per token) and the row is flagged `estimated`.
+- **Recording never breaks the call it measures.** Write errors are logged and dropped.
+- **Reports:**
+  - `manage.py llm_usage --by feature|operation|user|firm|model [--from --to]`;
+  - `GET /api/usage/summary` (Super Admin).
+
+  Both show calls, tokens and estimated cost from `LLM_PRICES` (per 1M tokens, by model).
+- **Measured live** (gpt-4o): one Lisa answer used about 6,000 input tokens (the case-data context) and about 10 output tokens, so chat cost is dominated by input.
+
 ## 16. AI Assistant
 
 A floating chat panel with two modes:
 
-**Rule-based command router** (`/api/assistant/query`) — intent matching for:
+**How messages are routed:** every typed message goes to the AI (below), which can also open pages and forms itself through action tools (`open_page`, `open_form`, `search_in_page`, `open_case`; each permission-checked). The quick buttons send exact command names. The phrase matcher below is used only as **basic mode**, when the AI is not configured or unreachable — no typed message is matched by phrase first, so new wordings never need rules. Details: `docs/AI_ASSISTANT.md`.
+
+**Rule-based command router — basic mode only** (`/api/assistant/query` with `{query}`; the quick buttons use `{command}`) — intent matching for:
 - **Navigation:** open Cases, Dashboard, Clients, Expenses, Calendar, Documents, Invoices, Settings, Reports.
 - **Data queries:** today's/upcoming hearings, pending invoices, today's/monthly expenses, monthly income, active-case count, client count, hearing counts.
 - **Search:** find client / case / invoice X (with "X's cases" natural-language resolution).
 - **Create modals:** create client, add case, new expense, schedule hearing, generate invoice.
 - **Refresh dashboard.**
 
-**LLM chat** (`/api/assistant/chat`) — streaming **SSE** conversation grounded strictly in the logged-in advocate's data (read-only context: caseload, case details, invoices, payments, tasks).
+**LLM chat** (`/api/assistant/chat`) — streaming **SSE** conversation grounded strictly in the user's data. Full design: `docs/AI_ASSISTANT.md`.
+- **Tool calling** (OpenAI / Gemini, `ASSISTANT_TOOL_CALLING=auto`): the model is offered only the tools the user's role may use (find a case, hearings between two dates, my tasks, overdue tasks, pending invoices, court record, ...) and fetches exactly what the question needs, up to 5 rounds. A local model, or a failed tool request, falls back to the pre-built context brief described below.
+- **Case search** (`assistant/search.py`): one ranked PostgreSQL query per question - case/registration number on number boundaries, full-text words with stems, party and counsel names, and typo tolerance (`pg_trgm`). A named case number must match; noise words and bare years match nothing.
 - Pluggable provider: **local** (ngrok-hosted), **Google Gemini**, or **OpenAI**.
 - Temperature 0.2; system prompt forbids hallucination; context capped (≈2 cases/query) to stay within token budget.
 - **Case briefings:** asking about a case or client ("what is the R. Murugan case") gets a prose summary, then *Where it stands* and *Follow-up*. The summary draws on the court record saved at import (`get_court_record`: acts, stage, coram, next date, hearing history, orders, interim applications). It reads both record layouts: High Court (`hearings`, flat case numbers) and district court (`history`, a `case_details` table, and extra tables such as IA status and transfers). It flags a court "next date" that has already passed, since `today` is in the context. Cases can be found by their court registration number (e.g. "AS 700/2025") even though an import stores the CNR as the case number.
 - **Conversation memory (per browser, per user):** each question is sent with the last 3 exchanges with the model and the case ids its previous answer used (returned in the stream's final `done` frame). A follow-up that refers back ("its next hearing", "what did he file") and names no case number stays on that case. Naming another case switches to it. The server treats the history as untrusted: only user/assistant turns, at most 8 turns and 8,000 characters in total; every remembered case id is re-checked against the user's practice. Only the latest message carries case data, so facts always come from a fresh read. Short follow-ups after a model answer skip the keyword router. Chats are stored in the browser under `advocate-assistant-history:<advocateId>`, so a different login on the same browser never sees (or sends) someone else's chat. Nothing is stored on the server yet.
+- **Access by role (both modes):** Lisa shows only what the person's own pages would show them. Each block of data needs the same permission as its page: cases/court record/parties/notes `CASE_VIEW`, hearings `EVENT_VIEW`, documents `DOCUMENT_VIEW`, invoices and dues `INVOICE_VIEW`, payments received `PAYMENT_VIEW`, expenses `EXPENSE_VIEW`, client details `CLIENT_VIEW`. What's withheld is listed to the model as `notPermitted`, so it answers "your role doesn't have access" instead of "there is none"; quick commands answer the same way. Scope is the person's team (the whole firm for Super Admin / Accountant), resolved on every request, so a team change applies at once.
+- **Privacy masking** (`assistant/privacy.py`): before anything is sent to the model, people's names and personal identifiers are replaced with tokens - clients `[CLIENT_n]`, case parties and counsel `[PARTY_n]`, staff `[PERSON_n]`, and phone, email, PAN, GSTIN, Aadhaar, IFSC and stored client addresses. Names come from the firm's own records within the user's scope (including surname-only mentions); the same person gets the same token across the question, chat history and case data. Case numbers, courts, judges, dates, amounts and statutes are not masked. The reply is unmasked as it streams (a token split across pieces is held back until complete), so the user reads real names. Always on for OpenAI/Gemini; for the local model `ASSISTANT_MASK_LOCAL` (default on). Each call writes an `ASSISTANT_LLM_CALL` audit row with the provider, model and how many values of each kind were masked - never the values. Limit: a name that appears only in free text (a note, a court filing) and in no record is not caught.
+- **"Me":** the context names who is asking and their own open tasks (`me.myOpenTasks`: assigned to them, or created by them with no assignee), so "anything I should worry about" means their items, not the whole team's.
 
 ---
 
 ## 17. Notifications & Communication (Email / WhatsApp / In-App)
 
 **Notification engine:**
-- Reminder types: hearings within next 2 days, overdue invoices, overdue tasks.
+- Reminder types: hearings within next 2 days, overdue invoices, and task deadlines: an open task is flagged once when its deadline is `TASK_REMINDER_DAYS` away (default 2: "Task due in 2 day(s)"), again on the due date, then daily while overdue - to the assignee and whoever assigned it.
 - Channels: **Email (SMTP)**, **in-app/browser**, **WhatsApp** (Meta Business API — present but disabled by default).
 - Asynchronous **queue** with retry/backoff and error tracking; idempotency (checks queue + history before duplicating).
 - In-app notifications with read/unread state and a bell icon (unread count + dropdown); hearing alert popups.
@@ -382,6 +478,15 @@ A floating chat panel with two modes:
 - Firm-wide visibility: cases/clients/etc. are scoped to the set of practice member IDs, so senior advocates see the team's caseload; former members lose access while their data stays intact.
 - Task delegation, case transfer, and "assignable advocates" all operate within the practice.
 - Enabled/migrated via `enable_shared_practice`; case-number uniqueness scoped per advocate via `scope_case_numbers`.
+
+### Teams within a firm
+
+- A firm can have several seniors. Each senior heads a **team** (themselves + the juniors/interns whose `parent_advocate_id` is them). `firms.FirmTeam` (`firm_team`) records which teams make up one firm; a team with no row is a one-team firm.
+- **Visibility:** advocates, juniors and interns see only their own team's cases, clients, hearings, bills and tasks; another senior's team does not see them. Firm-wide staff (Super Admin, Accountant — `FIRM_WIDE_SCOPE`) see every team of the firm. Another firm sees nothing. All of this comes from `core.practice.practice_ids()`.
+- **Clients:** a client added by the Super Admin with a handling advocate belongs to that advocate's team. The Handling Advocate list covers the whole firm for firm-wide staff, otherwise the user's own team.
+- **Transfers:** a senior can hand a matter to another senior **of the same firm** only; the case moves with its hearings, documents, bills, notes and tasks (`cases.views._move_matter`).
+- **Adding a senior:** a user created as "Head / firm-wide" joins the creator's firm as a new team.
+- **Splitting an existing team:** `manage.py make_team --senior <email> --firm <head email> [--yes]` (dry run by default; backup JSON under `uploads/demo-resets/`) makes a senior who reports to another senior head their own team and re-owns their cases' records.
 
 ---
 

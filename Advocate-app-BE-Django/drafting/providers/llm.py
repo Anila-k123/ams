@@ -56,18 +56,40 @@ class LLMProvider:
         logger.info('Temperature: %s, Max tokens: %s', self._temperature, max_tokens)
         logger.info('=================================')
 
-        if self._provider == 'anthropic':
-            result = self._complete_anthropic(system, user, max_tokens)
-        elif self._provider == 'ollama':
-            result = self._complete_ollama(system, user, max_tokens)
-        elif self._provider == 'flask':
-            result = self._complete_flask(system, user, max_tokens)
-        else:
-            result = self._complete_openai(system, user, max_tokens)
+        # Each provider path returns (text, usage); usage is (input, output)
+        # tokens, or None when the provider reports none. Returned rather than
+        # kept on self: providers are shared singletons used from several threads.
+        started = time.monotonic()
+        ok = False
+        usage = None
+        result = ''
+        try:
+            if self._provider == 'anthropic':
+                result, usage = self._complete_anthropic(system, user, max_tokens)
+            elif self._provider == 'ollama':
+                result, usage = self._complete_ollama(system, user, max_tokens)
+            elif self._provider == 'flask':
+                result, usage = self._complete_flask(system, user, max_tokens)
+            else:
+                result, usage = self._complete_openai(system, user, max_tokens)
+            ok = True
+        finally:
+            self._meter(system, user, result, usage, started, ok)
 
         logger.info('Response: %s', result)
         logger.info('=================================')
         return result
+
+    def _meter(self, system, user, result, usage, started, ok):
+        """Record the call's tokens (metering/usage.py); estimated from the
+        text when the provider sent no counts."""
+        from metering import usage as metering
+        ms = int((time.monotonic() - started) * 1000)
+        if usage is not None:
+            metering.record(self._provider, self._model, usage[0], usage[1], duration_ms=ms, ok=ok)
+        else:
+            metering.record_text(self._provider, self._model, (system or '') + (user or ''),
+                                 result or '', duration_ms=ms, ok=ok)
 
     def _post(self, url: str, payload: dict, headers: dict | None = None) -> httpx.Response:
         """POST with retries on transient gateway errors / timeouts."""
@@ -107,7 +129,7 @@ class LLMProvider:
         raise last_exc
 
     # ── Anthropic ──
-    def _complete_anthropic(self, system: str, user: str, max_tokens: int) -> str:
+    def _complete_anthropic(self, system: str, user: str, max_tokens: int) -> tuple:
         if not self._api_key or 'replace' in self._api_key.lower():
             raise RuntimeError('Claude (Anthropic) API key is not configured — set ANTHROPIC_API_KEY in backend/.env.')
         if self._client is None:
@@ -119,10 +141,12 @@ class LLMProvider:
             system=system,
             messages=[{'role': 'user', 'content': user}],
         )
-        return message.content[0].text
+        u = getattr(message, 'usage', None)
+        usage = (u.input_tokens, u.output_tokens) if u is not None else None
+        return message.content[0].text, usage
 
     # ── OpenAI-compatible (/v1/chat/completions) ──
-    def _complete_openai(self, system: str, user: str, max_tokens: int) -> str:
+    def _complete_openai(self, system: str, user: str, max_tokens: int) -> tuple:
         # Stream the response (SSE). A long, non-streamed generation holds the HTTP
         # connection idle until the whole answer is ready, and the server/proxy often
         # drops it ("Server disconnected without sending a response"). Streaming sends
@@ -140,11 +164,14 @@ class LLMProvider:
                 ],
                 'temperature': self._temperature,
                 'stream': True,
+                # Token counts arrive in a final chunk (metering); servers that
+                # don't support it ignore the field and the call is estimated.
+                'stream_options': {'include_usage': True},
             },
             headers=headers,
         )
 
-    def _stream_openai(self, url: str, payload: dict, headers: dict) -> str:
+    def _stream_openai(self, url: str, payload: dict, headers: dict) -> tuple:
         """POST with stream=True, accumulate the SSE delta chunks into the full text.
         Retries transient gateway errors / timeouts / mid-stream disconnects (starting the
         stream over each attempt), and honours Retry-After / backs off on 429 like _post."""
@@ -163,6 +190,7 @@ class LLMProvider:
                     else:
                         resp.raise_for_status()
                         chunks: list[str] = []
+                        usage = None
                         for line in resp.iter_lines():
                             line = line.strip()
                             if not line.startswith('data:'):
@@ -174,6 +202,9 @@ class LLMProvider:
                                 obj = json.loads(data)
                             except ValueError:
                                 continue
+                            u = obj.get('usage')
+                            if u and (u.get('prompt_tokens') is not None or u.get('completion_tokens') is not None):
+                                usage = (u.get('prompt_tokens') or 0, u.get('completion_tokens') or 0)
                             choices = obj.get('choices') or [{}]
                             piece = (choices[0].get('delta') or {}).get('content')
                             if piece:
@@ -181,7 +212,7 @@ class LLMProvider:
                         content = ''.join(chunks).strip()
                         if not content:
                             raise RuntimeError('LLM returned empty content (streamed); raise max_tokens.')
-                        return content
+                        return content, usage
             except httpx.TransportError as exc:  # connect/read timeout, conn reset, mid-stream drop
                 last_exc = exc
             if attempt < _MAX_ATTEMPTS - 1:
@@ -198,7 +229,7 @@ class LLMProvider:
         raise last_exc
 
     # ── Ollama native (/api/chat) ──
-    def _complete_ollama(self, system: str, user: str, max_tokens: int) -> str:
+    def _complete_ollama(self, system: str, user: str, max_tokens: int) -> tuple:
         resp = self._post(
             f'{self._base_url}/api/chat',
             {
@@ -212,10 +243,13 @@ class LLMProvider:
             },
         )
         data = resp.json()
-        return data['message']['content']
+        usage = None
+        if data.get('prompt_eval_count') is not None or data.get('eval_count') is not None:
+            usage = (data.get('prompt_eval_count') or 0, data.get('eval_count') or 0)
+        return data['message']['content'], usage
 
     # ── Custom Flask wrapper (POST /api/llm -> streamed plain text) ──
-    def _complete_flask(self, system: str, user: str, max_tokens: int) -> str:
+    def _complete_flask(self, system: str, user: str, max_tokens: int) -> tuple:
         prompt = f'{system}\n\n{user}' if system else user
         body: dict = {'prompt': prompt, 'temperature': self._temperature}
         if self._seed is not None:
@@ -225,7 +259,7 @@ class LLMProvider:
         # The wrapper streams errors as plain text with a 200 status — surface them.
         if text.startswith('Error:'):
             raise RuntimeError(f'LLM wrapper returned: {text}')
-        return text
+        return text, None   # plain text: no token counts, so the call is estimated
 
 
 def _config_for(choice: str) -> dict:

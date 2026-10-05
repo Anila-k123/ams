@@ -69,3 +69,21 @@
 .p-datepicker:not(.p-datepicker-inline) .p-datepicker-buttonbar { padding: 0.5rem 0 0; }
 .p-datepicker:not(.p-datepicker-inline) .p-timepicker { padding: 0.25rem; }
 .p-datepicker:not(.p-datepicker-inline) .p-timepicker span { font-size: 1rem; }
+
+/* Messages under form fields (components/FieldError.tsx). */
+.field-error, .field-warning { display: block; font-size: 12px; line-height: 1.35; margin-top: 2px; }
+.field-error { color: var(--danger, #dc2626); }
+.field-warning { color: var(--warning, #b45309); }
+.p-inputtext.p-invalid, .p-dropdown.p-invalid { border-color: var(--danger, #dc2626); }
+
+/* Button hover hints: small and compact, so the hint sits just above the
+   button instead of covering it and its neighbours. Every tooltip in the app
+   is positioned "top" (tooltipOptions); new ones should be too. */
+.p-tooltip .p-tooltip-text {
+  font-size: 0.75rem;
+  line-height: 1.3;
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  max-width: 16rem;
+  white-space: normal;
+}

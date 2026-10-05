@@ -7,7 +7,7 @@ everything about the AMS side and asks you to report the InstaDraft side so we c
 integration. **Do not write integration code yet — first produce the report requested at the end.**
 
 ## Target integration scenarios
-1. **Assigned-task flow:** A senior advocate assigns a drafting task to a junior advocate in AMS.
+1. **Assigned-task flow:** A senior advocate assigns a drafting task to a advocate in AMS.
    The junior clicks the task and lands in InstaDraft with the case + task context already
    loaded, then fills in the remaining draft-specific details.
 2. **Direct flow:** A user opens InstaDraft directly using their AMS credentials (single sign-on),

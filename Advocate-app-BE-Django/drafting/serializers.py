@@ -132,7 +132,13 @@ class DraftSessionSerializer(serializers.ModelSerializer):
         reviewer = (Advocate.objects.filter(id=task.reviewed_by_id).only('full_name').first()
                     if task.reviewed_by_id else None)
         is_owner = obj.created_by_id == request.user.id
+        # The latest hand-back, for the review bar: the author's note and what it changed.
+        from workspace.models import TaskSubmission
+        last = (TaskSubmission.objects.filter(task_id=task.id).defer('draft_snapshot')
+                .order_by('-created_at', '-id').first())
         return {'taskId': task.id, 'taskTitle': task.title, 'status': task.review_status,
+                'lastNote': last.note if last else None,
+                'lastChanges': last.changes if last else None,
                 'note': task.review_note, 'reviewedByName': reviewer.full_name if reviewer else None,
                 'isOwner': is_owner, 'canReview': can_review,
                 'canEdit': is_owner or (can_review and task.review_status == 'SUBMITTED')}

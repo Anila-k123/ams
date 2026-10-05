@@ -1,4 +1,6 @@
 import { Tag } from 'primereact/tag';
+import { Button } from 'primereact/button';
+import { useNavigate } from 'react-router-dom';
 import { formatCurrency } from '../utils/formatCurrency';
 
 function statusSeverity(status: string): any {
@@ -77,6 +79,7 @@ function formatAssistantText(text: string) {
 }
 
 export default function AssistantMessage({ message }: { message: any }) {
+  const navigate = useNavigate();
   const isUser = message.sender === 'user';
   const response = message.response;
 
@@ -86,6 +89,14 @@ export default function AssistantMessage({ message }: { message: any }) {
       <div className="assistant-msg-content">
         <div className="assistant-msg-text" dangerouslySetInnerHTML={{ __html: formatAssistantText(message.text || '') }} />
         {response && response.results && response.results.length > 0 && <AssistantResults results={response.results} />}
+        {!isUser && message.links?.length > 0 && (
+          <div className="assistant-msg-links">
+            {message.links.map((l: any) => (
+              <Button key={l.route} size="small" outlined icon="pi pi-arrow-right" iconPos="right"
+                label={l.label} onClick={() => navigate(l.route)} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

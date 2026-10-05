@@ -131,12 +131,18 @@ class TranslationProvider:
             'mode': self._mode,
             'numerals_format': 'native',
         }
+        import time
+        from metering import usage as metering
+        started = time.monotonic()
         resp = _requests.post(
             _ENDPOINT,
             headers={'api-subscription-key': self._key},
             json=payload,
             timeout=30,
         )
+        # Sarvam bills per input character, not per token.
+        metering.record('sarvam', self._model, characters=len(text), ok=resp.ok,
+                        duration_ms=int((time.monotonic() - started) * 1000))
         if not resp.ok:
             raise RuntimeError(
                 f'Sarvam Translate error {resp.status_code}: {resp.text[:300]}'

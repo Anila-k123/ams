@@ -6,9 +6,9 @@ and grants that already exist are left alone, and nothing is revoked.
 
 Grants (agreed chamber split):
   Super Admin, Senior Advocate : DRAFT_VIEW, DRAFT_CREATE, DRAFT_MANAGE, DRAFT_EXPORT
-  Junior Advocate              : DRAFT_VIEW, DRAFT_CREATE, DRAFT_EXPORT
+  Advocate              : DRAFT_VIEW, DRAFT_CREATE, DRAFT_EXPORT
   Intern                       : DRAFT_VIEW, DRAFT_CREATE   (drafts on tasks; seniors approve)
-  Accountant, Receptionist     : none
+  Accountant                   : none
 """
 
 from django.core.management.base import BaseCommand
@@ -25,7 +25,7 @@ CODES = {
 GRANTS = {
     'Super Admin': ['DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_MANAGE', 'DRAFT_EXPORT'],
     'Senior Advocate': ['DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_MANAGE', 'DRAFT_EXPORT'],
-    'Junior Advocate': ['DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_EXPORT'],
+    'Advocate': ['DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_EXPORT'],
     'Intern': ['DRAFT_VIEW', 'DRAFT_CREATE'],
 }
 

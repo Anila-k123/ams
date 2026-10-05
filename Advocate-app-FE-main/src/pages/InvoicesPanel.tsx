@@ -17,10 +17,14 @@ import api from "../api/client";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
+import { useAuth } from "../context/AuthContext";
 import { formatCurrency } from "../utils/formatCurrency";
+import { PAYMENT_MODES } from "../constants/payments";
 import usePagination from "../hooks/usePagination";
 import "../assets/styles/InvoicesPanel.css";
 import { usePageModal } from "../utils/pageModal";
+import FieldError from "../components/FieldError";
+import { gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
 
 const EMPTY_INVOICE = {
   invoiceDate: "",
@@ -45,7 +49,26 @@ const TAX_MODES = [
   { label: "Forward charge (firm charges GST)", value: "forward" },
 ];
 
-const STATUS_SEVERITY: Record<string, any> = { PAID: "success", UNPAID: "warning", OVERDUE: "danger" };
+const STATUS_SEVERITY: Record<string, any> = {
+  PAID: "success", PARTIAL: "info", UNPAID: "warning", OVERDUE: "danger", CANCELLED: "secondary",
+};
+const STATUS_LABEL: Record<string, string> = {
+  PAID: "Paid", PARTIAL: "Part-paid", UNPAID: "Unpaid", OVERDUE: "Overdue", CANCELLED: "Cancelled",
+};
+const today = () => new Date().toISOString().slice(0, 10);
+const EMPTY_PAYMENT = { amount: "", paymentMode: "", referenceNumber: "", paymentDate: "", description: "" };
+
+// An advocate-raised invoice waiting for accounts (invoices.models.InvoiceRequest).
+const REQUEST_STATUS: Record<string, { label: string; severity: any }> = {
+  SUBMITTED: { label: "With accounts", severity: "info" },
+  RETURNED: { label: "Returned", severity: "warning" },
+};
+
+// What the invoice form is doing:
+//   new     - a fresh invoice (issued directly, or sent to accounts)
+//   resend  - the advocate edits their own waiting / returned request
+//   review  - accounts check a submitted request before issuing it
+type FormMode = { kind: "new" } | { kind: "resend" | "review"; request: any };
 
 export default function InvoicesPanel() {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -67,6 +90,32 @@ export default function InvoicesPanel() {
   const { withLoading } = useLoading() as any;
   const { success, error } = useToast() as any;
   const { hasPermission } = usePermission() as any;
+  const { advocateId: myId } = useAuth();
+  // Raising a bill and issuing it are separate: advocates raise, accounts
+  // (and seniors) issue. Without INVOICE_ISSUE the form sends it to accounts.
+  const canIssue = hasPermission("INVOICE_ISSUE");
+  const canRaise = hasPermission("INVOICE_CREATE");
+  const [mode, setMode] = useState<FormMode>({ kind: "new" });
+  const [requests, setRequests] = useState<any[]>([]);
+  const [returning, setReturning] = useState<any>(null);   // request being sent back
+  const [returnNote, setReturnNote] = useState("");
+  // After issue, accounts own the invoice: payments against it, and
+  // cancelling a wrong one (it is never edited or deleted).
+  const [paying, setPaying] = useState<any>(null);          // invoice taking a payment
+  const [payment, setPayment] = useState<any>(EMPTY_PAYMENT);
+  const [cancelling, setCancelling] = useState<any>(null);  // invoice being cancelled
+  const [cancelReason, setCancelReason] = useState("");
+
+  const fetchRequests = useCallback(async () => {
+    if (!canRaise) return;
+    try {
+      setRequests((await api.get("/api/invoices/requests")).data || []);
+    } catch (err) {
+      console.error("Error fetching invoice requests:", err);
+    }
+  }, [canRaise]);
+
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
 
   const fetchInvoices = useCallback(async () => {
     try {
@@ -130,8 +179,30 @@ export default function InvoicesPanel() {
   }, [invoices, highlightedId]);
 
   const handleChange = (e: any) => {
-    setNewInvoice({ ...newInvoice, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    if (name === "recipientGstin") return setRecipientGstin(value);
+    setNewInvoice({ ...newInvoice, [name]: value });
   };
+
+  // A valid GSTIN gives the recipient's state and its code (the first two
+  // digits): fill them when empty or when they came from the GSTIN before.
+  const setRecipientGstin = (raw: string) => {
+    const g = normaliseCode(raw);
+    setNewInvoice((prev: any) => {
+      const next = { ...prev, recipientGstin: g };
+      if (!gstinError(g) && g) {
+        const st = gstinState(g);
+        const prevAuto = gstinState(prev.recipientGstin);
+        if (!prev.recipientState || prev.recipientState === prevAuto) next.recipientState = st;
+        if (!prev.recipientStateCode || prev.recipientStateCode === normaliseCode(prev.recipientGstin).slice(0, 2)) {
+          next.recipientStateCode = g.slice(0, 2);
+        }
+      }
+      return next;
+    });
+  };
+  const [gstinTouched, setGstinTouched] = useState(false);
+  const recipientGstinError = gstinError(newInvoice.recipientGstin);
 
   // Recipient fields filled in from the client (field -> value we put there),
   // so picking a different case replaces our suggestions but never what the
@@ -162,11 +233,66 @@ export default function InvoicesPanel() {
     });
   };
 
-  const handleClose = () => {
-    if (submitting) return;
+  const resetForm = () => {
     setShowModal(false);
     setNewInvoice(EMPTY_INVOICE);
+    setMode({ kind: "new" });
     prefilled.current = {};
+    setGstinTouched(false);
+  };
+
+  const handleClose = () => {
+    if (submitting) return;
+    resetForm();
+  };
+
+  // Open a request in the form: the advocate to change and resend it, or
+  // accounts to check (and correct) it before issuing.
+  const openRequest = (req: any, kind: "resend" | "review") => {
+    const p = req.payload || {};
+    const rows = (p.particulars || []).map((r: any) => ({ description: r.description || "", amount: String(r.amount ?? "") }));
+    setNewInvoice({
+      ...EMPTY_INVOICE,
+      ...Object.fromEntries(Object.keys(EMPTY_INVOICE).filter((k) => p[k] != null).map((k) => [k, String(p[k])])),
+      caseId: String(req.caseId),
+      particulars: rows.length ? rows : EMPTY_INVOICE.particulars,
+      gstRate: String(p.gstRate ?? "18"),
+      taxMode: p.taxMode || "rcm",
+    });
+    prefilled.current = {};
+    setMode({ kind, request: req });
+    setShowModal(true);
+  };
+
+  const withdrawRequest = (req: any) => {
+    confirmDialog({
+      message: "Withdraw this invoice? Accounts will no longer see it.",
+      header: "Withdraw invoice",
+      icon: "pi pi-undo",
+      accept: async () => {
+        try {
+          await withLoading(api.delete(`/api/invoices/requests/${req.id}`), "Withdrawing...");
+          fetchRequests();
+          success("Invoice withdrawn.");
+        } catch (err: any) {
+          error(err.response?.data?.error || "Failed to withdraw.");
+        }
+      },
+    });
+  };
+
+  const sendBack = async () => {
+    if (!returning || !returnNote.trim()) return;
+    try {
+      await withLoading(api.post(`/api/invoices/requests/${returning.id}/return`, { note: returnNote.trim() }), "Returning...");
+      setReturning(null);
+      setReturnNote("");
+      resetForm();
+      fetchRequests();
+      success("Returned to the advocate.");
+    } catch (err: any) {
+      error(err.response?.data?.error || "Failed to return the invoice.");
+    }
   };
 
   const setParticular = (i: number, field: string, value: any) =>
@@ -191,64 +317,128 @@ export default function InvoicesPanel() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (recipientGstinError) {
+      setGstinTouched(true);
+      error("Fix the recipient GSTIN first: " + recipientGstinError);
+      return;
+    }
     setSubmitting(true);
     try {
       const particulars = newInvoice.particulars
         .map((p: any) => ({ description: (p.description || "").trim(), amount: parseFloat(p.amount) || 0 }))
         .filter((p: any) => p.description || p.amount);
-      await withLoading(
-        api.post("/api/invoices/create", {
-          // No invoiceNumber — the server assigns the next one.
-          particulars,
-          invoiceDate: newInvoice.invoiceDate ? newInvoice.invoiceDate : null,
-          dueDate: newInvoice.dueDate ? newInvoice.dueDate : null,
-          caseEntity: { id: Number(newInvoice.caseId) },
-          // Recipient GST/tax details (blank ones are prefilled server-side
-          // from this client's most recent invoice).
-          kindAttn: newInvoice.kindAttn,
-          recipientGstin: newInvoice.recipientGstin,
-          recipientState: newInvoice.recipientState,
-          recipientStateCode: newInvoice.recipientStateCode,
-          recipientAddress: newInvoice.recipientAddress,
-          placeOfSupply: newInvoice.placeOfSupply,
-          taxMode: newInvoice.taxMode,
-          gstRate: newInvoice.gstRate,
-        }),
-        "Generating Invoice..."
-      );
+      const body = {
+        // No invoiceNumber — the server assigns the next one on issue.
+        particulars,
+        invoiceDate: newInvoice.invoiceDate ? newInvoice.invoiceDate : null,
+        dueDate: newInvoice.dueDate ? newInvoice.dueDate : null,
+        caseId: Number(newInvoice.caseId),
+        // Recipient GST/tax details (blank ones are prefilled server-side
+        // from this client's most recent invoice).
+        kindAttn: newInvoice.kindAttn,
+        recipientGstin: newInvoice.recipientGstin,
+        recipientState: newInvoice.recipientState,
+        recipientStateCode: newInvoice.recipientStateCode,
+        recipientAddress: newInvoice.recipientAddress,
+        placeOfSupply: newInvoice.placeOfSupply,
+        taxMode: newInvoice.taxMode,
+        gstRate: newInvoice.gstRate,
+      };
+      let done = "Invoice issued.";
+      if (mode.kind === "review") {
+        await withLoading(api.post(`/api/invoices/requests/${mode.request.id}/issue`, body), "Issuing Invoice...");
+      } else if (mode.kind === "resend") {
+        await withLoading(api.put(`/api/invoices/requests/${mode.request.id}`, body), "Sending to Accounts...");
+        done = "Sent to accounts.";
+      } else if (canIssue) {
+        await withLoading(api.post("/api/invoices/create", body), "Generating Invoice...");
+      } else {
+        await withLoading(api.post("/api/invoices/requests", body), "Sending to Accounts...");
+        done = "Sent to accounts to issue.";
+      }
 
       setSubmitting(false);
-      setShowModal(false);
-      setNewInvoice(EMPTY_INVOICE);
+      resetForm();
       fetchInvoices();
       fetchSummary();
-      success("Invoice created.");
+      fetchRequests();
+      success(done);
     } catch (err: any) {
       setSubmitting(false);
-      console.error("Error creating invoice:", err);
-      error(err.response?.data || "Failed to create invoice.");
+      console.error("Error saving invoice:", err);
+      error(err.response?.data?.error || err.response?.data || "Failed to save invoice.");
     }
   };
+
+  // The form's wording follows what pressing the button will do.
+  const formTitle = mode.kind === "review" ? "Review Invoice"
+    : mode.kind === "resend" ? "Edit Invoice" : "Generate Invoice";
+  const formSubtitle = mode.kind === "review"
+    ? `Raised by ${mode.request.requestedByName || "an advocate"}. Check it, correct if needed, then issue it or return it.`
+    : canIssue && mode.kind === "new" ? "Create an invoice for the selected client."
+    : "Accounts will check it and issue it to the client.";
+  const submitLabel = mode.kind === "review" || (mode.kind === "new" && canIssue) ? "Issue Invoice" : "Send to Accounts";
 
   const doPay = async (id: any) => {
     try {
-      await withLoading(api.put(`/api/invoices/pay/${id}`, {}), "Sending Invoice...");
+      await withLoading(api.put(`/api/invoices/pay/${id}`, {}), "Updating Invoice...");
       fetchInvoices();
       fetchSummary();
       success("Invoice marked as Paid!");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error paying invoice:", err);
-      error("Failed to pay invoice.");
+      error(err.response?.data?.error || "Failed to mark the invoice paid.");
     }
   };
 
+  // For money already recorded without being linked to this invoice.
   const handlePay = (id: any) => {
     confirmDialog({
-      message: "Mark this invoice as Paid?",
+      message: "Mark this invoice as Paid without recording a payment? Use this only if the money was already recorded elsewhere.",
       header: "Mark paid",
       icon: "pi pi-check-circle",
       accept: () => doPay(id),
     });
+  };
+
+  const openPayment = (inv: any) => {
+    setPaying(inv);
+    setPayment({ ...EMPTY_PAYMENT, amount: String(inv.balance ?? inv.amount), paymentDate: today() });
+  };
+
+  const due = (inv: any) => inv?.balance ?? inv?.amount ?? 0;
+  const payAmount = parseFloat(payment.amount) || 0;
+
+  const savePayment = async () => {
+    if (!paying || payAmount <= 0) return;
+    try {
+      await withLoading(api.post("/api/payments/create", {
+        invoiceId: paying.id, amount: payAmount,
+        paymentMode: payment.paymentMode || null, referenceNumber: payment.referenceNumber || null,
+        paymentDate: payment.paymentDate || null, description: payment.description || null,
+      }), "Recording Payment...");
+      const full = payAmount >= due(paying) - 0.005;
+      setPaying(null);
+      fetchInvoices();
+      fetchSummary();
+      success(full ? "Payment recorded. Invoice paid." : "Part-payment recorded.");
+    } catch (err: any) {
+      error(err.response?.data?.error || "Failed to record the payment.");
+    }
+  };
+
+  const confirmCancel = async () => {
+    if (!cancelling || !cancelReason.trim()) return;
+    try {
+      await withLoading(api.post(`/api/invoices/${cancelling.id}/cancel`, { reason: cancelReason.trim() }), "Cancelling...");
+      setCancelling(null);
+      setCancelReason("");
+      fetchInvoices();
+      fetchSummary();
+      success("Invoice cancelled.");
+    } catch (err: any) {
+      error(err.response?.data?.error || "Failed to cancel the invoice.");
+    }
   };
 
   const handleDownloadPDF = async (id: any, invNum: string) => {
@@ -326,29 +516,114 @@ export default function InvoicesPanel() {
         {card("overdue", "pi-exclamation-circle", "Overdue Dues", summary.overdueAmount, summary.overdue, "Payment deadline passed")}
       </div>
 
+      {(requests.length > 0 || canIssue) && (
+        <div className="invoices-table-card mb-3">
+          <div className="inv-requests-heading">
+            <strong>Waiting to be issued</strong>
+            <span className="subtle">
+              {canIssue ? "Raised by advocates. Review each one, then issue it or return it." : "Sent to accounts. Returned ones need your changes."}
+            </span>
+          </div>
+          {requests.length === 0 ? (
+            <p className="subtle m-0">Nothing waiting. Invoices advocates send to accounts appear here to review and issue.</p>
+          ) : (
+          <DataTable value={requests} dataKey="id" size="small" scrollable>
+            <Column header="Case Number" field="caseNumber" />
+            <Column header="Client" field="clientName" />
+            <Column header="Amount" body={(r) => formatCurrency(r.amount)} />
+            <Column header="Raised by" field="requestedByName" />
+            <Column header="Status" body={(r) => (
+              <div>
+                <Tag value={REQUEST_STATUS[r.status]?.label || r.status} severity={REQUEST_STATUS[r.status]?.severity || "info"} rounded />
+                {r.status === "RETURNED" && r.note && <div className="inv-request-note">{r.note}</div>}
+              </div>
+            )} />
+            <Column header="Actions" body={(r) => {
+              const mine = r.requestedById === myId;
+              return (
+                <div className="flex gap-2 white-space-nowrap">
+                  {canIssue && r.status === "SUBMITTED" && (
+                    <Button size="small" icon="pi pi-eye" label="Review" onClick={() => openRequest(r, "review")} />
+                  )}
+                  {mine && (
+                    <Button size="small" outlined icon="pi pi-pencil" label={r.status === "RETURNED" ? "Edit & Resend" : "Edit"}
+                      onClick={() => openRequest(r, "resend")} />
+                  )}
+                  {mine && (
+                    <Button size="small" text severity="danger" icon="pi pi-undo" tooltip="Withdraw" tooltipOptions={{ position: "top" }} aria-label="Withdraw"
+                      onClick={() => withdrawRequest(r)} />
+                  )}
+                </div>
+              );
+            }} />
+          </DataTable>
+          )}
+        </div>
+      )}
+
       <div className="invoices-table-card">
         {invoices.length === 0 ? (
           <p className="no-data">No invoices generated yet.</p>
         ) : (
           <DataTable value={invoices} dataKey="id" size="small" scrollable
             rowClassName={(inv: any) => (highlightedId === inv.id ? "highlight-row" : "")}>
-            <Column header="Invoice Number" body={(inv) => <strong>{inv.invoiceNumber}</strong>} />
-            <Column header="Client" field="clientName" />
-            <Column header="Case Number" body={(inv) => inv.caseEntity?.caseNumber} />
-            <Column header="Amount" body={(inv) => formatCurrency(inv.amount)} />
-            <Column header="Due Date" body={(inv) => new Date(inv.dueDate).toLocaleDateString()} />
-            <Column header="Status" body={(inv) => <Tag value={inv.status} severity={STATUS_SEVERITY[inv.status] || "info"} rounded />} />
-            <Column header="Actions" body={(inv) => (
-              <div className="flex gap-2 white-space-nowrap">
-                {inv.status !== "PAID" && hasPermission("INVOICE_EDIT") && (
-                  <Button size="small" outlined severity="success" icon="pi pi-check-circle" label="Mark Paid" onClick={() => handlePay(inv.id)} />
-                )}
-                {hasPermission("REPORT_EXPORT") && (
-                  <Button size="small" outlined icon="pi pi-download" label="Export" tooltip="Download PDF"
-                    onClick={() => handleDownloadPDF(inv.id, inv.invoiceNumber)} />
+            <Column header="Invoice Number" body={(inv) => (
+              <div>
+                <strong>{inv.invoiceNumber}</strong>
+                {inv.issuedAt && (
+                  <div className="inv-sub-line" title={inv.clientNotifiedAt
+                    ? `Client emailed ${new Date(inv.clientNotifiedAt).toLocaleString()}`
+                    : "The client was not emailed: no email on file, or client email is switched off"}>
+                    Issued {new Date(inv.issuedAt).toLocaleDateString()}
+                    {inv.clientNotifiedAt ? " · client emailed" : " · client not emailed"}
+                  </div>
                 )}
               </div>
             )} />
+            <Column header="Client" field="clientName" />
+            <Column header="Case Number" body={(inv) => inv.caseEntity?.caseNumber} />
+            <Column header="Amount" body={(inv) => (
+              <div>
+                <div className={inv.status === "CANCELLED" ? "inv-struck" : undefined}>{formatCurrency(inv.amount)}</div>
+                {inv.paidAmount > 0 && inv.balance > 0 && (
+                  <div className="inv-sub-line">Paid {formatCurrency(inv.paidAmount)} · Due {formatCurrency(inv.balance)}</div>
+                )}
+              </div>
+            )} />
+            <Column header="Due Date" body={(inv) => new Date(inv.dueDate).toLocaleDateString()} />
+            <Column header="Status" body={(inv) => (
+              <div>
+                <Tag value={STATUS_LABEL[inv.status] || inv.status} severity={STATUS_SEVERITY[inv.status] || "info"} rounded />
+                {inv.status === "CANCELLED" && inv.cancelReason && (
+                  <div className="inv-request-note">{inv.cancelReason}{inv.cancelledByName ? ` (${inv.cancelledByName})` : ""}</div>
+                )}
+              </div>
+            )} />
+            <Column header="Raised by" body={(inv) => inv.raisedByName || "—"} />
+            <Column header="Handled by" body={(inv) => inv.handledByName || "—"} />
+            <Column header="Actions" body={(inv) => {
+              const open = inv.status !== "PAID" && inv.status !== "CANCELLED";
+              const untouched = open && !(inv.paidAmount > 0);
+              return (
+              <div className="flex gap-2 white-space-nowrap">
+                {open && hasPermission("PAYMENT_CREATE") && (
+                  <Button size="small" outlined severity="success" icon="pi pi-wallet" label="Record Payment" onClick={() => openPayment(inv)} />
+                )}
+                {untouched && hasPermission("INVOICE_EDIT") && (
+                  <Button size="small" text severity="success" icon="pi pi-check-circle" tooltip="Mark paid (money recorded elsewhere)" tooltipOptions={{ position: "top" }}
+                    aria-label="Mark paid" onClick={() => handlePay(inv.id)} />
+                )}
+                {untouched && hasPermission("INVOICE_EDIT") && (
+                  <Button size="small" text severity="danger" icon="pi pi-ban" tooltip="Cancel invoice" tooltipOptions={{ position: "top" }} aria-label="Cancel invoice"
+                    onClick={() => { setCancelling(inv); setCancelReason(""); }} />
+                )}
+                {hasPermission("REPORT_EXPORT") && (
+                  <Button size="small" outlined icon="pi pi-download" label="Export" tooltip="Download PDF" tooltipOptions={{ position: "top" }}
+                    onClick={() => handleDownloadPDF(inv.id, inv.invoiceNumber)} />
+                )}
+              </div>
+              );
+            }} />
           </DataTable>
         )}
         {totalElements > 0 && (
@@ -359,12 +634,20 @@ export default function InvoicesPanel() {
 
       <Dialog visible={showModal} onHide={handleClose} closable={!submitting} closeOnEscape={!submitting} dismissableMask={!submitting}
         style={{ width: "min(760px, 95vw)" }} modal
-        header={<div><div>Generate Invoice</div><div className="inv-modal-subtitle">Create an invoice for the selected client.</div></div>}>
+        header={<div><div>{formTitle}</div><div className="inv-modal-subtitle">{formSubtitle}</div></div>}>
         <form onSubmit={handleSubmit} className="inv-form" noValidate>
+          {mode.kind === "resend" && mode.request.status === "RETURNED" && mode.request.note && (
+            <div className="inv-request-note inv-request-note-box">
+              <strong>Returned by {mode.request.reviewedByName || "accounts"}:</strong> {mode.request.note}
+            </div>
+          )}
           <div className="inv-form-group">
             <label htmlFor="inv-caseId">Associated Case</label>
+            {/* A raised invoice stays on its case; only a new one picks a case. */}
             <Dropdown inputId="inv-caseId" value={newInvoice.caseId} options={caseOptions} filter autoFocus
-              placeholder="Select a case..." onChange={(e) => selectCase(e.value)} />
+              disabled={mode.kind !== "new"}
+              placeholder={mode.kind !== "new" ? `${mode.request.caseNumber || ""} — ${mode.request.caseTitle || ""}` : "Select a case..."}
+              onChange={(e) => selectCase(e.value)} />
           </div>
 
           <div className="inv-form-row">
@@ -381,7 +664,7 @@ export default function InvoicesPanel() {
               <div className="inv-particular-row" key={i}>
                 <InputText
                   className="inv-particular-desc"
-                  placeholder="Enter particulars (e.g. Appearance for hearing on 03 Sep)"
+                  placeholder="Particulars"
                   value={p.description}
                   onChange={(e) => setParticular(i, "description", e.target.value)}
                 />
@@ -391,7 +674,7 @@ export default function InvoicesPanel() {
                   value={p.amount}
                   onChange={(e) => setParticular(i, "amount", e.target.value)}
                 />
-                <Button type="button" text rounded severity="danger" icon="pi pi-times" tooltip="Remove line" aria-label="Remove line"
+                <Button type="button" text rounded severity="danger" icon="pi pi-times" tooltip="Remove line" tooltipOptions={{ position: "top" }} aria-label="Remove line"
                   onClick={() => removeParticular(i)} disabled={newInvoice.particulars.length === 1} />
               </div>
             ))}
@@ -425,7 +708,15 @@ export default function InvoicesPanel() {
             </div>
             {input("kindAttn", "Kind Attn (contact person)", "e.g. Ms S V Archana")}
             <div className="inv-form-row">
-              {input("recipientGstin", "Recipient GSTIN/UIN", "e.g. 33AACCI3508E2Z3")}
+              <div className="inv-form-group">
+                <label htmlFor="inv-recipientGstin">Recipient GSTIN</label>
+                <InputText id="inv-recipientGstin" name="recipientGstin" value={newInvoice.recipientGstin}
+                  onChange={handleChange} onBlur={() => setGstinTouched(true)} maxLength={15}
+                  placeholder="e.g. 33ABCDE1234F1Z7 (blank if the client has none)"
+                  className={gstinTouched && recipientGstinError ? "p-invalid" : undefined} />
+                <FieldError error={gstinTouched ? recipientGstinError : ""}
+                  warning={gstinStateMismatch(newInvoice.recipientGstin, newInvoice.recipientState)} />
+              </div>
               {input("recipientState", "State", "e.g. TAMIL NADU")}
               {input("recipientStateCode", "State Code", "e.g. 33")}
             </div>
@@ -456,10 +747,86 @@ export default function InvoicesPanel() {
 
           <div className="flex justify-content-end gap-2 mt-2">
             <Button type="button" outlined label="Cancel" onClick={handleClose} disabled={submitting} />
-            <Button type="submit" label={submitting ? "Generating..." : "Raise Invoice"} loading={submitting}
+            {mode.kind === "review" && (
+              <Button type="button" outlined severity="warning" icon="pi pi-reply" label="Return to Advocate"
+                disabled={submitting} onClick={() => { setReturning(mode.request); setReturnNote(""); }} />
+            )}
+            <Button type="submit" label={submitting ? "Saving..." : submitLabel} loading={submitting}
               disabled={submitting || !newInvoice.caseId || invoiceTotal <= 0} />
           </div>
         </form>
+      </Dialog>
+
+      <Dialog visible={!!returning} onHide={() => setReturning(null)} modal style={{ width: "min(480px, 95vw)" }}
+        header="Return to Advocate">
+        <div className="inv-form">
+          <div className="inv-form-group">
+            <label htmlFor="inv-return-note">What should {returning?.requestedByName || "the advocate"} change?</label>
+            <InputTextarea id="inv-return-note" rows={4} autoFocus value={returnNote}
+              onChange={(e) => setReturnNote(e.target.value)} placeholder="What to change" />
+          </div>
+          <div className="flex justify-content-end gap-2">
+            <Button type="button" outlined label="Cancel" onClick={() => setReturning(null)} />
+            <Button type="button" severity="warning" label="Return" disabled={!returnNote.trim()} onClick={sendBack} />
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog visible={!!paying} onHide={() => setPaying(null)} modal style={{ width: "min(480px, 95vw)" }}
+        header={<div><div>Record Payment</div><div className="inv-modal-subtitle">
+          {paying ? `${paying.invoiceNumber} · ${paying.clientName || ""} · due ${formatCurrency(due(paying))}` : ""}
+        </div></div>}>
+        <div className="inv-form">
+          <div className="inv-form-row">
+            <div className="inv-form-group">
+              <label htmlFor="pay-amount">Amount received</label>
+              <InputText id="pay-amount" type="number" step="0.01" min="0" autoFocus value={payment.amount}
+                onChange={(e) => setPayment({ ...payment, amount: e.target.value })} />
+            </div>
+            <div className="inv-form-group">
+              <label htmlFor="pay-date">Date</label>
+              <InputText id="pay-date" type="date" value={payment.paymentDate}
+                onChange={(e) => setPayment({ ...payment, paymentDate: e.target.value })} />
+            </div>
+          </div>
+          <div className="inv-form-row">
+            <div className="inv-form-group">
+              <label htmlFor="pay-mode">Mode</label>
+              <Dropdown inputId="pay-mode" value={payment.paymentMode} options={PAYMENT_MODES} placeholder="Payment mode"
+                onChange={(e) => setPayment({ ...payment, paymentMode: e.value })} />
+            </div>
+            <div className="inv-form-group">
+              <label htmlFor="pay-ref">Reference</label>
+              <InputText id="pay-ref" value={payment.referenceNumber} placeholder="Transaction / cheque no."
+                onChange={(e) => setPayment({ ...payment, referenceNumber: e.target.value })} />
+            </div>
+          </div>
+          {paying && payAmount > 0 && payAmount < due(paying) - 0.005 && (
+            <p className="subtle m-0">Part-payment: {formatCurrency(due(paying) - payAmount)} will still be due.</p>
+          )}
+          <div className="flex justify-content-end gap-2">
+            <Button type="button" outlined label="Cancel" onClick={() => setPaying(null)} />
+            <Button type="button" severity="success" label="Record Payment" disabled={payAmount <= 0} onClick={savePayment} />
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog visible={!!cancelling} onHide={() => setCancelling(null)} modal style={{ width: "min(480px, 95vw)" }}
+        header="Cancel Invoice">
+        <div className="inv-form">
+          <p className="m-0">
+            {cancelling?.invoiceNumber} stays on record with its number but is no longer owed. Raise a new invoice if one is still needed.
+          </p>
+          <div className="inv-form-group">
+            <label htmlFor="inv-cancel-reason">Reason</label>
+            <InputTextarea id="inv-cancel-reason" rows={3} autoFocus value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)} placeholder="Reason" />
+          </div>
+          <div className="flex justify-content-end gap-2">
+            <Button type="button" outlined label="Keep Invoice" onClick={() => setCancelling(null)} />
+            <Button type="button" severity="danger" label="Cancel Invoice" disabled={!cancelReason.trim()} onClick={confirmCancel} />
+          </div>
+        </div>
       </Dialog>
     </div>
   );

@@ -53,6 +53,40 @@ const toISODate = (d: Date | null | undefined) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
+// How urgent an open task's deadline is. Dates compare as local yyyy-mm-dd, so
+// "today" is the user's today whatever the server time zone.
+const DAY = 86400000;
+const dayDiff = (iso: string) => {
+  const today = new Date(`${toISODate(new Date())}T00:00:00`).getTime();
+  return Math.round((new Date(`${iso.slice(0, 10)}T00:00:00`).getTime() - today) / DAY);
+};
+type Urgency = { kind: "overdue" | "today" | "soon" | "later" | "none"; label: string; days: number };
+const deadlineState = (task: any): Urgency => {
+  if (!task.deadline) return { kind: "none", label: "", days: Infinity };
+  const days = dayDiff(task.deadline);
+  const date = new Date(`${task.deadline.slice(0, 10)}T00:00:00`).toLocaleDateString();
+  if (task.completed || task.cancelled) return { kind: "later", label: date, days };
+  if (days < 0) return { kind: "overdue", label: `Overdue · ${-days} day${days === -1 ? "" : "s"}`, days };
+  if (days === 0) return { kind: "today", label: "Due today", days };
+  if (days <= 3) return { kind: "soon", label: days === 1 ? "Due tomorrow" : `Due in ${days} days`, days };
+  return { kind: "later", label: date, days };
+};
+const PRIORITY_RANK: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+const prioClass = (p?: string) => `prio-${(p || "MEDIUM").toLowerCase()}`;
+const isOpen = (t: any) => !t.completed && !t.cancelled;
+
+// The quick filters above the list.
+const QUICK: { key: string; label: string; icon: string; test: (t: any) => boolean }[] = [
+  { key: "overdue", label: "overdue", icon: "pi-exclamation-triangle", test: (t) => deadlineState(t).kind === "overdue" },
+  { key: "today", label: "due today", icon: "pi-clock", test: (t) => deadlineState(t).kind === "today" },
+  { key: "week", label: "due this week", icon: "pi-calendar", test: (t) => { const d = deadlineState(t).days; return d >= 0 && d <= 7; } },
+  { key: "high", label: "high priority", icon: "pi-flag", test: (t) => (t.priority || "MEDIUM") === "HIGH" },
+];
+
+const priorityValue = (opt: any) => opt
+  ? <span className={`task-prio-value ${prioClass(opt.value)}`}><i className="pi pi-flag-fill" /> {opt.label}</span>
+  : null;
+
 export default function TasksPage() {
   const { hasPermission } = usePermission();
   const { advocateId: myId } = useAuth();
@@ -67,6 +101,7 @@ export default function TasksPage() {
   const [searchText, setSearchText] = useState("");
   const [filter, setFilter] = useState("inprogress");
   const [scope, setScope] = useState("team");   // team | mine | created
+  const [quick, setQuick] = useState<string | null>(null);   // a QUICK key, or none
   const [showAddModal, setShowAddModal] = useState(false);
   const [assignees, setAssignees] = useState<any[]>([]);
   const [assignTo, setAssignTo] = useState<any>("");   // "" = myself
@@ -221,13 +256,20 @@ export default function TasksPage() {
   const caseOptions = cases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }));
   const assigneeOptions = assignees.map((a) => ({ value: a.id, label: a.fullName || a.email }));
 
-  const visibleTasks = tasks.filter((t) => {
+  const inScope = (t: any) =>
+    !(scope === "mine" && t.assignedToId !== myId) && !(scope === "created" && t.createdById !== myId);
+  // Counts for the quick filters: open tasks in the current scope.
+  const openInScope = tasks.filter((t) => isOpen(t) && inScope(t));
+  const quickCounts = QUICK.map((q) => ({ ...q, count: openInScope.filter(q.test).length }));
+  const quickTest = QUICK.find((q) => q.key === quick)?.test;
+
+  const filtered = tasks.filter((t) => {
     if (filter === "inprogress" && (t.completed || t.cancelled)) return false;
     if (filter === "review" && !canReviewTask(t, myId, canAssign)) return false;
     if (filter === "completed" && (!t.completed || t.cancelled)) return false;
     if (filter === "canceled" && !t.cancelled) return false;
-    if (scope === "mine" && t.assignedToId !== myId) return false;
-    if (scope === "created" && t.createdById !== myId) return false;
+    if (!inScope(t)) return false;
+    if (quickTest && !(isOpen(t) && quickTest(t))) return false;
     if (searchText.trim()) {
       const k = searchText.toLowerCase();
       return (t.title || "").toLowerCase().includes(k)
@@ -236,6 +278,14 @@ export default function TasksPage() {
     }
     return true;
   });
+  // Open work, most urgent first: overdue, today, soonest, then no deadline;
+  // within a day High before Medium before Low. Done tabs keep server order.
+  const visibleTasks = filter === "inprogress" || filter === "review"
+    ? [...filtered].sort((a, b) =>
+      (deadlineState(a).days - deadlineState(b).days)
+      || (PRIORITY_RANK[a.priority || "MEDIUM"] - PRIORITY_RANK[b.priority || "MEDIUM"])
+      || (a.id - b.id))
+    : filtered;
 
   return (
     <div className="tasks-page-container">
@@ -327,6 +377,19 @@ export default function TasksPage() {
         </span>
       </div>
 
+      {/* What needs attention first; each count narrows the list. */}
+      {quickCounts.some((q) => q.count > 0 || q.key === quick) && (
+        <div className="task-quick-row">
+          {quickCounts.filter((q) => q.count > 0 || q.key === quick).map((q) => (
+            <button key={q.key} type="button" className={`task-quick task-quick-${q.key}${quick === q.key ? " active" : ""}`}
+              onClick={() => setQuick(quick === q.key ? null : q.key)} aria-pressed={quick === q.key}>
+              <i className={`pi ${q.icon}`} /> {q.count} {q.label}
+            </button>
+          ))}
+          {quick && <button type="button" className="task-quick-clear" onClick={() => setQuick(null)}>Show all</button>}
+        </div>
+      )}
+
       {/* Tasks List */}
       {visibleTasks.length === 0 ? (
         <p className="task-empty">All caught up! No tasks here.</p>
@@ -335,14 +398,14 @@ export default function TasksPage() {
           {visibleTasks.map((task) => (
             <div
               key={task.id}
-              className={`task-row-card ${task.completed ? "completed" : ""}${task.cancelled ? " cancelled" : ""}${highlightedId === task.id ? " highlight-row" : ""}`}
+              className={`task-row-card ${prioClass(task.priority)} ${task.completed ? "completed" : ""}${task.cancelled ? " cancelled" : ""}${highlightedId === task.id ? " highlight-row" : ""}`}
               ref={(el) => { if (highlightedId === task.id && el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }}
             >
               <Button className="p-button-rounded p-button-text"
                 icon={task.completed ? "pi pi-check-square" : "pi pi-stop"}
                 onClick={() => handleToggle(task.id)} aria-label="Toggle complete"
                 disabled={!hasPermission("TASK_EDIT") && task.assignedToId !== myId}
-                tooltip={task.needsReview && task.assignedToId === myId && !task.completed ? "Submit for review" : undefined} />
+                tooltip={task.needsReview && task.assignedToId === myId && !task.completed ? "Submit for review" : undefined} tooltipOptions={{ position: "top" }} />
               <div className="task-content">
                 <span className="task-title">{task.title}</span>
                 <div className="flex align-items-center flex-wrap gap-2 mt-1">
@@ -351,9 +414,15 @@ export default function TasksPage() {
                       <i className="pi pi-briefcase" /> {task.caseNumber}
                     </span>
                   )}
-                  {task.deadline && (
-                    <span className="task-chip"><i className="pi pi-calendar" /> {new Date(task.deadline).toLocaleDateString()}</span>
-                  )}
+                  {task.deadline && (() => {
+                    const d = deadlineState(task);
+                    return (
+                      <span className={`task-chip task-due-${d.kind}`}
+                        title={`Deadline ${new Date(`${task.deadline.slice(0, 10)}T00:00:00`).toLocaleDateString()}`}>
+                        <i className={`pi ${d.kind === "overdue" ? "pi-exclamation-triangle" : d.kind === "today" ? "pi-clock" : "pi-calendar"}`} /> {d.label}
+                      </span>
+                    );
+                  })()}
                   {task.draftSessionId && (
                     <span className="task-chip task-doc-chip" onClick={() => navigate(DRAFTING.draft(task.draftSessionId))}
                       title="Open the draft in the drafting editor">
@@ -374,28 +443,32 @@ export default function TasksPage() {
                   <ReviewChip task={task} />
                 </div>
                 <ReviewNote task={task} />
-                <SubmissionHistory task={task} />
+                <SubmissionHistory task={task} myId={myId} canAssign={canAssign} toast={toast}
+                  onDone={() => fetchTasks()} onViewDocument={viewDocument}
+                  onOpenDraft={() => navigate(DRAFTING.draft(task.draftSessionId))} />
               </div>
               <div className="flex align-items-center flex-wrap gap-1 justify-content-end">
-                {hasPermission("TASK_EDIT") ? (
+                {/* Priority and cancel are the assigner's (the server enforces it). */}
+                {(task.assignedById ?? task.createdById) === myId ? (
                   <Dropdown className="p-inputtext-sm" value={task.priority || "MEDIUM"} options={PRIORITY_SHORT}
-                    onChange={(e) => handleChangePriority(task.id, e.value)} tooltip="Change priority" />
-                ) : <Tag value={task.priority || "MEDIUM"} />}
+                    valueTemplate={priorityValue} itemTemplate={priorityValue}
+                    onChange={(e) => handleChangePriority(task.id, e.value)} tooltip="Change priority" tooltipOptions={{ position: "top" }} />
+                ) : priorityValue(PRIORITY_SHORT.find((p) => p.value === (task.priority || "MEDIUM")))}
                 {canAssign && (
-                  <Dropdown className="p-inputtext-sm" value={task.assignedToId || ""} tooltip="Reassign task"
+                  <Dropdown className="p-inputtext-sm" value={task.assignedToId || ""} tooltip="Reassign task" tooltipOptions={{ position: "top" }}
                     options={[{ value: myId, label: "Me" }, ...assigneeOptions]}
                     onChange={(e) => handleReassign(task.id, e.value)} />
                 )}
                 <SubmitWork task={task} myId={myId} toast={toast} onDone={() => fetchTasks()} />
                 <ReviewActions task={task} myId={myId} canAssign={canAssign} toast={toast} onDone={() => fetchTasks()} />
                 {!task.completed && !task.cancelled && hasPermission("DRAFT_CREATE") && (
-                  <Button icon="pi pi-pencil" className="p-button-rounded p-button-text" tooltip="Draft for this task" aria-label="Draft for this task"
+                  <Button icon="pi pi-pencil" className="p-button-rounded p-button-text" tooltip="Draft for this task" tooltipOptions={{ position: "top" }} aria-label="Draft for this task"
                     onClick={() => navigate(newDraftUrl({ caseId: task.caseId, taskId: task.id }))} />
                 )}
                 {(task.assignedById ?? task.createdById) === myId && (
                   task.cancelled
-                    ? <Button icon="pi pi-replay" className="p-button-rounded p-button-text" tooltip="Restore task" aria-label="Restore task" onClick={() => handleCancel(task.id, false)} />
-                    : <Button icon="pi pi-times-circle" className="p-button-rounded p-button-text p-button-danger" tooltip="Cancel task" aria-label="Cancel task" onClick={() => handleCancel(task.id, true)} />
+                    ? <Button icon="pi pi-replay" className="p-button-rounded p-button-text" tooltip="Restore task" tooltipOptions={{ position: "top" }} aria-label="Restore task" onClick={() => handleCancel(task.id, false)} />
+                    : <Button icon="pi pi-times-circle" className="p-button-rounded p-button-text p-button-danger" tooltip="Cancel task" tooltipOptions={{ position: "top" }} aria-label="Cancel task" onClick={() => handleCancel(task.id, true)} />
                 )}
               </div>
             </div>

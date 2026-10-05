@@ -175,3 +175,62 @@ class TaskReviewTest(TestCase):
         body = self.client.put(f'/api/workspace/tasks/{own.id}/toggle', **auth(self.senior)).json()
         self.assertEqual((body['completed'], body['reviewStatus'], body['needsReview']), (True, None, False))
         notify.assert_not_called()
+
+
+    # -- a resubmitted draft records what changed since the last submission, so
+    #    the reviewer can check a revision without rereading the whole draft --
+
+    def _latest(self):
+        from workspace.models import TaskSubmission
+        return TaskSubmission.objects.filter(task_id=self.task.id).first()
+
+    def test_a_revision_records_the_changed_section_and_the_authors_note(self, notify):
+        from drafting.models import DraftBlock
+        self.assertEqual(self.file_draft(self.intern).status_code, 200)
+        self.assertIsNone(self._latest().changes, 'a first submission has nothing to compare')
+
+        self.review(self.senior, 'request_changes', 'State the arrears as a figure.')
+        session = self.draft(self.intern)
+        DraftBlock.objects.filter(session=session).update(
+            text='The plaintiff states as follows. Arrears of Rs. 3,15,000 are due.')
+        DraftBlock.objects.create(session=session, position=1, block_type='clause',
+                                  heading='Prayer', text='Decree for possession.')
+        resp = self.client.post(f'/api/drafting/drafts/{session.id}/send-to-ams/',
+                                {'note': 'Added the arrears figure and a prayer.'},
+                                content_type='application/json', **auth(self.intern))
+        self.assertEqual(resp.status_code, 200, resp.content[:300])
+
+        latest = self._latest()
+        self.assertIn('filed as version 2', latest.note)
+        self.assertIn('Added the arrears figure and a prayer.', latest.note)
+        kinds = {c['heading']: c['kind'] for c in latest.changes}
+        self.assertEqual(kinds, {'Plaint': 'edited', 'Prayer': 'added'})
+        edited = next(c for c in latest.changes if c['heading'] == 'Plaint')
+        self.assertIn('3,15,000', edited['after'])
+        self.assertNotIn('3,15,000', edited['before'])
+
+    def test_the_task_api_sends_changes_but_not_the_snapshot(self, notify):
+        self.file_draft(self.intern)
+        rows = self.client.get('/api/workspace/tasks/all', **auth(self.senior)).json()
+        rows = rows.get('content', rows) if isinstance(rows, dict) else rows
+        task = next(t for t in rows if t['id'] == self.task.id)
+        sub = task['submissions'][0]
+        self.assertIn('changes', sub)
+        self.assertNotIn('draftSnapshot', sub)
+        self.assertNotIn('draft_snapshot', sub)
+
+
+class CompareDraftsTest(TestCase):
+    def test_reordered_sections_pair_by_heading(self):
+        from workspace.review import compare_drafts
+        prev = [{'heading': 'A', 'text': 'one'}, {'heading': 'B', 'text': 'two'}]
+        cur = [{'heading': 'B', 'text': 'two'}, {'heading': 'A', 'text': 'one'}]
+        self.assertEqual(compare_drafts(prev, cur), [])
+
+    def test_removed_and_whitespace_only(self):
+        from workspace.review import compare_drafts
+        prev = [{'heading': 'A', 'text': 'one  two'}, {'heading': 'B', 'text': 'gone'}]
+        cur = [{'heading': 'a', 'text': 'one two'}]
+        self.assertEqual(compare_drafts(prev, cur),
+                         [{'heading': 'B', 'kind': 'removed', 'before': 'gone', 'after': ''}])
+        self.assertIsNone(compare_drafts(None, cur))

@@ -19,10 +19,9 @@ Run `python manage.py seed_role_demo` once, from `Advocate-app-BE-Django`, to cr
 |---|---|---|
 | Super Admin | Meena Iyer (firm admin) | `admin@kumar-associates.demo` |
 | Senior Advocate | Rajesh Kumar (practice owner) | `rajesh@kumar-associates.demo` |
-| Senior Advocate | Arjun Menon (holds A.S. 700/2025 and C.M.A. 1200/2025) | `arjun@kumar-associates.demo` |
-| Junior Advocate | Priya Nair | `priya@kumar-associates.demo` |
+| Senior Advocate | Arjun Menon (heads his own team; holds C.M.A. 1200/2025) | `arjun@kumar-associates.demo` |
+| Advocate | Priya Nair | `priya@kumar-associates.demo` |
 | Intern | Karthik R. | `karthik.intern@kumar-associates.demo` |
-| Receptionist | Lakshmi S. | `lakshmi.reception@kumar-associates.demo` |
 | Accountant (finance) | Suresh Kumar | `suresh@kumar-associates.demo` |
 | Client | K. M. Anand Joshi (O.S. No. 150/2025) | `anand.joshi@clients.demo` |
 
@@ -32,21 +31,21 @@ Everyone works in one firm and one team, headed by Rajesh. The other logins in t
 
 ✔ = can open and use; 👁 = view only; — = hidden from the menu, and the API refuses it (403).
 
-| Module | Admin | Senior | Junior | Intern | Reception | Accountant | Client |
-|---|---|---|---|---|---|---|---|
-| Cases | ✔ incl. delete | ✔ incl. delete | create / edit | 👁 | 👁 | 👁 | own case only (portal) |
-| Clients | ✔ incl. delete | create / edit | 👁 | 👁 | create / edit | 👁 | — |
-| Hearings & events | ✔ | ✔ | create | 👁 | create | — | own case only |
-| Documents | ✔ | ✔ | upload | 👁 | — | — | shared documents only |
-| Drafting | ✔ | ✔ incl. manage | create / export | create | — | — | — |
-| Tasks | all, incl. assign | all, incl. assign / review | own: create / edit | own | — | — | — |
-| Appeal Alert, Acts, Legal Dictionary, Law Codes | ✔ | ✔ | ✔ | ✔ | — | — | — |
-| Hearing and cause-list alerts | ✔ | ✔ | ✔ | ✔ | — | — | email about own case |
-| Invoice alerts ("to collect", overdue) | ✔ | ✔ | — | — | — | ✔ | own invoices |
-| Invoices / payments / expenses | ✔ | ✔ | — | — | — | ✔ | own invoices only |
-| Reports | ✔ | ✔ | — | — | — | ✔ | — |
-| Dashboard finance widgets | ✔ | ✔ | hidden | hidden | hidden | ✔ | — |
-| Users / roles / audit / backup | ✔ | — | — | — | — | — | — |
+| Module | Admin | Senior | Junior | Intern | Accountant | Client |
+|---|---|---|---|---|---|---|
+| Cases | ✔ incl. delete | ✔ incl. delete | create / edit | 👁 | 👁 | own case only (portal) |
+| Clients | ✔ incl. delete | create / edit | create / edit | 👁 | 👁 | — |
+| Hearings & events | ✔ | ✔ | create | 👁 | — | own case only |
+| Documents | ✔ | ✔ | upload | 👁 | — | shared documents only |
+| Drafting | ✔ | ✔ incl. manage | create / export | create | — | — |
+| Tasks | all, incl. assign | all, incl. assign / review | own: create / edit | own | — | — |
+| Appeal Alert, Acts, Legal Dictionary, Law Codes | ✔ | ✔ | ✔ | ✔ | — | — |
+| Hearing and cause-list alerts | ✔ | ✔ | ✔ | ✔ | — | email about own case |
+| Invoice alerts ("to collect", overdue) | ✔ | ✔ | — | — | ✔ | own invoices |
+| Invoices / payments / expenses | ✔ | ✔ | — | — | ✔ | own invoices only |
+| Reports | ✔ | ✔ | — | — | ✔ | — |
+| Dashboard finance widgets | ✔ | ✔ | hidden | hidden | ✔ | — |
+| Users / roles / audit / backup | ✔ | — | — | — | — | — |
 
 "Own" tasks are the ones assigned to you or created by you. Whoever holds TASK_ASSIGN (seniors, admin) sees every task. Who gets case alerts is set by the CASE_ALERTS permission, which you can change per role in Role Management.
 
@@ -59,16 +58,14 @@ Everyone works in one firm and one team, headed by Rajesh. The other logins in t
   - Show: the full practice (9 cases, finances, reports).
   - Show: assign a task, and review Priya's submitted draft (see "Reviewing a junior's draft").
   - Contrast: no Users or Roles pages.
-- **Arjun (Senior):** A.S. 700/2025 and C.M.A. 1200/2025 are his. Show case transfer from Case Detail.
+- **Arjun (Senior):** heads his own team in the firm. C.M.A. 1200/2025 is his; log in as Priya or Karthik (Rajesh's team) to show they cannot see it, and as Meena or Suresh to show they see both teams. Show case transfer from Case Detail (only seniors of this firm are offered).
 - **Priya (Junior):**
   - Show: her tasks, drafting, uploading documents, adding a hearing.
   - Show blocked: no Invoices, Expenses or Reports in the menu, and no money on the dashboard. Typing `/dashboard/invoices` sends her back to the dashboard.
+- **Priya (Junior):** also does client intake now (there's no Receptionist role): she registered the walk-in "Selvi Ramasamy" and booked the consultation on C.M.A. 1200/2025.
 - **Karthik (Intern):**
   - Show: the research task on SLP(C) 12710/2026; he can read cases and documents and draft.
   - Show blocked: he can't upload, edit or delete, and has no finance.
-- **Lakshmi (Reception):**
-  - Show: the walk-in client "Selvi Ramasamy" and the consultation she booked on C.M.A. 1200/2025. She can add clients and schedule events.
-  - Show blocked: no Documents, no money, no Tasks, and no legal reference (Appeal Alert, Acts, Dictionary, Law Codes).
 - **Suresh (Accountant):**
   - Show: all 5 invoices, and the ₹1,00,000 NEFT part-payment he recorded against the SLP. He can raise a new invoice (the case and client pickers work), and he sees expenses and reports.
   - Show blocked: no Documents, Drafting, Hearings, Tasks or legal reference; cases and clients are view-only.
@@ -149,7 +146,7 @@ Everyone works in one firm and one team, headed by Rajesh. The other logins in t
 - [ ] **Templates / Playbooks.** Open, view and upload.
 
 ### Reviewing a junior's draft (in the drafting editor)
-- [ ] **Open it.** First run steps 2 and 5 of [DEMO_OS900_2025.md](DEMO_OS900_2025.md), which create the task and submit the brief. Then Tasks → "Prepare mediation brief" (Submitted) → **Open draft**. Case Detail → Tasks has the same button.
+- [ ] **Open it.** First run steps 2 and 4 of [DEMO_OS900_2025.md](DEMO_OS900_2025.md), which create the task and submit the brief. Then Tasks → "Prepare mediation brief" (Submitted) → **Open draft**. Case Detail → Tasks has the same button.
   - Expect: the editor opens **read-only**, with the banner "Reviewing Priya Nair's draft for task … — awaiting your review".
   - Submit to task and Re-draft are hidden.
 - [ ] **Edit.** Click **Edit**, change a sentence, then **Save**. Expect: saved.

@@ -11,6 +11,7 @@ from core.models import (Case, Client, Document, Invoice, Expense, ClientPayment
                          CaseEvent, Advocate)
 from core.permissions import RequirePermission
 from .pdf import build_pdf, build_invoice_pdf, money, letterhead_from_advocate
+from core.finance import invoice_balance, invoice_paid_amounts
 from core.practice import practice_ids, practice_root
 from invoices.models import InvoiceItem, InvoiceTaxDetail, FirmBillingProfile
 
@@ -233,7 +234,7 @@ class MonthlyPdfView(APIView):
             advocate_id__in=practice_ids(request.user), payment_date__year=year, payment_date__month=month))
         new_clients = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False,
                                             created_at__year=year, created_at__month=month).count()
-        invoices_gen = Invoice.objects.filter(advocate_id__in=practice_ids(request.user),
+        invoices_gen = Invoice.objects.billable().filter(advocate_id__in=practice_ids(request.user),
                                               invoice_date__year=year, invoice_date__month=month).count()
         payments_recv = ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user),
                                                      payment_date__year=year, payment_date__month=month).count()
@@ -292,8 +293,7 @@ class DashboardPdfView(APIView):
             advocate_id__in=practice_ids(request.user), payment_date__gte=month_ago))
         expense = sum(e.amount or 0 for e in Expense.objects.filter(
             advocate_id__in=practice_ids(request.user), payment_date__gte=month_ago))
-        invoices = Invoice.objects.filter(advocate_id__in=practice_ids(request.user))
-        pending_inv = sum(1 for i in invoices if (i.status or '').upper() != 'PAID')
+        pending_inv = Invoice.objects.open().filter(advocate_id__in=practice_ids(request.user)).count()
         blocks = [
             {'type': 'heading', 'text': 'Summary'},
             {'type': 'kv', 'rows': [
@@ -367,9 +367,11 @@ def _reports_center_data(advocate_id, filt, start, end):
     rev_cur, rev_prev = total(pays, cs, ce), total(pays, ps, pe)
     exp_cur, exp_prev = total(exps, cs, ce), total(exps, ps, pe)
 
-    invoices = list(Invoice.objects.filter(advocate_id=advocate_id))
-    outstanding = [i for i in invoices if (i.status or '').upper() != 'PAID']
-    outstanding_total = sum(i.amount or 0 for i in outstanding)
+    invoices = list(Invoice.objects.billable().filter(advocate_id=advocate_id))
+    outstanding = list(Invoice.objects.open().filter(advocate_id=advocate_id))
+    received = invoice_paid_amounts([i.id for i in outstanding])
+    # Part-paid invoices owe only their balance.
+    outstanding_total = sum(invoice_balance(i, received.get(i.id, 0.0)) for i in outstanding)
 
     # cash flow: last 6 months
     today = datetime.date.today()

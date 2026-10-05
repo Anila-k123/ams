@@ -137,7 +137,7 @@ export default function GlobalSearchModal({ isOpen, onClose, onNavigate }: Props
                 <div className="global-search-section-label flex align-items-center gap-2">
                   <i className="pi pi-history gs-section-icon" />
                   <span className="flex-1">Recent Searches</span>
-                  <Button text rounded size="small" icon="pi pi-trash" className="gs-clear-recent" onClick={clearRecentSearches} tooltip="Clear recent searches" />
+                  <Button text rounded size="small" icon="pi pi-trash" className="gs-clear-recent" onClick={clearRecentSearches} tooltip="Clear recent searches" tooltipOptions={{ position: "top" }} />
                 </div>
                 <div className="gs-recent-list">
                   {recentSearches.map((term: string, idx: number) => (

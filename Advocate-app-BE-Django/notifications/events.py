@@ -20,6 +20,7 @@ import datetime
 import json
 import logging
 
+from decouple import config
 from django.utils import timezone
 
 from core.audit import record_system_action
@@ -33,6 +34,9 @@ log = logging.getLogger(__name__)
 
 # How far ahead to warn about a hearing.
 HEARING_LOOKAHEAD_DAYS = 2
+# Open tasks are flagged this many days before their deadline, so there's time
+# to finish them (TASK_REMINDER_DAYS in .env; default 2).
+TASK_REMINDER_DAYS = config('TASK_REMINDER_DAYS', default=2, cast=int)
 
 
 def _already_notified(advocate_id, event_type, entity_id, since):
@@ -85,7 +89,7 @@ def fanout(owner, event_type, subject, body, since, *, entity, entity_id,
     team, so an alert reaches every team member - each on their own channels,
     once each. `require_permission` keeps only members whose role grants it, so
     each role gets only what concerns it (a hearing alert -> CASE_ALERTS holders,
-    not the receptionist). `include_firm_wide` also reaches the common staff
+    not the accountant). `include_firm_wide` also reaches the common staff
     (e.g. accountants) across every team, for firm-wide matters like invoices.
     A solo advocate resolves to just themselves, so nothing changes for them.
     """
@@ -164,9 +168,8 @@ def overdue_invoices(advocate, today=None):
     today = today or timezone.now().date()
     since = timezone.now() - datetime.timedelta(days=7)
     queued = []
-    invoices = (Invoice.objects.select_related('client')
-                .filter(advocate_id=advocate.id, due_date__lt=today)
-                .exclude(status__iexact='PAID'))
+    invoices = (Invoice.objects.open().select_related('client')
+                .filter(advocate_id=advocate.id, due_date__lt=today))
     for inv in invoices:
         days = (today - inv.due_date).days
         client = inv.client.name if inv.client_id and inv.client else 'client'
@@ -184,21 +187,32 @@ def overdue_invoices(advocate, today=None):
 
 
 def task_deadlines(advocate, today=None):
-    """TASK_DEADLINE_REMINDER for open tasks due today or already past."""
+    """TASK_DEADLINE_REMINDER for open tasks: once when the deadline is
+    TASK_REMINDER_DAYS away or nearer ("due in 2 days"), then on the due date,
+    then daily while overdue."""
     today = today or timezone.now().date()
-    since = timezone.now() - datetime.timedelta(days=1)
+    now = timezone.now()
     queued = []
     tasks = (CaseTask.objects
-             .filter(advocate_id=advocate.id, completed=False,
-                     cancelled=False, deadline__lte=today)
+             .filter(advocate_id=advocate.id, completed=False, cancelled=False,
+                     deadline__lte=today + datetime.timedelta(days=TASK_REMINDER_DAYS))
              .exclude(deadline=None).order_by('deadline'))
     for t in tasks:
         overdue = (today - t.deadline).days
+        if overdue < 0:
+            # Advance warning: one per task across the whole window (dedup
+            # since the window opened), so it isn't repeated the next day.
+            since = now - datetime.timedelta(days=TASK_REMINDER_DAYS + 1)
+            when = 'due in {} day(s)'.format(-overdue) if overdue < -1 else 'due tomorrow'
+        else:
+            # Due date and overdue: daily. 20h, so the advance warning sent
+            # days earlier never suppresses the due-date one.
+            since = now - datetime.timedelta(hours=20)
+            when = 'due today' if overdue == 0 else '{} day(s) overdue'.format(overdue)
         case_no = None
         if t.case_id:
             c = Case.objects.filter(id=t.case_id).only('case_number').first()
             case_no = c.case_number if c else None
-        when = 'due today' if overdue == 0 else '{} day(s) overdue'.format(overdue)
         subject = 'Task {}: {}'.format(when, t.title)
         body = ('Task     : {}\nPriority : {}\nDeadline : {} ({})\n'
                 'Case     : {}\n').format(

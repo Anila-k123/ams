@@ -86,7 +86,7 @@ class ClientProfileTest(TestCase):
 
     FORM = {'name': 'R. Murugan', 'email': 'r.murugan@test.local', 'phone': '9444000700',
             'description': 'Walk-in, first appeal', 'website': '', 'billingCurrency': 'INR',
-            'gstin': '33ABCDE1234F1Z5', 'building': 'No. 3', 'street': 'Gandhi Street',
+            'gstin': '33ABCDE1234F1Z7', 'building': 'No. 3', 'street': 'Gandhi Street',
             'city': 'Tambaram', 'district': 'Chengalpattu', 'state': 'Tamil Nadu',
             'pincode': '600045', 'country': 'India'}
 
@@ -112,7 +112,7 @@ class ClientProfileTest(TestCase):
         self.client.post('/api/clients/create', data=json.dumps(self.FORM),
                          content_type='application/json', **auth(self.adv))
         rows = self.client.get('/api/clients', **auth(self.adv)).json()['content']
-        self.assertEqual((rows[0]['city'], rows[0]['gstin']), ('Tambaram', '33ABCDE1234F1Z5'))
+        self.assertEqual((rows[0]['city'], rows[0]['gstin']), ('Tambaram', '33ABCDE1234F1Z7'))
 
     def test_editing_an_old_client_keeps_their_address(self):
         """Clients from before profiles have only clients.address."""
@@ -128,3 +128,25 @@ class ClientProfileTest(TestCase):
         self._put(client.id, {'name': 'Plain Client', 'address': '5 Mount Road, Chennai'})
         client.refresh_from_db()
         self.assertEqual(client.address, '5 Mount Road, Chennai')
+
+
+class CountryDefaultTest(TestCase):
+    """The form defaults Country to India; that alone must not become, or
+    overwrite, the client's address."""
+
+    def setUp(self):
+        self.adv = make_advocate('country@test.local', ALL_PERMISSIONS)
+
+    def test_country_alone_is_not_an_address(self):
+        old = make_client(self.adv, 'Old Client', address='12 Anna Salai, Chennai')
+        self.client.put(f'/api/clients/update/{old.id}',
+                        data=json.dumps({'name': 'Old Client', 'country': 'India', 'state': ''}),
+                        content_type='application/json', **auth(self.adv))
+        old.refresh_from_db()
+        self.assertEqual(old.address, '12 Anna Salai, Chennai')
+
+        resp = self.client.post('/api/clients/create',
+                                data=json.dumps({'name': 'New', 'phone': '9000000001', 'country': 'India'}),
+                                content_type='application/json', **auth(self.adv))
+        self.assertIn(resp.json()['address'], (None, ''))
+        self.assertEqual(resp.json()['country'], 'India')

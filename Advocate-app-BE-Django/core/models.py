@@ -256,6 +256,21 @@ class Expense(models.Model):
         db_table = 'expenses'
 
 
+class InvoiceQuerySet(models.QuerySet):
+    """`invoices.status` is UNPAID, PARTIAL, PAID or CANCELLED (OVERDUE is
+    worked out from the due date, never stored)."""
+
+    def billable(self):
+        """Invoices that count: everything but cancelled ones. A cancelled
+        invoice is kept (its number is used, the client may have it) but is
+        not owed, so totals, reports and reminders read through this."""
+        return self.exclude(status__iexact='CANCELLED')
+
+    def open(self):
+        """Billable and not fully paid: what the client still owes on."""
+        return self.billable().exclude(status__iexact='PAID')
+
+
 class Invoice(models.Model):
     id = models.BigAutoField(primary_key=True)
     invoice_number = models.CharField(max_length=255, unique=True)
@@ -266,6 +281,8 @@ class Invoice(models.Model):
     advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, db_column='advocate_id')
     case = models.ForeignKey(Case, on_delete=models.DO_NOTHING, db_column='case_id')
     client = models.ForeignKey(Client, on_delete=models.DO_NOTHING, db_column='client_id')
+
+    objects = InvoiceQuerySet.as_manager()
 
     class Meta:
         managed = False

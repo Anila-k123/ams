@@ -22,9 +22,16 @@ import ReportService from "../services/ReportService";
 import usePagination from "../hooks/usePagination";
 import "../assets/styles/Clients.css";
 import ClientPortalAccess from "../components/ClientPortalAccess";
+import { INDIAN_STATES } from "./Drafting/constants/legal";
+import FieldError from "../components/FieldError";
+import { formatErrors, gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+
+// Checked here as you leave a field, and again on the server (core/validators.py).
+const CLIENT_FORMATS = { email: "email", phone: "phone", gstin: "gstin", pincode: "pincode" } as const;
 import { usePageModal } from "../utils/pageModal";
 
-const CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED"].map((c) => ({ label: c, value: c }));
+// Indian states and UTs, southern states first: the same list drafting uses.
+const STATE_OPTIONS = INDIAN_STATES.map((s) => ({ label: s, value: s }));
 
 function Clients() {
   const [clients, setClients] = useState<any[]>([]);
@@ -44,7 +51,7 @@ function Clients() {
     district: "",
     state: "",
     pincode: "",
-    country: "",
+    country: "India",
   };
   const [newClient, setNewClient] = useState<any>(emptyClient);
   const [showModal, setShowModal] = useState(false);
@@ -163,22 +170,54 @@ function Clients() {
   };
 
   const handleChange = (e: any) => {
-    setNewClient({ ...newClient, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    if (name === "gstin") return setGstin(value);
+    setNewClient({ ...newClient, [name]: value });
   };
+
+  // Format errors show once a field has been left, or after a save attempt,
+  // not while the user is still typing.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [triedSave, setTriedSave] = useState(false);
+  useEffect(() => { if (showModal) { setTouched({}); setTriedSave(false); } }, [showModal]);
+  const fmtErrs = formatErrors(newClient, CLIENT_FORMATS as any);
+  const errFor = (name: string) => (touched[name] || triedSave ? fmtErrs[name] : "") || "";
+  // A valid GSTIN says which state the client is registered in: fill State
+  // from it when State is empty (or was filled from the GSTIN before), and
+  // warn when someone has picked a different one.
+  const setGstin = (raw: string) => {
+    const g = normaliseCode(raw);
+    setNewClient((prev: any) => {
+      const next = { ...prev, gstin: g };
+      const fromGstin = !gstinError(g) ? gstinState(g) : "";
+      if (fromGstin && (!prev.state || prev.state === gstinState(prev.gstin))) next.state = fromGstin;
+      return next;
+    });
+  };
+  const gstinWarn = gstinStateMismatch(newClient.gstin, newClient.state);
 
   const ADDRESS_PARTS = ["building", "street", "city", "district", "state", "pincode", "country"];
   // Decided when the dialog opens, not per keystroke, so the field doesn't
   // vanish the moment the user starts typing a part.
   const [legacyAddress, setLegacyAddress] = useState(false);
   const openEdit = (c: any) => {
-    setNewClient({ ...c, handlingAdvocateId: c.handlingAdvocate?.id ?? null });
-    setLegacyAddress(!!(c.address && ADDRESS_PARTS.every((k) => !c[k])));
+    const legacy = !!(c.address && ADDRESS_PARTS.every((k) => !c[k]));
+    // Default the country to India, except for a client whose address is still
+    // one saved line: a lone country part would replace that line on save.
+    setNewClient({ ...c, handlingAdvocateId: c.handlingAdvocate?.id ?? null,
+                   country: c.country || (legacy ? "" : "India") });
+    setLegacyAddress(legacy);
     setEditClientId(c.id);
     setShowModal(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (Object.keys(fmtErrs).length) {
+      setTriedSave(true);
+      error("Fix the highlighted fields first.");
+      return;
+    }
     try {
       // handlingAdvocate is the server's read-back; the write field is its id.
       const { handlingAdvocate, ...rest } = newClient;
@@ -289,7 +328,10 @@ function Clients() {
   const field = (name: string, label: string, placeholder: string, opts: any = {}) => (
     <div className="client-form-field">
       <label htmlFor={`cf-${name}`}>{label}{opts.required && <span className="required"> *</span>}</label>
-      <InputText id={`cf-${name}`} name={name} placeholder={placeholder} value={newClient[name] || ""} onChange={handleChange} {...opts} />
+      <InputText id={`cf-${name}`} name={name} placeholder={placeholder} value={newClient[name] || ""} onChange={handleChange}
+        onBlur={() => setTouched((t) => ({ ...t, [name]: true }))}
+        className={errFor(name) ? "p-invalid" : undefined} {...opts} />
+      <FieldError error={errFor(name)} warning={name === "gstin" ? gstinWarn : undefined} />
     </div>
   );
 
@@ -305,7 +347,7 @@ function Clients() {
             <Button size="small" text label="Edit" icon="pi pi-pencil" onClick={() => openEdit(c)} />
           )}
           {hasPermission("CLIENT_EDIT") && (
-            <Button size="small" text label="Logins" icon="pi pi-users" tooltip="Logins for this client" onClick={() => setPortalFor(c)} />
+            <Button size="small" text label="Logins" icon="pi pi-users" tooltip="Logins for this client" tooltipOptions={{ position: "top" }} onClick={() => setPortalFor(c)} />
           )}
           {hasPermission("CLIENT_DELETE") && (
             <Button size="small" text severity="danger" label="Archive" icon="pi pi-inbox" onClick={() => handleDelete(c.id)} />
@@ -313,7 +355,7 @@ function Clients() {
         </>
       )}
       {hasPermission("REPORT_EXPORT") && (
-        <Button size="small" text rounded icon="pi pi-file-pdf" tooltip="Export PDF" aria-label="Export PDF"
+        <Button size="small" text rounded icon="pi pi-file-pdf" tooltip="Export PDF" tooltipOptions={{ position: "top" }} aria-label="Export PDF"
           onClick={() => ReportService.downloadClientDetail(c.id, c.name)} />
       )}
     </div>
@@ -345,21 +387,17 @@ function Clients() {
         <form className="client-form" onSubmit={handleSubmit}>
           <p className="client-form-section">Basic Details</p>
           <div className="client-form-row">
-            {field("name", "Name", "Name of Client", { required: true })}
+            {field("name", "Name", "Name", { required: true })}
             {field("description", "Description", "Short Description about Client.")}
           </div>
-          {field("website", "Website", "Enter client's website")}
+          {field("website", "Website", "Website")}
           <div className="client-form-row">
             {field("email", "Email", "Email address", { required: true, type: "email" })}
             {field("phone", "Phone", "Phone number", { required: true })}
           </div>
+          {/* Billing currency is always INR for now (set in emptyClient), so no picker. */}
           <div className="client-form-row">
-            <div className="client-form-field">
-              <label htmlFor="cf-billingCurrency">Billing Currency</label>
-              <Dropdown inputId="cf-billingCurrency" value={newClient.billingCurrency} options={CURRENCIES}
-                onChange={(e) => setNewClient({ ...newClient, billingCurrency: e.value })} />
-            </div>
-            {field("gstin", "GSTIN", "Enter GST number")}
+            {field("gstin", "GSTIN", "15 characters, e.g. 33ABCDE1234F1Z7 (leave blank if none)", { maxLength: 15 })}
           </div>
           {canPickHandler && (
             <div className="client-form-row">
@@ -388,18 +426,24 @@ function Clients() {
             </div>
           )}
           <div className="client-form-row">
-            {field("building", "Building", "Name of Building")}
-            {field("street", "Street", "Name of Street")}
+            {field("building", "Building", "Building")}
+            {field("street", "Street", "Street")}
           </div>
           <div className="client-form-row">
-            {field("city", "City", "Name of City")}
-            {field("district", "District", "Name of District")}
+            {field("city", "City", "City")}
+            {field("district", "District", "District")}
           </div>
           <div className="client-form-row">
-            {field("state", "State", "Name of State")}
-            {field("pincode", "Pincode", "Enter pin code of the area")}
+            <div className="client-form-field">
+              <label htmlFor="cf-state">State</label>
+              {/* Editable, so a value typed before the list existed ("TAMIL NADU") still shows. */}
+              <Dropdown inputId="cf-state" value={newClient.state || ""} options={STATE_OPTIONS}
+                filter editable placeholder="Select state" appendTo={document.body}
+                onChange={(e) => setNewClient({ ...newClient, state: e.value ?? "" })} />
+            </div>
+            {field("pincode", "Pincode", "6 digits", { maxLength: 6, inputMode: "numeric" })}
           </div>
-          {field("country", "Country", "Name of Country")}
+          {field("country", "Country", "Country")}
 
           <div className="flex justify-content-end gap-2 mt-3">
             <Button type="button" outlined label="Cancel" onClick={() => setShowModal(false)} />
@@ -455,8 +499,8 @@ function Clients() {
                     <span className="case-doc-meta">{d.category || "Other"}</span>
                     <span className="case-doc-meta">{d.version > 1 ? `v${d.version}` : "v1"}</span>
                     <div className="flex gap-1">
-                      <Button text rounded icon="pi pi-eye" tooltip="Preview" onClick={() => handleClientDocPreview(d.id)} />
-                      <Button text rounded icon="pi pi-download" tooltip="Download" onClick={() => handleClientDocDownload(d.id, d.originalName || d.documentName)} />
+                      <Button text rounded icon="pi pi-eye" tooltip="Preview" tooltipOptions={{ position: "top" }} onClick={() => handleClientDocPreview(d.id)} />
+                      <Button text rounded icon="pi pi-download" tooltip="Download" tooltipOptions={{ position: "top" }} onClick={() => handleClientDocDownload(d.id, d.originalName || d.documentName)} />
                     </div>
                   </div>
                 ))}

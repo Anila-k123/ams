@@ -17,6 +17,12 @@ import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import "../assets/styles/SettingsPage.css";
 import "../assets/styles/ProfilePage.css";
+import FieldError from "../components/FieldError";
+import { formatErrors, gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+
+// Checked as you leave a field, and again on the server (core/validators.py).
+const GEN_FORMATS = { phone: "phone" } as const;
+const OFF_FORMATS = { officePhone: "phone", officeEmail: "email", pinCode: "pincode", gstNumber: "gstin", panNumber: "pan" } as const;
 
 const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d@#$%^&*!?_+=-]{8,32}$/;
 
@@ -142,7 +148,23 @@ export default function ProfilePage() {
   };
 
   const setGen = (name: string, value: any) => setGeneral((p: any) => ({ ...p, [name]: value }));
-  const setOff = (name: string, value: any) => setOffice((p: any) => ({ ...p, [name]: value }));
+  const setOff = (name: string, value: any) => setOffice((p: any) => {
+    // GST number and PAN are stored uppercase; a valid GST number also says
+    // which state the office is registered in.
+    if (name === "gstNumber" || name === "panNumber") value = normaliseCode(value);
+    const next = { ...p, [name]: value };
+    if (name === "gstNumber" && value && !gstinError(value)
+        && (!p.state || p.state === gstinState(p.gstNumber))) next.state = gstinState(value);
+    return next;
+  });
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [triedSave, setTriedSave] = useState<Record<string, boolean>>({});
+  const genErrs = formatErrors(general, GEN_FORMATS as any);
+  const offErrs = formatErrors(office, OFF_FORMATS as any);
+  const errFor = (section: "general" | "office", name: string) =>
+    (touched[name] || triedSave[section] ? (section === "general" ? genErrs : offErrs)[name] : "") || "";
+  // The server's own message (e.g. a format error it caught), else the fallback.
+  const serverError = (err: any, fallback: string) => err?.response?.data?.error || fallback;
   const setPref = (name: string, value: any) => setPreferences((p: any) => ({ ...p, [name]: value }));
 
   const validatePassword = (pwd: string) => {
@@ -163,26 +185,36 @@ export default function ProfilePage() {
   };
 
   const handleSaveGeneral = async () => {
+    if (Object.keys(genErrs).length) {
+      setTriedSave((t) => ({ ...t, general: true }));
+      toast.error("Fix the highlighted fields first.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = { ...general, ...notifications };
       const res = await withLoading(api.put("/api/profile", payload), "Saving profile...");
       updateProfile({ fullName: res.data.fullName });
       toast.success("Profile updated");
-    } catch {
-      toast.error("Failed to save profile");
+    } catch (err: any) {
+      toast.error(serverError(err, "Failed to save profile"));
     } finally {
       setSaving(false);
     }
   };
 
   const handleSaveOffice = async () => {
+    if (Object.keys(offErrs).length) {
+      setTriedSave((t) => ({ ...t, office: true }));
+      toast.error("Fix the highlighted fields first.");
+      return;
+    }
     setSaving(true);
     try {
       await withLoading(api.put("/api/profile", office), "Saving office info...");
       toast.success("Office information saved");
-    } catch {
-      toast.error("Failed to save office info");
+    } catch (err: any) {
+      toast.error(serverError(err, "Failed to save office info"));
     } finally {
       setSaving(false);
     }
@@ -300,9 +332,18 @@ export default function ProfilePage() {
     </div>
   );
   const genText = (name: string, label: string, placeholder?: string) =>
-    col(label, <InputText id={`pf-${name}`} value={general[name] ?? ""} placeholder={placeholder} onChange={(e) => setGen(name, e.target.value)} />, `pf-${name}`);
+    col(label, <>
+      <InputText id={`pf-${name}`} value={general[name] ?? ""} placeholder={placeholder} onChange={(e) => setGen(name, e.target.value)}
+        onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} className={errFor("general", name) ? "p-invalid" : undefined} />
+      <FieldError error={errFor("general", name)} />
+    </>, `pf-${name}`);
   const offText = (name: string, label: string, placeholder?: string, type = "text") =>
-    col(label, <InputText id={`pf-${name}`} type={type} value={office[name] ?? ""} placeholder={placeholder} onChange={(e) => setOff(name, e.target.value)} />, `pf-${name}`);
+    col(label, <>
+      <InputText id={`pf-${name}`} type={type} value={office[name] ?? ""} placeholder={placeholder} onChange={(e) => setOff(name, e.target.value)}
+        onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} className={errFor("office", name) ? "p-invalid" : undefined} />
+      <FieldError error={errFor("office", name)}
+        warning={name === "gstNumber" ? gstinStateMismatch(office.gstNumber, office.state) : undefined} />
+    </>, `pf-${name}`);
   const genDate = (name: string, label: string) =>
     col(label, <Calendar inputId={`pf-${name}`} value={toDate(general[name])} onChange={(e) => setGen(name, fromDate(e.value))} dateFormat="dd/mm/yy" showIcon showButtonBar />, `pf-${name}`);
   const prefSelect = (name: string, label: string, options: any[]) =>
@@ -376,9 +417,9 @@ export default function ProfilePage() {
           {offText("city", "City")}
           {offText("state", "State")}
           {offText("country", "Country")}
-          {offText("pinCode", "PIN Code")}
-          {offText("gstNumber", "GST Number (Optional)")}
-          {offText("panNumber", "PAN Number (Optional)")}
+          {offText("pinCode", "PIN Code", "6 digits")}
+          {offText("gstNumber", "GST Number (Optional)", "15 characters, e.g. 33ABCDE1234F1Z7")}
+          {offText("panNumber", "PAN Number (Optional)", "10 characters, e.g. ABCDE1234F")}
         </div>
         <Button className="mt-3" icon="pi pi-save" label={saving ? "Saving..." : "Save Office Info"} onClick={handleSaveOffice} disabled={saving} />
       </div>

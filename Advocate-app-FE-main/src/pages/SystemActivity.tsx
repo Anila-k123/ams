@@ -48,6 +48,8 @@ const ACTION_TYPES = [
   { value: "PAYMENT_UPDATED", label: "Payment Updated" },
   { value: "PAYMENT_DELETED", label: "Payment Deleted" },
   { value: "INVOICE_GENERATED", label: "Invoice Generated" },
+  { value: "INVOICE_SUBMITTED", label: "Invoice To Issue" },
+  { value: "INVOICE_RETURNED", label: "Invoice Returned" },
   { value: "INVOICE_PAID", label: "Invoice Paid" },
   { value: "EMAIL_SENT", label: "Email Sent" },
   { value: "WHATSAPP_SENT", label: "WhatsApp Sent" },

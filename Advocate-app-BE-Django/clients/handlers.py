@@ -1,25 +1,28 @@
 """The handling advocate named when a client is added (see ClientHandler).
 
-Whoever adds the client, often the front desk, picks the advocate who will
-take the matter. That advocate is told at once (in-app + email). The case
+Whoever adds the client (the advocate who met them, senior or junior)
+picks the advocate who will take the matter. That advocate is told at once (in-app + email). The case
 details reach them outside the app for now, so no case is created here.
 """
 
 from core.models import Advocate
-from core.practice import active_members, practice_root
+from core.practice import active_members, firm_team_roots, has_firm_wide_scope, practice_root
 from notifications import internal_events
 
 from .models import ClientHandler
 
 # Only people who can open the case once the details arrive may be picked;
-# a receptionist or accountant can't take a matter.
+# an accountant or intern can't take a matter.
 HANDLER_PERMISSION = 'CASE_CREATE'
 
 
 def candidates(user):
-    """Active people in the user's practice who can take a client's case."""
-    root = practice_root(user)
-    people = list(Advocate.objects.filter(id=root, left_on__isnull=True)) + active_members(root)
+    """Active people who can take a client's case: the user's own team, or for
+    firm-wide staff (Super Admin) every team of the firm."""
+    roots = firm_team_roots(user) if has_firm_wide_scope(user) else [practice_root(user)]
+    people = []
+    for root in roots:
+        people += list(Advocate.objects.filter(id=root, left_on__isnull=True)) + active_members(root)
     seen, out = set(), []
     for p in people:
         if p.id in seen:

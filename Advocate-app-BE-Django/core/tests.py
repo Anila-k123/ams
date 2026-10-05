@@ -371,3 +371,320 @@ class ResetDemoClientTest(TestCase):
         self.assertTrue(Advocate.objects.filter(id=self.firm.id).exists())
         self.assertTrue(Client.objects.filter(id=self.other.id).exists())
         self.assertTrue(Case.objects.filter(id=self.other_case.id).exists())
+
+
+class CaseMoneyTotalsTest(TestCase):
+    """The case's running totals follow its payments, expenses and invoices.
+    They used to stay at 0 whatever was recorded (core/finance.py)."""
+
+    def setUp(self):
+        import json as _json
+        self.json = _json
+        self.adv = make_advocate('money@test.local', ALL_PERMISSIONS)
+        self.client_row = make_client(self.adv, 'Kannan')
+        self.case = make_case(self.adv, self.client_row)
+        self.other_case = make_case(self.adv, self.client_row)
+
+    def _post(self, url, body):
+        return self.client.post(url, data=self.json.dumps(body),
+                                content_type='application/json', **auth(self.adv))
+
+    def _totals(self, case=None):
+        from core.models import Case
+        c = Case.objects.get(id=(case or self.case).id)
+        return (c.total_paid_by_client, c.total_expenses_so_far,
+                c.balance_in_account, c.pending_from_client)
+
+    def _expense(self, amount, case=None):
+        resp = self._post('/api/expenses/create', {
+            'title': 'Court fee stamps', 'amount': amount, 'category': 'Court Fees',
+            'expenseType': 'CLIENT_CASE', 'caseEntity': {'id': (case or self.case).id}})
+        self.assertEqual(resp.status_code, 201, resp.content[:300])
+        return resp.json()['id']
+
+    def test_payment_and_expense_update_the_case(self):
+        resp = self._post('/api/payments/create', {
+            'amount': 10000, 'paymentMode': 'UPI', 'caseEntity': {'id': self.case.id}})
+        self.assertEqual(resp.status_code, 201, resp.content[:300])
+        self._expense(4850)
+        paid, spent, balance, _pending = self._totals()
+        self.assertEqual((paid, spent, balance), (10000.0, 4850.0, 5150.0))
+
+    def test_an_invoice_sets_what_is_pending_when_no_fee_was_agreed(self):
+        resp = self._post('/api/invoices/create', {
+            'caseEntity': {'id': self.case.id}, 'taxMode': 'rcm',
+            'particulars': [{'description': 'Professional fee', 'amount': 25000}]})
+        self.assertIn(resp.status_code, (200, 201), resp.content[:300])
+        self._post('/api/payments/create', {'amount': 10000, 'caseEntity': {'id': self.case.id}})
+        self.assertEqual(self._totals()[3], 15000.0)
+
+    def test_an_agreed_fee_wins_over_invoices(self):
+        self.client.put(f'/api/cases/update/{self.case.id}', data=self.json.dumps({'amount': 50000}),
+                        content_type='application/json', **auth(self.adv))
+        self._post('/api/payments/create', {'amount': 10000, 'caseEntity': {'id': self.case.id}})
+        self.assertEqual(self._totals()[3], 40000.0)
+
+    def test_editing_moving_and_deleting_an_expense(self):
+        eid = self._expense(1000)
+        self.client.put(f'/api/expenses/update/{eid}', data=self.json.dumps({
+            'title': 'Court fee stamps', 'amount': 1500, 'expenseType': 'CLIENT_CASE',
+            'caseEntity': {'id': self.other_case.id}}),
+            content_type='application/json', **auth(self.adv))
+        self.assertEqual(self._totals()[1], 0.0)                 # moved away
+        self.assertEqual(self._totals(self.other_case)[1], 1500.0)
+        self.client.delete(f'/api/expenses/delete/{eid}', **auth(self.adv))
+        self.assertEqual(self._totals(self.other_case)[1], 0.0)
+
+    def test_the_backfill_command_fixes_existing_cases(self):
+        from core.models import Case, ClientPayment
+        from django.core.management import call_command
+        from io import StringIO
+        # A payment written without going through the API (as before the fix).
+        ClientPayment.objects.create(amount=7000, advocate_id=self.adv.id, case=self.case,
+                                     client=self.client_row)
+        Case.objects.filter(id=self.case.id).update(total_paid_by_client=0)
+        call_command('recalc_case_totals', stdout=StringIO())
+        self.assertEqual(self._totals()[0], 7000.0)
+
+
+class RemoveReceptionistRoleTest(TestCase):
+    """manage.py remove_receptionist_role: advocates take over client intake."""
+
+    def setUp(self):
+        import datetime
+        from core.models import (AdvocateRole, CaseEvent, Permission, Role, RolePermission)
+        now = datetime.datetime.now()
+        self.now = now
+        self.owner = make_advocate('rr-owner@test.local', ALL_PERMISSIONS)
+        self.desk = make_advocate('rr-desk@test.local', parent_advocate_id=self.owner.id)
+        self.lone = make_advocate('rr-lone@test.local')
+        self.role = Role.objects.create(name='Receptionist', description='', created_at=now)
+        self.junior_role = Role.objects.create(name='Advocate', description='', created_at=now)
+        for code in ('CLIENT_CREATE', 'CLIENT_EDIT', 'EVENT_CREATE'):
+            perm, _ = Permission.objects.get_or_create(
+                name=code, defaults={'description': code, 'module': 'TEST', 'created_at': now})
+            RolePermission.objects.create(role_id=self.role.id, permission_id=perm.id, created_at=now)
+        for acc in (self.desk, self.lone):
+            AdvocateRole.objects.create(advocate_id=acc.id, role_id=self.role.id, created_at=now)
+        self.walk_in = make_client(self.desk, 'Selvi Ramasamy')
+        case = make_case(self.owner)
+        self.event = CaseEvent.objects.create(title='Consultation', event_type='MEETING',
+                                              date=datetime.date.today(), case=case,
+                                              advocate_id=self.desk.id)
+
+    def _run(self, *extra):
+        import tempfile
+        from io import StringIO
+        from django.core.management import call_command
+        from django.test import override_settings
+        out = StringIO()
+        with tempfile.TemporaryDirectory() as tmp, override_settings(DOCUMENT_UPLOAD_DIR=tmp):
+            call_command('remove_receptionist_role', *extra, stdout=out)
+        return out.getvalue()
+
+    def test_a_dry_run_changes_nothing(self):
+        from core.models import Advocate, Role
+        self.assertIn('Dry run', self._run())
+        self.assertTrue(Role.objects.filter(name='Receptionist').exists())
+        self.assertTrue(Advocate.objects.filter(id=self.desk.id).exists())
+
+    def test_apply_hands_over_work_and_removes_role_and_accounts(self):
+        from core.models import Advocate, CaseEvent, Client, Role, RolePermission
+        self._run('--yes')
+        self.assertFalse(Role.objects.filter(name='Receptionist').exists())
+        self.assertFalse(Advocate.objects.filter(id__in=[self.desk.id, self.lone.id]).exists())
+        # Their work stays with the firm, owned by the practice owner.
+        self.assertEqual(Client.objects.get(id=self.walk_in.id).advocate_id, self.owner.id)
+        self.assertEqual(CaseEvent.objects.get(id=self.event.id).advocate_id, self.owner.id)
+        granted = set(RolePermission.objects.filter(role_id=self.junior_role.id)
+                      .values_list('permission_id', flat=True))
+        from core.models import Permission
+        self.assertEqual(granted, set(Permission.objects.filter(
+            name__in=['CLIENT_CREATE', 'CLIENT_EDIT']).values_list('id', flat=True)))
+        # A second run has nothing to do.
+        self.assertIn('Nothing to do', self._run('--yes'))
+
+    def test_an_owner_less_account_with_work_is_kept(self):
+        from core.models import Advocate
+        make_client(self.lone, 'Someone')
+        out = self._run('--yes')
+        self.assertIn('will NOT be deleted', out)
+        self.assertTrue(Advocate.objects.filter(id=self.lone.id).exists())
+        self.assertFalse(Advocate.objects.filter(id=self.desk.id).exists())
+
+
+class FormatValidatorsTest(TestCase):
+    """core/validators.py: the format rules every form shares."""
+
+    def test_gstin(self):
+        from core.validators import clean_gstin, gstin_state
+        self.assertEqual(clean_gstin(' 33arkpk4821m1zl '), '33ARKPK4821M1ZL')   # normalised
+        self.assertEqual(gstin_state('33ARKPK4821M1ZL'), 'Tamil Nadu')
+        self.assertEqual(clean_gstin(''), '')                                 # optional
+        for bad in ('33ARKPK4821M1ZM',      # wrong check digit
+                    '33ARKPK4821M1Z',       # 14 characters
+                    '00ARKPK4821M1ZL',      # not a state code
+                    'GSTIN1234567890'):     # wrong pattern
+            with self.assertRaises(ValueError, msg=bad):
+                clean_gstin(bad)
+
+    def test_pan_pin_phone_email_ifsc(self):
+        from core import validators as v
+        self.assertEqual(v.clean_pan('abcde1234f'), 'ABCDE1234F')
+        self.assertEqual(v.clean_pincode('600 004'), '600004')
+        self.assertEqual(v.clean_email(' Kannan@Clients.Demo '), 'kannan@clients.demo')
+        self.assertEqual(v.clean_ifsc('sbin0001234'), 'SBIN0001234')
+        for ok in ('+91 90030 11900', '9003011900', '044-24981234', '+1 415 555 0100'):
+            v.clean_phone(ok)
+        for fn, bad in ((v.clean_pan, 'ABCD1234F'), (v.clean_pincode, '060004'),
+                        (v.clean_phone, '12345'), (v.clean_phone, 'call me'),
+                        (v.clean_email, 'kannan@'), (v.clean_ifsc, 'SBIN1001234')):
+            with self.assertRaises(ValueError, msg=bad):
+                fn(bad)
+
+
+class FormatChecksOnFormsTest(TestCase):
+    """The forms' endpoints refuse malformed values, and store clean ones."""
+
+    def setUp(self):
+        import json as _json
+        self.json = _json
+        self.adv = make_advocate('formats@test.local', ALL_PERMISSIONS)
+
+    def _send(self, method, url, body):
+        return getattr(self.client, method)(url, data=self.json.dumps(body),
+                                            content_type='application/json', **auth(self.adv))
+
+    def test_client_form(self):
+        bad = self._send('post', '/api/clients/create',
+                         {'name': 'Kannan', 'phone': '9003011900', 'gstin': '33ARKPK4821M1ZM'})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn('gstin', bad.json()['errors'])
+        self.assertIn('check digit', bad.json()['error'])
+        ok = self._send('post', '/api/clients/create',
+                        {'name': 'Kannan', 'phone': '9003011900', 'gstin': '33arkpk4821m1zl',
+                         'pincode': '600004', 'email': 'Kannan@Clients.Demo'})
+        self.assertEqual(ok.status_code, 201, ok.content[:300])
+        self.assertEqual(ok.json()['gstin'], '33ARKPK4821M1ZL')
+
+    def test_profile_and_user_forms(self):
+        r = self._send('put', '/api/profile', {'panNumber': 'BADPAN', 'pinCode': '600004'})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(list(r.json()['errors']), ['panNumber'])
+        r = self._send('post', '/api/admin/users',
+                       {'email': 'not-an-email', 'password': 'Strong#Pass1', 'fullName': 'X'})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('email', r.json()['errors'])
+
+
+class TeamsWithinFirmTest(TestCase):
+    """A firm with two seniors: each senior's team sees only its own matters;
+    the firm's Super Admin and Accountant see both; another firm sees nothing."""
+
+    def setUp(self):
+        from firms.models import FirmTeam
+        fw = ALL_PERMISSIONS + (practice.FIRM_WIDE_PERMISSION,)
+        self.senior_a = make_advocate(permissions=ALL_PERMISSIONS)
+        self.junior_a = make_advocate(permissions=ALL_PERMISSIONS, parent_advocate_id=self.senior_a.id)
+        self.senior_b = make_advocate(permissions=ALL_PERMISSIONS)
+        self.intern_b = make_advocate(permissions=ALL_PERMISSIONS, parent_advocate_id=self.senior_b.id)
+        self.admin = make_advocate(permissions=fw, parent_advocate_id=self.senior_a.id)
+        self.accountant = make_advocate(permissions=('INVOICE_VIEW', 'CASE_VIEW', practice.FIRM_WIDE_PERMISSION),
+                                        parent_advocate_id=self.senior_a.id)
+        FirmTeam.objects.create(team_root_id=self.senior_a.id, firm_root_id=self.senior_a.id)
+        FirmTeam.objects.create(team_root_id=self.senior_b.id, firm_root_id=self.senior_a.id)
+        self.other_firm = make_advocate(permissions=ALL_PERMISSIONS)
+        self.case_a = make_case(self.senior_a)
+        self.case_b = make_case(self.senior_b)
+
+    def _numbers(self, who):
+        r = self.client.get('/api/cases/my-cases', **auth(who))
+        self.assertEqual(r.status_code, 200)
+        return {c['caseNumber'] for c in r.json()}
+
+    def test_each_team_sees_only_its_own_cases(self):
+        a, b = self.case_a.case_number, self.case_b.case_number
+        for who in (self.senior_a, self.junior_a):
+            self.assertEqual(self._numbers(who), {a})
+        for who in (self.senior_b, self.intern_b):
+            self.assertEqual(self._numbers(who), {b})
+        for who in (self.admin, self.accountant):
+            self.assertEqual(self._numbers(who), {a, b})
+        self.assertEqual(self._numbers(self.other_firm), set())
+
+    def test_other_team_cannot_open_the_case(self):
+        r = self.client.get('/api/cases/{}/timeline'.format(self.case_a.id), **auth(self.intern_b))
+        self.assertEqual(r.status_code, 404)
+
+    def test_firm_wide_alerts_cover_every_team(self):
+        ids = {m.id for m in practice.firm_wide_members(self.senior_b.id, permission='INVOICE_VIEW')}
+        self.assertIn(self.accountant.id, ids)
+
+    def test_transfer_targets_stay_in_the_firm(self):
+        r = self.client.get('/api/cases/transfer-targets', **auth(self.senior_a))
+        ids = {t['id'] for t in r.json()}
+        self.assertIn(self.senior_b.id, ids)
+        self.assertNotIn(self.other_firm.id, ids)
+        r = self.client.put('/api/cases/transfer/{}'.format(self.case_a.id),
+                            {'advocateId': self.other_firm.id}, content_type='application/json',
+                            **auth(self.senior_a))
+        self.assertEqual(r.status_code, 403)
+
+    def test_transfer_moves_the_matter_to_the_other_team(self):
+        from core.models import CaseEvent
+        import datetime
+        CaseEvent.objects.create(case_id=self.case_a.id, advocate_id=self.junior_a.id,
+                                 title='Hearing', event_type='HEARING', date=datetime.date.today())
+        r = self.client.put('/api/cases/transfer/{}'.format(self.case_a.id),
+                            {'advocateId': self.senior_b.id}, content_type='application/json',
+                            **auth(self.senior_a))
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertIn(self.case_a.case_number, self._numbers(self.intern_b))
+        self.assertNotIn(self.case_a.case_number, self._numbers(self.junior_a))
+        self.assertEqual(set(CaseEvent.objects.filter(case_id=self.case_a.id)
+                             .values_list('advocate_id', flat=True)), {self.senior_b.id})
+
+    def test_admin_registers_a_client_for_the_other_team(self):
+        from core.models import Client
+        r = self.client.post('/api/clients/create', {'name': 'Walk In', 'phone': '9876543210',
+                                                     'handlingAdvocateId': self.senior_b.id},
+                             content_type='application/json', **auth(self.admin))
+        self.assertEqual(r.status_code, 201, r.content)
+        client = Client.objects.get(id=r.json()['id'])
+        self.assertIn(client.advocate_id, practice.practice_ids(self.intern_b))
+        self.assertNotIn(client.advocate_id, practice.practice_ids(self.junior_a))
+
+
+class MakeTeamCommandTest(TestCase):
+    def setUp(self):
+        self.head = make_advocate('head@test.local', ALL_PERMISSIONS)
+        self.second = make_advocate('second@test.local', ALL_PERMISSIONS, parent_advocate_id=self.head.id)
+        self.junior = make_advocate(permissions=ALL_PERMISSIONS, parent_advocate_id=self.head.id)
+        self.case = make_case(self.second)
+        from core.models import CaseEvent
+        import datetime
+        CaseEvent.objects.create(case_id=self.case.id, advocate_id=self.junior.id,
+                                 title='Hearing', event_type='HEARING', date=datetime.date.today())
+
+    def _run(self, *extra):
+        import io, tempfile
+        from django.core.management import call_command
+        from django.test import override_settings
+        with tempfile.TemporaryDirectory() as tmp, override_settings(DOCUMENT_UPLOAD_DIR=tmp):
+            out = io.StringIO()
+            call_command('make_team', '--senior', 'second@test.local', '--firm', 'head@test.local',
+                         *extra, stdout=out)
+            return out.getvalue()
+
+    def test_dry_run_then_apply_then_idempotent(self):
+        from core.models import Advocate, CaseEvent
+        self._run()
+        self.assertEqual(Advocate.objects.get(id=self.second.id).parent_advocate_id, self.head.id)
+        self._run('--yes')
+        second = Advocate.objects.get(id=self.second.id)
+        self.assertIsNone(second.parent_advocate_id)
+        self.assertEqual(set(CaseEvent.objects.filter(case_id=self.case.id)
+                             .values_list('advocate_id', flat=True)), {self.second.id})
+        self.assertNotIn(self.case.advocate_id, practice.practice_ids(
+            Advocate.objects.get(id=self.junior.id)))
+        self.assertIn('nothing to do', self._run('--yes'))

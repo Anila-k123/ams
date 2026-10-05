@@ -62,7 +62,7 @@ USERS = {
     'priya': dict(
         email='priya@kumar-associates.demo', full_name='Priya Nair',
         bar_council_id='TN/5678/2018', role='ADVOCATE',
-        specialization='Litigation', roles=['Junior Advocate'], parent='rajesh'),
+        specialization='Litigation', roles=['Advocate'], parent='rajesh'),
     'suresh': dict(
         email='suresh@kumar-associates.demo', full_name='Suresh Kumar',
         bar_council_id='TN/ACC/0001', role='ACCOUNTANT',

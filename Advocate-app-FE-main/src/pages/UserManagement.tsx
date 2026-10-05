@@ -14,8 +14,12 @@ import rbacService from "../services/rbacService";
 import { usePermission } from "../contexts/PermissionContext";
 import { useToast } from "../contexts/ToastContext";
 import "../assets/styles/AdminManagement.css";
+import FieldError from "../components/FieldError";
+import { formatErrors } from "../utils/validators";
 
 const EMPTY_FORM = { fullName: "", email: "", phone: "", barCouncilId: "", specialization: "", experience: 0 };
+// Checked as you leave a field, and again on the server (core/validators.py).
+const USER_FORMATS = { email: "email", phone: "phone" } as const;
 
 export default function UserManagement() {
   const [users, setUsers] = useState<any[]>([]);
@@ -91,6 +95,8 @@ export default function UserManagement() {
   const handleSave = async () => {
     if (!form.fullName.trim()) { error("Full name is required."); return; }
     if (!form.email.trim()) { error("Email is required."); return; }
+    const bad = formatErrors(form, USER_FORMATS);
+    if (Object.keys(bad).length) { setTriedSave(true); error(Object.values(bad)[0]); return; }
     if (!editingUser && password.length < 8) {
       error("Set an initial password of at least 8 characters.");
       return;
@@ -163,12 +169,19 @@ export default function UserManagement() {
     ...seniors.map((s) => ({ label: `Reports to ${s.fullName}`, value: String(s.id) })),
   ];
 
-  const field = (key: string, label: string, type = "text") => (
-    <div className="col-12 md:col-6 flex flex-column gap-1">
-      <label htmlFor={`um-${key}`}>{label}</label>
-      <InputText id={`um-${key}`} type={type} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
-    </div>
-  );
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [triedSave, setTriedSave] = useState(false);
+  const field = (key: string, label: string, type = "text") => {
+    const msg = touched[key] || triedSave ? formatErrors(form, USER_FORMATS)[key] || "" : "";
+    return (
+      <div className="col-12 md:col-6 flex flex-column gap-1">
+        <label htmlFor={`um-${key}`}>{label}</label>
+        <InputText id={`um-${key}`} type={type} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+          onBlur={() => setTouched((t) => ({ ...t, [key]: true }))} className={msg ? "p-invalid" : undefined} />
+        <FieldError error={msg} />
+      </div>
+    );
+  };
 
   const practiceBody = (u: any) =>
     u.active === false
@@ -256,8 +269,10 @@ export default function UserManagement() {
             <small className="am-muted">
               Pick the senior this person reports to — they join that team's loop
               (its cases, cause-list and hearing alerts). Choose “Head / firm-wide”
-              for a senior who leads their own team, or for common staff (accountant,
-              receptionist) who serve the whole firm through their role.
+              for a senior who leads their own team, or for common staff (the
+              accountant) who serve the whole firm through their role. A new
+              senior's team is part of this firm, but the other seniors' teams
+              do not see its cases; the Super Admin and Accountant see every team.
             </small>
           </div>
         ) : (

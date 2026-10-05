@@ -2,9 +2,8 @@
 
 Scope in this app is per-practice: a query is limited to `advocate_id IN
 practice_ids(user)`. Some roles are not team-bound, though - the Super Admin
-oversees everything, and the Accountant and Receptionist are COMMON services
-shared across every senior's team (one accountant does the whole firm's
-invoices; one receptionist handles everyone's clients/appointments). This
+oversees everything, and the Accountant is a COMMON service shared across
+every senior's team (one accountant does the whole firm's invoices). This
 permission is the single lever that widens their scope to the whole firm;
 their OTHER permissions still decide what they may actually open (an accountant
 with no CASE_VIEW sees every invoice but no case file).
@@ -21,12 +20,11 @@ PERMISSION = ('FIRM_WIDE_SCOPE', 'ADMIN',
               '(what you can open is still limited by your other permissions)')
 
 # Roles that serve the whole firm rather than one senior's team.
-FIRM_WIDE_ROLES = ['Super Admin', 'Accountant', 'Receptionist']
+FIRM_WIDE_ROLES = ['Super Admin', 'Accountant']
 
 
 class Command(BaseCommand):
-    help = ('Create FIRM_WIDE_SCOPE and grant it to Super Admin, Accountant '
-            'and Receptionist.')
+    help = 'Create FIRM_WIDE_SCOPE and grant it to Super Admin and Accountant.'
 
     def handle(self, *args, **options):
         name, module, description = PERMISSION

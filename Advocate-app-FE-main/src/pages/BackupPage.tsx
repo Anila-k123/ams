@@ -473,8 +473,8 @@ function BackupPage() {
           <Column header="Status" body={(h: any) => <Tag severity={statusSeverity(h.status)} value={h.status} />} />
           <Column header="Actions" body={(h: any) => (
             <div className="flex gap-1">
-              <Button icon="pi pi-download" rounded text tooltip="Download" onClick={() => downloadBackup(h.id)} />
-              <Button icon="pi pi-trash" rounded text severity="danger" tooltip="Delete" onClick={() => requestDelete(h.id)} />
+              <Button icon="pi pi-download" rounded text tooltip="Download" tooltipOptions={{ position: "top" }} onClick={() => downloadBackup(h.id)} />
+              <Button icon="pi pi-trash" rounded text severity="danger" tooltip="Delete" tooltipOptions={{ position: "top" }} onClick={() => requestDelete(h.id)} />
             </div>
           )} />
         </DataTable>

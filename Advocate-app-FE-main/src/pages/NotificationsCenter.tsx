@@ -27,6 +27,8 @@ const EVENT_LABELS: Record<string, string> = {
   HEARING_REMINDER: "Hearing Reminder",
   HEARING_RESCHEDULED: "Hearing Rescheduled",
   INVOICE_GENERATED: "Invoice Generated",
+  INVOICE_SUBMITTED: "Invoice To Issue",
+  INVOICE_RETURNED: "Invoice Returned",
   PAYMENT_RECEIVED: "Payment Received",
   EXPENSE_UPDATED: "Expense Updated",
   OVERDUE_PAYMENT_REMINDER: "Overdue Payment",

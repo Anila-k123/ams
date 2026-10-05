@@ -569,3 +569,11 @@ body[style*="user-select: none"] .assistant-panel {
 
 /* "Lisa · AI legal assistant" header (constants/assistant.ts) */
 .assistant-subtitle { font-size: 0.75em; font-weight: 500; color: var(--text-muted); }
+
+/* Pages an answer points to (e.g. "Open Tasks"), opened on click. */
+.assistant-msg-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}

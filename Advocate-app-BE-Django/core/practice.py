@@ -37,7 +37,9 @@ _CACHE_ATTR = '_practice_ids_cache'
 # user's OTHER permissions still decide what they may open. The role-name set is
 # a fallback for before the permission is seeded.
 FIRM_WIDE_PERMISSION = 'FIRM_WIDE_SCOPE'
-FIRM_WIDE_ROLES = {'Super Admin', 'Accountant', 'Receptionist'}
+# (The firm has no front desk: the Receptionist role was removed, see
+# rbac/management/commands/remove_receptionist_role.py.)
+FIRM_WIDE_ROLES = {'Super Admin', 'Accountant'}
 SUPER_ADMIN_ROLE = 'Super Admin'
 
 # Who is alerted about a case (hearings, cause-list listings, case payments).
@@ -74,8 +76,8 @@ def _perm_codes(advocate, cache=None):
 
 
 def has_firm_wide_scope(user):
-    """True when this user sees across every team (Super Admin / Accountant /
-    Receptionist), by the FIRM_WIDE_SCOPE permission or the role-name fallback."""
+    """True when this user sees across every team (Super Admin / Accountant),
+    by the FIRM_WIDE_SCOPE permission or the role-name fallback."""
     try:
         if FIRM_WIDE_PERMISSION in user.permission_codes():
             return True
@@ -92,11 +94,50 @@ def practice_root(user):
     return getattr(user, 'parent_advocate_id', None) or user.id
 
 
+def firm_root(user_or_root):
+    """The head team root of the firm this user (or team root id) belongs to.
+
+    Firms with several seniors are recorded in firms.FirmTeam; a team root
+    with no row is a one-team firm and is its own firm root.
+    """
+    root = user_or_root if isinstance(user_or_root, int) else practice_root(user_or_root)
+    try:
+        from firms.models import FirmTeam
+        row = FirmTeam.objects.filter(team_root_id=root).values_list('firm_root_id', flat=True).first()
+    except Exception:                                        # noqa: BLE001
+        row = None
+    return row or root
+
+
+def firm_team_roots(user_or_root):
+    """Every team root in this user's (or team root's) firm, including its own."""
+    froot = firm_root(user_or_root)
+    roots = {froot}
+    if not isinstance(user_or_root, int):
+        roots.add(practice_root(user_or_root))
+    else:
+        roots.add(user_or_root)
+    try:
+        from firms.models import FirmTeam
+        roots.update(FirmTeam.objects.filter(firm_root_id=froot)
+                     .values_list('team_root_id', flat=True))
+    except Exception:                                        # noqa: BLE001
+        pass
+    return sorted(roots)
+
+
+def same_firm(a, b):
+    """True when two advocates belong to the same firm."""
+    return firm_root(a) == firm_root(b)
+
+
 def practice_ids(user):
     """Every advocate id whose rows this user may reach.
 
-    A solo advocate gets [their own id], so behaviour is unchanged for anyone
-    not part of a practice.
+    Advocates, juniors and interns reach their own TEAM (their senior and the
+    people reporting to that senior): one senior's matters are not visible to
+    another senior's team. Firm-wide staff (Super Admin, Accountant) reach every
+    team of their firm. A solo advocate gets [their own id].
     """
     if user is None or getattr(user, 'id', None) is None:
         return []
@@ -107,17 +148,19 @@ def practice_ids(user):
     root = practice_root(user)
     ids = {root, user.id}
     try:
-        # Scope to the practice tree (the FIRM) only. In the shared multi-tenant
+        # Scope to the team, or for firm-wide roles every team of the firm. In the shared multi-tenant
         # deployment the practice is the tenant boundary, so visibility must never
-        # cross into another firm. Firm-wide roles (Super Admin / Accountant /
-        # Receptionist) legitimately see the WHOLE firm — which is exactly the
+        # cross into another firm. Firm-wide roles (Super Admin / Accountant)
+        # legitimately see the WHOLE firm — which is exactly the
         # practice tree — but not other firms' data.
         #
         # Deliberately NOT filtered on left_on: a former member's work belongs to
         # the practice, so their id stays in scope after they leave. They lose
         # access at authentication, not by having their rows hidden.
+        roots = firm_team_roots(user) if has_firm_wide_scope(user) else [root]
+        ids.update(roots)
         ids.update(
-            Advocate.objects.filter(parent_advocate_id=root)
+            Advocate.objects.filter(parent_advocate_id__in=roots)
             .values_list('id', flat=True))
     except Exception:                                        # noqa: BLE001
         # If the column is missing (the DDL command has not been run yet) fall
@@ -197,7 +240,7 @@ def alert_members(advocate, permission=None, perm_cache=None):
 
     When `permission` is given, only members whose role grants it are kept, so
     an alert reaches only the people it is relevant to (a hearing alert goes to
-    those with CASE_VIEW, not to a receptionist on the same team).
+    those with CASE_VIEW, not to an accountant on the same team).
     """
     root = practice_root(advocate)
     owner = Advocate.objects.filter(id=root).first()
@@ -216,11 +259,12 @@ def alert_members(advocate, permission=None, perm_cache=None):
 def firm_wide_members(root_id, permission=None, perm_cache=None):
     """Common staff who serve every team of one firm - for firm-wide alerts.
 
-    `root_id` is the firm (practice_root). Only that firm's staff are returned:
+    `root_id` is any team root of the firm (practice_root); staff attached to
+    ANY team of the firm are included. Only that firm's staff are returned:
     in the shared multi-tenant deployment an accountant at another firm must
     never be told about this firm's invoices.
 
-    These are the shared roles (Accountant, Receptionist): an overdue invoice is
+    These are the shared roles (e.g. the Accountant): an overdue invoice is
     the firm's accountant's concern whichever team it belongs to, so a firm-wide
     alert reaches them across all teams. `permission` narrows to those it is
     relevant to (INVOICE_VIEW -> the accountants).
@@ -230,7 +274,8 @@ def firm_wide_members(root_id, permission=None, perm_cache=None):
     """
     out = []
     from django.db.models import Q
-    firm = Advocate.objects.filter(Q(id=root_id) | Q(parent_advocate_id=root_id),
+    roots = firm_team_roots(int(root_id))
+    firm = Advocate.objects.filter(Q(id__in=roots) | Q(parent_advocate_id__in=roots),
                                    left_on__isnull=True)
     for advocate in firm:
         try:

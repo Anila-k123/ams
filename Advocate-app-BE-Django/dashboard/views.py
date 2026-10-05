@@ -82,12 +82,12 @@ class DashboardView(APIView):
 
         # --- Financials ---
         # Only for people who may see the money. The dashboard is open to every
-        # signed-in staff member, so without this an intern or receptionist -
+        # signed-in staff member, so without this an intern or accountant -
         # who get 403 from /api/invoices - read the same figures here.
         perms = request.user.permission_codes()
         sees_invoices = 'INVOICE_VIEW' in perms
         sees_money = sees_invoices and 'PAYMENT_VIEW' in perms and 'EXPENSE_VIEW' in perms
-        invoices = (list(Invoice.objects.filter(advocate_id__in=advocate_ids))
+        invoices = (list(Invoice.objects.billable().filter(advocate_id__in=advocate_ids))
                     if sees_invoices else [])
         paid = unpaid = overdue = 0
         for inv in invoices:

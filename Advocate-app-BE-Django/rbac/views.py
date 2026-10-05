@@ -7,6 +7,7 @@ from core.permissions import RequirePermission
 from core.passwords import hash_password
 from core import practice
 from core.practice import practice_root
+from core.validators import check_payload
 
 
 def _parse_ids(data, key):
@@ -166,7 +167,24 @@ def _user_map(adv):
     }
 
 
-def _resolve_practice_owner(owner_value, target_id=None):
+def _join_firm(adv, requester):
+    """Keep firms.FirmTeam in step with where `adv` now sits.
+
+    A new head (a senior heading their own team) is a team of the
+    requester's firm, not a separate firm; a head that becomes a member is no
+    longer a team of its own."""
+    from firms.models import FirmTeam
+    if adv.parent_advocate_id is not None:
+        FirmTeam.objects.filter(team_root_id=adv.id).delete()
+        return
+    froot = practice.firm_root(requester)
+    if froot == adv.id:
+        return
+    FirmTeam.objects.get_or_create(team_root_id=froot, defaults={'firm_root_id': froot})
+    FirmTeam.objects.update_or_create(team_root_id=adv.id, defaults={'firm_root_id': froot})
+
+
+def _resolve_practice_owner(owner_value, target_id=None, requester=None):
     """Validate a requested practice owner id. Returns (parent_id, error).
 
     `owner_value` None / '' / 0 -> (None, None): the advocate heads their own
@@ -190,6 +208,8 @@ def _resolve_practice_owner(owner_value, target_id=None):
     if owner.parent_advocate_id is not None:
         return None, ('Chosen practice head is itself a member of a practice. '
                       'Pick a senior who heads their own practice.')
+    if requester is not None and not practice.same_firm(owner, requester):
+        return None, 'Chosen practice head is not in your firm.'
     return oid, None
 
 def _has_history(advocate):
@@ -217,7 +237,11 @@ class UsersView(APIView):
         return Response([_user_map(a) for a in Advocate.objects.exclude(id__in=client_advocate_ids()).order_by('id')])
 
     def post(self, request):
-        d = request.data
+        d, bad = check_payload(request.data, {'email': 'email', 'phone': 'phone'})
+        if bad is not None:
+            return bad
+        if not d.get('email'):
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
         if Advocate.objects.filter(email=d.get('email')).exists():
             return Response({'error': 'Email already registered!'}, status=status.HTTP_409_CONFLICT)
         # No default password: falling back to a shared literal meant every
@@ -231,7 +255,7 @@ class UsersView(APIView):
         # that senior). Falls back to the old sharePractice behaviour when the
         # field is absent, so existing callers are unaffected.
         if 'practiceOwnerId' in d:
-            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'))
+            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'), requester=request.user)
             if err:
                 return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
         elif d.get('sharePractice') is False:
@@ -256,6 +280,7 @@ class UsersView(APIView):
             parent_advocate_id=parent_id,
         )
         adv.save()
+        _join_firm(adv, request.user)
         return Response(_user_map(adv), status=status.HTTP_201_CREATED)
 
 
@@ -272,7 +297,9 @@ class UserDetailView(APIView):
         adv = Advocate.objects.filter(id=pk).first()
         if adv is None or _client_user(pk):
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
-        d = request.data
+        d, bad = check_payload(request.data, {'email': 'email', 'phone': 'phone'})
+        if bad is not None:
+            return bad
         for attr, key in [('full_name', 'fullName'), ('phone', 'phone'), ('email', 'email'),
                           ('bar_council_id', 'barCouncilId'), ('specialization', 'specialization'),
                           ('experience', 'experience'), ('address', 'address'), ('role', 'role')]:
@@ -284,7 +311,8 @@ class UserDetailView(APIView):
         # Reassign which practice this user belongs to (null = make them a
         # head/senior; an id = move them under that senior).
         if 'practiceOwnerId' in d:
-            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'), target_id=adv.id)
+            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'), target_id=adv.id,
+                                                     requester=request.user)
             if err:
                 return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
             # The Super Admin account stays top-level - never tuck it under a team.
@@ -305,6 +333,8 @@ class UserDetailView(APIView):
             adv.parent_advocate_id = parent_id
 
         adv.save()
+        if 'practiceOwnerId' in d:
+            _join_firm(adv, request.user)
         return Response(_user_map(adv))
 
     def delete(self, request, pk):

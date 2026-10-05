@@ -177,3 +177,6 @@
 .ac-tabs { margin: 4px 0 18px; }
 .ac-status { display: flex; gap: 14px; align-items: center; height: 44px; }
 .ac-status label { display: inline-flex; align-items: center; gap: 5px; color: var(--text-primary); font-size: 0.88rem; font-weight: 400; }
+
+/* Small help text under a field (manual entry). */
+.ac-field-hint { display: block; margin-top: 4px; color: var(--text-muted); font-size: 0.78rem; }

@@ -53,3 +53,44 @@
 .task-doc-chip { color: var(--warning); }
 .task-case-chip:hover, .task-doc-chip:hover { text-decoration: underline; }
 
+
+/* Priority: a coloured left edge on every card, and a flag on the value. */
+.task-row-card.prio-high { border-left: 4px solid var(--danger); }
+.task-row-card.prio-medium { border-left: 4px solid var(--warning); }
+.task-row-card.prio-low { border-left: 4px solid var(--success); }
+.task-row-card.completed, .task-row-card.cancelled { border-left-color: var(--border-color); }
+.task-prio-value { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; }
+.task-prio-value .pi { font-size: 11px; }
+.task-prio-value.prio-high { color: var(--danger); }
+.task-prio-value.prio-medium { color: var(--warning); }
+.task-prio-value.prio-low { color: var(--success); }
+
+/* Deadline urgency (open tasks only; done ones read as "later"). */
+.task-chip.task-due-overdue {
+  color: var(--danger); border-color: var(--danger); font-weight: 600;
+  background: rgba(var(--danger-rgb), 0.08);
+}
+.task-chip.task-due-today {
+  color: var(--warning); border-color: var(--warning); font-weight: 600;
+  background: rgba(var(--warning-rgb), 0.12);
+}
+.task-chip.task-due-soon { color: var(--warning); border-color: var(--warning); }
+
+/* What needs attention first. */
+.task-quick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.task-quick {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 4px 12px; border-radius: 999px;
+  background: var(--card-bg); color: var(--text-secondary); border: 1px solid var(--border-color);
+}
+.task-quick .pi { font-size: 12px; }
+.task-quick-overdue { color: var(--danger); border-color: var(--danger); }
+.task-quick-today, .task-quick-week { color: var(--warning); border-color: var(--warning); }
+.task-quick-high { color: var(--danger); }
+.task-quick:hover { border-color: var(--primary); }
+.task-quick.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.task-quick-clear {
+  font: inherit; font-size: 13px; cursor: pointer; background: none; border: none;
+  color: var(--primary); text-decoration: underline; padding: 4px;
+}

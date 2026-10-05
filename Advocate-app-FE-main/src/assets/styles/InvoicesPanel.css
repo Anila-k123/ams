@@ -43,3 +43,39 @@
 .inv-case-detail-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
 .inv-case-detail-label { color: var(--text-secondary); }
 .inv-case-detail-value { font-weight: 600; color: var(--text-primary); text-align: right; }
+
+/* Advocate-raised invoices waiting for accounts. */
+.inv-requests-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.inv-request-note {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  max-width: 28rem;
+}
+.inv-request-note-box {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-primary);
+  max-width: none;
+}
+
+/* Settlement under the amount, and a cancelled invoice's amount. */
+.inv-sub-line {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.inv-struck {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}

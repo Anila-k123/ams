@@ -4,11 +4,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from core.models import ClientPayment, Case
+from core.models import ClientPayment, Case, Invoice
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ClientPaymentSerializer
 from core.practice import practice_ids
+from core.finance import invoice_balance, recalc_case_totals, recalc_invoice_status
+from invoices.models import PaymentInvoice
 from notifications import client_events, internal_events
 
 SORT_MAP = {'paymentDate': 'payment_date', 'amount': 'amount', 'id': 'id'}
@@ -77,8 +79,33 @@ class CreatePaymentView(APIView):
 
     def post(self, request):
         data = request.data
-        cid = _case_id(data)
-        case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first() if cid else None
+        # Paying an invoice: the payment is linked to it, and the invoice
+        # moves to PARTIAL / PAID from its linked payments. The case and
+        # client are the invoice's.
+        invoice = None
+        if data.get('invoiceId'):
+            invoice = (Invoice.objects.billable().select_related('case')
+                       .filter(id=data.get('invoiceId'), advocate_id__in=practice_ids(request.user)).first())
+            if invoice is None:
+                return Response({'error': 'Invoice not found'}, status=status.HTTP_404_NOT_FOUND)
+            try:
+                amount = round(float(data.get('amount') or 0), 2)
+            except (TypeError, ValueError):
+                amount = 0
+            balance = invoice_balance(invoice)
+            if amount <= 0:
+                return Response({'error': 'Enter the amount received.', 'errors': {'amount': 'Required'}},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if balance <= 0:
+                return Response({'error': 'This invoice is already paid.'}, status=status.HTTP_409_CONFLICT)
+            if amount > balance + 0.005:
+                return Response({'error': 'That is more than the Rs. {:,.2f} still due on this invoice.'.format(balance),
+                                 'errors': {'amount': 'More than the balance'}},
+                                status=status.HTTP_400_BAD_REQUEST)
+            case = invoice.case
+        else:
+            cid = _case_id(data)
+            case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first() if cid else None
         payment = ClientPayment.objects.create(
             amount=data.get('amount'),
             payment_mode=data.get('paymentMode'),
@@ -89,6 +116,10 @@ class CreatePaymentView(APIView):
             case=case,
             client=case.client if case else None,
         )
+        if invoice is not None:
+            PaymentInvoice.objects.create(payment_id=payment.id, invoice_id=invoice.id)
+            recalc_invoice_status(invoice.id)
+        recalc_case_totals(payment.case_id)
         client_events.payment_received(request.user, payment.client, payment, case)
         # Internal hand-off: tell the case's advocates the matter is settled.
         internal_events.payment_settled(request.user, payment, case,

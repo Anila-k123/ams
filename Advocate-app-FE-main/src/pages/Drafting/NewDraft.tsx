@@ -252,7 +252,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
                 <Tag value={d.status}
                   severity={statusSeverity(d.status)}
                   icon={d.status === 'processing' || d.status === 'pending' ? 'pi pi-spin pi-spinner' : undefined} />
-                <Button icon="pi pi-times" text rounded severity="secondary" onClick={() => removeDoc(d.id)} tooltip="Remove" />
+                <Button icon="pi pi-times" text rounded severity="secondary" onClick={() => removeDoc(d.id)} tooltip="Remove" tooltipOptions={{ position: "top" }} />
               </div>
             ))}
 

@@ -30,6 +30,7 @@ import PlaybookRiskPanel from './components/PlaybookRiskPanel'
 import InlineDocViewer from './components/InlineDocViewer'
 import DocumentPlaceholders from './components/DocumentPlaceholders'
 import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview } from './api/drafting'
+import DraftChanges, { changeSummary } from '../../components/DraftChanges'
 import { RiskContext, type RiskMap } from './context/RiskContext'
 
 // ── legacy blank detection (old ______ / dot-leader drafts) ────────────────────
@@ -546,14 +547,27 @@ export default function DraftPage() {
     if (!hasAmsTask || !sessionId) return
     draftingApi.getAmsTask(Number(sessionId)).then(setAmsTask).catch(() => setAmsTask(null))
   }, [hasAmsTask, sessionId])
-  const sendToAms = async (caseId?: number) => {
+  // Resubmitting after changes were requested asks what was changed, so the
+  // reviewer gets the author's own account alongside the automatic diff.
+  const [askResubmit, setAskResubmit] = useState(false)
+  const [resubmitNote, setResubmitNote] = useState('')
+  const [showChanges, setShowChanges] = useState(false)
+  const submitToTask = () => {
+    if (amsTask?.needsReview && amsTask.reviewStatus === 'CHANGES_REQUESTED') {
+      setResubmitNote(''); setAskResubmit(true)
+    } else {
+      sendToAms()
+    }
+  }
+  const sendToAms = async (caseId?: number, note?: string) => {
     if (!sessionId) return
     if (!session?.case_id && !caseId) { setPickAmsCase(true); return }
     setPickAmsCase(false)
     if (dirty && !(await save())) return
     setSendingAms(true); setError('')
     try {
-      const r = await draftingApi.sendToAms(Number(sessionId), caseId)
+      const r = await draftingApi.sendToAms(Number(sessionId), caseId, note)
+      setAskResubmit(false)
       setSession(prev => prev && ({
         ...prev, case_id: r.amsCaseId, ams_document_id: r.documentId,
         ams_document_version: r.version, ams_synced_at: r.syncedAt,
@@ -790,8 +804,9 @@ export default function DraftPage() {
                 </span>
               )}
               <Button label={session?.ams_task_id ? 'Submit to task' : 'Save to PactPro'} icon="pi pi-send"
-                size="small" outlined loading={sendingAms} onClick={() => sendToAms()}
-                tooltip={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'} />
+                size="small" outlined loading={sendingAms}
+                onClick={() => (session?.ams_task_id ? submitToTask() : sendToAms())}
+                tooltip={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'} tooltipOptions={{ position: "top" }} />
           </>}
           {hasPermission('DRAFT_EXPORT') && (
             <Button label="Download" icon="pi pi-download" size="small" outlined severity="secondary"
@@ -827,25 +842,62 @@ export default function DraftPage() {
         <div className="pp-review-bar">
           <div>
             <i className="pi pi-user-edit" />{' '}
-            Reviewing <strong>{session.created_by_name || 'the junior'}</strong>'s draft for task
+            Reviewing <strong>{session.created_by_name || 'the advocate'}</strong>'s draft for task
             {' '}<strong>"{review.taskTitle}"</strong> —{' '}
             {review.status === 'SUBMITTED' ? 'awaiting your review'
               : review.status === 'APPROVED' ? `approved${review.reviewedByName ? ` by ${review.reviewedByName}` : ''}`
               : 'sent back for changes'}
             {review.note && review.status !== 'SUBMITTED' && <span className="text-color-secondary"> · "{review.note}"</span>}
+            {review.status === 'SUBMITTED' && review.lastChanges != null && (
+              <div className="pp-review-changes">
+                <i className="pi pi-history" />{' '}
+                {review.lastChanges.length
+                  ? <>Changed since the last version: <strong>{changeSummary(review.lastChanges)}</strong></>
+                  : 'No text changes since the last version.'}
+                {review.lastNote && <div className="text-color-secondary pp-review-changes-note">"{review.lastNote}"</div>}
+                {review.lastChanges.length > 0 && (
+                  <Button label="What changed" icon="pi pi-eye" size="small" text onClick={() => setShowChanges(true)} />
+                )}
+              </div>
+            )}
           </div>
           {review.canReview && review.status === 'SUBMITTED' && (
             <div className="flex gap-2">
               <Button label="Request changes" icon="pi pi-replay" size="small" severity="warning" outlined
-                disabled={reviewing || dirty} tooltip={dirty ? 'Save your edits first' : undefined}
+                disabled={reviewing || dirty} tooltip={dirty ? 'Save your edits first' : undefined} tooltipOptions={{ position: "top" }}
                 onClick={() => { setReviewNote(''); setAskChanges(true) }} />
               <Button label="Approve" icon="pi pi-check" size="small" severity="success"
-                loading={reviewing} disabled={dirty} tooltip={dirty ? 'Save your edits first' : undefined}
+                loading={reviewing} disabled={dirty} tooltip={dirty ? 'Save your edits first' : undefined} tooltipOptions={{ position: "top" }}
                 onClick={() => submitReview('approve')} />
             </div>
           )}
         </div>
       )}
+      <Dialog header="What changed since the last version" visible={showChanges}
+        style={{ width: 'min(720px, 95vw)' }} onHide={() => setShowChanges(false)} dismissableMask>
+        {review?.lastNote && <p className="mt-0 text-color-secondary">"{review.lastNote}"</p>}
+        <DraftChanges changes={review?.lastChanges} />
+      </Dialog>
+      <Dialog header="Submit to task" visible={askResubmit} style={{ width: 'min(520px, 95vw)' }}
+        onHide={() => setAskResubmit(false)}
+        footer={<div className="flex justify-content-end gap-2">
+          <Button label="Cancel" text onClick={() => setAskResubmit(false)} />
+          <Button label="Submit" icon="pi pi-send" loading={sendingAms}
+            disabled={!resubmitNote.trim()} onClick={() => sendToAms(undefined, resubmitNote.trim())} />
+        </div>}>
+        {amsTask?.reviewNote && (
+          <div className="task-review-note changes mb-3">
+            <strong>{amsTask.reviewedByName || 'Your senior'} asked:</strong> {amsTask.reviewNote}
+          </div>
+        )}
+        <label className="font-medium text-sm block mb-2">What did you change?</label>
+        <InputTextarea value={resubmitNote} onChange={e => setResubmitNote(e.target.value)} rows={3}
+          autoResize autoFocus className="w-full"
+          placeholder="e.g. Added the arrears figure Rs. 3,15,000 in Reliefs claimed; kept the fallback." />
+        <small className="text-color-secondary block mt-2">
+          Your reviewer also sees exactly which sections changed.
+        </small>
+      </Dialog>
       <Dialog header="Request changes" visible={askChanges} style={{ width: 'min(520px, 95vw)' }}
         onHide={() => setAskChanges(false)}
         footer={<div className="flex justify-content-end gap-2">
@@ -853,7 +905,7 @@ export default function DraftPage() {
           <Button label="Send back" icon="pi pi-send" severity="warning" loading={reviewing}
             disabled={!reviewNote.trim()} onClick={() => submitReview('request_changes', reviewNote)} />
         </div>}>
-        <label className="font-medium text-sm block mb-2">What should {session?.created_by_name || 'the junior'} change?</label>
+        <label className="font-medium text-sm block mb-2">What should {session?.created_by_name || 'the advocate'} change?</label>
         <InputTextarea value={reviewNote} onChange={e => setReviewNote(e.target.value)} rows={4}
           autoResize className="w-full" placeholder="e.g. Add the limitation calculation and cite the trial court order." />
       </Dialog>
@@ -928,7 +980,7 @@ export default function DraftPage() {
                     <div className="pp-refview-sub">Reference document</div>
                   </div>
                   <Button icon="pi pi-times" text rounded severity="secondary"
-                    onClick={() => setRefDoc(null)} tooltip="Close" tooltipOptions={{ position: 'left' }} />
+                    onClick={() => setRefDoc(null)} tooltip="Close" tooltipOptions={{ position: 'top' }} />
                 </div>
                 <div className="pp-refview-body"><InlineDocViewer fileUrl={refDoc.url} name={refDoc.name} /></div>
               </div>

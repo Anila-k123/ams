@@ -630,7 +630,7 @@ function Cases() {
                   onChange={(e) => setField("status", e.value || "")} />
 
                 {hasPermission("INVOICE_VIEW") && (
-                  <InputText type="number" name="amount" placeholder="Amount" value={newCase.amount} onChange={handleChange} />
+                  <InputText type="number" name="amount" placeholder="Agreed fee (₹)" value={newCase.amount} onChange={handleChange} min={0} />
                 )}
 
                 <Dropdown
@@ -698,7 +698,7 @@ function Cases() {
               );
             }} />
             <Column header="Client" body={(c) => <span title={c.clientName || "N/A"}>{c.clientName || "N/A"}</span>} />
-            {hasPermission("INVOICE_VIEW") && <Column header="Amount" body={(c) => formatCurrency(c.amount)} />}
+            {hasPermission("INVOICE_VIEW") && <Column header="Agreed fee" body={(c) => formatCurrency(c.amount)} />}
             <Column header="Actions" body={actionsBody} />
           </DataTable>
         )}
@@ -740,8 +740,8 @@ function Cases() {
                     <span className="case-doc-meta">{d.category || "Other"}</span>
                     <span className="case-doc-meta">{d.version > 1 ? `v${d.version}` : "v1"}</span>
                     <div className="flex gap-1 ml-auto">
-                      <Button icon="pi pi-eye" rounded text size="small" onClick={() => handleDocPreview(d.id)} tooltip="Preview" />
-                      <Button icon="pi pi-download" rounded text size="small" onClick={() => handleDocDownload(d.id, d.originalName || d.documentName)} tooltip="Download" />
+                      <Button icon="pi pi-eye" rounded text size="small" onClick={() => handleDocPreview(d.id)} tooltip="Preview" tooltipOptions={{ position: "top" }} />
+                      <Button icon="pi pi-download" rounded text size="small" onClick={() => handleDocDownload(d.id, d.originalName || d.documentName)} tooltip="Download" tooltipOptions={{ position: "top" }} />
                     </div>
                   </div>
                 ))}

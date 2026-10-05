@@ -1,4 +1,5 @@
 import api from './client'
+import type { DraftChange } from '../../../components/DraftChanges'
 
 /** One user-fillable case fact captured by a template (e.g. "party_name"). */
 export interface SlotField {
@@ -144,6 +145,9 @@ export interface DraftReview {
   isOwner: boolean
   canReview: boolean
   canEdit: boolean
+  // The latest hand-back: the author's note and what it changed (null for a first submission).
+  lastNote?: string | null
+  lastChanges?: DraftChange[] | null
 }
 
 /** Senior review of a delegated AMS task (AMS workspace/review.py). */
@@ -231,10 +235,11 @@ export const draftingApi = {
         return { blob: r.data, filename: m ? m[1] : `draft_${id}.docx` }
       }),
   // File the saved draft on its AMS case (+ task). `caseId` links an unlinked draft first.
-  sendToAms: (id: number, caseId?: number) =>
+  // `note`: what the author changed, when resubmitting after changes were requested.
+  sendToAms: (id: number, caseId?: number, note?: string) =>
     api.post<{ documentId: number; version: number; taskLinked: boolean; syncedAt: string; amsCaseId: number;
                reviewStatus: AmsReviewStatus | null }>(
-      `/drafts/${id}/send-to-ams/`, caseId ? { caseId } : {}).then(r => r.data),
+      `/drafts/${id}/send-to-ams/`, { ...(caseId ? { caseId } : {}), ...(note ? { note } : {}) }).then(r => r.data),
   // The AMS task the draft came from, with the senior's review (null if none).
   getAmsTask: (id: number) =>
     api.get<{ task: AmsTaskReview | null }>(`/drafts/${id}/ams-task/`).then(r => r.data.task),

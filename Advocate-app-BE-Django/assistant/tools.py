@@ -1,15 +1,16 @@
 """Read-only tools the AI assistant may call to answer questions about the
-advocate's practice data. Every function is scoped via `_scope(advocate_id)` to the
-advocate's whole PRACTICE — the same visibility as the case list and reports — so a
-junior can query a senior's shared cases, but no one can read another practice's data.
-Nothing here writes.
+advocate's data. Every function is scoped via `_scope(advocate_id)` to the user's
+team (the whole firm for Super Admin / Accountant) - the same visibility as the
+Cases list - and checked against their role's permissions. Nothing here writes.
 
-Each tool returns plain JSON-serializable data. `TOOLS` is the Claude tool-schema
-list; `run_tool(name, args, advocate_id)` dispatches and enforces ownership.
+Each tool returns plain JSON-serializable data. `tools_for(advocate_id)` is the
+OpenAI-style tool list this user may use; `run_tool(name, args, advocate_id)`
+dispatches it and enforces permission and ownership.
 """
 
+import contextlib
+import contextvars
 import datetime
-from functools import lru_cache
 
 from django.db.models import Count, Q, Sum
 
@@ -17,18 +18,70 @@ from core.models import Case, Client, CaseEvent, Document, Expense, Invoice, Cli
 from core.practice import practice_ids
 from workspace.models import CaseNote, CaseTag, CaseTask
 
+# Who the assistant is answering for, set once per request (acting_as). Tools
+# take an advocate id, but scope and permissions come from this user object so
+# they're resolved once per request - and never from a process-wide cache,
+# which kept serving the old team after a team change until a restart.
+_ACTING = contextvars.ContextVar('assistant_acting_user', default=None)
+
+
+@contextlib.contextmanager
+def acting_as(user):
+    token = _ACTING.set(user)
+    try:
+        yield user
+    finally:
+        _ACTING.reset(token)
+
+
+def _user(advocate_id):
+    u = _ACTING.get()
+    if u is not None and getattr(u, 'id', None) == advocate_id:
+        return u
+    return Advocate.objects.filter(id=advocate_id).first()
+
+
+def permissions(advocate_id):
+    """The user's permission codes, resolved once per user object."""
+    u = _user(advocate_id)
+    if u is None:
+        return set()
+    cached = getattr(u, '_assistant_perms', None)
+    if cached is None:
+        try:
+            cached = set(u.permission_codes())
+        except Exception:                                    # noqa: BLE001
+            cached = set()
+        try:
+            u._assistant_perms = cached
+        except Exception:                                    # noqa: BLE001
+            pass
+    return cached
+
+
+def allowed(advocate_id, *codes):
+    """True when the user holds ANY of these codes - the same OR rule as
+    RequirePermission. Lisa must never show what the user's own pages would
+    refuse them (an intern asking "who owes us money?")."""
+    have = permissions(advocate_id)
+    return any(c in have for c in codes)
+
+
+# The permission each kind of data needs, matching the API's own gates.
+CASES, EVENTS, DOCUMENTS, CLIENTS = 'CASE_VIEW', 'EVENT_VIEW', 'DOCUMENT_VIEW', 'CLIENT_VIEW'
+INVOICES, PAYMENTS, EXPENSES = 'INVOICE_VIEW', 'PAYMENT_VIEW', 'EXPENSE_VIEW'
+
 
 def _iso(d):
     return d.isoformat() if d else ""
 
 
-@lru_cache(maxsize=512)
 def _scope(advocate_id):
-    """Advocate ids this user may reach — their whole practice (owner + members),
-    matching the Cases list / Reports visibility so a junior can query a senior's
-    shared cases. Cached per process (practice membership is stable; a newly-added
-    member may take a restart to appear)."""
-    adv = Advocate.objects.filter(id=advocate_id).first()
+    """Advocate ids this user may reach: their team (or, for firm-wide staff,
+    the whole firm), the same visibility as the Cases list. practice_ids()
+    caches on the user object, so within a request this is one lookup, and a
+    team change shows up on the next request."""
+    adv = _user(advocate_id)
     return practice_ids(adv) if adv else [advocate_id]
 
 
@@ -52,20 +105,25 @@ def _owned_case(advocate_id, case_id):
 
 # --- tool implementations -------------------------------------------------
 
-def find_case(advocate_id, query):
+def find_case(advocate_id, query, limit=10):
+    """Cases the text is about, best match first: one ranked query over case
+    number, registration number, title, client, parties, with typo tolerance
+    (assistant/search.py). `total` counts every match."""
+    from .search import search_cases
     q = (query or '').strip()
-    match = Q(case_number__icontains=q) | Q(case_title__icontains=q) | Q(status__icontains=q)
-    # A court import stores the CNR as case_number and puts the registration
-    # number ("AS /700/2025") only in the description, so "AS 700/2025" would
-    # otherwise find nothing. Number-like queries only: a plain word would match
-    # half the descriptions in the practice.
-    if any(ch.isdigit() for ch in q):
-        match |= Q(description__icontains=q)
-    qs = Case.objects.select_related('client').filter(advocate_id__in=_scope(advocate_id), deleted=False).filter(match)[:10]
-    return {'cases': [{
-        'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title,
-        'status': c.status, 'client': c.client.name if c.client_id and c.client else None,
-    } for c in qs]}
+    # A CNR is one 16-character token: match it exactly as typed.
+    if len(q) == 16 and q[:4].isalpha() and q[4:].isdigit():
+        qs = Case.objects.select_related('client').filter(
+            advocate_id__in=_scope(advocate_id), deleted=False, case_number__iexact=q)
+        rows = [{'caseId': c.id, 'caseNumber': c.case_number, 'caseTitle': c.case_title,
+                 'status': c.status, 'client': c.client.name if c.client_id and c.client else None,
+                 'matchedOn': ['number']} for c in qs[:limit]]
+        if rows:
+            return {'total': len(rows), 'cases': rows}
+    found = search_cases(_scope(advocate_id), q, limit=limit)
+    for row in found['cases']:
+        row.pop('score', None)
+    return found
 
 
 def find_client(advocate_id, query):
@@ -140,6 +198,29 @@ def list_cases(advocate_id, court_level=None, status=None, client_id=None,
     }
 
 
+def _due_words(deadline, today):
+    """A deadline in words, worked out here so the model never has to do date
+    arithmetic: "today", "tomorrow", "in 3 days", "overdue by 2 days", or None.
+    A model given only "2026-10-07" called it "due today"."""
+    if not deadline:
+        return None
+    days = (deadline - today).days
+    if days == 0:
+        return 'today'
+    if days == 1:
+        return 'tomorrow'
+    if days > 1:
+        return 'in {} days'.format(days)
+    return 'overdue by {} day{}'.format(-days, '' if days == -1 else 's')
+
+
+def _iso_day(value, default=None):
+    try:
+        return datetime.date.fromisoformat(str(value)[:10]) if value else default
+    except ValueError:
+        return default
+
+
 def overdue_tasks(advocate_id, limit=30):
     """Open tasks whose deadline has passed, across EVERY case (not one case),
     newest deadline last. Case numbers are resolved in one extra query so the
@@ -161,19 +242,80 @@ def overdue_tasks(advocate_id, limit=30):
             'taskId': t.id, 'title': t.title, 'priority': t.priority,
             'deadline': _iso(t.deadline),
             'daysOverdue': (today - t.deadline).days if t.deadline else None,
+            'due': _due_words(t.deadline, today),
             'caseNumber': numbers.get(t.case_id),
         } for t in rows],
     }
 
 
+def my_tasks(advocate_id, limit=20, from_date=None, to_date=None):
+    """Open tasks assigned to THIS user (a task with no assignee is its
+    creator's), soonest deadline first - what "my tasks" / "anything I should
+    worry about" means.
+
+    With from_date / to_date (inclusive) only tasks whose deadline falls in
+    that range are returned - "due today" is from_date = to_date = today. An
+    empty list then means none are due then, and the answer must say so
+    rather than offer the next one as if it were due."""
+    today = datetime.date.today()
+    mine = (_tasks(advocate_id).filter(completed=False, cancelled=False)
+            .filter(Q(assigned_to_id=advocate_id) | Q(assigned_to_id__isnull=True, advocate_id=advocate_id)))
+    qs = mine.order_by('deadline', 'id')
+    start, end = _iso_day(from_date), _iso_day(to_date)
+    if start and end and end < start:
+        start, end = end, start
+    if start:
+        qs = qs.filter(deadline__gte=start)
+    if end:
+        qs = qs.filter(deadline__lte=end)
+    total = qs.count()
+    rows = list(qs[:limit])
+    # Nothing due in the asked range: the next ones after it, so the answer can
+    # be "none today - next is X, due in 2 days" instead of a bare "none".
+    upcoming = []
+    if (start or end) and total == 0:
+        after = end or start
+        upcoming = list(mine.filter(deadline__gt=after).order_by('deadline', 'id')[:3])
+    numbers = dict(Case.objects.filter(
+        advocate_id__in=_scope(advocate_id),
+        id__in=[t.case_id for t in rows + upcoming if t.case_id]
+    ).values_list('id', 'case_number'))
+
+    def row(t):
+        return {
+            'taskId': t.id, 'title': t.title, 'priority': t.priority,
+            'deadline': _iso(t.deadline),
+            'due': _due_words(t.deadline, today),
+            'overdue': bool(t.deadline and t.deadline < today),
+            'review': t.review_status,
+            'caseNumber': numbers.get(t.case_id),
+        }
+    out = {
+        'today': _iso(today),
+        'from': _iso(start), 'to': _iso(end),
+        'total': total,
+        'returned': len(rows),
+        'truncated': total > len(rows),
+        'tasks': [row(t) for t in rows],
+    }
+    if start or end:
+        out['nextDue'] = [row(t) for t in upcoming]
+    if allowed(advocate_id, 'TASK_VIEW'):
+        # A button under the reply; the user opens the page when ready.
+        out['_link'] = {'route': '/dashboard/tasks', 'label': 'Open Tasks'}
+    return out
+
+
 def client_financials(advocate_id, client_id):
     """Billed / paid / outstanding for ONE client across all their cases —
     the per-client sibling of get_case_financials()."""
-    invoices = list(Invoice.objects.filter(advocate_id__in=_scope(advocate_id), client_id=client_id))
+    invoices = list(Invoice.objects.billable().filter(advocate_id__in=_scope(advocate_id), client_id=client_id))
     billed = sum((i.amount or 0) for i in invoices)
     unpaid = [i for i in invoices if (i.status or '').upper() != 'PAID']
-    paid = sum((p.amount or 0) for p in
-               ClientPayment.objects.filter(advocate_id__in=_scope(advocate_id), client_id=client_id))
+    # Payments received need PAYMENT_VIEW, on top of the invoices' INVOICE_VIEW.
+    paid = (sum((p.amount or 0) for p in
+                ClientPayment.objects.filter(advocate_id__in=_scope(advocate_id), client_id=client_id))
+            if allowed(advocate_id, PAYMENTS) else None)
     return {
         'totalBilled': billed,
         'totalPaid': paid,
@@ -216,7 +358,7 @@ def pending_invoices(advocate_id, limit=25):
     """
     today = datetime.date.today()
     qs = (Invoice.objects.select_related('client')
-          .filter(advocate_id__in=_scope(advocate_id)).exclude(status__iexact='PAID')
+          .open().filter(advocate_id__in=_scope(advocate_id))
           .order_by('due_date'))
     total = qs.count()
     rows = list(qs[:limit])
@@ -471,10 +613,11 @@ def get_case_financials(advocate_id, case_id):
     c = _owned_case(advocate_id, case_id)
     if c is None:
         return {'error': 'Case not found or not accessible.'}
-    invoices = Invoice.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id)
+    invoices = Invoice.objects.billable().filter(advocate_id__in=_scope(advocate_id), case_id=c.id)
     inv_rows = [{'invoiceNumber': i.invoice_number, 'amount': i.amount, 'status': i.status,
                  'dueDate': _iso(i.due_date)} for i in invoices]
-    paid = sum((p.amount or 0) for p in ClientPayment.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id))
+    paid = (sum((p.amount or 0) for p in ClientPayment.objects.filter(advocate_id__in=_scope(advocate_id), case_id=c.id))
+            if allowed(advocate_id, PAYMENTS) else None)
     unpaid = sum((i.amount or 0) for i in invoices if (i.status or '').upper() != 'PAID')
     return {'agreedAmount': c.amount, 'invoices': inv_rows,
             'totalPaid': paid, 'outstanding': unpaid}
@@ -497,62 +640,286 @@ def list_upcoming_hearings(advocate_id, days=14):
 
 
 def dashboard_summary(advocate_id):
+    """Practice-wide counts - only the ones this user's role may see."""
     today = datetime.date.today()
-    total = Case.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False).count()
-    active = Case.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False, status__iexact='Active').count()
-    clients = Client.objects.filter(advocate_id__in=_scope(advocate_id), deleted=False).count()
-    upcoming = CaseEvent.objects.filter(advocate_id__in=_scope(advocate_id), date__gte=today).count()
-    pending = sum(1 for i in Invoice.objects.filter(advocate_id__in=_scope(advocate_id)) if (i.status or '').upper() != 'PAID')
-    return {'totalCases': total, 'activeCases': active, 'clients': clients,
-            'upcomingHearings': upcoming, 'pendingInvoices': pending}
+    scope = _scope(advocate_id)
+    out = {}
+    if allowed(advocate_id, CASES):
+        out['totalCases'] = Case.objects.filter(advocate_id__in=scope, deleted=False).count()
+        out['activeCases'] = Case.objects.filter(advocate_id__in=scope, deleted=False, status__iexact='Active').count()
+    if allowed(advocate_id, CLIENTS):
+        out['clients'] = Client.objects.filter(advocate_id__in=scope, deleted=False).count()
+    if allowed(advocate_id, EVENTS):
+        out['upcomingHearings'] = CaseEvent.objects.filter(advocate_id__in=scope, date__gte=today).count()
+    if allowed(advocate_id, INVOICES):
+        out['pendingInvoices'] = Invoice.objects.open().filter(advocate_id__in=scope).count()
+    return out
 
 
-# --- Claude tool schema + dispatch ---------------------------------------
+def hearings_between(advocate_id, from_date=None, to_date=None, limit=50):
+    """Hearings across the caseload in a date range (both ends inclusive),
+    soonest first, with the true total. Defaults: today to 14 days ahead."""
+    today = datetime.date.today()
 
-_CASE_ID = {'case_id': {'type': 'integer', 'description': 'The numeric caseId from find_case.'}}
+    def day(v, default):
+        try:
+            return datetime.date.fromisoformat(str(v)[:10]) if v else default
+        except ValueError:
+            return default
+    start = day(from_date, today)
+    end = day(to_date, start + datetime.timedelta(days=14))
+    if end < start:
+        start, end = end, start
+    qs = CaseEvent.objects.select_related('case').filter(
+        advocate_id__in=_scope(advocate_id), date__gte=start, date__lte=end,
+        event_type__iexact='HEARING').order_by('date', 'time')
+    total = qs.count()
+    return {
+        'from': _iso(start), 'to': _iso(end),
+        'total': total, 'returned': min(total, limit), 'truncated': total > limit,
+        'hearings': [{
+            'caseId': e.case_id,
+            'caseNumber': e.case.case_number if e.case_id and e.case else None,
+            'title': e.title, 'date': _iso(e.date), 'time': str(e.time) if e.time else '',
+        } for e in qs[:limit]],
+    }
 
-TOOLS = [
-    {'name': 'find_case', 'description': "Find the advocate's cases by number, title, party, or status. Use this first to get a caseId.",
-     'input_schema': {'type': 'object', 'properties': {'query': {'type': 'string'}}, 'required': ['query']}},
-    {'name': 'get_case_summary', 'description': 'Core details of one case (number, title, type, court, status, amount, client, description).',
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'get_court_record', 'description': "The court's own record for a case: acts, stage, coram, next date, hearing history, orders, filings.",
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'get_hearings', 'description': 'All hearings/events for a case, past and upcoming, with the next hearing date.',
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'get_parties', 'description': 'Petitioners, respondents, and their counsel for a case.',
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'get_notes', 'description': 'Case notes/diary entries and tags for a case.',
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'get_tasks', 'description': 'To-do tasks for a case, with priority, deadline, and completion.',
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'get_case_financials', 'description': 'Invoices, payments received, and outstanding dues for a case.',
-     'input_schema': {'type': 'object', 'properties': _CASE_ID, 'required': ['case_id']}},
-    {'name': 'list_upcoming_hearings', 'description': "All upcoming hearings across the advocate's cases within N days (default 14).",
-     'input_schema': {'type': 'object', 'properties': {'days': {'type': 'integer'}}, 'required': []}},
-    {'name': 'dashboard_summary', 'description': 'Practice-wide counts: total/active cases, clients, upcoming hearings, pending invoices.',
-     'input_schema': {'type': 'object', 'properties': {}, 'required': []}},
-]
 
-_DISPATCH = {
-    'find_case': lambda aid, a: find_case(aid, a.get('query', '')),
-    'get_case_summary': lambda aid, a: get_case_summary(aid, a.get('case_id')),
-    'get_court_record': lambda aid, a: get_court_record(aid, a.get('case_id')),
-    'get_hearings': lambda aid, a: get_hearings(aid, a.get('case_id')),
-    'get_parties': lambda aid, a: get_parties(aid, a.get('case_id')),
-    'get_notes': lambda aid, a: get_notes(aid, a.get('case_id')),
-    'get_tasks': lambda aid, a: get_tasks(aid, a.get('case_id')),
-    'get_case_financials': lambda aid, a: get_case_financials(aid, a.get('case_id')),
-    'list_upcoming_hearings': lambda aid, a: list_upcoming_hearings(aid, a.get('days', 14)),
-    'dashboard_summary': lambda aid, a: dashboard_summary(aid),
+# --- actions: Lisa can open pages and forms, not just answer -------------
+# Fixed choices only, so the model can't invent a route. Each needs the same
+# permission as the page or form itself (pages/Dashboard.tsx PermissionRoute).
+# An action tool returns '_action', which the planner sends to the browser as
+# an `action` event (handled by AssistantContext.handleAction).
+
+PAGES = {
+    'dashboard': ('/dashboard', None, 'Dashboard'),
+    'cases': ('/dashboard/cases', CASES, 'Cases'),
+    'clients': ('/dashboard/clients', CLIENTS, 'Clients'),
+    'hearings': ('/dashboard/hearings', EVENTS, 'Hearings'),
+    'tasks': ('/dashboard/tasks', 'TASK_VIEW', 'Tasks'),
+    'documents': ('/dashboard/documents', DOCUMENTS, 'Documents'),
+    'invoices': ('/dashboard/invoices', INVOICES, 'Invoices'),
+    'expenses': ('/dashboard/expenses', EXPENSES, 'Expenses'),
+    'reports': ('/dashboard/reports', 'REPORT_VIEW', 'Reports'),
+    'drafting': ('/dashboard/drafting', 'DRAFT_VIEW', 'Drafting'),
+    'display_board': ('/dashboard/display-board', None, 'Display Board'),
+    'cause_list': ('/dashboard/daily-causelist', None, 'Daily Cause List'),
+    'settings': ('/dashboard/settings', None, 'Settings'),
 }
+# form -> (route, modal the page opens via usePageModal, permission, label)
+FORMS = {
+    'new_client': ('/dashboard/clients', 'create-client', 'CLIENT_CREATE', 'New Client form'),
+    'new_case': ('/dashboard/cases/new', None, 'CASE_CREATE', 'Add Case page'),
+    'new_hearing': ('/dashboard/hearings', 'create-hearing', 'EVENT_CREATE', 'New Hearing form'),
+    'new_invoice': ('/dashboard/invoices', 'create-invoice', 'INVOICE_CREATE', 'New Invoice form'),
+    'new_expense': ('/dashboard/expenses', 'create-expense', 'EXPENSE_CREATE', 'New Expense form'),
+    'upload_document': ('/dashboard/documents', 'upload-document', 'DOCUMENT_UPLOAD', 'document upload'),
+}
+# Pages that listen for the assistant-search event.
+SEARCHABLE = {'cases': CASES, 'clients': CLIENTS, 'documents': DOCUMENTS}
+
+
+def _refuse(what):
+    return {'error': f"Not permitted: your role can't open {what}."}
+
+
+def open_page(advocate_id, page):
+    spec = PAGES.get(page)
+    if spec is None:
+        return {'error': f'Unknown page: {page}'}
+    route, need, label = spec
+    if need and not allowed(advocate_id, need):
+        return _refuse(label)
+    return {'done': f'Opened {label}.', '_action': {'action': 'OPEN_PAGE', 'route': route}}
+
+
+def open_form(advocate_id, form):
+    spec = FORMS.get(form)
+    if spec is None:
+        return {'error': f'Unknown form: {form}'}
+    route, modal, need, label = spec
+    if need and not allowed(advocate_id, need):
+        return _refuse(label)
+    if modal is None:
+        return {'done': f'Opened the {label}.', '_action': {'action': 'OPEN_PAGE', 'route': route}}
+    return {'done': f'Opened the {label}.',
+            '_action': {'action': 'OPEN_MODAL', 'route': route, 'modalToOpen': modal}}
+
+
+def search_in_page(advocate_id, page, text):
+    need = SEARCHABLE.get(page)
+    if need is None:
+        return {'error': f'Searching is available on: {", ".join(SEARCHABLE)}.'}
+    if not allowed(advocate_id, need):
+        return _refuse(PAGES[page][2])
+    text = (text or '').strip()[:100]
+    if not text:
+        return {'error': 'Nothing to search for.'}
+    return {'done': f'Opened {PAGES[page][2]} filtered by the search.',
+            '_action': {'action': 'SEARCH', 'route': PAGES[page][0], 'searchQuery': text}}
+
+
+def open_case(advocate_id, case_id):
+    if not allowed(advocate_id, CASES):
+        return _refuse('cases')
+    c = _owned_case(advocate_id, case_id)
+    if c is None:
+        return {'error': 'Case not found or not accessible.'}
+    return {'done': f'Opened case {c.case_number}.',
+            '_action': {'action': 'OPEN_PAGE', 'route': f'/dashboard/cases/{c.id}'}}
+
+
+# --- tool catalogue (OpenAI-style function calling) -----------------------
+# One entry per tool: description, JSON-schema parameters, the permission it
+# needs (ANY of; None = any signed-in user) and how to call it. The planner
+# only offers the model the tools this user is allowed, and run_tool refuses
+# the rest anyway.
+
+_CASE_ID = {'case_id': {'type': 'integer', 'description': 'The numeric caseId (from find_case or a list).'}}
+_NONE = {'type': 'object', 'properties': {}, 'required': []}
+
+
+def _obj(props, required=()):
+    return {'type': 'object', 'properties': props, 'required': list(required)}
+
+
+_CATALOGUE = {
+    'find_case': (
+        "Find cases by case number (e.g. 'O.S. 900/2025', '900/2025'), title words or a party/client "
+        "name. Returns caseIds. Use this first when the question names a case.",
+        _obj({'query': {'type': 'string'}}, ['query']), (CASES,),
+        lambda aid, a: find_case(aid, a.get('query', ''))),
+    'list_cases': (
+        'Cases filtered by court level (District / High Court / Supreme Court), status '
+        '(Active / Pending / Closed / Dismissed) and/or client, with the true total.',
+        _obj({'court_level': {'type': 'string'}, 'status': {'type': 'string'},
+              'client_id': {'type': 'integer'}}), (CASES,),
+        lambda aid, a: list_cases(aid, court_level=a.get('court_level'), status=a.get('status'),
+                                  client_id=a.get('client_id'))),
+    'caseload_breakdown': (
+        'Exact counts of all cases by status and by court level.', _NONE, (CASES,),
+        lambda aid, a: caseload_breakdown(aid)),
+    'get_case_summary': (
+        'Core details of one case: number, title, type, court, status, agreed fee, client, description.',
+        _obj(_CASE_ID, ['case_id']), (CASES,), lambda aid, a: get_case_summary(aid, a.get('case_id'))),
+    'get_court_record': (
+        "The court's own record of a case: acts, stage, coram, next date, hearing history, orders, "
+        'filings, petitioners and respondents. Use it to explain what a case is about.',
+        _obj(_CASE_ID, ['case_id']), (CASES,), lambda aid, a: get_court_record(aid, a.get('case_id'))),
+    'get_parties': (
+        'Parties on a case (our side and the other side) and their counsel.',
+        _obj(_CASE_ID, ['case_id']), (CASES,), lambda aid, a: get_parties(aid, a.get('case_id'))),
+    'get_notes': (
+        'Case notes / diary entries and tags.',
+        _obj(_CASE_ID, ['case_id']), (CASES,), lambda aid, a: get_notes(aid, a.get('case_id'))),
+    'get_tasks': (
+        'Tasks on one case, with priority, deadline and completion.',
+        _obj(_CASE_ID, ['case_id']), (CASES,), lambda aid, a: get_tasks(aid, a.get('case_id'))),
+    'get_hearings': (
+        'All hearings/events of one case, past and upcoming, with its next hearing date.',
+        _obj(_CASE_ID, ['case_id']), (EVENTS,), lambda aid, a: get_hearings(aid, a.get('case_id'))),
+    'hearings_between': (
+        'Hearings across ALL cases between two dates (YYYY-MM-DD, inclusive). Use for "this week", '
+        '"before Friday", "next month".',
+        _obj({'from_date': {'type': 'string'}, 'to_date': {'type': 'string'}}), (EVENTS,),
+        lambda aid, a: hearings_between(aid, a.get('from_date'), a.get('to_date'))),
+    'list_documents': (
+        'Documents filed on one case (names, categories, dates; not their contents).',
+        _obj(_CASE_ID, ['case_id']), (DOCUMENTS,), lambda aid, a: list_documents(aid, a.get('case_id'))),
+    'my_tasks': (
+        "The asking user's OWN open tasks (assigned to them), soonest deadline first. Use for "
+        '"my tasks", "what should I do", "anything I should worry about". For a date question '
+        '("due today", "due this week", "due by Friday") pass from_date/to_date (YYYY-MM-DD, '
+        'inclusive; "today" = both set to today). Each task has `due` in words ("today", '
+        '"tomorrow", "in 3 days", "overdue by 2 days"): repeat it as given. If none match the '
+        'dates, say none are due then, then name the tasks in `nextDue` with their `due`. '
+        'An "Open Tasks" button is added under the reply by itself; do not write a link.',
+        _obj({'from_date': {'type': 'string'}, 'to_date': {'type': 'string'}}), None,
+        lambda aid, a: my_tasks(aid, from_date=a.get('from_date'), to_date=a.get('to_date'))),
+    'overdue_tasks': (
+        'Open tasks past their deadline across the cases this user can see.',
+        _NONE, None, lambda aid, a: overdue_tasks(aid)),
+    'find_client': (
+        'Find clients by name, email or phone. Returns clientIds.',
+        _obj({'query': {'type': 'string'}}, ['query']), (CLIENTS,),
+        lambda aid, a: find_client(aid, a.get('query', ''))),
+    'list_cases_for_client': (
+        "All of one client's cases.",
+        _obj({'client_id': {'type': 'integer'}}, ['client_id']), (CASES,),
+        lambda aid, a: list_cases_for_client(aid, a.get('client_id'))),
+    'clients_by_case_count': (
+        'Clients ranked by number of live cases.', _NONE, (CLIENTS,),
+        lambda aid, a: clients_by_case_count(aid)),
+    'get_case_financials': (
+        'Invoices, payments received and outstanding dues for one case.',
+        _obj(_CASE_ID, ['case_id']), (INVOICES,), lambda aid, a: get_case_financials(aid, a.get('case_id'))),
+    'client_financials': (
+        'Billed, paid and outstanding for one client across all their cases.',
+        _obj({'client_id': {'type': 'integer'}}, ['client_id']), (INVOICES,),
+        lambda aid, a: client_financials(aid, a.get('client_id'))),
+    'pending_invoices': (
+        'Every unpaid invoice with amount, client, due date and days overdue. Use for '
+        '"who owes us", "pending dues", "is X behind on payment".',
+        _NONE, (INVOICES,), lambda aid, a: pending_invoices(aid)),
+    'expense_summary': (
+        'Expenses this month and last, by category, and recent entries.', _NONE, (EXPENSES,),
+        lambda aid, a: expense_summary(aid)),
+    'income_summary': (
+        'Payments received this month and last, and recent receipts.', _NONE, (PAYMENTS,),
+        lambda aid, a: income_summary(aid)),
+    'open_page': (
+        'Take the user to a page of the app. Use when they ask to open, go to or show a page.',
+        _obj({'page': {'type': 'string', 'enum': list(PAGES)}}, ['page']), None,
+        lambda aid, a: open_page(aid, a.get('page'))),
+    'open_form': (
+        'Open a form to create something: a client, a case, a hearing, an invoice, an expense, '
+        'or a document upload. Use when they ask to add, create, register, schedule or upload.',
+        _obj({'form': {'type': 'string', 'enum': list(FORMS)}}, ['form']), None,
+        lambda aid, a: open_form(aid, a.get('form'))),
+    'search_in_page': (
+        'Open the cases, clients or documents page filtered by a search text.',
+        _obj({'page': {'type': 'string', 'enum': list(SEARCHABLE)}, 'text': {'type': 'string'}},
+             ['page', 'text']), None,
+        lambda aid, a: search_in_page(aid, a.get('page'), a.get('text'))),
+    'open_case': (
+        "Open one case's page (find its caseId with find_case first).",
+        _obj(_CASE_ID, ['case_id']), (CASES,), lambda aid, a: open_case(aid, a.get('case_id'))),
+    'dashboard_summary': (
+        'Headline counts: cases, active cases, clients, upcoming hearings, pending invoices '
+        "(only those this user's role may see).", _NONE, None, lambda aid, a: dashboard_summary(aid)),
+}
+
+# Kept for callers and tests that look tools up by name.
+TOOL_PERMISSIONS = {name: spec[2] for name, spec in _CATALOGUE.items() if spec[2]}
+# Tools whose case_id argument names "the case we're talking about".
+CASE_TOOLS = {name for name, spec in _CATALOGUE.items() if 'case_id' in spec[1]['properties']}
+
+
+def tools_for(advocate_id):
+    """The OpenAI-style tool list this user may use."""
+    return [{'type': 'function',
+             'function': {'name': name, 'description': desc, 'parameters': params}}
+            for name, (desc, params, need, _fn) in _CATALOGUE.items()
+            if not need or allowed(advocate_id, *need)]
 
 
 def run_tool(name, args, advocate_id):
-    fn = _DISPATCH.get(name)
-    if fn is None:
+    spec = _CATALOGUE.get(name)
+    if spec is None:
         return {'error': f'Unknown tool: {name}'}
+    need = spec[2]
+    if need and not allowed(advocate_id, *need):
+        return {'error': 'Not permitted: your role does not have access to this information.'}
     try:
-        return fn(advocate_id, args or {})
-    except Exception as exc:  # noqa: BLE001 — surface a clean error to the model
+        return spec[3](advocate_id, args or {})
+    except Exception as exc:  # noqa: BLE001 - surface a clean error to the model
         return {'error': f'Tool failed: {exc}'}
+
+
+def not_permitted(advocate_id):
+    """The kinds of data this user's role can't see, in plain words - so Lisa
+    says "your role doesn't have access" rather than "there is none"."""
+    kinds = [(CASES, 'cases'), (EVENTS, 'hearings'), (DOCUMENTS, 'documents'),
+             (CLIENTS, 'client details'), (INVOICES, 'invoices and dues'),
+             (PAYMENTS, 'payments received / income'), (EXPENSES, 'expenses')]
+    return [label for code, label in kinds if not allowed(advocate_id, code)]

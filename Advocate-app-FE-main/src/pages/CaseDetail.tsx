@@ -30,6 +30,7 @@ import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
 import { useLoading } from "../contexts/LoadingContext";
 import { formatCurrency } from "../utils/formatCurrency";
+import { persistCourtRecord } from "./AddCase";
 import "../assets/styles/CourtRecordView.css";
 import "../assets/styles/CaseDetail.css";
 
@@ -562,6 +563,54 @@ export default function CaseDetail() {
 
   // Re-scrape the court record and refresh the stored copy (new hearings/orders/
   // disposal, or a wrong scrape). Can take a while — it re-fetches full detail.
+  // ---- Link a manual case to its court record (by CNR) ----
+  // A case entered by hand (a CNR not assigned yet, the scraper down) can pick
+  // up its court record later without being re-created: the record, parties
+  // and upcoming hearings are added to THIS case, keeping its notes, tasks and
+  // bills. Same steps as an import (AddCase.persistCourtRecord).
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkCnr, setLinkCnr] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [linkFound, setLinkFound] = useState<any>(null);   // {courtId, record}
+  const openLink = () => {
+    setShowActions(false);
+    setLinkCnr(""); setLinkError(""); setLinkFound(null); setLinkOpen(true);
+  };
+  const findCnr = async () => {
+    const cnr = linkCnr.replace(/\s+/g, "").toUpperCase();
+    if (!/^[A-Z]{4}\d{12}$/.test(cnr)) { setLinkError("A CNR is 16 characters: 4 letters then 12 digits."); return; }
+    setLinkBusy(true); setLinkError(""); setLinkFound(null);
+    try {
+      const res = await api.post("/api/courtsearch/cnr", { cnr });
+      const cases = res.data?.cases || [];
+      if (!cases.length) { setLinkError("The court has no case with that CNR."); return; }
+      setLinkFound({ courtId: res.data?.courtId === "ecourts_hc" ? "ecourts_hc" : "ecourts_dc",
+                     record: { cases }, cnr });
+    } catch (err: any) {
+      setLinkError(err?.response?.data?.error || "Could not reach the court. Try again shortly.");
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+  const doLink = async () => {
+    if (!linkFound) return;
+    setLinkBusy(true); setLinkError("");
+    try {
+      const existing = await api.get(`/api/workspace/cases/${id}/parties`).then((r) => r.data || []).catch(() => []);
+      await persistCourtRecord(Number(id), linkFound.courtId, { cnr: linkFound.cnr }, linkFound.record,
+                               existing.map((p: any) => p.name || ""));
+      await api.put(`/api/workspace/cases/${id}/profile`, { cnr: linkFound.cnr });
+      setLinkOpen(false);
+      toast.success("Linked to the court record. Parties and upcoming hearings were added.");
+      fetchCourtRecord(); fetchParties(); fetchEvents(); fetchSummary();
+    } catch (err: any) {
+      setLinkError(err?.response?.data?.error || "Could not link the court record.");
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
   const refreshCourtData = async () => {
     setShowActions(false);
     setRefreshing(true);
@@ -714,20 +763,23 @@ export default function CaseDetail() {
     }
     setSavingFin(true);
     try {
+      const body = {
+        particulars,
+        invoiceDate: invoiceForm.invoiceDate || null,
+        dueDate: invoiceForm.dueDate || null,
+        caseId: Number(id),
+      };
+      // Without INVOICE_ISSUE the invoice goes to accounts to check and issue.
+      const issue = hasPermission("INVOICE_ISSUE");
       await withLoading(
-        api.post("/api/invoices/create", {
-          particulars,
-          invoiceDate: invoiceForm.invoiceDate || null,
-          dueDate: invoiceForm.dueDate || null,
-          caseId: Number(id),
-        }),
-        "Adding invoice..."
+        api.post(issue ? "/api/invoices/create" : "/api/invoices/requests", body),
+        issue ? "Adding invoice..." : "Sending to accounts..."
       );
       setShowInvoiceModal(false);
       setInvoiceForm({ invoiceDate: "", dueDate: "", particulars: [{ description: "", amount: "" }] });
       fetchFinancials();
       fetchSummary();
-      success("Invoice added to this case.");
+      success(issue ? "Invoice added to this case." : "Sent to accounts to issue.");
     } catch (err) {
       error(err.response?.data?.error || "Failed to add invoice.");
     } finally {
@@ -1189,6 +1241,9 @@ export default function CaseDetail() {
 
   const actionItems = [
     ...(courtRecord && hasPermission("CASE_EDIT") ? [{ label: "Refresh court data", icon: "pi pi-clock", command: refreshCourtData }] : []),
+    // A manual case with no court record yet can be linked to one by CNR.
+    ...(!courtRecord && courtRecordLoaded && hasPermission("CASE_EDIT")
+      ? [{ label: "Link to court record…", icon: "pi pi-link", command: openLink }] : []),
     // Only when you can edit AND there's actually someone to transfer to — a solo
     // advocate has no target, so it hides.
     ...(canTransfer ? [{ label: "Transfer case…", icon: "pi pi-users", command: openTransfer }] : []),
@@ -1241,6 +1296,33 @@ export default function CaseDetail() {
   return (
     <div className="case-detail">
       <ConfirmDialog />
+      <Dialog header="Link to court record" visible={linkOpen} style={{ width: "min(560px, 95vw)" }}
+        onHide={() => !linkBusy && setLinkOpen(false)} modal
+        footer={<div className="flex justify-content-end gap-2">
+          <Button label="Cancel" text disabled={linkBusy} onClick={() => setLinkOpen(false)} />
+          {linkFound
+            ? <Button label="Link this record" icon="pi pi-link" loading={linkBusy} onClick={doLink} />
+            : <Button label="Find" icon="pi pi-search" loading={linkBusy} onClick={findCnr} disabled={!linkCnr.trim()} />}
+        </div>}>
+        <p className="mt-0 text-sm text-color-secondary">
+          For a case entered by hand: once it has a CNR, its court record (parties, hearings, orders) is added to
+          this case. Notes, tasks, documents and bills stay as they are.
+        </p>
+        <label htmlFor="link-cnr" className="font-medium text-sm block mb-1">CNR</label>
+        <InputText id="link-cnr" value={linkCnr} maxLength={16} className="w-full" autoFocus
+          placeholder="16 characters, e.g. TNCH010015532025"
+          onChange={(e) => { setLinkCnr(e.target.value.toUpperCase()); setLinkFound(null); setLinkError(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
+        {linkError && <small className="field-error">{linkError}</small>}
+        {linkFound && (
+          <div className="mt-3 p-2 border-round surface-ground text-sm">
+            <i className="pi pi-check-circle mr-1" style={{ color: "var(--success)" }} />
+            Found <strong>{linkFound.record.cases[0]?.case_number || linkFound.cnr}</strong>
+            {linkFound.record.cases[0]?.parties ? <> · {linkFound.record.cases[0].parties}</> : null}
+            <div className="text-color-secondary mt-1">Check this is the same case, then link it.</div>
+          </div>
+        )}
+      </Dialog>
       <Button text icon="pi pi-arrow-left" label="Back to Workspace" className="cd-back" onClick={() => navigate("/dashboard/cases")} />
 
       {/* Header */}
@@ -1627,7 +1709,12 @@ export default function CaseDetail() {
                 {financials.invoices.map((inv) => listItem(inv.id, "pi-file", (
                   <>
                     <span className="cd-li-title">{inv.invoiceNumber}</span>
-                    <span className="cd-li-desc">Issued {fmtDate(inv.invoiceDate)} · Due {fmtDate(inv.dueDate)}</span>
+                    <span className="cd-li-desc">
+                      Issued {fmtDate(inv.invoiceDate)} · Due {fmtDate(inv.dueDate)}
+                      {inv.raisedByName ? ` · Raised by ${inv.raisedByName}` : ""}
+                      {inv.handledByName && inv.handledByName !== inv.raisedByName ? ` · Handled by ${inv.handledByName}` : ""}
+                      {inv.paidAmount > 0 && inv.balance > 0 ? ` · ${formatCurrency(inv.balance)} still due` : ""}
+                    </span>
                   </>
                 ), (
                   <div className="cd-li-actions">
@@ -1698,7 +1785,9 @@ export default function CaseDetail() {
                 <div className="cd-task-main">
                   <span className="cd-task-title">{t.title}{t.cancelled && <span className="cd-task-cancelled"> Cancelled</span>}</span>
                   <ReviewNote task={t} />
-                  <SubmissionHistory task={t} />
+                  <SubmissionHistory task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast}
+                    onDone={() => { fetchTasks(); fetchSummary(); }} onViewDocument={previewDoc}
+                    onOpenDraft={() => navigate(DRAFTING.draft(t.draftSessionId))} />
                   {t.documents?.length > 0 && (
                     <div className="cd-task-docs">
                       {t.documents.map((d) => (
@@ -1719,7 +1808,8 @@ export default function CaseDetail() {
                     <i className="pi pi-user" style={{ fontSize: 11 }} /> {t.assignedToName}
                   </span>
                 )}
-                {hasPermission("TASK_EDIT") ? <Dropdown
+                {/* Priority and cancel are the assigner's (the server enforces it). */}
+                {(t.assignedById ?? t.createdById) === myId ? <Dropdown
                   className={`cd-task-prio p-inputtext-sm prio-${(t.priority || "medium").toLowerCase()}`}
                   value={t.priority || "MEDIUM"}
                   options={["HIGH", "MEDIUM", "LOW"]}
@@ -2036,7 +2126,7 @@ export default function CaseDetail() {
         footer={
           <div className="flex justify-content-end gap-2">
             <Button text label="Cancel" onClick={() => setShowInvoiceModal(false)} />
-            <Button label={savingFin ? "Saving..." : "Raise Invoice"} onClick={addInvoice} disabled={savingFin || invoiceTotal <= 0} />
+            <Button label={savingFin ? "Saving..." : hasPermission("INVOICE_ISSUE") ? "Raise Invoice" : "Send to Accounts"} onClick={addInvoice} disabled={savingFin || invoiceTotal <= 0} />
           </div>
         }>
         {!summary.clientName && (
@@ -2071,7 +2161,7 @@ export default function CaseDetail() {
           </div>
           {invoiceForm.particulars.map((p, i) => (
             <div className="flex gap-2 align-items-center" key={i}>
-              <InputText className="flex-1" placeholder="Enter particulars" value={p.description}
+              <InputText className="flex-1" placeholder="Particulars" value={p.description}
                 onChange={(e) => setInvParticular(i, "description", e.target.value)} />
               <InputNumber className="cd-inv-amount" inputClassName="w-full" placeholder="₹ Amount"
                 value={p.amount === "" ? null : Number(p.amount)} min={0} mode="decimal" minFractionDigits={0} maxFractionDigits={2}

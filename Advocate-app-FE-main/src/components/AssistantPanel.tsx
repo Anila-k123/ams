@@ -66,7 +66,7 @@ export default function AssistantPanel() {
   if (!isOpen) {
     return (
       <Button rounded className="assistant-fab" icon="pi pi-comments" aria-label={`Ask ${ASSISTANT_NAME}`}
-        tooltip={`Ask ${ASSISTANT_NAME}`} tooltipOptions={{ position: 'left' }} onClick={() => setIsOpen(true)} />
+        tooltip={`Ask ${ASSISTANT_NAME}`} tooltipOptions={{ position: 'top' }} onClick={() => setIsOpen(true)} />
     );
   }
 

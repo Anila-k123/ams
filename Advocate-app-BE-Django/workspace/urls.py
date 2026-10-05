@@ -20,6 +20,7 @@ urlpatterns = [
 
     # Tags
     path('workspace/cases/<int:case_id>/tags', views.CaseTagsView.as_view()),
+    path('workspace/cases/<int:case_id>/profile', views.CaseProfileView.as_view()),
     path('workspace/tags/<int:pk>', views.DeleteCaseTagView.as_view()),
 
     # Tasks — unified (standalone + per-case)

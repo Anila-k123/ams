@@ -106,3 +106,12 @@
   font-size: 11px !important;
 }
 
+
+/* Which month / week / day is on screen (the calendar's own toolbar is hidden). */
+.calendar-period {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 11rem;
+  text-align: center;
+}

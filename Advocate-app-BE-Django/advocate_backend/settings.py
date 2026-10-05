@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'core',
     'accounts',
     'clients',
+    'metering',
     'cases',
     'events',
     'documents',
@@ -46,6 +47,7 @@ INSTALLED_APPS = [
     'assistant',
     'appeals',
     'workspace',
+    'firms',               # teams grouped into a firm (core/practice.py)
     'courtsearch',
     'acts',
     'dictionary',
@@ -160,6 +162,22 @@ ASSISTANT_NAME = config('ASSISTANT_NAME', default='Lisa')
 # assistant LLM (LLM_PROVIDER) for a structured legal summary, stored in the
 # document_summary table. Turn off with SUMMARY_ENABLED=False. ---
 SUMMARY_ENABLED = config('SUMMARY_ENABLED', default=True, cast=bool)
+
+# --- AI usage metering (metering app) ---
+# Price per 1 million tokens, [input, output], by model name. Used only when
+# reporting (manage.py llm_usage, /api/usage/summary), so prices can change
+# without touching recorded usage. JSON in .env, e.g.
+#   LLM_PRICES={"gpt-4o-2024-08-06": [2.5, 10], "gemini-2.5-flash": [0.3, 2.5]}
+def _json_setting(value):
+    import json as _json
+    try:
+        return _json.loads(value) if value else {}
+    except ValueError:
+        return {}
+
+
+LLM_PRICES = config('LLM_PRICES', default='{}', cast=_json_setting)
+LLM_PRICE_CURRENCY = config('LLM_PRICE_CURRENCY', default='USD')
 SUMMARY_MAX_CHARS = config('SUMMARY_MAX_CHARS', default=24000, cast=int)
 
 # --- Public base URL: how outside clients (e.g. an email recipient's inbox)

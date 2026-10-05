@@ -12,11 +12,32 @@ class ClientPaymentSerializer(serializers.ModelSerializer):
     caseTitle = serializers.SerializerMethodField()
     clientName = serializers.SerializerMethodField()
     caseEntity = serializers.SerializerMethodField()
+    # The invoice this payment settles, if it was recorded against one.
+    invoiceId = serializers.SerializerMethodField()
+    invoiceNumber = serializers.SerializerMethodField()
 
     class Meta:
         model = ClientPayment
         fields = ['id', 'amount', 'paymentMode', 'referenceNumber', 'paymentDate',
-                  'description', 'caseId', 'caseTitle', 'clientId', 'clientName', 'caseEntity']
+                  'description', 'caseId', 'caseTitle', 'clientId', 'clientName', 'caseEntity',
+                  'invoiceId', 'invoiceNumber']
+
+    def _invoice(self, obj):
+        cache = self.context.setdefault('_invoice_by_payment', {})
+        if obj.id not in cache:
+            from core.models import Invoice
+            from invoices.models import PaymentInvoice
+            link = PaymentInvoice.objects.filter(payment_id=obj.id).first()
+            cache[obj.id] = Invoice.objects.filter(id=link.invoice_id).first() if link else None
+        return cache[obj.id]
+
+    def get_invoiceId(self, obj):
+        inv = self._invoice(obj)
+        return inv.id if inv else None
+
+    def get_invoiceNumber(self, obj):
+        inv = self._invoice(obj)
+        return inv.invoice_number if inv else None
 
     def get_caseTitle(self, obj):
         return obj.case.case_title if obj.case_id and obj.case else None

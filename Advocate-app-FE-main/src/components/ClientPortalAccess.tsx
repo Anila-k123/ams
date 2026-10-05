@@ -7,6 +7,8 @@ import { InputText } from "primereact/inputtext";
 import { Tag } from "primereact/tag";
 import api from "../api/client";
 import "../assets/styles/ClientPortalAccess.css";
+import FieldError from "../components/FieldError";
+import { emailError } from "../utils/validators";
 
 const STATUS: Record<string, [string, any]> = {
   ACTIVE: ["Active", "success"],
@@ -21,6 +23,7 @@ const fmt = (d: any) => (d ? new Date(d).toLocaleString("en-IN", { dateStyle: "m
 export default function ClientPortalAccess({ client, isOpen, onClose, toast }: { client: any; isOpen: boolean; onClose: () => void; toast?: any }) {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [email, setEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [lastLink, setLastLink] = useState<any>(null);   // {url, emailSent, email}
@@ -92,15 +95,21 @@ export default function ClientPortalAccess({ client, isOpen, onClose, toast }: {
           </DataTable>
         )}
 
-        <form className="flex flex-column gap-2" onSubmit={(e) => { e.preventDefault(); invite(email.trim(), name.trim()); }}>
+        <form className="flex flex-column gap-2" onSubmit={(e) => {
+          e.preventDefault();
+          if (emailError(email)) { setEmailTouched(true); return; }
+          invite(email.trim(), name.trim());
+        }}>
           <div className="cpa-strong">Add a login</div>
           <div className="flex gap-2 flex-wrap">
             <InputText className="flex-1" style={{ minWidth: 160 }} type="email" required placeholder="Email" value={email}
-              onChange={(e) => setEmail(e.target.value)} aria-label="Email to invite" />
+              onChange={(e) => setEmail(e.target.value)} onBlur={() => setEmailTouched(true)}
+              className={emailTouched && emailError(email) ? "p-invalid" : undefined} aria-label="Email to invite" />
             <InputText className="flex-1" style={{ minWidth: 160 }} placeholder="Name (optional)" value={name}
               onChange={(e) => setName(e.target.value)} aria-label="Name of the person" />
             <Button type="submit" label={busy ? "Sending…" : "Create & send link"} disabled={busy || !email.trim()} />
           </div>
+          <FieldError error={emailTouched ? emailError(email) : ""} />
         </form>
 
         {lastLink && (

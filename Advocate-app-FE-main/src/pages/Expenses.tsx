@@ -20,19 +20,11 @@ import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
 import ReportService from "../services/ReportService";
 import { formatCurrency } from "../utils/formatCurrency";
+import { PAYMENT_MODES } from "../constants/payments";
 import "../assets/styles/Expenses.css";
 import { usePageModal } from "../utils/pageModal";
 
 const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"].map((c) => ({ label: c, value: c }));
-const PAYMENT_MODES = [
-  { label: "UPI", value: "UPI" },
-  { label: "Bank Transfer", value: "Bank Transfer" },
-  { label: "Cash", value: "Cash" },
-  { label: "Cheque", value: "Cheque" },
-  { label: "Card (Credit/Debit)", value: "Card" },
-  { label: "Net Banking", value: "Net Banking" },
-  { label: "Demand Draft", value: "Demand Draft" },
-];
 const STATUS_SEVERITY: Record<string, any> = { pending: "warning", active: "success", closed: "secondary" };
 
 const today = () => new Date().toISOString().split("T")[0];
@@ -90,7 +82,10 @@ function Expenses() {
     paymentDate: today(),
     description: "",
     caseId: "",
+    invoiceId: null,
   });
+  // The case's invoices still owed on, for "against invoice" on a payment.
+  const [openInvoices, setOpenInvoices] = useState<any[]>([]);
 
   // ------------------ FETCH CASES ------------------
   useEffect(() => {
@@ -289,8 +284,26 @@ function Expenses() {
       paymentDate: today(),
       description: "",
       caseId,
+      invoiceId: null,
     });
+    setOpenInvoices([]);
     setShowPaymentModal(true);
+    if (hasPermission("INVOICE_VIEW")) {
+      api.get("/api/invoices/my-invoices")
+        .then((res) => setOpenInvoices((res.data || []).filter(
+          (inv: any) => String(inv.caseId) === String(caseId) && inv.balance > 0)))
+        .catch(() => setOpenInvoices([]));
+    }
+  };
+
+  // Paying an invoice fills in its balance; the amount can still be lowered
+  // for a part-payment.
+  const selectPaymentInvoice = (invoiceId: any) => {
+    const inv = openInvoices.find((i) => i.id === invoiceId);
+    setNewPayment((prev: any) => ({
+      ...prev, invoiceId: invoiceId ?? null,
+      amount: inv && !prev.amount ? String(inv.balance) : prev.amount,
+    }));
   };
 
   const handlePaymentChange = (e: any) => {
@@ -311,6 +324,7 @@ function Expenses() {
           ...newPayment,
           amount: parseFloat(newPayment.amount),
           caseEntity: { id: newPayment.caseId },
+          invoiceId: newPayment.invoiceId || undefined,
         }),
         "Saving Payment..."
       );
@@ -320,10 +334,11 @@ function Expenses() {
       // refresh
       fetchExpensesAndPayments(newPayment.caseId);
       fetchCases();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error saving payment:", err);
-      setErrorMessage("Failed to record payment.");
-      error("Failed to record payment.");
+      const msg = err.response?.data?.error || "Failed to record payment.";
+      setErrorMessage(msg);
+      error(msg);
     }
   };
 
@@ -511,6 +526,14 @@ function Expenses() {
       <Dialog visible={showPaymentModal} onHide={() => setShowPaymentModal(false)} header="Add Client Payment"
         modal style={{ width: "min(460px, 95vw)" }}>
         <form onSubmit={handlePaymentSubmit} className="expense-form">
+          {openInvoices.length > 0 && (
+            <Dropdown value={newPayment.invoiceId} showClear placeholder="Against invoice (optional)"
+              options={openInvoices.map((inv) => ({
+                value: inv.id,
+                label: `${inv.invoiceNumber} · due ${formatCurrency(inv.balance)}`,
+              }))}
+              onChange={(e) => selectPaymentInvoice(e.value)} />
+          )}
           <InputText name="amount" type="number" placeholder="Amount" value={newPayment.amount} onChange={handlePaymentChange} required />
           <Dropdown value={newPayment.paymentMode} options={PAYMENT_MODES} placeholder="Payment Mode"
             onChange={(e) => setNewPayment({ ...newPayment, paymentMode: e.value })} />
@@ -552,6 +575,7 @@ function Expenses() {
               <Column header="Mode" field="paymentMode" />
               <Column header="Amount" body={inAmount} />
               <Column header="Ref No." field="referenceNumber" />
+              <Column header="Invoice" body={(p) => p.invoiceNumber || "—"} />
               <Column header="Date" body={(p) => dateOnly(p.paymentDate)} />
             </DataTable>
           </div>

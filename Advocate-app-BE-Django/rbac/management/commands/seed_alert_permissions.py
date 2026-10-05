@@ -22,8 +22,8 @@ PERMISSIONS = [
      'Receive hearing, cause-list and case payment alerts'),
 ]
 
-# The case workers. Accountant and Receptionist are deliberately left out.
-DEFAULT_ROLES = ['Super Admin', 'Senior Advocate', 'Junior Advocate', 'Intern']
+# The case workers. The Accountant is deliberately left out.
+DEFAULT_ROLES = ['Super Admin', 'Senior Advocate', 'Advocate', 'Intern']
 
 
 class Command(BaseCommand):

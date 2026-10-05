@@ -23,6 +23,33 @@ def _clean_heading(heading):
 
 logger = logging.getLogger(__name__)
 
+
+def _metered(feature, operation, model_name, owner_field=None, ref_type=''):
+    """Run a background task under a metering context (metering/usage.py).
+
+    Tasks get only an id and may run in a separate worker process, so the
+    context is set here, inside the task, from the row's owner. Celery stays on
+    the outside (it wraps this), and functools.wraps keeps the task's name.
+    """
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(self, obj_id, *args, **kwargs):
+            from metering.usage import metering
+            owner = None
+            if owner_field:
+                try:
+                    from django.apps import apps
+                    model = apps.get_model('drafting', model_name)
+                    owner = model.objects.filter(id=obj_id).values_list(owner_field, flat=True).first()
+                except Exception:                            # noqa: BLE001
+                    owner = None
+            with metering(feature, operation, owner, ref_type=ref_type or model_name.lower(), ref_id=obj_id):
+                return fn(self, obj_id, *args, **kwargs)
+        return wrapper
+    return deco
+
 # Number of candidate source clauses offered to the model per slot (Stage B).
 TOP_K = 3
 
@@ -55,6 +82,7 @@ def _claimed_source_id(obj: dict):
 
 
 @shared_task(bind=True, max_retries=3)
+@_metered('draft', 'draft.prepare_document', 'Sample', 'uploaded_by_id', 'sample')
 def process_sample(self, sample_id: int):
     """Parse uploaded file → split clauses → embed each → persist SampleClause
     records, and (if a contract_type was set on upload) promote the same clauses
@@ -117,6 +145,7 @@ def process_sample(self, sample_id: int):
 
 
 @shared_task(bind=True, max_retries=3)
+@_metered('draft', 'draft.prepare_template', 'Template', None, 'template')
 def process_template(self, template_id: int):
     """Parse an uploaded template file into clause-skeleton slots (body_json) and
     LLM-name each slot, then mark the template READY. Runs in the background so the
@@ -1019,6 +1048,7 @@ def _verified_block(session, position, block_type, heading, raw, by_id, verify_c
 
 
 @shared_task(bind=True, max_retries=3)
+@_metered('translation', 'translation.document', 'Sample', 'uploaded_by_id', 'sample')
 def translate_sample(self, sample_id: int, target_lang: str = 'en'):
     """Translate a processed sample into target_lang; cache it on the Sample."""
     from .models import Sample
@@ -1049,6 +1079,7 @@ def translate_sample(self, sample_id: int, target_lang: str = 'en'):
 
 
 @shared_task(bind=True, max_retries=3)
+@_metered('draft', 'draft.generate', 'DraftSession', 'created_by_id', 'draft')
 def generate_draft(self, session_id: int):
     """Retrieve/rewrite clauses → call LLM → verify citations → persist DraftBlocks.
 
@@ -1126,6 +1157,7 @@ def generate_draft(self, session_id: int):
 
 
 @shared_task(bind=True, max_retries=2)
+@_metered('draft', 'draft.playbook', 'Playbook', 'created_by_id', 'playbook')
 def process_playbook(self, playbook_id: int):
     """Two-pass pipeline: extract raw clauses from each uploaded document, then
     synthesise them into consolidated PlaybookClause rows.
@@ -1274,6 +1306,7 @@ def process_playbook(self, playbook_id: int):
 
 
 @shared_task(bind=True, max_retries=2)
+@_metered('draft', 'draft.risk', 'DraftSession', 'created_by_id', 'draft')
 def analyse_risks(self, session_id: int):
     """Clause-centric risk analysis: for every PlaybookClause, find the nearest
     DraftBlock and ask the LLM to flag deviations from the playbook position.

@@ -6,10 +6,11 @@ differs, and a little role-specific activity on those same real cases:
 
     Meena Iyer     Super Admin       firm administration (users, roles, audit)
     Rajesh Kumar   Senior Advocate   practice owner; no longer also Super Admin
-    Arjun Menon    Senior Advocate   second senior; two matters moved to him
-    Priya Nair     Junior Advocate   (existing)
+    Arjun Menon    Senior Advocate   second senior, heading his OWN team in the firm;
+                                     two matters moved to him (Rajesh's team no longer sees them)
+    Priya Nair     Advocate   (existing) also registers a walk-in client and
+                                     books a consultation - there is no front desk
     Karthik R.     Intern            one research task
-    Lakshmi S.     Receptionist      a walk-in client and a consultation booked
     Suresh Kumar   Accountant        linked into the firm; records a part-payment
     Anand Joshi    Client            (existing) O.S. No. 150/2025
     (Kannan and O.S. No. 900/2025 are created live in the demo - see
@@ -18,13 +19,17 @@ differs, and a little role-specific activity on those same real cases:
 It also applies two role-policy changes (they are global, since roles are
 shared):
 
-    Junior Advocate  loses INVOICE_VIEW / PAYMENT_VIEW / EXPENSE_VIEW / REPORT_VIEW.
-                     Juniors cannot raise any of these, so finance stays with
-                     the seniors and the accountant.
-    Accountant       gains CASE_VIEW / CLIENT_VIEW - the invoice form's case
-                     and client pickers need them (/api/cases/my-cases).
-    Accountant       also loses TASK_VIEW - accounts is not given tasks.
-    Receptionist     loses TASK_VIEW - the front desk is not given tasks.
+    Advocate    gains INVOICE_VIEW / INVOICE_CREATE - the advocate running a
+                case raises its invoice; accounts (INVOICE_ISSUE) issue it.
+                See invoices.models.InvoiceRequest.
+    Advocate    loses PAYMENT_VIEW / EXPENSE_VIEW / REPORT_VIEW - collecting
+                and the firm's figures stay with seniors and the accountant.
+    Advocate    gains CLIENT_CREATE / CLIENT_EDIT - advocates do their own
+                client intake (the Receptionist role was removed; see
+                rbac/management/commands/remove_receptionist_role.py).
+    Accountant  gains CASE_VIEW / CLIENT_VIEW - the invoice form's case
+                and client pickers need them (/api/cases/my-cases).
+    Accountant  also loses TASK_VIEW - accounts is not given tasks.
 
 Everything goes through the ORM, so no emails or notifications fire. Idempotent:
 each row is found by a natural key first, so a second run changes nothing.
@@ -46,11 +51,15 @@ from core.models import (Advocate, AdvocateRole, Case, CaseEvent, Client,
                          ClientPayment, Permission, Role, RolePermission)
 from core.passwords import hash_password
 from workspace.models import CaseTask
+from core.practice import practice_ids
 
 DEFAULT_PASSWORD = 'Demo@1234'
 OWNER_EMAIL = 'rajesh@kumar-associates.demo'
 
 # email -> (full name, role, bar council id / staff code, phone)
+# Seniors who head their own team inside the firm (not members of Rajesh's).
+OWN_TEAM = {'arjun@kumar-associates.demo'}
+
 STAFF = {
     'admin@kumar-associates.demo': (
         'Meena Iyer', 'Super Admin', 'TN/ADM/0001', '+91 90000 00011'),
@@ -58,8 +67,6 @@ STAFF = {
         'Arjun Menon', 'Senior Advocate', 'TN/2210/2006', '+91 90000 00012'),
     'karthik.intern@kumar-associates.demo': (
         'Karthik R.', 'Intern', 'TN/INT/2026/07', '+91 90000 00013'),
-    'lakshmi.reception@kumar-associates.demo': (
-        'Lakshmi S.', 'Receptionist', 'TN/STF/0002', '+91 90000 00014'),
 }
 EXISTING_MEMBERS = ('priya@kumar-associates.demo', 'suresh@kumar-associates.demo')
 
@@ -68,11 +75,12 @@ ARJUN_CASES = ('A.S. No. 700/2025', 'C.M.A. No. 1200/2025')
 
 # role name -> (codes to grant, codes to revoke)
 ROLE_POLICY = {
-    'Junior Advocate': ((), ('INVOICE_VIEW', 'PAYMENT_VIEW', 'EXPENSE_VIEW', 'REPORT_VIEW')),
+    # No front desk: advocates register clients themselves, and raise their
+    # cases' invoices for accounts to issue; collecting stays with seniors.
+    'Advocate': (('CLIENT_CREATE', 'CLIENT_EDIT', 'INVOICE_VIEW', 'INVOICE_CREATE'),
+                 ('PAYMENT_VIEW', 'EXPENSE_VIEW', 'REPORT_VIEW')),
     # Accounts bills cases and clients; it is not handed tasks.
     'Accountant': (('CASE_VIEW', 'CLIENT_VIEW'), ('TASK_VIEW',)),
-    # The front desk books clients and appointments; it is not handed tasks.
-    'Receptionist': ((), ('TASK_VIEW',)),
 }
 
 CLIENT_LOGINS = {
@@ -125,6 +133,9 @@ class Command(BaseCommand):
                 self._line('revoke', '{} -{}'.format(role_name, code), bool(n))
 
     def _staff(self, email, full_name, role_name, code, phone, owner, pw_hash):
+        # A second senior heads his OWN team in the firm (firms.FirmTeam), so
+        # his matters are not visible to Rajesh's juniors, and vice versa.
+        parent_id = None if email in OWN_TEAM else owner.id
         adv, created = Advocate.objects.get_or_create(
             email=email,
             defaults=dict(
@@ -134,11 +145,16 @@ class Command(BaseCommand):
                 currency='INR', theme='light', whatsapp_enabled=False,
                 email_notifications_enabled=False,
                 browser_notifications_enabled=True,
-                parent_advocate_id=owner.id))
+                parent_advocate_id=parent_id))
         moved = False
-        if adv.parent_advocate_id != owner.id:
-            Advocate.objects.filter(id=adv.id).update(parent_advocate_id=owner.id)
+        if adv.parent_advocate_id != parent_id:
+            Advocate.objects.filter(id=adv.id).update(parent_advocate_id=parent_id)
+            adv.parent_advocate_id = parent_id
             moved = True
+        if parent_id is None:
+            from firms.models import FirmTeam
+            FirmTeam.objects.update_or_create(team_root_id=owner.id, defaults={'firm_root_id': owner.id})
+            FirmTeam.objects.update_or_create(team_root_id=adv.id, defaults={'firm_root_id': owner.id})
         roles_changed = self._only_role(adv, role_name)
         self._line('user', '{} ({})'.format(email, role_name),
                    created or moved or roles_changed)
@@ -181,7 +197,8 @@ class Command(BaseCommand):
 
         arjun = staff['arjun@kumar-associates.demo']
         intern = staff['karthik.intern@kumar-associates.demo']
-        reception = staff['lakshmi.reception@kumar-associates.demo']
+        junior = staff.get('priya@kumar-associates.demo') or Advocate.objects.filter(
+            email='priya@kumar-associates.demo').first()
         suresh = staff.get('suresh@kumar-associates.demo')
 
         # 2) Client logins ---------------------------------------------------
@@ -209,11 +226,13 @@ class Command(BaseCommand):
         # 3) Role showcase activity on the real cases -----------------------
         cases = {c.case_number: c for c in Case.objects.filter(advocate_id__in=[owner.id, arjun.id])}
 
-        # Second senior owns two matters (shows ownership / transfer).
+        # Second senior owns two matters (shows ownership / transfer). They move
+        # to his team with their hearings, bills and notes (a cross-team move).
+        from cases.views import _move_matter
         for number in ARJUN_CASES:
             case = cases.get(number)
             if case and case.advocate_id != arjun.id:
-                Case.objects.filter(id=case.id).update(advocate_id=arjun.id)
+                _move_matter(case, arjun)
                 self._line('case', '{} -> Arjun'.format(number), True)
             elif case:
                 self._line('case', '{} -> Arjun'.format(number), False)
@@ -247,22 +266,30 @@ class Command(BaseCommand):
             else:
                 self._line('submit', 'intern research report (awaiting review)', False)
 
-        # Reception: a walk-in enquiry client, and a consultation booked on a case.
-        _, created = Client.objects.get_or_create(
-            advocate_id=reception.id, name='Selvi Ramasamy',
-            defaults=dict(email='selvi.ramasamy@clients.demo', phone='+91 98410 55021',
-                          address='22, Arcot Road, Vadapalani, Chennai 600026',
-                          deleted=False, created_at=today))
-        self._line('client', 'walk-in enquiry (by reception)', created)
+        # No front desk: the junior registers a walk-in and books a consultation.
+        # Found by name within the practice, not by creator, so a row handed to
+        # the owner when the Receptionist role was removed isn't duplicated.
+        in_firm = practice_ids(owner)
+        created = False
+        if junior and not Client.objects.filter(advocate_id__in=in_firm, name='Selvi Ramasamy').exists():
+            Client.objects.create(
+                advocate_id=junior.id, name='Selvi Ramasamy', email='selvi.ramasamy@clients.demo',
+                phone='+91 98410 55021', address='22, Arcot Road, Vadapalani, Chennai 600026',
+                deleted=False, created_at=today)
+            created = True
+        self._line('client', 'walk-in enquiry (by the junior)', created)
         cma = cases.get('C.M.A. No. 1200/2025')
-        if cma:
-            _, created = CaseEvent.objects.get_or_create(
-                case_id=cma.id, advocate_id=reception.id, event_type='MEETING',
-                title='Client consultation - Mathankumar',
-                defaults=dict(date=today + datetime.timedelta(days=3),
-                              time=datetime.time(11, 0),
-                              description='Booked by reception'))
-            self._line('event', 'consultation booked by reception', created)
+        if cma and junior:
+            created = False
+            if not CaseEvent.objects.filter(case_id=cma.id, event_type='MEETING',
+                                            title='Client consultation - Mathankumar').exists():
+                CaseEvent.objects.create(
+                    case_id=cma.id, advocate_id=junior.id, event_type='MEETING',
+                    title='Client consultation - Mathankumar',
+                    date=today + datetime.timedelta(days=3), time=datetime.time(11, 0),
+                    description='Booked by the advocate')
+                created = True
+            self._line('event', 'consultation booked by the junior', created)
 
         # Accountant: a part-payment against the SLP invoice.
         if suresh and slp:

@@ -1,6 +1,14 @@
-"""AI Assistant — a rule-based (keyword-matching) command router, faithfully
-ported from the Spring AssistantService. Not an LLM: it maps phrases to
-navigation/data actions the frontend acts on.
+"""Lisa's two endpoints.
+
+/api/assistant/chat   every TYPED message: the AI answers, and can open pages
+                      and forms itself (planner.py, tools.py action tools).
+/api/assistant/query  the quick buttons, by exact command name ({"command":
+                      "open_cases"}) - instant and free, no text matching.
+                      It also still accepts {"query": text} for BASIC MODE
+                      only: the browser falls back to it when the AI is not
+                      configured or can't be reached. That phrase matcher
+                      (AssistantQueryView.process) is not on the normal path,
+                      so new wordings never need a rule.
 """
 
 import datetime
@@ -13,7 +21,17 @@ from rest_framework.response import Response
 from core.models import Case, Client, CaseEvent, Invoice, Expense, ClientPayment, Document
 from core.permissions import RequirePermission
 from .llm import stream_answer, clean_history, clean_focus_ids
-from .tools import _scope   # practice-wide advocate scope (owner + members)
+from metering.usage import metering
+from .tools import _scope, acting_as, allowed   # team scope; role permissions
+from . import tools as T
+
+
+def _metered(gen, advocate_id):
+    """Run the answer stream under a chat metering context. Set inside the
+    generator, not around it in the view: the stream is consumed after the
+    view has returned, when a context set there would already be gone."""
+    with metering('chat', 'chat.answer', advocate_id, ref_type='chat'):
+        yield from gen
 
 
 class AssistantChatView(APIView):
@@ -30,7 +48,7 @@ class AssistantChatView(APIView):
             return StreamingHttpResponse(_empty(), content_type='text/event-stream')
         history = clean_history(request.data.get('history'))
         focus = clean_focus_ids(request.data.get('focusCaseIds'))
-        resp = StreamingHttpResponse(stream_answer(question, aid, history, focus),
+        resp = StreamingHttpResponse(_metered(stream_answer(question, request.user, history, focus), aid),
                                      content_type='text/event-stream')
         resp['Cache-Control'] = 'no-cache'
         resp['X-Accel-Buffering'] = 'no'  # disable proxy buffering so tokens flush live
@@ -94,6 +112,11 @@ _CLIENT_CASES_RE = re.compile(
 )
 
 
+def _no_access(what):
+    return _answer(f"Your role doesn't have access to {what}, so I can't show that. "
+                   "Ask your senior or the firm admin if you need it.")
+
+
 def _client_cases_query(clean: str, advocate_id=None) -> str:
     """The client name in an "X's cases" phrasing, or '' if there isn't one.
 
@@ -114,13 +137,34 @@ def _client_cases_query(clean: str, advocate_id=None) -> str:
 
 
 class AssistantQueryView(APIView):
-    def post(self, request):
-        query = (request.data.get('query') or '').strip()
-        clean = query.lower()
-        aid = request.user.id
-        return Response(self.process(clean, aid))
+    # Quick buttons: command name -> builder. Add a button = add a name here.
+    COMMANDS = {
+        'open_cases': lambda self, aid: (
+            _page('OPEN_CASES', 'Opening Case Management.', '/dashboard/cases')
+            if allowed(aid, T.CASES) else _no_access('cases')),
+        'open_clients': lambda self, aid: (
+            _page('OPEN_CLIENTS', 'Opening Client Directory.', '/dashboard/clients')
+            if allowed(aid, T.CLIENTS) else _no_access('clients')),
+        'todays_hearings': lambda self, aid: self._hearings(aid, 0, 1, "Today's Hearings", '/dashboard/hearings'),
+        'upcoming_hearings': lambda self, aid: self._hearings(aid, 0, 30, 'Upcoming Hearings', '/dashboard/hearings'),
+        'dashboard_summary': lambda self, aid: self._summary(aid),
+        'pending_invoices': lambda self, aid: self._pending_invoices(aid),
+    }
 
-    # --- intent engine ---
+    def post(self, request):
+        aid = request.user.id
+        command = (request.data.get('command') or '').strip()
+        with acting_as(request.user):
+            if command:
+                fn = self.COMMANDS.get(command)
+                if fn is None:
+                    return Response({'error': f'Unknown command: {command}'}, status=400)
+                return Response(fn(self, aid))
+            # Basic mode only (the AI is unavailable): the old phrase matcher.
+            query = (request.data.get('query') or '').strip()
+            return Response(self.process(query.lower(), aid))
+
+    # --- basic-mode phrase matcher (only when the AI is unavailable) ---
     def process(self, clean, aid):
         # Page navigation
         pages = [
@@ -169,12 +213,18 @@ class AssistantQueryView(APIView):
             if _any(clean, 'monthly income', 'income this month', 'revenue this month', 'monthly revenue'):
                 return self._income(aid)
             if _any(clean, 'how many active cases', 'active cases count', 'number of active cases'):
+                if not allowed(aid, T.CASES):
+                    return _no_access('cases')
                 n = Case.objects.filter(advocate_id__in=_scope(aid), deleted=False, status__iexact='Active').count()
                 return _answer(f'There are **{n}** active cases currently.')
             if _any(clean, 'how many clients', 'total clients', 'number of clients', 'client count'):
+                if not allowed(aid, T.CLIENTS):
+                    return _no_access('clients')
                 n = Client.objects.filter(advocate_id__in=_scope(aid)).count()
                 return _answer(f'You have **{n}** clients registered.')
             if _any(clean, 'how many hearings today', 'hearings count today', 'number of hearings today'):
+                if not allowed(aid, T.EVENTS):
+                    return _no_access('hearings')
                 n = CaseEvent.objects.filter(advocate_id__in=_scope(aid), date=datetime.date.today()).count()
                 return _answer(f'There are **{n}** hearings scheduled for today.')
 
@@ -221,24 +271,23 @@ class AssistantQueryView(APIView):
         }
 
     # --- builders ---
+    # Each data command needs the same permission as the page it summarises;
+    # without it the user is told so, never shown the data.
     def _summary(self, aid):
-        today = datetime.date.today()
-        total = Case.objects.filter(advocate_id__in=_scope(aid), deleted=False).count()
-        active = Case.objects.filter(advocate_id__in=_scope(aid), deleted=False, status__iexact='Active').count()
-        clients = Client.objects.filter(advocate_id__in=_scope(aid), deleted=False).count()
-        upcoming = CaseEvent.objects.filter(advocate_id__in=_scope(aid), date__gte=today).count()
-        pending = sum(1 for i in Invoice.objects.filter(advocate_id__in=_scope(aid))
-                      if (i.status or '').upper() != 'PAID')
+        data = T.dashboard_summary(aid)      # only the counts this role may see
+        labels = [('totalCases', 'Total Cases'), ('activeCases', 'Active Cases'),
+                  ('clients', 'Clients'), ('upcomingHearings', 'Upcoming Hearings'),
+                  ('pendingInvoices', 'Pending Invoices')]
+        lines = '\n'.join(f'• {label}: **{data[k]}**' for k, label in labels if k in data)
         return {
             'intent': 'SHOW_SUMMARY', 'action': 'SHOW_DATA', 'route': '/dashboard',
-            'message': (f'📊 **Dashboard Summary**\n\n• Total Cases: **{total}**\n'
-                        f'• Active Cases: **{active}**\n• Clients: **{clients}**\n'
-                        f'• Upcoming Hearings: **{upcoming}**\n• Pending Invoices: **{pending}**'),
-            'data': {'totalCases': total, 'activeCases': active, 'clients': clients,
-                     'upcomingHearings': upcoming, 'pendingInvoices': pending},
+            'message': f'📊 **Dashboard Summary**\n\n{lines}',
+            'data': data,
         }
 
     def _hearings(self, aid, start_off, end_off, label, route):
+        if not allowed(aid, T.EVENTS):
+            return _no_access('hearings')
         today = datetime.date.today()
         start = today + datetime.timedelta(days=start_off)
         end = today + datetime.timedelta(days=end_off)
@@ -258,8 +307,10 @@ class AssistantQueryView(APIView):
         }
 
     def _pending_invoices(self, aid):
+        if not allowed(aid, T.INVOICES):
+            return _no_access('invoices')
         invs = [i for i in Invoice.objects.select_related('client').filter(advocate_id__in=_scope(aid))
-                if (i.status or '').upper() in ('UNPAID', 'OVERDUE')][:10]
+                if (i.status or '').upper() in ('UNPAID', 'PARTIAL', 'OVERDUE')][:10]
         results = [{
             'id': i.id, 'invoiceNumber': i.invoice_number, 'amount': i.amount, 'status': i.status,
             'clientName': i.client.name if i.client_id and i.client else 'N/A',
@@ -274,6 +325,8 @@ class AssistantQueryView(APIView):
         }
 
     def _expenses(self, aid, start, end, label):
+        if not allowed(aid, T.EXPENSES):
+            return _no_access('expenses')
         qs = Expense.objects.filter(advocate_id__in=_scope(aid), payment_date__gte=start, payment_date__lte=end).order_by('-payment_date')[:10]
         results = [{'id': e.id, 'title': e.title, 'amount': e.amount, 'category': e.category,
                     'date': e.payment_date.isoformat() if e.payment_date else ''} for e in qs]
@@ -286,6 +339,8 @@ class AssistantQueryView(APIView):
         }
 
     def _income(self, aid):
+        if not allowed(aid, T.PAYMENTS):
+            return _no_access('payments received')
         start = datetime.date.today().replace(day=1)
         end = datetime.date.today()
         total = sum(p.amount or 0 for p in ClientPayment.objects.filter(
@@ -297,6 +352,8 @@ class AssistantQueryView(APIView):
         }
 
     def _search_clients(self, aid, name):
+        if not allowed(aid, T.CLIENTS):
+            return _no_access('clients')
         qs = Client.objects.filter(advocate_id__in=_scope(aid), deleted=False).filter(
             Q(name__icontains=name) | Q(email__icontains=name) | Q(phone__icontains=name))[:10]
         results = [{'id': c.id, 'name': c.name, 'email': c.email, 'phone': c.phone} for c in qs]
@@ -309,6 +366,8 @@ class AssistantQueryView(APIView):
         }
 
     def _search_cases(self, aid, kw):
+        if not allowed(aid, T.CASES):
+            return _no_access('cases')
         # Includes client name so "cases of client X" / "find case X" resolve
         # the same way the Cases page's own search (cases/views.py's
         # SearchCasesView) already does.
@@ -326,6 +385,8 @@ class AssistantQueryView(APIView):
         }
 
     def _search_invoices(self, aid, kw):
+        if not allowed(aid, T.INVOICES):
+            return _no_access('invoices')
         qs = Invoice.objects.select_related('client').filter(advocate_id__in=_scope(aid)).filter(
             Q(invoice_number__icontains=kw) | Q(status__icontains=kw))[:10]
         results = [{'id': i.id, 'invoiceNumber': i.invoice_number, 'amount': i.amount,

@@ -367,7 +367,7 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
       <div className="pp-chat-head">
         <span><i className="pi pi-sparkles mr-2" />{ASSISTANT_NAME} · drafting assistant</span>
         <Button icon="pi pi-window-maximize" text rounded severity="secondary" size="small"
-          onClick={() => setExpanded(true)} tooltip="Expand" tooltipOptions={{ position: 'left' }}
+          onClick={() => setExpanded(true)} tooltip="Expand" tooltipOptions={{ position: 'top' }}
           aria-label="Expand chat" />
       </div>
       {chatInner}

@@ -166,8 +166,12 @@ The restored dump already has migration history; this only applies anything newe
 ```bat
 venv\Scripts\python manage.py migrate
 venv\Scripts\python manage.py seed_drafting_permissions
+venv\Scripts\python manage.py seed_invoice_permissions
+venv\Scripts\python manage.py recalc_case_totals
 venv\Scripts\python manage.py check --deploy
 ```
+
+`recalc_case_totals` rebuilds every case's paid / expenses / balance / pending figures from the real payment, expense and invoice rows. Older databases have these at 0. It's safe to re-run.
 
 ### Smoke test
 

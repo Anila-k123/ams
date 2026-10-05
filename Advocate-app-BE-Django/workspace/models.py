@@ -72,6 +72,13 @@ class TaskSubmission(models.Model):
     submitted_by_id = models.BigIntegerField()
     note = models.TextField(blank=True, default='')
     hours = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    # Drafts only (drafting/filing.py). The draft as submitted, [{heading, text}],
+    # kept so the NEXT submission can be compared with it; never sent to the
+    # browser. `changes` is that comparison for this submission
+    # ([{heading, kind, before, after}], review.compare_drafts), so a reviewer
+    # sees what a revision changed without rereading the whole draft.
+    draft_snapshot = models.JSONField(null=True, blank=True)
+    changes = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -165,3 +172,33 @@ class HearingDetail(models.Model):
     def payload(event_id):
         row = HearingDetail.objects.filter(event_id=event_id).first()
         return row.as_dict() if row else None
+
+
+class CaseProfile(models.Model):
+    """What an advocate records for a case that the Spring `cases` table has no
+    columns for: chiefly for manual entries (tribunals, unfiled matters,
+    non-litigation work), which have no court record to supply it. Also holds
+    the CNR once a manual case is linked to its court record later.
+
+    A separate managed table keyed by case id, per the AMS convention for
+    adding data to Spring-owned tables.
+    """
+    LITIGATION, PRE_FILING, NON_LITIGATION = 'litigation', 'pre_filing', 'non_litigation'
+    MATTER_TYPES = [(LITIGATION, 'Litigation'), (PRE_FILING, 'Not filed yet'),
+                    (NON_LITIGATION, 'Non-litigation (notice, advisory, contract)')]
+
+    id = models.BigAutoField(primary_key=True)
+    case_id = models.BigIntegerField(unique=True)
+    matter_type = models.CharField(max_length=20, choices=MATTER_TYPES, default=LITIGATION)
+    court_name = models.CharField(max_length=255, blank=True, default='')   # court / tribunal / forum
+    court_hall = models.CharField(max_length=64, blank=True, default='')
+    judge = models.CharField(max_length=255, blank=True, default='')
+    our_side = models.CharField(max_length=32, blank=True, default='')      # Plaintiff, Respondent, ...
+    filing_date = models.DateField(null=True, blank=True)
+    case_year = models.IntegerField(null=True, blank=True)
+    cnr = models.CharField(max_length=16, blank=True, default='', db_index=True)
+    acts_sections = models.TextField(blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'case_profile'

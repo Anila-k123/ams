@@ -195,7 +195,7 @@ export default function DocumentTranslate() {
     <div style={shell}>
       {/* Top bar */}
       <div className="flex align-items-center gap-2 mb-2" style={{ flex: '0 0 auto' }}>
-        <Button icon="pi pi-arrow-left" text rounded onClick={() => navigate(DRAFTING.samples)} tooltip="Back to Documents" />
+        <Button icon="pi pi-arrow-left" text rounded onClick={() => navigate(DRAFTING.samples)} tooltip="Back to Documents" tooltipOptions={{ position: "top" }} />
         <span className="font-semibold" style={{ fontSize: '1.1rem', wordBreak: 'break-word' }}>{sample.name}</span>
       </div>
 

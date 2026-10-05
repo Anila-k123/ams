@@ -49,6 +49,10 @@ def save(client, fields):
     ClientProfile.objects.update_or_create(client_id=client.id, defaults=fields)
     profile = ClientProfile.objects.get(client_id=client.id)
     parts = {k: getattr(profile, k) for k in ADDRESS_PARTS}
+    # A country alone isn't an address: the form defaults it to India, and
+    # "India" must not replace a saved address or become a new client's address.
+    if not any((parts.get(k) or '').strip() for k in ADDRESS_PARTS if k != 'country'):
+        return None
     line = compose_address(parts)
     return line or None
 

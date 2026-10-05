@@ -20,7 +20,6 @@ import uuid
 from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import Sum
 from django.http import FileResponse, HttpResponse
 from django.utils import timezone
 from rest_framework.permissions import AllowAny, BasePermission
@@ -31,12 +30,14 @@ from core.jwt import generate_token
 from core.models import Advocate, AdvocateRole, AuditLog, CaseEvent, Client, Document, NotificationQueue, Role
 from core.passwords import hash_password
 from core.permissions import RequirePermission
+from core.finance import invoice_balance, invoice_paid_amounts
 from core.practice import practice_ids
 from workspace.models import CaseParty, HearingDetail
 
 from . import scope
 from .gate import CLIENT_ROLE
 from .models import ClientInvite, ClientUser
+from core.validators import check_payload
 
 log = logging.getLogger(__name__)
 INVITE_TTL = datetime.timedelta(hours=72)
@@ -172,14 +173,16 @@ class ClientOverviewView(_ClientView):
         case_ids = list(scope.cases(cid).values_list('id', flat=True))
         upcoming = (CaseEvent.objects.filter(case_id__in=case_ids, date__gte=datetime.date.today())
                     .select_related('case').order_by('date', 'time')[:5])
-        unpaid = scope.invoices(cid).exclude(status__iexact='PAID')
+        unpaid = list(scope.invoices(cid).open())
+        received = invoice_paid_amounts([i.id for i in unpaid])
         return Response({
             'activeCases': scope.cases(cid).exclude(status__iexact='Closed').count(),
             'totalCases': len(case_ids),
             'upcomingHearings': [{**_event(e), 'caseId': e.case_id, 'caseNumber': e.case.case_number}
                                  for e in upcoming],
-            'outstandingInvoices': unpaid.count(),
-            'outstandingAmount': unpaid.aggregate(s=Sum('amount'))['s'] or 0,
+            'outstandingInvoices': len(unpaid),
+            # Part-paid invoices owe only their balance.
+            'outstandingAmount': round(sum(invoice_balance(i, received.get(i.id, 0.0)) for i in unpaid), 2),
             'sharedDocuments': scope.documents(cid).count(),
         })
 
@@ -367,8 +370,11 @@ class ClientLoginsView(_FirmView):
         if client is None:
             return Response({'error': 'Client not found.'}, status=404)
         email = (request.data.get('email') or client.email or '').strip().lower()
-        if '@' not in email:
+        if not email:
             return Response({'error': 'Enter the email address for the login.'}, status=400)
+        _, bad = check_payload({'email': email}, {'email': 'email'})
+        if bad is not None:
+            return bad
         advocate = Advocate.objects.filter(email__iexact=email).first()
         link = ClientUser.objects.filter(advocate_id=advocate.id).first() if advocate else None
         if advocate is not None and (link is None or link.client_id != client.id):

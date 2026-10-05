@@ -46,18 +46,74 @@ def can_review(task, user):
     return 'TASK_ASSIGN' in perms
 
 
-def submit(task, by, note='', hours=None):
+def _norm(s):
+    return ' '.join((s or '').split())
+
+
+def compare_drafts(prev, cur):
+    """What changed between two draft snapshots ([{heading, text}] each).
+
+    Returns [{heading, kind, before, after}] for changed sections only, in the
+    new draft's order (removed sections last), or None when there's nothing to
+    compare against (a first submission). Sections are paired by heading
+    (case- and space-insensitive), then by position for any left over, so a
+    reordered or renamed-by-one-word draft still lines up sensibly.
+    """
+    if prev is None or cur is None:
+        return None
+    key = lambda b: _norm(b.get('heading')).lower()
+    unmatched_prev = list(range(len(prev)))
+    pairs = []
+    for i, block in enumerate(cur):
+        j = next((j for j in unmatched_prev if key(prev[j]) and key(prev[j]) == key(block)), None)
+        pairs.append([i, j])
+        if j is not None:
+            unmatched_prev.remove(j)
+    # Leftovers pair by position: an untitled or re-headed section is still "the same" one.
+    for pair in pairs:
+        if pair[1] is None and unmatched_prev:
+            pair[1] = unmatched_prev.pop(0)
+
+    changes = []
+    for i, j in pairs:
+        after = cur[i]
+        if j is None:
+            changes.append({'heading': after.get('heading') or '', 'kind': 'added',
+                            'before': '', 'after': after.get('text') or ''})
+            continue
+        before = prev[j]
+        if _norm(before.get('text')) != _norm(after.get('text')) or key(before) != key(after):
+            changes.append({'heading': after.get('heading') or before.get('heading') or '',
+                            'kind': 'edited', 'before': before.get('text') or '',
+                            'after': after.get('text') or ''})
+    for j in unmatched_prev:
+        changes.append({'heading': prev[j].get('heading') or '', 'kind': 'removed',
+                        'before': prev[j].get('text') or '', 'after': ''})
+    return changes
+
+
+def previous_snapshot(task):
+    """The draft as last submitted on this task, or None."""
+    from .models import TaskSubmission
+    return (TaskSubmission.objects.filter(task_id=task.id, draft_snapshot__isnull=False)
+            .values_list('draft_snapshot', flat=True).first())
+
+
+def submit(task, by, note='', hours=None, draft_snapshot=None, changes=None):
     """Mark a delegated task as submitted for review, with the assignee's report.
 
     No-op for self-assigned tasks, for someone other than the assignee, and for
     approved tasks. Every submission is kept (TaskSubmission), so resubmitting
     after changes were requested adds a round rather than replacing the last.
+    A draft submission also stores its snapshot and what changed since the
+    previous one (see compare_drafts).
     """
     if not needs_review(task) or not is_assignee(task, by) or task.review_status == APPROVED:
         return False
     from .models import TaskSubmission
     TaskSubmission.objects.create(task_id=task.id, submitted_by_id=by.id,
-                                  note=(note or '').strip(), hours=hours)
+                                  note=(note or '').strip(), hours=hours,
+                                  draft_snapshot=draft_snapshot, changes=changes)
     task.review_status = SUBMITTED
     task.submitted_at = timezone.now()
     task.save(update_fields=['review_status', 'submitted_at'])

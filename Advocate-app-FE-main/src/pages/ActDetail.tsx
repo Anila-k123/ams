@@ -315,7 +315,7 @@ export default function ActDetail() {
                       {lc.caseTitle || lc.caseNumber || `Case #${lc.caseId}`}
                     </button>
                     <span className="act-row-date">{formatDate(lc.linkedAt)}</span>
-                    <Button icon="pi pi-trash" text rounded severity="danger" size="small" tooltip="Unlink"
+                    <Button icon="pi pi-trash" text rounded severity="danger" size="small" tooltip="Unlink" tooltipOptions={{ position: "top" }}
                       aria-label="Unlink" onClick={() => unlinkCase(lc.caseId)} />
                   </div>
                 ))}

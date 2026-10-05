@@ -139,3 +139,53 @@ class CaseTimelineTest(TestCase):
 
     def test_money_hidden_without_invoice_view(self):
         self.assertNotIn('INVOICE_GENERATED', self._types(self.junior))
+
+
+class ManualCaseEntryTest(TestCase):
+    """Manual entry: matters with no court number, the extra details, and the
+    guard against importing a case already linked by its CNR."""
+
+    def setUp(self):
+        self.adv = make_advocate('manual@test.local', ALL_PERMISSIONS)
+        self.cl = make_client(self.adv, 'Manual Client')
+
+    def _create(self, **body):
+        body.setdefault('clientId', self.cl.id)
+        body.setdefault('caseTitle', 'A vs B')
+        return self.client.post('/api/cases/create', data=json.dumps(body),
+                                content_type='application/json', **auth(self.adv))
+
+    def test_unfiled_and_non_litigation_matters_get_a_number(self):
+        a = self._create(matterType='pre_filing', caseNumber='')
+        b = self._create(matterType='pre_filing', caseNumber='')
+        c = self._create(matterType='non_litigation', caseNumber='')
+        self.assertEqual(a.status_code, 201, a.content[:200])
+        self.assertRegex(a.json()['caseNumber'], r'^PRE/\d{4}/0001$')
+        self.assertRegex(b.json()['caseNumber'], r'^PRE/\d{4}/0002$')
+        self.assertRegex(c.json()['caseNumber'], r'^MAT/\d{4}/0001$')
+        # Litigation still needs its number.
+        self.assertEqual(self._create(matterType='litigation', caseNumber='').status_code, 400)
+
+    def test_details_are_saved_and_read_back(self):
+        r = self._create(caseNumber='CC 45/2026', matterType='litigation', courtName='DRT-II, Chennai',
+                         courtHall='Hall 3', ourSide='Applicant', filingDate='2026-02-10',
+                         caseYear=2026, actsSections='SARFAESI Act s.17')
+        self.assertEqual(r.status_code, 201, r.content[:200])
+        got = self.client.get(f"/api/workspace/cases/{r.json()['id']}/profile", **auth(self.adv)).json()
+        self.assertEqual((got['courtName'], got['ourSide'], got['filingDate'], got['caseYear']),
+                         ('DRT-II, Chennai', 'Applicant', '2026-02-10', 2026))
+
+    def test_bad_values_are_refused(self):
+        self.assertEqual(self._create(caseNumber='X 1/2026', caseYear=1700).status_code, 400)
+        self.assertEqual(self._create(caseNumber='X 2/2026', cnr='NOTACNR').status_code, 400)
+
+    def test_a_linked_cnr_cannot_be_imported_again(self):
+        r = self._create(caseNumber='O.S. 900/2025')
+        cid = r.json()['id']
+        put = self.client.put(f'/api/workspace/cases/{cid}/profile',
+                              data=json.dumps({'cnr': 'tnch010015532025'}),
+                              content_type='application/json', **auth(self.adv))
+        self.assertEqual(put.json()['cnr'], 'TNCH010015532025')
+        dup = self._create(caseNumber='TNCH010015532025')
+        self.assertEqual(dup.status_code, 409)
+        self.assertIn('O.S. 900/2025', dup.json()['error'])

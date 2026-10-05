@@ -7,6 +7,7 @@ import { Tag } from "primereact/tag";
 import api from "../api/client";
 import { canReviewTask, canSubmitTask } from "../utils/taskReview";
 import { usePermission } from "../contexts/PermissionContext";
+import DraftChanges from "./DraftChanges";
 import "../assets/styles/TaskReview.css";
 
 // Senior review of delegated tasks (backend: workspace/review.py). A task one
@@ -174,22 +175,90 @@ export function SubmitWork({ task, myId, onDone, toast, caseId }: any) {
   );
 }
 
-/** Every hand-back on a delegated task, newest first, with the report and hours. */
-export function SubmissionHistory({ task }: { task: any }) {
+const fmtWhen = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "");
+
+/**
+ * The hand-backs on a delegated task. The list shows one summary line; the
+ * full reports (a research note can run to many lines) open in a dialog, so a
+ * long submission doesn't push every other task down the page. The dialog also
+ * carries the attachments and, for the reviewer, Approve / Request changes, so
+ * the work can be read and decided in one place.
+ *
+ * Optional props come from the page: without myId/canAssign the dialog is
+ * read-only; without onViewDocument / onOpenDraft those links are hidden.
+ */
+export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onViewDocument, onOpenDraft }: {
+  task: any; myId?: any; canAssign?: boolean; toast?: any; onDone?: (t?: any) => void;
+  onViewDocument?: (id: any) => void; onOpenDraft?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
   const subs = task.submissions || [];
   if (!task.needsReview || subs.length === 0) return null;
+  const latest = subs[0];   // the API lists them newest first
+
   return (
-    <div className="task-submissions">
-      {subs.map((s: any) => (
-        <div key={s.id} className="task-submission">
-          <div className="task-submission-head">
-            <i className="pi pi-send" /> {s.submittedByName || "Assignee"} submitted
-            {s.createdAt ? ` on ${new Date(s.createdAt).toLocaleString()}` : ""}
-            {s.hours ? ` · ${s.hours} h` : ""}
+    <>
+      <div className="task-submission task-submission-summary">
+        <span className="task-submission-head" title={latest.note || ""}>
+          <i className="pi pi-send" /> {latest.submittedByName || "Assignee"} submitted
+          {latest.createdAt ? ` · ${new Date(latest.createdAt).toLocaleDateString()}` : ""}
+          {latest.hours ? ` · ${latest.hours} h` : ""}
+          {subs.length > 1 ? ` · ${subs.length} submissions` : ""}
+          {latest.changes?.length
+            ? ` · ${latest.changes.length} section${latest.changes.length > 1 ? "s" : ""} changed` : ""}
+        </span>
+        <Button className="task-submission-view" text size="small" icon="pi pi-eye" label="View work"
+          onClick={() => setOpen(true)} />
+      </div>
+
+      <Dialog visible={open} onHide={() => setOpen(false)} header={`Submitted work — ${task.title}`}
+        style={{ width: "min(720px, 95vw)" }} modal dismissableMask
+        footer={myId !== undefined ? (
+          <div className="flex justify-content-end gap-2">
+            <ReviewActions task={task} myId={myId} canAssign={canAssign} toast={toast}
+              onDone={(t: any) => { setOpen(false); onDone?.(t); }} />
           </div>
-          {s.note && <div className="task-submission-note">{s.note}</div>}
+        ) : undefined}>
+        <div className="task-work">
+          <div className="task-work-facts">
+            {task.caseNumber && <span><i className="pi pi-briefcase" /> {task.caseNumber}</span>}
+            {task.deadline && <span><i className="pi pi-calendar" /> Due {new Date(task.deadline).toLocaleDateString()}</span>}
+            {task.assignedToName && <span><i className="pi pi-user" /> {task.assignedToName}</span>}
+            <ReviewChip task={task} />
+          </div>
+          <ReviewNote task={task} />
+
+          {subs.map((s: any, i: number) => (
+            <div key={s.id} className="task-submission">
+              <div className="task-submission-head">
+                <i className="pi pi-send" /> {i === 0 ? "Latest submission" : "Earlier submission"}:{" "}
+                {s.submittedByName || "Assignee"}, {fmtWhen(s.createdAt)}
+                {s.hours ? ` · ${s.hours} h` : ""}
+              </div>
+              {s.note ? <div className="task-submission-note">{s.note}</div>
+                : <div className="task-submission-note task-muted">No report written.</div>}
+              {s.changes != null && (
+                <div className="task-submission-changes">
+                  <div className="task-submission-changes-title">What changed since the previous version</div>
+                  <DraftChanges changes={s.changes} />
+                </div>
+              )}
+            </div>
+          ))}
+
+          {((onViewDocument && task.documents?.length > 0) || (onOpenDraft && task.draftSessionId)) && (
+            <div className="task-work-files">
+              {onOpenDraft && task.draftSessionId && (
+                <Button text size="small" icon="pi pi-file-edit" label="Open draft"
+                  onClick={() => { setOpen(false); onOpenDraft(); }} />
+              )}
+              {onViewDocument && task.documents?.map((d: any) => (
+                <Button key={d.id} text size="small" icon="pi pi-eye" label={d.name} onClick={() => onViewDocument(d.id)} />
+              ))}
+            </div>
+          )}
         </div>
-      ))}
-    </div>
+      </Dialog>
+    </>
   );
 }

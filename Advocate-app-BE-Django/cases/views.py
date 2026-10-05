@@ -12,7 +12,8 @@ from core.models import (Case, Client, Advocate, NotificationHistory,
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseSerializer
-from core.practice import practice_ids, is_owner, practice_root
+from core.practice import practice_ids, is_owner, practice_root, firm_team_roots, same_firm
+from core.finance import recalc_case_totals
 from notifications import client_events
 
 SORT_MAP = {'createdAt': 'created_at', 'caseNumber': 'case_number',
@@ -143,10 +144,31 @@ class CreateCaseView(APIView):
     permission_classes = [RequirePermission('CASE_CREATE')]
 
     def post(self, request):
+        from workspace import case_profile
+        from workspace.models import CaseProfile
         data = request.data
-        case_number = data.get('caseNumber')
+        case_number = (data.get('caseNumber') or '').strip()
+        # Manual entries may be for matters with no court number yet: an unfiled
+        # suit or non-litigation work gets one generated (PRE/… or MAT/…).
+        matter_type = (data.get('matterType') or CaseProfile.LITIGATION).strip()
+        if not case_number and matter_type in (CaseProfile.PRE_FILING, CaseProfile.NON_LITIGATION):
+            case_number = case_profile.number_for_unfiled(practice_ids(request.user), matter_type)
         if not case_number:
             return Response({'error': 'caseNumber is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            profile_fields = case_profile.sent(data)
+        except case_profile.ProfileError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        # A manual case linked to its court record keeps its own number and
+        # stores the CNR in its profile; importing that CNR again would make a
+        # second copy of the same case.
+        linked = CaseProfile.objects.filter(
+            cnr=case_number.upper(), case_id__in=Case.objects.filter(
+                advocate_id__in=practice_ids(request.user), deleted=False).values('id')).first()
+        if linked:
+            return Response({'error': 'This court case is already in your workspace (linked to case {}).'.format(
+                Case.objects.filter(id=linked.case_id).values_list('case_number', flat=True).first())},
+                status=status.HTTP_409_CONFLICT)
         # Scoped to the practice, not global. cases.case_number used to carry a
         # global UNIQUE, so this lookup could not be scoped and an advocate was
         # refused a case number another practice happened to hold - for a case
@@ -186,6 +208,8 @@ class CreateCaseView(APIView):
             existing.client = client
             existing.save()
             _clear_import_children(existing.id)
+            if profile_fields:
+                CaseProfile.objects.update_or_create(case_id=existing.id, defaults=profile_fields)
             return Response(CaseSerializer(existing).data, status=status.HTTP_200_OK)
         case = Case.objects.create(
             case_number=case_number,
@@ -200,6 +224,8 @@ class CreateCaseView(APIView):
             advocate_id=request.user.id,
             client=client,
         )
+        if profile_fields:
+            CaseProfile.objects.update_or_create(case_id=case.id, defaults=profile_fields)
         client_events.case_created(request.user, client, case)
         return Response(CaseSerializer(case).data, status=status.HTTP_201_CREATED)
 
@@ -227,6 +253,8 @@ class UpdateCaseView(APIView):
         if client_id is not None:
             case.client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first()
         case.save()
+        if 'amount' in data:
+            case = recalc_case_totals(case.id) or case
         return Response(CaseSerializer(case).data)
 
 
@@ -338,6 +366,9 @@ def _resolve_target_client(target, src_client):
     """
     if src_client is None:
         return None
+    # Already reachable by the target's team (e.g. the case was already theirs).
+    if src_client.advocate_id in practice_ids(target):
+        return src_client.id
     # Local import avoids a module-load cycle (clients.views imports core only).
     from clients.views import _find_practice_duplicate, _digits
     name = (src_client.name or '').strip()
@@ -407,7 +438,7 @@ class TransferCaseView(APIView):
             return Response({'error': 'Target advocate not found'},
                             status=status.HTTP_404_NOT_FOUND)
         # The target must actually be able to work the case; finance-only staff
-        # (accountant/receptionist) have no CASE_VIEW and should not own cases.
+        # (e.g. the accountant) have no CASE_VIEW and should not own cases.
         if 'CASE_VIEW' not in target.permission_codes():
             return Response({'error': 'That user cannot hold cases (no case access).'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -430,6 +461,9 @@ class TransferCaseView(APIView):
                                 status=status.HTTP_403_FORBIDDEN)
             if target.parent_advocate_id is not None:
                 return Response({'error': 'A case can only be transferred to another senior (practice owner).'},
+                                status=status.HTTP_403_FORBIDDEN)
+            if not same_firm(target, owner or request.user):
+                return Response({'error': 'A case can only be transferred within your firm.'},
                                 status=status.HTTP_403_FORBIDDEN)
             # The receiving practice must not already hold this case number
             # (cases are UNIQUE per advocate); refuse rather than crash on save.
@@ -480,10 +514,11 @@ class TransferTargetsView(APIView):
                   .exclude(id=request.user.id).order_by('full_name')):
             add(a)
 
-        # A senior may also transfer to another team's senior.
+        # A senior may also transfer to another team's senior - of the SAME firm
+        # only; other firms' advocates are never offered.
         if is_owner(request.user):
             for a in (Advocate.objects
-                      .filter(parent_advocate_id__isnull=True, left_on__isnull=True)
+                      .filter(id__in=firm_team_roots(request.user), left_on__isnull=True)
                       .exclude(id=request.user.id).order_by('full_name')):
                 add(a)
 

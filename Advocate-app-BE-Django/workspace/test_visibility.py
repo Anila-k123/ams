@@ -48,6 +48,28 @@ class TaskVisibilityTest(TestCase):
                             **auth(self.intern))
         self.assertEqual(r.status_code, 404)
 
+    def _put(self, user, task, what, body):
+        return self.client.put('/api/workspace/tasks/{}/{}'.format(task.id, what), body,
+                               content_type='application/json', **auth(user))
+
+    def test_only_the_assigner_sets_priority(self):
+        """The assignee does the work; the person who assigned it sets its priority."""
+        self.assertEqual(self._put(self.intern, self.intern_task, 'priority', {'priority': 'LOW'}).status_code, 403)
+        self.assertEqual(self._put(self.senior, self.intern_task, 'priority', {'priority': 'HIGH'}).status_code, 200)
+        self.assertEqual(CaseTask.objects.get(id=self.intern_task.id).priority, 'HIGH')
+
+    def test_only_the_assigner_cancels_or_deletes(self):
+        self.assertEqual(self._put(self.intern, self.intern_task, 'cancel', {'cancelled': True}).status_code, 403)
+        r = self.client.delete('/api/workspace/tasks/{}'.format(self.intern_task.id), **auth(self.intern))
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self._put(self.senior, self.intern_task, 'cancel', {'cancelled': True}).status_code, 200)
+        self.assertTrue(CaseTask.objects.get(id=self.intern_task.id).cancelled)
+
+    def test_own_task_is_its_creators(self):
+        """A task with no assigner belongs to whoever created it."""
+        self.assertEqual(self._put(self.intern, self.own_task, 'priority', {'priority': 'HIGH'}).status_code, 200)
+        self.assertEqual(self._put(self.senior, self.own_task, 'priority', {'priority': 'LOW'}).status_code, 403)
+
     def test_deadline_reminder_goes_to_assignee_and_assigner_only(self):
         CaseTask.objects.filter(id=self.junior_task.id).update(
             deadline=datetime.date.today())
@@ -76,3 +98,44 @@ class CaseAlertRecipientsTest(TestCase):
         ids = {m.id for m in practice.firm_wide_members(
             self.senior.id, permission='INVOICE_VIEW')}
         self.assertIn(self.accountant.id, ids)
+
+
+class TaskReminderTimingTest(TestCase):
+    """A task is flagged 2 days before its deadline (once), on the due date,
+    and daily while overdue - so there's time to finish it."""
+
+    def setUp(self):
+        self.senior = make_advocate(permissions=('CASE_VIEW',))
+        self.junior = make_advocate(permissions=('CASE_VIEW',), parent_advocate_id=self.senior.id)
+        self.deadline = datetime.date(2026, 10, 10)
+        self.task = CaseTask.objects.create(
+            advocate_id=self.senior.id, case_id=make_case(self.senior).id, title='Draft WS',
+            assigned_to_id=self.junior.id, assigned_by_id=self.senior.id, deadline=self.deadline)
+
+    def run_on(self, day):
+        """Run the reminder job as of `day`, after ageing earlier reminders by a
+        day (the dedup windows are measured from now)."""
+        from django.utils import timezone
+        NotificationQueue.objects.update(created_at=timezone.now() - datetime.timedelta(days=1, hours=1))
+        events.task_deadlines(self.senior, today=day)
+        import json
+        subjects = [json.loads(q.payload_json).get('subject') for q in NotificationQueue.objects.filter(
+            advocate_id=self.junior.id, type='TASK_DEADLINE_REMINDER').order_by('id')]
+        return list(dict.fromkeys(subjects))     # one per reminder, whatever the channels
+
+    def test_reminder_schedule(self):
+        d = datetime.timedelta
+        self.assertEqual(self.run_on(self.deadline - d(days=3)), [])                     # too early
+        self.assertEqual(self.run_on(self.deadline - d(days=2))[-1], 'Task due in 2 day(s): Draft WS')
+        self.assertEqual(len(self.run_on(self.deadline - d(days=1))), 1)                 # not repeated
+        self.assertEqual(self.run_on(self.deadline)[-1], 'Task due today: Draft WS')
+        self.assertEqual(self.run_on(self.deadline + d(days=1))[-1], 'Task 1 day(s) overdue: Draft WS')
+        self.assertEqual(len(self.run_on(self.deadline + d(days=2))), 4)                 # daily while overdue
+
+    def test_a_late_job_still_warns_the_day_before(self):
+        subjects = self.run_on(self.deadline - datetime.timedelta(days=1))
+        self.assertEqual(subjects, ['Task due tomorrow: Draft WS'])
+
+    def test_completed_tasks_are_never_flagged(self):
+        CaseTask.objects.filter(id=self.task.id).update(completed=True)
+        self.assertEqual(self.run_on(self.deadline - datetime.timedelta(days=2)), [])

@@ -100,3 +100,86 @@ class InvoiceTaxDetail(models.Model):
 
     def __str__(self):
         return 'TaxDetail(invoice={})'.format(self.invoice_id)
+
+
+class InvoiceRequest(models.Model):
+    """An invoice an advocate has raised for accounts to issue.
+
+    Advocates who run a case (senior or not) raise its bill; the accountant
+    checks it and issues it. Until then it is not an invoice: it has no number,
+    is not in any total, report or reminder, and the client never sees it. That
+    is why it waits here and the real `invoices` row is only created on issue
+    (with the requester recorded as its advocate, i.e. "raised by").
+
+    `payload` is the create-form body as submitted (particulars, GST fields,
+    dates), replayed through the normal create path on issue.
+    """
+    SUBMITTED = 'SUBMITTED'   # waiting for accounts
+    RETURNED = 'RETURNED'     # sent back to the advocate with a note
+    ISSUED = 'ISSUED'         # became invoice `invoice_id`
+    WITHDRAWN = 'WITHDRAWN'   # the advocate took it back
+
+    case_id = models.BigIntegerField(db_index=True)
+    client_id = models.BigIntegerField(null=True)
+    requested_by_id = models.BigIntegerField(db_index=True)
+    status = models.CharField(max_length=16, default=SUBMITTED, db_index=True)
+    payload = models.JSONField(default=dict)
+    amount = models.FloatField(default=0)          # taxable total, for the list
+    note = models.TextField(blank=True, default='')  # why it was returned
+    reviewed_by_id = models.BigIntegerField(null=True)
+    invoice_id = models.BigIntegerField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'invoice_request'
+
+    def __str__(self):
+        return 'InvoiceRequest({}, case={}, {})'.format(self.id, self.case_id, self.status)
+
+
+class PaymentInvoice(models.Model):
+    """Which invoice a client payment settles. One payment pays one invoice;
+    an invoice can take several (part-payments). `client_payments` and
+    `invoices` are Spring-owned, so the link lives here, keyed by ids.
+
+    An invoice's paid amount is the sum of its linked payments; its status
+    (UNPAID -> PARTIAL -> PAID) follows from that - see core.finance.
+    """
+    payment_id = models.BigIntegerField(unique=True)
+    invoice_id = models.BigIntegerField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'payment_invoice'
+
+    def __str__(self):
+        return 'PaymentInvoice(payment={}, invoice={})'.format(self.payment_id, self.invoice_id)
+
+
+class InvoiceHandling(models.Model):
+    """Who handles an invoice after it is raised, and its cancellation.
+
+    "Raised by" is the invoice's own advocate (the advocate who ran the case).
+    `issued_by_id` is who issued it - accounts (or the admin) - and so whom
+    to ask about collecting it. Invoices from
+    before this table have no row; they read as handled by their advocate.
+
+    An issued GST invoice is not edited or deleted: a wrong one is cancelled,
+    with the reason, and a new one raised.
+    """
+    invoice_id = models.BigIntegerField(unique=True)
+    issued_by_id = models.BigIntegerField(null=True)
+    # When the client's invoice email went out; None if it was not sent (no
+    # email on file, or client email switched off for the firm).
+    client_notified_at = models.DateTimeField(null=True)
+    cancelled_by_id = models.BigIntegerField(null=True)
+    cancelled_at = models.DateTimeField(null=True)
+    cancel_reason = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'invoice_handling'
+
+    def __str__(self):
+        return 'InvoiceHandling(invoice={})'.format(self.invoice_id)

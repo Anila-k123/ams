@@ -27,7 +27,7 @@ FIRM = dict(
     office_phone='+91 44 2345 6789',
     office_email='contact@kumar-associates.in',
     website='www.kumar-associates.in',
-    gst_number='33ABCDE1234F1Z5', pan_number='ABCDE1234F',
+    gst_number='33ABCDE1234F1Z7', pan_number='ABCDE1234F',
     primary_brand_color=PRIMARY, secondary_brand_color=SECONDARY,
 )
 

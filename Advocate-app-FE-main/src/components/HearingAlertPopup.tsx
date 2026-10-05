@@ -116,7 +116,7 @@ export default function HearingAlertPopup({ onView }: { onView?: (alert: any) =>
     <div className="hearing-alerts-container">
       <div className="hearing-alerts-toolbar">
         <Button text rounded size="small" className="hearing-sound-toggle" onClick={toggleSound}
-          icon={soundEnabled ? 'pi pi-volume-up' : 'pi pi-volume-off'} tooltip={soundEnabled ? 'Mute alerts' : 'Enable sound'} />
+          icon={soundEnabled ? 'pi pi-volume-up' : 'pi pi-volume-off'} tooltip={soundEnabled ? 'Mute alerts' : 'Enable sound'} tooltipOptions={{ position: "top" }} />
       </div>
       {alerts.map((alert) => (
         <div key={alert.id} className="hearing-alert-popup slide-in-down">

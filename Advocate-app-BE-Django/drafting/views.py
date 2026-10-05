@@ -6,6 +6,24 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from .files import FileDownloadMixin
+
+
+def _metered_action(operation):
+    """Meter an on-demand drafting action (metering/usage.py) as the signed-in
+    user: chat edit and refine make several model calls per click, and all of
+    them belong to this one action."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(self, request, pk=None, *args, **kwargs):
+            from metering.usage import metering
+            ref = int(pk) if str(pk or '').isdigit() else None
+            with metering('draft', operation, getattr(request.user, 'id', None),
+                          ref_type='draft', ref_id=ref):
+                return fn(self, request, pk, *args, **kwargs)
+        return wrapper
+    return deco
 from .models import Template, Sample, DraftSession, Playbook, PlaybookClause, PlaybookRisk
 from .serializers import (
     TemplateSerializer, TemplateUploadSerializer,
@@ -262,6 +280,7 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         return Response(DraftSessionSerializer(session, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
+    @_metered_action('draft.edit')
     def edit(self, request, pk=None):
         """Chat-edit: locate the clause an instruction refers to, propose a rewrite,
         and record it as a PENDING DraftEdit. Does not change the block yet."""
@@ -303,6 +322,7 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=['post'], url_path='refine')
+    @_metered_action('draft.refine')
     def refine(self, request, pk=None):
         """Whole-document refine: apply an action ('formal'|'concise'|'grammar') to
         every clause and return only the clauses that actually changed. Body:
@@ -364,6 +384,7 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=['post'], url_path='consistency-check')
+    @_metered_action('draft.consistency')
     def consistency_check(self, request, pk=None):
         """Review the whole draft for contradictions and loose ends. Body:
         {clauses?: [{block_id, heading, text}], model?}. When `clauses` is sent

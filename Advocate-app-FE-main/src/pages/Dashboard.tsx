@@ -169,7 +169,7 @@ function IfPermitted({ perm, children }: { perm: string | string[]; children: Re
 }
 
 // Appeal alerts and the legal reference (Acts, Dictionary, Law Codes) are tools
-// for legal work: shown to those who edit cases or draft, not reception/accounts.
+// for legal work: shown to those who edit cases or draft, not accounts.
 const LEGAL_WORK_PERMS = ['CASE_EDIT', 'DRAFT_VIEW'];
 // The practice-wide delivery log (Notifications) and client communication
 // (Communication): for the admin, seniors and the accountant. Everyone keeps
@@ -221,6 +221,32 @@ function SideLink({ to, icon, text, title, end, sub }: { to: string; icon: strin
   );
 }
 
+// A collapsible sidebar group: a toggle row, with its links shown only while open.
+function NavGroup({ icon, text, open, onToggle, children }: { icon: string; text: string; open: boolean; onToggle: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLLIElement>(null);
+  const opening = useRef(false);
+  // Opened by a click near the bottom of the sidebar: scroll so its links are
+  // in view instead of hidden below the fold. Not on the automatic open when a
+  // page loads, which would jump the sidebar.
+  useEffect(() => {
+    if (open && opening.current) {
+      opening.current = false;
+      requestAnimationFrame(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+    }
+  }, [open]);
+  return (
+    <li className="nav-group" ref={ref}>
+      <button type="button" className="nav-link nav-group-toggle" title={text} aria-expanded={open}
+        onClick={() => { opening.current = !open; onToggle(); }}>
+        <span className="nav-icon"><i className={`pi ${icon}`} /></span>
+        <span className="nav-text">{text}</span>
+        <i className={`pi pi-chevron-down nav-group-chevron ${open ? 'open' : ''}`} />
+      </button>
+      {open && <ul className="nav-submenu">{children}</ul>}
+    </li>
+  );
+}
+
 // ====== INNER SHELL (has access to context) ======
 function DashboardShell() {
   const { hasPermission } = usePermission() as any;
@@ -244,13 +270,23 @@ function DashboardShell() {
 
   const accountMenuRef = useRef<Menu>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [casesOpen, setCasesOpen] = useState(true);
+  const [casesOpen, setCasesOpen] = useState(false);
+  const [draftingOpen, setDraftingOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [commsOpen, setCommsOpen] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
 
   const { isCollapsed, isMobile, toggleSidebar, closeSidebar, mobileOpen } = useSidebar() as any;
   const location = useLocation();
 
   const currentPath = location.pathname.replace(/\/$/, '') || '/dashboard';
+  // Menu groups stay collapsed until clicked, but open when one of their pages is showing.
+  useEffect(() => {
+    if (/^\/dashboard\/(cases|daily-causelist|display-board)(\/|$)/.test(currentPath)) setCasesOpen(true);
+    if (/^\/dashboard\/drafting(\/|$)/.test(currentPath)) setDraftingOpen(true);
+    if (/^\/dashboard\/(activity|users|roles)(\/|$)/.test(currentPath)) setAdminOpen(true);
+    if (/^\/dashboard\/communication(\/|$)/.test(currentPath)) setCommsOpen(true);
+  }, [currentPath]);
   const pageTitle = titleFor(currentPath);
   const isDashboardHome = currentPath === '/dashboard';
 
@@ -847,20 +883,11 @@ function DashboardShell() {
           <ul>
             <SideLink to="/dashboard" end icon="pi-th-large" text="Dashboard" />
             <IfPermitted perm="CASE_VIEW">
-              <li className="nav-group">
-                <button type="button" className="nav-link nav-group-toggle" onClick={() => setCasesOpen((o) => !o)} title="Cases" aria-expanded={casesOpen}>
-                  <span className="nav-icon"><i className="pi pi-briefcase" /></span>
-                  <span className="nav-text">Cases</span>
-                  <i className={`pi pi-chevron-down nav-group-chevron ${casesOpen ? 'open' : ''}`} />
-                </button>
-                {casesOpen && (
-                  <ul className="nav-submenu">
-                    <SideLink to="/dashboard/cases" end sub icon="pi-inbox" text="Workspace" />
-                    <SideLink to="/dashboard/daily-causelist" sub icon="pi-calendar" text="Daily Causelist" />
-                    <SideLink to="/dashboard/display-board" sub icon="pi-desktop" text="Display Board" />
-                  </ul>
-                )}
-              </li>
+              <NavGroup icon="pi-briefcase" text="Cases" open={casesOpen} onToggle={() => setCasesOpen((o) => !o)}>
+                <SideLink to="/dashboard/cases" end sub icon="pi-inbox" text="Workspace" />
+                <SideLink to="/dashboard/daily-causelist" sub icon="pi-calendar" text="Daily Causelist" />
+                <SideLink to="/dashboard/display-board" sub icon="pi-desktop" text="Display Board" />
+              </NavGroup>
             </IfPermitted>
             <IfPermitted perm="CLIENT_VIEW">
               <SideLink to="/dashboard/clients" icon="pi-users" text="Clients" />
@@ -896,55 +923,58 @@ function DashboardShell() {
               <Link to="#" className="nav-link" title={`${ASSISTANT_NAME} · AI assistant`}
                 onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('assistant-toggle-open')); }}>
                 <span className="nav-icon"><i className="pi pi-comments" /></span>
-                <span className="nav-text">{ASSISTANT_NAME}</span>
+                <span className="nav-text">{ASSISTANT_NAME} (AI)</span>
               </Link>
             </li>
             <SideLink to="/dashboard/settings" icon="pi-cog" text="Settings" />
             <IfPermitted perm="BACKUP_MANAGE">
               <SideLink to="/dashboard/backup" icon="pi-lock" text="Backup" />
             </IfPermitted>
-            {/* The heading only shows when there is at least one admin page below it. */}
+            {/* The group only shows when there is at least one admin page in it. */}
             <IfPermitted perm={['AUDIT_VIEW', 'USER_MANAGE', 'ROLE_MANAGE']}>
-              <li className="nav-section-label">Administration</li>
-            </IfPermitted>
-            <IfPermitted perm="AUDIT_VIEW">
-              <SideLink to="/dashboard/activity" icon="pi-history" text="System Activity" />
-            </IfPermitted>
-            <IfPermitted perm="USER_MANAGE">
-              <SideLink to="/dashboard/users" icon="pi-user" text="Users" title="User Management" />
-            </IfPermitted>
-            <IfPermitted perm="ROLE_MANAGE">
-              <SideLink to="/dashboard/roles" icon="pi-shield" text="Roles" title="Role Management" />
+              <NavGroup icon="pi-sitemap" text="Administration" open={adminOpen} onToggle={() => setAdminOpen((o) => !o)}>
+                <IfPermitted perm="AUDIT_VIEW">
+                  <SideLink to="/dashboard/activity" sub icon="pi-history" text="System Activity" />
+                </IfPermitted>
+                <IfPermitted perm="USER_MANAGE">
+                  <SideLink to="/dashboard/users" sub icon="pi-user" text="Users" title="User Management" />
+                </IfPermitted>
+                <IfPermitted perm="ROLE_MANAGE">
+                  <SideLink to="/dashboard/roles" sub icon="pi-shield" text="Roles" title="Role Management" />
+                </IfPermitted>
+              </NavGroup>
             </IfPermitted>
             <IfPermitted perm={COMMS_PERMS}>
-              <li className="nav-section-label">Communication</li>
-              {/* "Overview", not "Dashboard": the sidebar already has one. */}
-              <SideLink to="/dashboard/communication" end icon="pi-send" text="Overview" title="Communication Overview" />
-              <IfPermitted perm="SETTINGS_EDIT">
-                <SideLink to="/dashboard/communication/settings" icon="pi-sliders-h" text="Settings" title="Communication Settings" />
-              </IfPermitted>
-              <SideLink to="/dashboard/communication/history" icon="pi-list" text="History" title="Communication History" />
+              <NavGroup icon="pi-send" text="Communication" open={commsOpen} onToggle={() => setCommsOpen((o) => !o)}>
+                {/* "Overview", not "Dashboard": the sidebar already has one. */}
+                <SideLink to="/dashboard/communication" end sub icon="pi-send" text="Overview" title="Communication Overview" />
+                <IfPermitted perm="SETTINGS_EDIT">
+                  <SideLink to="/dashboard/communication/settings" sub icon="pi-sliders-h" text="Settings" title="Communication Settings" />
+                </IfPermitted>
+                <SideLink to="/dashboard/communication/history" sub icon="pi-list" text="History" title="Communication History" />
+              </NavGroup>
             </IfPermitted>
             {/* DRAFTING - the drafting workspace (formerly InstaDraft), its own section. */}
             <IfPermitted perm="DRAFT_VIEW">
-              <li className="nav-section-label nav-section-drafting">Drafting</li>
-              {/* Drafts, with a "+" beside it to start a new draft. */}
-              <li className="nav-item-with-action">
-                <NavLink to={DRAFTING.drafts} title="Drafts"
-                  className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-                  <span className="nav-icon"><i className="pi pi-file-edit" /></span>
-                  <span className="nav-text">Drafts</span>
-                </NavLink>
-                <IfPermitted perm="DRAFT_CREATE">
-                  <button type="button" className="nav-side-action" title="New draft" aria-label="New draft"
-                    onClick={() => navigate(DRAFTING.newDraft)}>
-                    <i className="pi pi-plus" />
-                  </button>
-                </IfPermitted>
-              </li>
-              <SideLink to={DRAFTING.templates} icon="pi-clone" text="Templates" />
-              <SideLink to={DRAFTING.samples} icon="pi-folder-open" text="Draft Documents" />
-              <SideLink to={DRAFTING.playbooks} icon="pi-shield" text="Playbooks" />
+              <NavGroup icon="pi-pen-to-square" text="Drafting" open={draftingOpen} onToggle={() => setDraftingOpen((o) => !o)}>
+                    {/* Drafts, with a "+" beside it to start a new draft. */}
+                    <li className="nav-item-with-action">
+                      <NavLink to={DRAFTING.drafts} title="Drafts"
+                        className={({ isActive }) => `nav-link sub${isActive ? ' active' : ''}`}>
+                        <span className="nav-icon sub-nav-icon"><i className="pi pi-file-edit" /></span>
+                        <span className="nav-text">Drafts</span>
+                      </NavLink>
+                      <IfPermitted perm="DRAFT_CREATE">
+                        <button type="button" className="nav-side-action" title="New draft" aria-label="New draft"
+                          onClick={() => navigate(DRAFTING.newDraft)}>
+                          <i className="pi pi-plus" />
+                        </button>
+                      </IfPermitted>
+                    </li>
+                    <SideLink to={DRAFTING.templates} sub icon="pi-clone" text="Templates" />
+                    <SideLink to={DRAFTING.samples} sub icon="pi-folder-open" text="Draft Documents" />
+                    <SideLink to={DRAFTING.playbooks} sub icon="pi-shield" text="Playbooks" />
+              </NavGroup>
             </IfPermitted>
           </ul>
         </nav>

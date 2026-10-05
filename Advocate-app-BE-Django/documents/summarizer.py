@@ -20,6 +20,7 @@ from django.conf import settings
 from core.models import Document
 from assistant.llm import complete_text, active_model_name, AssistantUnavailable
 from .models import DocumentSummary
+from metering.usage import metering
 
 log = logging.getLogger(__name__)
 
@@ -150,7 +151,10 @@ def summarize(row):
         f"--- DOCUMENT TEXT ---\n{text}"
     )
     try:
-        raw = complete_text(SUMMARY_SYSTEM_PROMPT, user_prompt)
+        # Background (thread or cron), so the user comes from the document.
+        with metering('summary', 'summary.document', doc.advocate_id,
+                      ref_type='document', ref_id=doc.id):
+            raw = complete_text(SUMMARY_SYSTEM_PROMPT, user_prompt)
         data = _parse_json(raw)
     except AssistantUnavailable as exc:
         row.status = DocumentSummary.FAILED

@@ -104,7 +104,7 @@ export default function DocumentVersionsModal({ doc, onClose, canUpload = false,
                   </span>
                 </div>
                 <Button icon="pi pi-download" className="p-button-rounded p-button-text" onClick={() => download(v.version)}
-                  tooltip="Download this version" aria-label="Download this version" />
+                  tooltip="Download this version" tooltipOptions={{ position: "top" }} aria-label="Download this version" />
               </li>
             ))}
             {versions.length === 0 && (

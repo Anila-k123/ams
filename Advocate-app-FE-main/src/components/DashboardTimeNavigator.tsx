@@ -41,7 +41,7 @@ export default function DashboardTimeNavigator() {
 
   return (
     <div className="time-navigator flex align-items-center gap-1">
-      <Button icon="pi pi-chevron-left" text rounded size="small" onClick={handlePrev} tooltip="Previous" />
+      <Button icon="pi pi-chevron-left" text rounded size="small" onClick={handlePrev} tooltip="Previous" tooltipOptions={{ position: "top" }} />
       <div className="period-label-wrapper">
         <span className="period-label">{periodLabel()}</span>
         {/* Native picker overlays the label (month/year inputs have no PrimeReact twin with the same semantics). */}
@@ -55,7 +55,7 @@ export default function DashboardTimeNavigator() {
           max={getPickerMax()}
         />
       </div>
-      <Button icon="pi pi-chevron-right" text rounded size="small" onClick={handleNext} disabled={isNextDisabled} tooltip="Next" />
+      <Button icon="pi pi-chevron-right" text rounded size="small" onClick={handleNext} disabled={isNextDisabled} tooltip="Next" tooltipOptions={{ position: "top" }} />
     </div>
   );
 }

@@ -13,6 +13,8 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import { useLoading } from "../contexts/LoadingContext";
 import "../assets/styles/SettingsPage.css";
+import FieldError from "../components/FieldError";
+import { formatErrors, normaliseCode, phoneError } from "../utils/validators";
 
 const TABS = [
   { key: "profile", icon: "pi pi-user", label: "Profile details" },
@@ -35,6 +37,9 @@ const BILLING_FIELDS: [string, string, string][] = [
   ["hsnCode", "HSN code", "998212"],
   ["serviceCategory", "Service category", "LEGAL SERVICES"],
 ];
+
+// Checked as you leave a field, and again on the server (core/validators.py).
+const BILLING_FORMATS = { ifscCode: "ifsc", remittanceEmail: "email" } as const;
 
 export default function SettingsPage() {
   const { setTheme: applyTheme } = useTheme() as any;
@@ -75,7 +80,18 @@ export default function SettingsPage() {
 
   const setBill = (name: string, value: any) => setBilling((b: any) => ({ ...b, [name]: value }));
 
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [billTried, setBillTried] = useState(false);
+  const [acctTried, setAcctTried] = useState(false);
+  const billErr = (name: string) =>
+    (touched[name] || billTried ? formatErrors(billing, BILLING_FORMATS)[name] : "") || "";
   const saveBilling = async () => {
+    const bad = formatErrors(billing, BILLING_FORMATS);
+    if (Object.keys(bad).length) {
+      setBillTried(true);
+      setErrorMsg("Fix the highlighted fields first: " + Object.values(bad)[0]);
+      return;
+    }
     setSavingBilling(true);
     setMessage("");
     setErrorMsg("");
@@ -116,6 +132,12 @@ export default function SettingsPage() {
 
   const handleSave = async (e: any) => {
     e.preventDefault();
+    const phoneMsg = phoneError(formData.phone);
+    if (phoneMsg) {
+      setAcctTried(true);
+      setErrorMsg(phoneMsg);
+      return;
+    }
     setSaving(true);
     setMessage("");
     setErrorMsg("");
@@ -141,12 +163,17 @@ export default function SettingsPage() {
     }
   };
 
-  const text = (name: string, label: string, props: any = {}) => (
-    <div className="col-12 md:col-6 flex flex-column gap-1">
-      <label htmlFor={`st-${name}`}>{label}</label>
-      <InputText id={`st-${name}`} value={formData[name]} onChange={(e) => set(name, e.target.value)} {...props} />
-    </div>
-  );
+  const text = (name: string, label: string, props: any = {}) => {
+    const msg = name === "phone" && (acctTried || touched[name]) ? phoneError(formData.phone) : "";
+    return (
+      <div className="col-12 md:col-6 flex flex-column gap-1">
+        <label htmlFor={`st-${name}`}>{label}</label>
+        <InputText id={`st-${name}`} value={formData[name]} onChange={(e) => set(name, e.target.value)}
+          onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} className={msg ? "p-invalid" : undefined} {...props} />
+        <FieldError error={msg} />
+      </div>
+    );
+  };
 
   const checkRow = (name: string, title: string, desc: string) => (
     <div className="flex align-items-start gap-3 settings-check-row">
@@ -214,7 +241,7 @@ export default function SettingsPage() {
                   <div className="grid">
                     <div className="col-12 md:col-6 flex flex-column gap-1">
                       <label htmlFor="st-password">New Password</label>
-                      <Password inputId="st-password" feedback={false} toggleMask placeholder="Enter new password" value={formData.password} onChange={(e) => set("password", e.target.value)} className="w-full" inputClassName="w-full" />
+                      <Password inputId="st-password" feedback={false} toggleMask placeholder="New password" value={formData.password} onChange={(e) => set("password", e.target.value)} className="w-full" inputClassName="w-full" />
                     </div>
                     <div className="col-12 md:col-6 flex flex-column gap-1">
                       <label htmlFor="st-confirm">Confirm Password</label>
@@ -282,7 +309,11 @@ export default function SettingsPage() {
                     {BILLING_FIELDS.map(([name, label, ph]) => (
                       <div key={name} className="col-12 md:col-6 flex flex-column gap-1">
                         <label htmlFor={`bl-${name}`}>{label}</label>
-                        <InputText id={`bl-${name}`} value={billing[name] ?? ""} placeholder={ph} onChange={(e) => setBill(name, e.target.value)} />
+                        <InputText id={`bl-${name}`} value={billing[name] ?? ""} placeholder={ph}
+                          onChange={(e) => setBill(name, name === "ifscCode" ? normaliseCode(e.target.value) : e.target.value)}
+                          onBlur={() => setTouched((t) => ({ ...t, [name]: true }))}
+                          className={billErr(name) ? "p-invalid" : undefined} />
+                        <FieldError error={billErr(name)} />
                       </div>
                     ))}
                     <div className="col-12 flex flex-column gap-1">

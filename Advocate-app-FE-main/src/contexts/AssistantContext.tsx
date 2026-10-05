@@ -25,11 +25,14 @@ function loadMessages(advocateId) {
 // How much of the chat goes back to the model with each question. The server
 // caps it too; this just keeps the request small.
 const HISTORY_PAIRS = 3;
-// A short message that points back at the last answer ("its next hearing?",
-// "what about him") belongs to the model, not the keyword router, which would
-// otherwise read "hearings" as "open the Hearings page".
-const FOLLOW_UP = /(it|its|it's|this|that|these|those|he|him|his|she|her|they|them|their|same|also|what about|and the|then)/i;
-const isFollowUp = (q) => q.trim().split(/\s+/).length <= 12 && FOLLOW_UP.test(q);
+
+// How Lisa is reached (docs/AI_ASSISTANT.md):
+//  - every TYPED message goes to the AI (/api/assistant/chat), which answers
+//    and can open pages and forms itself (`action` events). Nothing is matched
+//    by phrase first, so no wording ever needs a rule.
+//  - the quick buttons send an exact command name to /api/assistant/query.
+//  - only if the AI is unavailable does typed text fall back to the basic
+//    phrase matcher (/api/assistant/query with {query}).
 
 const AssistantContext = createContext(null);
 
@@ -105,8 +108,12 @@ export function AssistantProvider({ children, token }) {
   }, [messages]);
 
   const actionTimerRef = useRef(null);
+  // handleAction is defined below; streamChat reaches it through this ref.
+  const handleActionRef = useRef<(r: any) => void>(() => {});
 
   // Stream a conversational answer from the LLM assistant (SSE token deltas).
+  // Returns false when the AI is unavailable (not configured / unreachable),
+  // so the caller can fall back to basic mode.
   const streamChat = useCallback(async (query, prior) => {
     // Only exchanges the model took part in: a question plus its model answer.
     // Router replies ("Opening Cases...") aren't conversation.
@@ -124,6 +131,7 @@ export function AssistantProvider({ children, token }) {
     const botId = `msg-${++msgIdCounter.current}`;
     addMessage({ id: botId, sender: "bot", text: "", llm: true });
     let acc = "";
+    let unavailable = false;
     try {
       const res = await fetch(apiUrl(`/api/assistant/chat`), {
         method: "POST",
@@ -132,6 +140,7 @@ export function AssistantProvider({ children, token }) {
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
+      const links: { route: string; label: string }[] = [];
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -149,7 +158,18 @@ export function AssistantProvider({ children, token }) {
           if (evt.type === "text") {
             acc += evt.text;
             setMessageText(botId, acc);
+          } else if (evt.type === "link" && evt.route) {
+            // A page the answer points to: a button under the reply, opened
+            // when the user clicks it.
+            if (!links.some((l) => l.route === evt.route)) {
+              links.push({ route: evt.route, label: evt.label || "Open" });
+              setMessageFields(botId, { links: [...links] });
+            }
+          } else if (evt.type === "action") {
+            // Lisa opened a page or form: the same handling as a quick command.
+            handleActionRef.current(evt);
           } else if (evt.type === "error") {
+            if (evt.code === "unavailable" && !acc) unavailable = true;
             setMessageText(botId, acc || evt.message || "Sorry, something went wrong.");
           } else if (evt.type === "done" && Array.isArray(evt.caseIds)) {
             // Remembered so the next follow-up can say "it" and mean this case.
@@ -157,66 +177,82 @@ export function AssistantProvider({ children, token }) {
           }
         }
       }
+      if (unavailable) {
+        // Basic mode answers instead; drop the empty AI bubble.
+        setMessages(prev => prev.filter(m => m.id !== botId));
+        return false;
+      }
       if (!acc) setMessageText(botId, "I couldn't find anything for that. Try rephrasing.");
     } catch {
       setMessageText(botId, acc || "Sorry, I couldn't reach the assistant. Please try again.");
     }
+    return true;
   }, [token, addMessage, setMessageText, setMessageFields]);
 
-  const sendQuery = useCallback(async (query) => {
-    if (!query.trim() || !token) return;
+  // Show a /query reply (quick command or basic mode) and act on it.
+  const showQueryReply = useCallback((data, note = "") => {
+    addMessage({ sender: "bot", text: note + data.message, response: data });
+    actionTimerRef.current = setTimeout(() => handleActionRef.current(data), 100);
+  }, [addMessage]);
+
+  const postQuery = useCallback(async (body) => {
+    const res = await fetch(apiUrl(`/api/assistant/query`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }, []);
+
+  const startTurn = (text) => {
     if (actionTimerRef.current) {
       clearTimeout(actionTimerRef.current);
       actionTimerRef.current = null;
     }
     setInputValue("");
     const prior = messagesRef.current;
-    addMessage({ sender: "user", text: query });
+    addMessage({ sender: "user", text });
     setIsProcessing(true);
+    return prior;
+  };
 
-    const lastBot = [...prior].reverse().find(m => m.sender === "bot" && m.id !== "welcome");
-    if (lastBot?.llm && isFollowUp(query)) {
-      try { await streamChat(query, prior); } finally { setIsProcessing(false); }
-      return;
-    }
-
+  // A typed message: always the AI.
+  const sendQuery = useCallback(async (query) => {
+    if (!query.trim() || !token) return;
+    const prior = startTurn(query);
     try {
-      const res = await fetch(apiUrl(`/api/assistant/query`), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
-        body: JSON.stringify({
-          query,
-          currentRoute: location.pathname,
-        }),
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const data = await res.json();
-
-      // Deterministic nav/data/search command → act instantly (free, no LLM).
-      // Anything the rule router doesn't recognise → hand to the LLM assistant.
-      if (data.intent === "UNKNOWN") {
-        await streamChat(query, prior);
-      } else {
-        addMessage({ sender: "bot", text: data.message, response: data });
-        actionTimerRef.current = setTimeout(() => {
-          handleAction(data);
-        }, 100);
+      const answered = await streamChat(query, prior);
+      if (!answered) {
+        // AI unavailable: the basic phrase matcher, clearly labelled.
+        const data = await postQuery({ query, currentRoute: location.pathname });
+        if (data.intent === "UNKNOWN") {
+          addMessage({ sender: "bot", text: "The AI assistant is unavailable right now, so I can only do basic commands such as \"open cases\" or \"today's hearings\". Please try again shortly." });
+        } else {
+          showQueryReply(data, "(Basic mode) ");
+        }
       }
-
-    } catch (err) {
-      addMessage({
-        sender: "bot",
-        text: "Sorry, I encountered an error processing your request. Please try again.",
-      });
+    } catch {
+      addMessage({ sender: "bot", text: "Sorry, I encountered an error processing your request. Please try again." });
     } finally {
       setIsProcessing(false);
     }
-  }, [token, location.pathname, addMessage, streamChat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, location.pathname, addMessage, streamChat, postQuery, showQueryReply]);
+
+  // A quick button: an exact command name, no AI, no text matching.
+  const sendCommand = useCallback(async (command, label) => {
+    if (!token) return;
+    startTurn(label);
+    try {
+      showQueryReply(await postQuery({ command }));
+    } catch {
+      addMessage({ sender: "bot", text: "Sorry, that command didn't work. Please try again." });
+    } finally {
+      setIsProcessing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, addMessage, postQuery, showQueryReply]);
 
   // Cleanup action timer on unmount
   useEffect(() => {
@@ -261,6 +297,7 @@ export function AssistantProvider({ children, token }) {
       window.dispatchEvent(new CustomEvent("assistant-refresh-dashboard"));
     }
   }, [navigate, location.pathname]);
+  handleActionRef.current = handleAction;
 
   // Update suggestions based on input
   useEffect(() => {
@@ -300,9 +337,10 @@ export function AssistantProvider({ children, token }) {
     isProcessing,
     suggestions,
     sendQuery,
+    sendCommand,
     clearHistory,
     exportHistory,
-  }), [isOpen, messages, addMessage, inputValue, isProcessing, suggestions, sendQuery, clearHistory, exportHistory]);
+  }), [isOpen, messages, addMessage, inputValue, isProcessing, suggestions, sendQuery, sendCommand, clearHistory, exportHistory]);
 
   return (
     <AssistantContext.Provider value={value}>

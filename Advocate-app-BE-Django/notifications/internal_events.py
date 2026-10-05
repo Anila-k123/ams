@@ -34,9 +34,10 @@ def _money(amount):
 
 
 def _fanout_now(recipients, event_type, subject, body, *, actor_id=None,
-                case_id=None, client_id=None, entity=None, entity_id=None):
-    """Queue to each distinct recipient (never the actor) and deliver at once."""
-    queued, seen = [], set()
+                case_id=None, client_id=None, entity=None, entity_id=None, skip_ids=()):
+    """Queue to each distinct recipient (never the actor, nor `skip_ids`) and
+    deliver at once."""
+    queued, seen = [], set(skip_ids)
     for member in recipients:
         if not member or member.id in seen or member.id == actor_id:
             continue
@@ -49,7 +50,7 @@ def _fanout_now(recipients, event_type, subject, body, *, actor_id=None,
     return queued
 
 
-def invoice_raised(actor, invoice, case):
+def invoice_raised(actor, invoice, case, skip_ids=()):
     """An advocate raised an invoice -> tell the accountants to collect.
 
     Reaches the firm's accountants (INVOICE_VIEW, firm-wide) plus the team's own
@@ -71,7 +72,7 @@ def invoice_raised(actor, invoice, case):
             recipients, 'INVOICE_GENERATED', subject, body,
             actor_id=getattr(actor, 'id', None), case_id=getattr(case, 'id', None),
             client_id=getattr(invoice, 'client_id', None),
-            entity='Invoice', entity_id=getattr(invoice, 'id', None))
+            entity='Invoice', entity_id=getattr(invoice, 'id', None), skip_ids=skip_ids)
     except Exception:                                        # noqa: BLE001
         log.exception('invoice_raised notification failed')
         return []
@@ -161,4 +162,74 @@ def client_assigned(actor, client, advocate):
             entity='Client', entity_id=client.id)
     except Exception:                                        # noqa: BLE001
         log.exception('client_assigned notification failed')
+        return []
+
+
+def _issuers(case, actor):
+    """Who issues invoices for this case: the team's INVOICE_ISSUE holders
+    (e.g. the senior) plus the firm's accountants."""
+    owner = case.advocate if (case and case.advocate_id) else actor
+    return (alert_members(owner, permission='INVOICE_ISSUE')
+            + firm_wide_members(practice_root(owner), permission='INVOICE_ISSUE'))
+
+
+def _request_lines(req, case, by_label, by_name):
+    client = getattr(getattr(case, 'client', None), 'name', '') if case else ''
+    return ('Case     : {}\nClient   : {}\nAmount   : {} (before GST)\n{}: {}\n').format(
+        getattr(case, 'case_number', '') or '-', client or '-', _money(req.amount),
+        by_label.ljust(9), by_name or '-')
+
+
+def invoice_submitted(actor, req, case, resubmitted=False):
+    """An advocate raised an invoice for accounts -> tell those who issue them."""
+    try:
+        subject = 'Invoice {} for {} - to issue'.format(
+            'resubmitted' if resubmitted else 'raised', getattr(case, 'case_number', '') or 'a case')
+        body = ('An advocate has raised an invoice. Check it and issue it, or return it '
+                'with a note.\n\n' + _request_lines(req, case, 'Raised by', getattr(actor, 'full_name', '')))
+        return _fanout_now(
+            _issuers(case, actor), 'INVOICE_SUBMITTED', subject, body,
+            actor_id=getattr(actor, 'id', None), case_id=getattr(case, 'id', None),
+            client_id=getattr(req, 'client_id', None), entity='InvoiceRequest', entity_id=req.id)
+    except Exception:                                        # noqa: BLE001
+        log.exception('invoice_submitted notification failed')
+        return []
+
+
+def invoice_returned(actor, req):
+    """Accounts sent an invoice back -> tell the advocate who raised it, and why."""
+    try:
+        from core.models import Advocate, Case
+        advocate = Advocate.objects.filter(id=req.requested_by_id).first()
+        case = Case.objects.select_related('client').filter(id=req.case_id).first()
+        subject = 'Invoice returned - {}'.format(getattr(case, 'case_number', '') or 'your case')
+        body = ('Your invoice was returned. Change it and send it again.\n\n'
+                + _request_lines(req, case, 'Returned by', getattr(actor, 'full_name', ''))
+                + '\nWhat to change:\n{}\n'.format(req.note))
+        return _fanout_now(
+            [advocate], 'INVOICE_RETURNED', subject, body,
+            actor_id=getattr(actor, 'id', None), case_id=req.case_id,
+            client_id=req.client_id, entity='InvoiceRequest', entity_id=req.id)
+    except Exception:                                        # noqa: BLE001
+        log.exception('invoice_returned notification failed')
+        return []
+
+
+def invoice_request_issued(actor, req, invoice):
+    """Accounts issued an advocate's invoice -> tell that advocate its number."""
+    try:
+        from core.models import Advocate, Case
+        advocate = Advocate.objects.filter(id=req.requested_by_id).first()
+        case = Case.objects.select_related('client').filter(id=req.case_id).first()
+        number = getattr(invoice, 'invoice_number', '') or invoice.id
+        subject = 'Invoice {} issued - {}'.format(number, getattr(case, 'case_number', '') or '')
+        body = ('Your invoice was issued to the client.\n\nInvoice  : {}\nAmount   : {}\n'
+                'Issued by: {}\nDue date : {}\n').format(
+            number, _money(invoice.amount), getattr(actor, 'full_name', ''), invoice.due_date)
+        return _fanout_now(
+            [advocate], 'INVOICE_GENERATED', subject, body,
+            actor_id=getattr(actor, 'id', None), case_id=req.case_id,
+            client_id=req.client_id, entity='Invoice', entity_id=invoice.id)
+    except Exception:                                        # noqa: BLE001
+        log.exception('invoice_request_issued notification failed')
         return []

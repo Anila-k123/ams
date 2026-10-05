@@ -10,6 +10,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ExpenseSerializer
 from core.practice import practice_ids
+from core.finance import recalc_case_totals
 
 SORT_MAP = {'paymentDate': 'payment_date', 'amount': 'amount', 'title': 'title', 'id': 'id'}
 
@@ -127,6 +128,7 @@ class CreateExpenseView(APIView):
         expense = Expense(advocate_id=request.user.id)
         _apply(expense, data, request)
         expense.save()
+        recalc_case_totals(expense.case_id)
         return Response(ExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
 
 
@@ -137,8 +139,12 @@ class UpdateExpenseView(APIView):
         expense = _base(request).filter(id=pk).first()
         if expense is None:
             return Response({'error': 'Expense not found'}, status=status.HTTP_404_NOT_FOUND)
+        old_case_id = expense.case_id
         _apply(expense, request.data, request)
         expense.save()
+        # Moved to another case: both cases' totals change.
+        for cid in {old_case_id, expense.case_id}:
+            recalc_case_totals(cid)
         return Response(ExpenseSerializer(expense).data)
 
 
@@ -149,5 +155,7 @@ class DeleteExpenseView(APIView):
         expense = Expense.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
         if expense is None:
             return Response({'error': 'Expense not found'}, status=status.HTTP_404_NOT_FOUND)
+        case_id = expense.case_id
         expense.delete()
+        recalc_case_totals(case_id)
         return Response('Expense deleted successfully')

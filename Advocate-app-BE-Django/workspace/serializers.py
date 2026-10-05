@@ -60,7 +60,9 @@ class CaseTaskSerializer(serializers.ModelSerializer):
             'hours': float(s.hours) if s.hours is not None else None,
             'submittedByName': self._name(s.submitted_by_id),
             'createdAt': s.created_at.isoformat() if s.created_at else None,
-        } for s in TaskSubmission.objects.filter(task_id=obj.id)]
+            # What a draft revision changed; the snapshot itself stays server-side.
+            'changes': s.changes,
+        } for s in TaskSubmission.objects.filter(task_id=obj.id).defer('draft_snapshot')]
 
     def _name(self, advocate_id):
         if not advocate_id:

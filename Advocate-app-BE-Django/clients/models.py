@@ -4,7 +4,7 @@ from django.db import models
 
 class ClientHandler(models.Model):
     """The advocate who will take a new client's matter, named when the client
-    is added (typically by the front desk, before any case exists).
+    is added (by the advocate who met them, before any case exists).
 
     A separate managed table rather than a column on `clients`, which belongs
     to the original Spring schema and is managed=False. Plain ids, not foreign

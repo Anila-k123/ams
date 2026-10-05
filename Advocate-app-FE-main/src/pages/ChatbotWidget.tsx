@@ -124,7 +124,7 @@ export default function ChatbotWidget() {
           className="chatbot-bubble-btn"
           aria-label={`Ask ${ASSISTANT_NAME}`}
           tooltip={`Ask ${ASSISTANT_NAME}`}
-          tooltipOptions={{ position: "left" }}
+          tooltipOptions={{ position: "top" }}
           onClick={() => setIsOpen(true)}
         />
       )}

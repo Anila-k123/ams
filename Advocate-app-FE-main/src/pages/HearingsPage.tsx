@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Calendar as BigCalendar, momentLocalizer, Views } from "react-big-calendar";
 import moment from "moment";
 import "react-big-calendar/lib/css/react-big-calendar.css";
@@ -32,9 +32,9 @@ const EVENT_TYPES = [
 ];
 
 const VIEW_OPTIONS = [
+  { value: Views.DAY, label: "Day" },
   { value: Views.WEEK, label: "Week" },
   { value: Views.MONTH, label: "Month" },
-  { value: Views.AGENDA, label: "Agenda" },
 ];
 
 const emptyEvent = {
@@ -55,6 +55,13 @@ const fromHHMM = (s: string) => {
 
 function HearingsPage() {
   const [events, setEvents] = useState<any[]>([]);
+  // Open tasks shown on their deadline date, read from the Tasks page's own
+  // list (/api/workspace/tasks/all, already limited to what this user may
+  // see). Shown, not copied: a copy as a calendar event would go stale when
+  // the task is edited, completed or reassigned, and would raise hearing
+  // reminders. Task alerts come from notifications/events.task_deadlines.
+  const [tasks, setTasks] = useState<any[]>([]);
+  const navigate = useNavigate();
   const [cases, setCases] = useState<any[]>([]);
   const [currentView, setCurrentView] = useState<any>(Views.MONTH);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -97,10 +104,45 @@ function HearingsPage() {
     }
   }, []);
 
+  const canSeeTasks = hasPermission("TASK_VIEW");
+  const fetchTasks = useCallback(async () => {
+    if (!canSeeTasks) return;
+    try {
+      const res = await api.get("/api/workspace/tasks/all");
+      const today = moment().startOf("day");
+      setTasks((res.data || [])
+        .filter((t: any) => t.deadline && !t.completed && !t.cancelled)
+        .map((t: any) => {
+          const due = moment(t.deadline, "YYYY-MM-DD");
+          return {
+            id: `task-${t.id}`,           // never clashes with an event id
+            taskId: t.id,
+            kind: "task",
+            title: `✓ Task: ${t.title}${t.caseNumber ? ` – ${t.caseNumber}` : ""}`,
+            plainTitle: t.title,
+            start: due.toDate(),
+            end: due.toDate(),
+            allDay: true,
+            overdue: due.isBefore(today),
+          };
+        }));
+    } catch (err) {
+      console.error("Error fetching tasks:", err);
+    }
+  }, [canSeeTasks]);
+
   useEffect(() => {
     fetchEvents();
     fetchCases();
-  }, [fetchEvents]);
+    fetchTasks();
+  }, [fetchEvents, fetchTasks]);
+
+  // A task on the calendar opens it on the Tasks page (search + highlight).
+  const onSelectEvent = (item: any) => {
+    if (item.kind === "task") {
+      navigate("/dashboard/tasks", { state: { search: item.plainTitle, id: item.taskId } });
+    }
+  };
 
   const openModal = () => {
     setFormError("");
@@ -177,12 +219,37 @@ function HearingsPage() {
     setNewEvent(emptyEvent);
   };
 
-  const goToToday = () => setCurrentDate(new Date());
-  const step = currentView === Views.MONTH ? "month" : "week";
-  const goToNext = () => setCurrentDate(moment(currentDate).add(1, step).toDate());
-  const goToPrev = () => setCurrentDate(moment(currentDate).subtract(1, step).toDate());
+  // Prev / Next move by what the view shows.
+  const move = (dir: 1 | -1) => {
+    const m = moment(currentDate);
+    m.add(dir, currentView === Views.MONTH ? "month" : currentView === Views.DAY ? "day" : "week");
+    setCurrentDate(m.toDate());
+  };
+  const goToNext = () => move(1);
+  const goToPrev = () => move(-1);
+
+  // The calendar's own toolbar (with its "October 2026" label) is hidden in
+  // HearingsPage.css, so say here what period is on screen.
+  const periodLabel = (() => {
+    const d = moment(currentDate);
+    if (currentView === Views.MONTH) return d.format("MMMM YYYY");
+    if (currentView === Views.DAY) return d.format("ddd, D MMM YYYY");
+    const start = d.clone().startOf("week");
+    const end = d.clone().endOf("week");
+    return `${start.format(start.year() === end.year() ? "D MMM" : "D MMM YYYY")} – ${end.format("D MMM YYYY")}`;
+  })();
 
   const eventStyleGetter = (event: any) => {
+    if (event.kind === "task") {
+      // Tasks look different from hearings and events: outlined, with overdue in red.
+      const colour = event.overdue ? "#c62828" : "#7b1fa2";
+      return {
+        style: {
+          backgroundColor: "#fff", color: colour, border: `1.5px solid ${colour}`,
+          borderRadius: "8px", padding: "1px 5px", fontWeight: event.overdue ? 600 : 500,
+        },
+      };
+    }
     let backgroundColor = "#1976d2";
     if (event.eventType === "HEARING") backgroundColor = "#e53935";
     else if (event.eventType === "MEETING") backgroundColor = "#43a047";
@@ -211,14 +278,17 @@ function HearingsPage() {
       <div className="flex flex-wrap align-items-center gap-2">
         {hasPermission("EVENT_CREATE") && <Button icon="pi pi-plus" label="Add Event" onClick={openModal} />}
         <Button icon="pi pi-chevron-left" label="Prev" className="p-button-outlined" onClick={goToPrev} />
-        <Button label="Today" className="p-button-outlined" onClick={goToToday} />
         <Button icon="pi pi-chevron-right" iconPos="right" label="Next" className="p-button-outlined" onClick={goToNext} />
+        <span className="calendar-period">{periodLabel}</span>
         <SelectButton value={currentView} options={VIEW_OPTIONS} onChange={(e) => e.value && setCurrentView(e.value)} />
       </div>
 
       <BigCalendar
         localizer={localizer}
-        events={events}
+        events={[...events, ...tasks]}
+        onSelectEvent={onSelectEvent}
+        tooltipAccessor={(item: any) => item.kind === "task"
+          ? `${item.overdue ? "Overdue task" : "Task due"}: ${item.plainTitle} (click to open)` : item.title}
         startAccessor="start"
         endAccessor="end"
         style={{ height: 600 }}
@@ -227,6 +297,7 @@ function HearingsPage() {
         view={currentView}
         onNavigate={setCurrentDate}
         onView={setCurrentView}
+        views={[Views.DAY, Views.WEEK, Views.MONTH]}
       />
 
       <Dialog visible={showModal} onHide={closeModal} header="Add New Event" modal style={{ width: "36rem" }} breakpoints={{ "640px": "95vw" }}>

@@ -1,4 +1,6 @@
 import datetime
+from django.db import transaction
+from django.utils import timezone
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework.views import APIView
@@ -10,10 +12,13 @@ import re
 from core.models import Invoice, Case, Advocate
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
-from .serializers import InvoiceSerializer, FirmBillingProfileSerializer
-from .models import InvoiceItem, InvoiceTaxDetail, FirmBillingProfile
+from .serializers import InvoiceSerializer, FirmBillingProfileSerializer, invoice_context
+from .models import (InvoiceItem, InvoiceTaxDetail, FirmBillingProfile, InvoiceRequest,
+                     InvoiceHandling, PaymentInvoice)
 from core.practice import practice_ids, practice_root
+from core.finance import invoice_paid_amounts, recalc_case_totals
 from notifications import client_events, internal_events
+from core.validators import check_payload
 
 SORT_MAP = {'invoiceDate': 'invoice_date', 'dueDate': 'due_date', 'amount': 'amount', 'id': 'id'}
 
@@ -193,14 +198,16 @@ class InvoiceListView(APIView):
         qs = qs.order_by(sort_by if sort_dir == 'asc' else '-' + sort_by, '-id')
         paginator = SpringStylePagination()
         page = paginator.paginate_queryset(qs, request, self)
-        return paginator.get_paginated_response(InvoiceSerializer(page, many=True).data)
+        return paginator.get_paginated_response(
+            InvoiceSerializer(page, many=True, context=invoice_context(page)).data)
 
 
 class MyInvoicesView(APIView):
     permission_classes = [RequirePermission('INVOICE_VIEW')]
 
     def get(self, request):
-        return Response(InvoiceSerializer(_base(request).order_by('-invoice_date', '-id'), many=True).data)
+        invoices = list(_base(request).order_by('-invoice_date', '-id'))
+        return Response(InvoiceSerializer(invoices, many=True, context=invoice_context(invoices)).data)
 
 
 class InvoiceSummaryView(APIView):
@@ -213,21 +220,33 @@ class InvoiceSummaryView(APIView):
         # dues" / "Payment deadline passed", i.e. they want AMOUNTS - but only
         # counts were returned, and the frontend ran them through a currency
         # formatter, so 7 paid invoices displayed as "₹7". Send both.
+        # A part-paid invoice counts once, as outstanding or overdue, with only
+        # its balance there; what was received on it is in "collected".
+        # Cancelled invoices are not owed and are left out.
         paid_amount = unpaid_amount = overdue_amount = 0.0
         monthly_revenue = 0.0
-        for inv in _base(request):
+        invoices = list(_base(request).billable())
+        received = invoice_paid_amounts([i.id for i in invoices])
+        for inv in invoices:
             amount = inv.amount or 0
+            this_month = (inv.invoice_date and inv.invoice_date.year == today.year
+                          and inv.invoice_date.month == today.month)
             if (inv.status or '').upper() == 'PAID':
                 paid += 1
                 paid_amount += amount
-                if inv.invoice_date and inv.invoice_date.year == today.year and inv.invoice_date.month == today.month:
+                if this_month:
                     monthly_revenue += amount
-            elif inv.due_date and inv.due_date < today:
+                continue
+            got = min(received.get(inv.id, 0.0), amount)
+            paid_amount += got
+            if this_month:
+                monthly_revenue += got
+            if inv.due_date and inv.due_date < today:
                 overdue += 1
-                overdue_amount += amount
+                overdue_amount += amount - got
             else:
                 unpaid += 1
-                unpaid_amount += amount
+                unpaid_amount += amount - got
         return Response({
             'paid': paid, 'unpaid': unpaid, 'overdue': overdue,
             'paidAmount': paid_amount, 'unpaidAmount': unpaid_amount,
@@ -236,85 +255,128 @@ class InvoiceSummaryView(APIView):
         })
 
 
+def _billable_case(user, data):
+    """The case an invoice is for, if `user` may bill it; else (None, 400)."""
+    cid = _case_id(data)
+    case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(user)).first() if cid else None
+    if case is None:
+        return None, Response({'error': 'Valid caseId is required'}, status=http.HTTP_400_BAD_REQUEST)
+    if case.client_id is None:
+        return None, Response({'error': 'Selected case has no client; invoice needs a client.'},
+                              status=http.HTTP_400_BAD_REQUEST)
+    return case, None
+
+
+def _taxable(data):
+    """Taxable value = sum of the particulars; falls back to a flat `amount`
+    for older callers that don't send a breakdown. Returns (particulars, total)."""
+    particulars = _parse_particulars(data)
+    if particulars:
+        return particulars, round(sum(p['amount'] for p in particulars), 2)
+    try:
+        return particulars, round(float(data.get('amount') or 0), 2)
+    except (TypeError, ValueError):
+        return particulars, 0.0
+
+
 class CreateInvoiceView(APIView):
-    permission_classes = [RequirePermission('INVOICE_CREATE')]
+    """Issue an invoice straight away. Needs INVOICE_ISSUE (accounts, seniors);
+    advocates who may only raise one go through InvoiceRequestListView."""
+    permission_classes = [RequirePermission('INVOICE_ISSUE')]
 
     def post(self, request):
-        data = request.data
-        cid = _case_id(data)
-        case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first() if cid else None
-        if case is None:
-            return Response({'error': 'Valid caseId is required'}, status=http.HTTP_400_BAD_REQUEST)
-        if case.client_id is None:
-            return Response({'error': 'Selected case has no client; invoice needs a client.'},
-                            status=http.HTTP_400_BAD_REQUEST)
-
-        # Taxable value = sum of the particulars; fall back to a flat `amount`
-        # for older callers that don't send a breakdown.
-        particulars = _parse_particulars(data)
-        if particulars:
-            taxable = round(sum(p['amount'] for p in particulars), 2)
-        else:
-            taxable = round(float(data.get('amount') or 0), 2)
-
-        # Recipient GST/tax details, snapshotted on the invoice. Fields left blank are
-        # filled from the client's record, then their most recent invoice, so a
-        # caller that skips them still gets a proper tax invoice.
-        tax = _parse_tax(data)
-        if not all(tax.get(k) for k in ('recipient_gstin', 'recipient_state')):
-            defaults = _recipient_defaults(case.client_id)
-            for k in _TAX_KEYS:
-                tax[k] = tax.get(k) or defaults[k]
-        if not tax['place_of_supply'] and tax['recipient_state']:
-            tax['place_of_supply'] = '{} - {}'.format(
-                tax['recipient_state'], tax['recipient_state_code']).strip(' -')
-
-        # GST treatment. Forward charge splits CGST+SGST (intra-state) or IGST
-        # (inter-state, by comparing the firm's state to the recipient's).
-        tax_mode = (data.get('taxMode') or 'rcm').strip().lower()
-        if tax_mode not in ('rcm', 'forward'):
-            tax_mode = 'rcm'
-        try:
-            gst_rate = float(data.get('gstRate') or 18)
-        except (TypeError, ValueError):
-            gst_rate = 18.0
-        owner = Advocate.objects.filter(id=practice_root(request.user)).first()
-        supplier_state = (owner.state if owner else '') or ''
-        interstate = bool(supplier_state and tax['recipient_state']
-                          and _norm_state(supplier_state) != _norm_state(tax['recipient_state']))
-        cgst, sgst, igst, total_value = _compute_gst(taxable, tax_mode, gst_rate, interstate)
-        tax.update({'tax_mode': tax_mode, 'gst_rate': gst_rate, 'is_interstate': interstate,
-                    'taxable_value': taxable, 'cgst_amount': cgst, 'sgst_amount': sgst,
-                    'igst_amount': igst, 'total_value': total_value})
-
-        # Auto-number when the client doesn't supply one (the new forms don't).
-        number = (data.get('invoiceNumber') or '').strip() or _next_invoice_number()
-        if Invoice.objects.filter(invoice_number=number).exists():
-            return Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
-
-        today = datetime.date.today()
-        invoice = Invoice.objects.create(
-            invoice_number=number,
-            amount=total_value,           # gross for forward charge; == taxable for RCM
-            invoice_date=_as_date(data.get('invoiceDate'), today),
-            due_date=_as_date(data.get('dueDate'), today + datetime.timedelta(days=30)),
-            status='UNPAID',
-            advocate_id=request.user.id,
-            case=case,
-            client_id=case.client_id,
-        )
-        if particulars:
-            InvoiceItem.objects.bulk_create([
-                InvoiceItem(invoice_id=invoice.id, description=p['description'],
-                            amount=p['amount'], position=p['position'])
-                for p in particulars])
-        InvoiceTaxDetail.objects.create(invoice_id=invoice.id, **tax)
-
-        client_events.invoice_generated(request.user, case.client, invoice, case)
-        # Internal hand-off: tell the accountants (and the team's finance
-        # viewers) there's a new bill to collect.
-        internal_events.invoice_raised(request.user, invoice, case)
+        case, bad = _billable_case(request.user, request.data)
+        if bad is not None:
+            return bad
+        invoice, bad = _create_invoice(request.user, request.data, case)
+        if bad is not None:
+            return bad
         return Response(InvoiceSerializer(invoice).data, status=http.HTTP_201_CREATED)
+
+
+def _create_invoice(actor, data, case, raised_by=None):
+    """Create the GST invoice for `case` from a create-form body.
+
+    Returns (invoice, None) or (None, error Response). `raised_by` is the
+    advocate recorded on the invoice (defaults to `actor`); when accounts
+    issue an advocate's request it is that advocate, so "raised by" and the
+    team's scoping stay with the person who ran the case.
+    """
+    raised_by = raised_by or actor
+    particulars, taxable = _taxable(data)
+
+    # A GSTIN typed on the form must be a real one; a blank one is filled
+    # from the client record below.
+    data, bad = check_payload(data, {'recipientGstin': 'gstin'})
+    if bad is not None:
+        return None, bad
+    # Recipient GST/tax details, snapshotted on the invoice. Fields left blank are
+    # filled from the client's record, then their most recent invoice, so a
+    # caller that skips them still gets a proper tax invoice.
+    tax = _parse_tax(data)
+    if not all(tax.get(k) for k in ('recipient_gstin', 'recipient_state')):
+        defaults = _recipient_defaults(case.client_id)
+        for k in _TAX_KEYS:
+            tax[k] = tax.get(k) or defaults[k]
+    if not tax['place_of_supply'] and tax['recipient_state']:
+        tax['place_of_supply'] = '{} - {}'.format(
+            tax['recipient_state'], tax['recipient_state_code']).strip(' -')
+
+    # GST treatment. Forward charge splits CGST+SGST (intra-state) or IGST
+    # (inter-state, by comparing the firm's state to the recipient's).
+    tax_mode = (data.get('taxMode') or 'rcm').strip().lower()
+    if tax_mode not in ('rcm', 'forward'):
+        tax_mode = 'rcm'
+    try:
+        gst_rate = float(data.get('gstRate') or 18)
+    except (TypeError, ValueError):
+        gst_rate = 18.0
+    owner = Advocate.objects.filter(id=practice_root(raised_by)).first()
+    supplier_state = (owner.state if owner else '') or ''
+    interstate = bool(supplier_state and tax['recipient_state']
+                      and _norm_state(supplier_state) != _norm_state(tax['recipient_state']))
+    cgst, sgst, igst, total_value = _compute_gst(taxable, tax_mode, gst_rate, interstate)
+    tax.update({'tax_mode': tax_mode, 'gst_rate': gst_rate, 'is_interstate': interstate,
+                'taxable_value': taxable, 'cgst_amount': cgst, 'sgst_amount': sgst,
+                'igst_amount': igst, 'total_value': total_value})
+
+    # Auto-number when the client doesn't supply one (the new forms don't).
+    number = (data.get('invoiceNumber') or '').strip() or _next_invoice_number()
+    if Invoice.objects.filter(invoice_number=number).exists():
+        return None, Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
+
+    today = datetime.date.today()
+    invoice = Invoice.objects.create(
+        invoice_number=number,
+        amount=total_value,           # gross for forward charge; == taxable for RCM
+        invoice_date=_as_date(data.get('invoiceDate'), today),
+        due_date=_as_date(data.get('dueDate'), today + datetime.timedelta(days=30)),
+        status='UNPAID',
+        advocate_id=raised_by.id,
+        case=case,
+        client_id=case.client_id,
+    )
+    if particulars:
+        InvoiceItem.objects.bulk_create([
+            InvoiceItem(invoice_id=invoice.id, description=p['description'],
+                        amount=p['amount'], position=p['position'])
+            for p in particulars])
+    InvoiceTaxDetail.objects.create(invoice_id=invoice.id, **tax)
+    # Whoever issues it handles it from here (accounts).
+    handling = InvoiceHandling.objects.create(invoice_id=invoice.id, issued_by_id=actor.id)
+    recalc_case_totals(case.id)
+
+    # Issuing is what tells the client. Record whether the email actually went.
+    if client_events.invoice_generated(raised_by, case.client, invoice, case):
+        handling.client_notified_at = timezone.now()
+        handling.save(update_fields=['client_notified_at'])
+    # Internal hand-off: tell the accountants (and the team's finance
+    # viewers) there's a new bill to collect.
+    # The requester of an issued request hears about it from
+    # invoice_request_issued instead, so they are not told twice.
+    internal_events.invoice_raised(actor, invoice, case,
+                                   skip_ids=() if raised_by is actor else (raised_by.id,))
+    return invoice, None
 
 
 class PayInvoiceView(APIView):
@@ -324,12 +386,51 @@ class PayInvoiceView(APIView):
         invoice = _base(request).filter(id=pk).first()
         if invoice is None:
             return Response({'error': 'Invoice not found'}, status=http.HTTP_404_NOT_FOUND)
+        if (invoice.status or '').upper() == 'CANCELLED':
+            return Response({'error': 'A cancelled invoice cannot be paid.'}, status=http.HTTP_409_CONFLICT)
+        # For money already recorded without a link to this invoice. A new
+        # payment is recorded against the invoice instead (payments/create
+        # with invoiceId), which moves it to PARTIAL / PAID by itself.
         invoice.status = 'PAID'
         invoice.save(update_fields=['status'])
         client_events.invoice_paid(request.user, invoice.client, invoice, invoice.case)
         # Internal hand-off: tell the case's advocates it's settled.
         internal_events.payment_settled(request.user, invoice, invoice.case,
                                         amount=invoice.amount)
+        return Response(InvoiceSerializer(invoice).data)
+
+
+class CancelInvoiceView(APIView):
+    """Cancel an issued invoice, with the reason. A GST invoice is never edited
+    or deleted: a wrong one is cancelled (kept, its number used, out of every
+    total) and a correct one raised. Not once money has been received on it.
+    INVOICE_EDIT, not INVOICE_ISSUE: a senior may issue an invoice, but after
+    issue the invoice is accounts' (payments, corrections)."""
+    permission_classes = [RequirePermission('INVOICE_EDIT')]
+
+    def post(self, request, pk):
+        invoice = _base(request).filter(id=pk).first()
+        if invoice is None:
+            return Response({'error': 'Invoice not found'}, status=http.HTTP_404_NOT_FOUND)
+        status = (invoice.status or '').upper()
+        if status == 'CANCELLED':
+            return Response({'error': 'This invoice is already cancelled.'}, status=http.HTTP_409_CONFLICT)
+        if status in ('PAID', 'PARTIAL') or PaymentInvoice.objects.filter(invoice_id=invoice.id).exists():
+            return Response({'error': 'Money has been received on this invoice, so it cannot be cancelled.'},
+                            status=http.HTTP_409_CONFLICT)
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response({'error': 'Give the reason for cancelling.', 'errors': {'reason': 'Required'}},
+                            status=http.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            invoice.status = 'CANCELLED'
+            invoice.save(update_fields=['status'])
+            handling, _ = InvoiceHandling.objects.get_or_create(
+                invoice_id=invoice.id, defaults={'issued_by_id': invoice.advocate_id})
+            handling.cancelled_by_id, handling.cancel_reason = request.user.id, reason[:2000]
+            handling.cancelled_at = timezone.now()
+            handling.save(update_fields=['cancelled_by_id', 'cancel_reason', 'cancelled_at'])
+        recalc_case_totals(invoice.case_id)
         return Response(InvoiceSerializer(invoice).data)
 
 
@@ -350,8 +451,190 @@ class BillingProfileView(APIView):
         if request.user.id != owner_id:
             return Response({'error': 'Only the firm owner can edit billing details.'},
                             status=http.HTTP_403_FORBIDDEN)
+        data, bad = check_payload(request.data, {'ifscCode': 'ifsc', 'remittanceEmail': 'email'})
+        if bad is not None:
+            return bad
         profile, _ = FirmBillingProfile.objects.get_or_create(advocate_id=owner_id)
-        ser = FirmBillingProfileSerializer(profile, data=request.data, partial=True)
+        ser = FirmBillingProfileSerializer(profile, data=data, partial=True)
         ser.is_valid(raise_exception=True)
         ser.save()
         return Response(ser.data)
+
+
+# ---------------------------------------------------------------------------
+# Advocate-raised invoices: raise -> accounts issue (or return with a note).
+# ---------------------------------------------------------------------------
+
+def _requests_in_scope(user):
+    """Invoice requests on cases this user's team (or firm) can see."""
+    case_ids = Case.objects.filter(advocate_id__in=practice_ids(user)).values_list('id', flat=True)
+    return InvoiceRequest.objects.filter(case_id__in=list(case_ids))
+
+
+def _request_json(req, cases=None, people=None):
+    case = (cases or {}).get(req.case_id) or Case.objects.select_related('client').filter(id=req.case_id).first()
+    names = people if people is not None else dict(
+        Advocate.objects.filter(id__in=[req.requested_by_id, req.reviewed_by_id])
+        .values_list('id', 'full_name'))
+    p = req.payload or {}
+    return {
+        'id': req.id, 'status': req.status, 'amount': req.amount, 'note': req.note,
+        'caseId': req.case_id, 'caseNumber': case.case_number if case else None,
+        'caseTitle': case.case_title if case else None,
+        'clientId': req.client_id,
+        'clientName': case.client.name if case and case.client_id and case.client else None,
+        'requestedById': req.requested_by_id, 'requestedByName': names.get(req.requested_by_id),
+        'reviewedById': req.reviewed_by_id, 'reviewedByName': names.get(req.reviewed_by_id),
+        'invoiceId': req.invoice_id, 'payload': p,
+        'invoiceDate': p.get('invoiceDate'), 'dueDate': p.get('dueDate'),
+        'createdAt': req.created_at, 'updatedAt': req.updated_at,
+    }
+
+
+def _clean_payload(data, case_id):
+    """The form body as stored on a request: no invoice number (accounts number
+    it on issue), and the request's own case (it cannot be moved to another)."""
+    body = {k: v for k, v in dict(data).items() if k not in ('invoiceNumber', 'caseEntity')}
+    body['caseId'] = case_id
+    return body
+
+
+def _check_request_body(data):
+    """(taxable, None) if the body can become an invoice, else (None, 400)."""
+    _, bad = check_payload(data, {'recipientGstin': 'gstin'})
+    if bad is not None:
+        return None, bad
+    _, taxable = _taxable(data)
+    if taxable <= 0:
+        return None, Response({'error': 'Add at least one particular with an amount.'},
+                              status=http.HTTP_400_BAD_REQUEST)
+    return taxable, None
+
+
+class InvoiceRequestListView(APIView):
+    """GET: requests in scope (?status=SUBMITTED,RETURNED is the default).
+    POST: an advocate raises an invoice for accounts to issue."""
+    permission_classes = [RequirePermission('INVOICE_CREATE')]
+
+    def get(self, request):
+        wanted = [s.strip().upper() for s in (request.query_params.get('status') or
+                                               'SUBMITTED,RETURNED').split(',') if s.strip()]
+        reqs = list(_requests_in_scope(request.user).filter(status__in=wanted)
+                    .order_by('-updated_at', '-id')[:200])
+        cases = {c.id: c for c in Case.objects.select_related('client')
+                 .filter(id__in=[r.case_id for r in reqs])}
+        people = dict(Advocate.objects.filter(
+            id__in={r.requested_by_id for r in reqs} | {r.reviewed_by_id for r in reqs if r.reviewed_by_id})
+            .values_list('id', 'full_name'))
+        return Response([_request_json(r, cases, people) for r in reqs])
+
+    def post(self, request):
+        case, bad = _billable_case(request.user, request.data)
+        if bad is not None:
+            return bad
+        taxable, bad = _check_request_body(request.data)
+        if bad is not None:
+            return bad
+        req = InvoiceRequest.objects.create(
+            case_id=case.id, client_id=case.client_id, requested_by_id=request.user.id,
+            payload=_clean_payload(request.data, case.id), amount=taxable)
+        internal_events.invoice_submitted(request.user, req, case)
+        return Response(_request_json(req), status=http.HTTP_201_CREATED)
+
+
+class InvoiceRequestDetailView(APIView):
+    """PUT: the advocate edits a waiting or returned request (a returned one is
+    sent to accounts again). DELETE: the advocate withdraws it. Only the
+    advocate who raised it may do either."""
+    permission_classes = [RequirePermission('INVOICE_CREATE')]
+
+    def _own_open(self, request, pk):
+        req = _requests_in_scope(request.user).filter(id=pk).first()
+        if req is None:
+            return None, Response({'error': 'Invoice request not found'}, status=http.HTTP_404_NOT_FOUND)
+        if req.requested_by_id != request.user.id:
+            return None, Response({'error': 'Only the advocate who raised it can change it.'},
+                                  status=http.HTTP_403_FORBIDDEN)
+        if req.status not in (InvoiceRequest.SUBMITTED, InvoiceRequest.RETURNED):
+            return None, Response({'error': 'This request is already {}.'.format(req.status.lower())},
+                                  status=http.HTTP_409_CONFLICT)
+        return req, None
+
+    def put(self, request, pk):
+        req, bad = self._own_open(request, pk)
+        if bad is not None:
+            return bad
+        taxable, bad = _check_request_body(request.data)
+        if bad is not None:
+            return bad
+        was_returned = req.status == InvoiceRequest.RETURNED
+        req.payload, req.amount = _clean_payload(request.data, req.case_id), taxable
+        req.status = InvoiceRequest.SUBMITTED
+        req.save(update_fields=['payload', 'amount', 'status', 'updated_at'])
+        if was_returned:
+            case = Case.objects.filter(id=req.case_id).first()
+            internal_events.invoice_submitted(request.user, req, case, resubmitted=True)
+        return Response(_request_json(req))
+
+    def delete(self, request, pk):
+        req, bad = self._own_open(request, pk)
+        if bad is not None:
+            return bad
+        req.status = InvoiceRequest.WITHDRAWN
+        req.save(update_fields=['status', 'updated_at'])
+        return Response(status=http.HTTP_204_NO_CONTENT)
+
+
+class InvoiceRequestIssueView(APIView):
+    """Accounts issue a request: the real invoice is created now - numbered,
+    counted, sent to the client - with the requesting advocate as its advocate.
+    The body may carry corrected fields (GST, dates, particulars); they win."""
+    permission_classes = [RequirePermission('INVOICE_ISSUE')]
+
+    def post(self, request, pk):
+        req = _requests_in_scope(request.user).filter(id=pk).first()
+        if req is None:
+            return Response({'error': 'Invoice request not found'}, status=http.HTTP_404_NOT_FOUND)
+        data = dict(req.payload or {})
+        data.update({k: v for k, v in dict(request.data).items() if k not in ('caseId', 'caseEntity')})
+        data['caseId'] = req.case_id
+        case, bad = _billable_case(request.user, data)
+        if bad is not None:
+            return bad
+        raised_by = Advocate.objects.filter(id=req.requested_by_id).first() or request.user
+        with transaction.atomic():
+            # Lock the row so two people pressing Issue together make one invoice.
+            req = InvoiceRequest.objects.select_for_update().get(id=req.id)
+            if req.status != InvoiceRequest.SUBMITTED:
+                return Response({'error': 'Only a submitted request can be issued (this one is {}).'
+                                 .format(req.status.lower())}, status=http.HTTP_409_CONFLICT)
+            invoice, bad = _create_invoice(request.user, data, case, raised_by=raised_by)
+            if bad is not None:
+                return bad
+            req.status, req.invoice_id, req.reviewed_by_id = InvoiceRequest.ISSUED, invoice.id, request.user.id
+            req.payload, req.note = _clean_payload(data, req.case_id), ''
+            req.save(update_fields=['status', 'invoice_id', 'reviewed_by_id', 'payload', 'note', 'updated_at'])
+        internal_events.invoice_request_issued(request.user, req, invoice)
+        return Response({'request': _request_json(req), 'invoice': InvoiceSerializer(invoice).data},
+                        status=http.HTTP_201_CREATED)
+
+
+class InvoiceRequestReturnView(APIView):
+    """Accounts send a request back to the advocate, saying what to fix."""
+    permission_classes = [RequirePermission('INVOICE_ISSUE')]
+
+    def post(self, request, pk):
+        req = _requests_in_scope(request.user).filter(id=pk).first()
+        if req is None:
+            return Response({'error': 'Invoice request not found'}, status=http.HTTP_404_NOT_FOUND)
+        if req.status != InvoiceRequest.SUBMITTED:
+            return Response({'error': 'Only a submitted request can be returned.'},
+                            status=http.HTTP_409_CONFLICT)
+        note = (request.data.get('note') or '').strip()
+        if not note:
+            return Response({'error': 'Say what needs to change.', 'errors': {'note': 'Required'}},
+                            status=http.HTTP_400_BAD_REQUEST)
+        req.status, req.note, req.reviewed_by_id = InvoiceRequest.RETURNED, note[:2000], request.user.id
+        req.save(update_fields=['status', 'note', 'reviewed_by_id', 'updated_at'])
+        internal_events.invoice_returned(request.user, req)
+        return Response(_request_json(req))

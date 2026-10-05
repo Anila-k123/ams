@@ -4,10 +4,19 @@ import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { useAssistant } from '../contexts/AssistantContext';
 
-const QUICK = ['Open Cases', 'Open Clients', "Today's Hearings", 'Dashboard Summary', 'Find Client'];
+// Each button sends an exact command name (assistant/views.py COMMANDS):
+// instant and free. "Find Client" needs a name, so it pre-fills the input and
+// the typed message goes to the AI like any other.
+const QUICK: { label: string; command: string | null }[] = [
+  { label: 'Open Cases', command: 'open_cases' },
+  { label: 'Open Clients', command: 'open_clients' },
+  { label: "Today's Hearings", command: 'todays_hearings' },
+  { label: 'Dashboard Summary', command: 'dashboard_summary' },
+  { label: 'Find Client', command: null },
+];
 
 export default function AssistantInput() {
-  const { inputValue, setInputValue, sendQuery, suggestions, isProcessing } = useAssistant() as any;
+  const { inputValue, setInputValue, sendQuery, sendCommand, suggestions, isProcessing } = useAssistant() as any;
   const inputRef = useRef<HTMLInputElement>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -28,13 +37,12 @@ export default function AssistantInput() {
     inputRef.current?.focus();
   };
 
-  const handleQuickAction = (cmd: string) => {
-    // "Find Client" needs a name, so pre-fill instead of sending.
-    if (cmd === 'Find Client') {
+  const handleQuickAction = (q: { label: string; command: string | null }) => {
+    if (!q.command) {
       handleSuggestionClick('Find client ');
       return;
     }
-    sendQuery(cmd);
+    sendCommand(q.command, q.label);
   };
 
   return (
@@ -49,9 +57,9 @@ export default function AssistantInput() {
 
       <div className="assistant-quick-chips flex flex-wrap align-items-center gap-1">
         <span className="chip-label">Quick:</span>
-        {QUICK.map((cmd) => (
-          <Button key={cmd} type="button" size="small" rounded outlined className="quick-chip" label={cmd}
-            onClick={() => handleQuickAction(cmd)} disabled={isProcessing} />
+        {QUICK.map((q) => (
+          <Button key={q.label} type="button" size="small" rounded outlined className="quick-chip" label={q.label}
+            onClick={() => handleQuickAction(q)} disabled={isProcessing} />
         ))}
       </div>
 

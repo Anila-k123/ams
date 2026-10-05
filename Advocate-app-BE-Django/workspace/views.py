@@ -10,7 +10,8 @@ from rest_framework import status
 from core.models import Case, CaseEvent, Expense, Invoice, ClientPayment, Document, Advocate
 from core.permissions import RequirePermission
 from expenses.serializers import ExpenseSerializer
-from invoices.serializers import InvoiceSerializer
+from invoices.serializers import InvoiceSerializer, invoice_context
+from core.finance import invoice_balance
 from payments.serializers import ClientPaymentSerializer
 from .models import CaseNote, CaseTag, CaseTask, CaseParty, RelatedCase, CaseTaskDocument, HearingDetail
 from .access import visible_tasks
@@ -154,6 +155,33 @@ class DeleteCaseNoteView(APIView):
             return Response({'error': 'Note not found'}, status=status.HTTP_404_NOT_FOUND)
         note.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- Case profile (manual-entry details, CNR once linked) -----------------
+
+class CaseProfileView(APIView):
+    """GET / PUT a case's CaseProfile: matter type, court or forum, our side,
+    filing details, acts, and the CNR once linked to its court record."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request, case_id):
+        from . import case_profile
+        from .models import CaseProfile
+        if not _owns_case(request, case_id):
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(case_profile.payload(CaseProfile.objects.filter(case_id=case_id).first()))
+
+    def put(self, request, case_id):
+        from . import case_profile
+        if 'CASE_EDIT' not in request.user.permission_codes():
+            return Response({'error': 'You cannot edit this case.'}, status=status.HTTP_403_FORBIDDEN)
+        if not _owns_case(request, case_id):
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            profile = case_profile.save(case_id, request.data)
+        except case_profile.ProfileError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(case_profile.payload(profile))
 
 
 # --- Tags ----------------------------------------------------------------
@@ -431,9 +459,23 @@ class ReviewTaskView(APIView):
         return Response(CaseTaskSerializer(task).data)
 
 
+def task_owner_id(task):
+    """Who owns a task's terms: the person who assigned it, or for tasks from
+    before assignment existed, its creator. Only they set its priority and
+    cancel, restore or delete it; the assignee does the work."""
+    return task.assigned_by_id or task.advocate_id
+
+
+def _not_owner(task, user, what):
+    if user.id != task_owner_id(task):
+        return Response({'error': 'Only the person who assigned this task can {}.'.format(what)},
+                        status=status.HTTP_403_FORBIDDEN)
+    return None
+
+
 class UpdateTaskPriorityView(APIView):
-    """PUT /api/workspace/tasks/<pk>/priority {priority}. Any practice member
-    (including the task's assignee) may change a task's priority."""
+    """PUT /api/workspace/tasks/<pk>/priority {priority}. Only the task's
+    owner (task_owner_id) may change it - not the assignee, not the team."""
     permission_classes = [RequirePermission()]
 
     _ALLOWED = {'LOW', 'MEDIUM', 'HIGH'}
@@ -442,6 +484,9 @@ class UpdateTaskPriorityView(APIView):
         task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        refused = _not_owner(task, request.user, 'change its priority')
+        if refused is not None:
+            return refused
         priority = (request.data.get('priority') or '').strip().upper()
         if priority not in self._ALLOWED:
             return Response({'error': 'priority must be LOW, MEDIUM or HIGH'},
@@ -455,19 +500,16 @@ class CancelTaskView(APIView):
     """PUT /api/workspace/tasks/<pk>/cancel {cancelled?} -> soft-cancel a task.
 
     Replaces hard delete: the task is kept for the record, just flagged cancelled.
-    Body may pass {cancelled: false} to restore. Any practice member may do it."""
+    Body may pass {cancelled: false} to restore. Only the task's owner may."""
     permission_classes = [RequirePermission()]
 
     def put(self, request, pk):
         task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
-        # Only the person who assigned the task may cancel/restore it. For tasks
-        # created before assignment existed, the creator is the assigner.
-        assigner_id = task.assigned_by_id or task.advocate_id
-        if request.user.id != assigner_id:
-            return Response({'error': 'Only the person who assigned this task can cancel it.'},
-                            status=status.HTTP_403_FORBIDDEN)
+        refused = _not_owner(task, request.user, 'cancel or restore it')
+        if refused is not None:
+            return refused
         cancelled = request.data.get('cancelled', True)
         task.cancelled = bool(cancelled)
         task.save(update_fields=['cancelled'])
@@ -481,6 +523,9 @@ class DeleteCaseTaskView(APIView):
         task = visible_tasks(request.user).filter(id=pk).first()
         if task is None:
             return Response({'error': 'Task not found'}, status=status.HTTP_404_NOT_FOUND)
+        refused = _not_owner(task, request.user, 'delete it')
+        if refused is not None:
+            return refused
         task.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -570,14 +615,19 @@ class CaseFinancialsView(APIView):
                     .order_by('-payment_date', '-id'))
 
         total_expenses = sum((e.amount or 0) for e in expenses)
-        total_invoiced = sum((i.amount or 0) for i in invoices)
-        total_paid = sum((i.amount or 0) for i in invoices if (i.status or '').upper() == 'PAID')
-        total_unpaid = round(total_invoiced - total_paid, 2)
+        # Cancelled invoices are listed but owed by nobody; part-paid ones
+        # owe only their balance.
+        invoices = list(invoices)
+        ctx = invoice_context(invoices)
+        billable = [i for i in invoices if (i.status or '').upper() != 'CANCELLED']
+        total_invoiced = sum((i.amount or 0) for i in billable)
+        total_unpaid = round(sum(invoice_balance(i, ctx['paid'].get(i.id, 0.0)) for i in billable), 2)
+        total_paid = round(total_invoiced - total_unpaid, 2)
         total_payments = sum((p.amount or 0) for p in payments)
 
         return Response({
             'expenses': ExpenseSerializer(expenses, many=True).data,
-            'invoices': InvoiceSerializer(invoices, many=True).data,
+            'invoices': InvoiceSerializer(invoices, many=True, context=ctx).data,
             'payments': ClientPaymentSerializer(payments, many=True).data,
             'totals': {
                 'totalExpenses': round(total_expenses, 2),

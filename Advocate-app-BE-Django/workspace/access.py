@@ -2,7 +2,7 @@
 
 A task belongs to the practice, but not everyone in it should see every task.
 Whoever can hand out work (TASK_ASSIGN: seniors, the firm admin) sees the whole
-team's tasks, as before. Everyone else - juniors, interns, reception, the
+team's tasks, as before. Everyone else - juniors, interns, the
 accountant - sees only the tasks assigned to them or created by them.
 
 Every task query that reaches a user goes through visible_tasks(), lists and

@@ -9,9 +9,10 @@ from core.models import Client
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import ClientSerializer, ClientRequestSerializer
-from core.practice import practice_ids
+from core.practice import has_firm_wide_scope, practice_ids
 from notifications import client_events
 from . import handlers, profile
+from core.validators import check_payload
 
 SORT_MAP = {'createdAt': 'created_at', 'name': 'name', 'email': 'email', 'id': 'id'}
 
@@ -99,9 +100,13 @@ def _find_practice_duplicate(user, name, email, phone_digits):
     return active, archived
 
 
-def _save_profile(request, client):
+# Format-checked before anything is saved (core/validators.py).
+CLIENT_FORMATS = {'email': 'email', 'phone': 'phone', 'gstin': 'gstin', 'pincode': 'pincode'}
+
+
+def _save_profile(data, client):
     """Store the form's extra fields and rebuild clients.address from its parts."""
-    line = profile.save(client, profile.sent_fields(request.data))
+    line = profile.save(client, profile.sent_fields(data))
     if line is not None and line != client.address:
         client.address = line
         client.save(update_fields=['address'])
@@ -134,7 +139,10 @@ class CreateClientView(APIView):
     permission_classes = [RequirePermission('CLIENT_CREATE')]
 
     def post(self, request):
-        s = ClientRequestSerializer(data=request.data)
+        data, bad = check_payload(request.data, CLIENT_FORMATS)
+        if bad is not None:
+            return bad
+        s = ClientRequestSerializer(data=data)
         s.is_valid(raise_exception=True)
         d = s.validated_data
         # Checked before anything is saved, so a bad pick doesn't leave a
@@ -167,17 +175,23 @@ class CreateClientView(APIView):
                 archived.address = d.get('address')
                 archived.deleted = False
                 archived.save()
-                _save_profile(request, archived)
+                _save_profile(data, archived)
                 if handler is not None:
                     handlers.assign(request.user, archived, handler)
                 return Response(ClientSerializer(archived).data,
                                 status=status.HTTP_200_OK)
 
+        # Firm-wide staff (the Super Admin) register clients for any team: the
+        # client then belongs to the handler's team, so that team (and not the
+        # other seniors' teams) sees it. Everyone else adds to their own team.
+        owner_id = request.user.id
+        if handler is not None and has_firm_wide_scope(request.user):
+            owner_id = handler.id
         client = Client.objects.create(
             name=d['name'], email=d.get('email'), phone=d.get('phone'),
-            address=d.get('address'), deleted=False, advocate_id=request.user.id,
+            address=d.get('address'), deleted=False, advocate_id=owner_id,
         )
-        _save_profile(request, client)
+        _save_profile(data, client)
         client_events.client_registered(request.user, client)
         if handler is not None:
             handlers.assign(request.user, client, handler)
@@ -195,7 +209,10 @@ class UpdateClientView(APIView):
         client = _owned(request, pk)
         if client is None:
             return Response({'error': 'Client not found'}, status=status.HTTP_404_NOT_FOUND)
-        s = ClientRequestSerializer(data=request.data)
+        data, bad = check_payload(request.data, CLIENT_FORMATS)
+        if bad is not None:
+            return bad
+        s = ClientRequestSerializer(data=data)
         s.is_valid(raise_exception=True)
         d = s.validated_data
         handler, error = _handler_or_error(request, d)
@@ -206,13 +223,13 @@ class UpdateClientView(APIView):
         client.phone = d.get('phone')
         # The form sends address parts, not `address`; only a caller that
         # sends `address` itself replaces it (it used to be nulled on every edit).
-        if 'address' in request.data:
+        if 'address' in data:
             client.address = d.get('address')
         client.save()
-        _save_profile(request, client)
+        _save_profile(data, client)
         # Only touch the handler when the form sent the field: older callers
         # that don't know about it must not wipe an existing assignment.
-        if 'handlingAdvocateId' in request.data:
+        if 'handlingAdvocateId' in data:
             if handler is not None:
                 handlers.assign(request.user, client, handler)
             else:

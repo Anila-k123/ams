@@ -38,6 +38,7 @@ def _client_user(pk):
     return is_client_id(pk)
 
 
+_USER_NOT_FOUND = {'error': 'User not found'}
 _NOT_HERE = {'error': 'Client logins are managed from the client\'s "Client logins".'}
 
 
@@ -229,12 +230,31 @@ def _has_history(advocate):
 USER_MANAGE = [RequirePermission('USER_MANAGE')]
 
 
+def _firm_users(request):
+    """The accounts this admin manages: everyone in their own firm (every
+    team root of the firm, and the members under them). USER_MANAGE is a
+    firm's admin permission, not a server-wide one: with several firms on one
+    server, an admin must not list, edit, re-role or close another firm's
+    people."""
+    from django.db.models import Q
+    roots = practice.firm_team_roots(request.user)
+    return Advocate.objects.filter(Q(id__in=roots) | Q(parent_advocate_id__in=roots))
+
+
+def _firm_user(request, pk):
+    """One account in this admin's firm, or None (answered as not found)."""
+    if _client_user(pk):
+        return None
+    return _firm_users(request).filter(id=pk).first()
+
+
 class UsersView(APIView):
     permission_classes = USER_MANAGE
 
     def get(self, request):
         from clientaccess.gate import client_advocate_ids
-        return Response([_user_map(a) for a in Advocate.objects.exclude(id__in=client_advocate_ids()).order_by('id')])
+        return Response([_user_map(a) for a in
+                         _firm_users(request).exclude(id__in=client_advocate_ids()).order_by('id')])
 
     def post(self, request):
         d, bad = check_payload(request.data, {'email': 'email', 'phone': 'phone'})
@@ -288,14 +308,14 @@ class UserDetailView(APIView):
     permission_classes = USER_MANAGE
 
     def get(self, request, pk):
-        adv = Advocate.objects.filter(id=pk).first()
-        if adv is None or _client_user(pk):
+        adv = _firm_user(request, pk)
+        if adv is None:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         return Response(_user_map(adv))
 
     def put(self, request, pk):
-        adv = Advocate.objects.filter(id=pk).first()
-        if adv is None or _client_user(pk):
+        adv = _firm_user(request, pk)
+        if adv is None:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         d, bad = check_payload(request.data, {'email': 'email', 'phone': 'phone'})
         if bad is not None:
@@ -350,8 +370,8 @@ class UserDetailView(APIView):
         So an account with history is marked as having left instead: the person
         loses access, the practice keeps the cases, clients and invoices.
         """
-        adv = Advocate.objects.filter(id=pk).first()
-        if adv is None or _client_user(pk):
+        adv = _firm_user(request, pk)
+        if adv is None:
             return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
         if adv.id == request.user.id:
             return Response({'error': 'You cannot remove your own account.'},
@@ -388,6 +408,8 @@ class UserRolesView(APIView):
     def get(self, request, pk):
         if _client_user(pk):
             return Response(_NOT_HERE, status=status.HTTP_404_NOT_FOUND)
+        if _firm_user(request, pk) is None:
+            return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         role_ids = AdvocateRole.objects.filter(advocate_id=pk).values_list('role_id', flat=True)
         roles = Role.objects.filter(id__in=list(role_ids)).order_by('id')
         return Response([{'id': r.id, 'name': r.name, 'description': r.description} for r in roles])
@@ -396,6 +418,8 @@ class UserRolesView(APIView):
         new_ids = _parse_ids(request.data, 'roleIds')
         if _client_user(pk) or any(_client_role(r) for r in new_ids):
             return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
+        if _firm_user(request, pk) is None:
+            return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         AdvocateRole.objects.filter(advocate_id=pk).delete()
         AdvocateRole.objects.bulk_create([
             AdvocateRole(advocate_id=pk, role_id=rid) for rid in new_ids
@@ -409,6 +433,8 @@ class UserRoleItemView(APIView):
     def post(self, request, pk, role_id):
         if _client_user(pk) or _client_role(role_id):
             return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
+        if _firm_user(request, pk) is None:
+            return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         if not AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).exists():
             AdvocateRole.objects.create(advocate_id=pk, role_id=role_id)
         return Response({'message': 'Role assigned.'})
@@ -416,5 +442,7 @@ class UserRoleItemView(APIView):
     def delete(self, request, pk, role_id):
         if _client_user(pk):
             return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
+        if _firm_user(request, pk) is None:
+            return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).delete()
         return Response({'message': 'Role removed.'})

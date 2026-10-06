@@ -43,6 +43,15 @@ The role hierarchy is **Super Admin > Senior Advocate > Advocate > Intern** (plu
 python manage.py rename_junior_role
 ```
 
+**A new, separate firm** (for example a sandbox for a team to explore in). Users → Add User always adds people to the creating admin's own firm, so the first account comes from a command:
+
+```
+python manage.py create_firm --name "Sandbox Law Chambers" --admin-name "Anitha R" --admin-email anitha@example.com --senior "Ravi K <ravi@example.com>" --password Explore@2026
+python manage.py create_firm ... --yes
+```
+
+Without `--yes` it only shows what it would create. The new Super Admin's firm is invisible to every other firm. Each `--senior` becomes a team of it ("Head of own practice"), and later users added by that admin from the screens join it too. It's safe to re-run; existing emails are left alone.
+
 **History:**
 - Until 2026-09-25, AMS used `advocate_db` and drafting used `pactpro`, behind a database router.
 - Both were merged into `PactPro_db`: AMS's `public` plus drafting's `drf`, with every row count checked.

@@ -288,3 +288,18 @@ C:\Users\ANILA\scrap/           # separate repo — ALL scraping lives here
 **The boundary is deliberate: no scraping code in the AMS backend.** The backend
 proxies, caches, stores and matches; the scraper fetches and parses. `pdfplumber`
 and `beautifulsoup4` belong to the scraper's requirements, not the backend's.
+
+## Hosting on the local network (LAN)
+
+To let other devices on the same network use the app at `http://<this-PC's-IP>:5173` (e.g. `http://192.168.1.36:5173`):
+
+1. **Frontend `.env`:** set `VITE_API_BASE=http://<IP>:8080`. With `127.0.0.1`, other devices would call themselves and every login would fail. This PC keeps working with the IP too.
+2. **Backend `.env`:**
+   - `ALLOWED_HOSTS` includes `<IP>`.
+   - `CORS_ORIGINS` includes `http://<IP>:5173`.
+   - `CLIENT_APP_URL=http://<IP>:5173`, so client-portal invite links open on other devices.
+3. **Start with `run-project.bat`.** It already binds the backend to `0.0.0.0:8080`, and Vite has `host: true`. A backend started with plain `runserver 8080` listens on `127.0.0.1` only, so other devices can't reach it.
+4. **Windows Firewall** must allow `node.exe` and the Python that runs Django (the base interpreter, e.g. `Python311\python.exe`, not the venv launcher) on the active network profile. Windows asks the first time; check with `Get-NetFirewallRule`.
+5. **Restart Vite after changing `.env`.** It reads `VITE_*` only at start.
+
+If the PC's IP changes (DHCP), update both `.env` files. A fixed IP or a DHCP reservation on the router avoids this.

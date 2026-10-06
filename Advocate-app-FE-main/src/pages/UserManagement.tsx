@@ -35,6 +35,11 @@ export default function UserManagement() {
   const [practiceOwnerId, setPracticeOwnerId] = useState("");
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesLoadFailed, setRolesLoadFailed] = useState(false);
+  // Form validation display. Declared with the other hooks: below the early
+  // "loading" return they ran on some renders only, and React threw
+  // "Rendered more hooks than during the previous render" - a blank page.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [triedSave, setTriedSave] = useState(false);
   const { hasPermission } = usePermission() as any;
   const { success, error } = useToast() as any;
   const canManage = hasPermission("USER_MANAGE");
@@ -169,8 +174,6 @@ export default function UserManagement() {
     ...seniors.map((s) => ({ label: `Reports to ${s.fullName}`, value: String(s.id) })),
   ];
 
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
-  const [triedSave, setTriedSave] = useState(false);
   const field = (key: string, label: string, type = "text") => {
     const msg = touched[key] || triedSave ? formatErrors(form, USER_FORMATS)[key] || "" : "";
     return (

@@ -254,7 +254,8 @@ class UserDeletionTest(TestCase):
 
     def test_an_empty_account_is_actually_deleted(self):
         from core.models import Advocate
-        empty = make_advocate('empty@test.local')
+        # In the admin's own firm: an admin manages only their firm's accounts.
+        empty = make_advocate('empty@test.local', parent_advocate_id=self.admin.id)
         res = self.client.delete('/api/admin/users/%d' % empty.id,
                                  **auth(self.admin))
         self.assertEqual(res.status_code, 200)

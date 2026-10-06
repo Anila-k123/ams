@@ -12,9 +12,20 @@ Drafting is a feature inside AMS, served under `/api/drafting/` and on the front
 |---|---|---|
 | Backend API | `python manage.py runserver 8080` (prod: a WSGI server on `advocate_backend.wsgi`) | always |
 | Frontend | `npm run dev` in `Advocate-app-FE-main` (prod: `npm run build`, serve `dist/`) | always |
-| Court lookup scraper | the separate scraper service at `COURT_API_BASE` | for Add Case court import |
+| Court lookup scraper | the separate scraper service at `COURT_API_BASE` (task **PactPro Scraper**) | for every court feature |
+| Notifications scheduler | `python manage.py run_scheduler` (task **PactPro Scheduler**, or `run-scheduler.bat`) | for reminders (hearings, overdue invoices, task deadlines) and retries |
 | Celery worker | `celery -A advocate_backend worker -l info` | the permanent job setup (`CELERY_TASK_ALWAYS_EAGER=False`); until then the API starts its own stopgap worker process |
 | Redis | any Redis at `REDIS_URL` | only with the worker |
+
+### Keeping the scraper and scheduler running
+
+`powershell -ExecutionPolicy Bypass -File tools\install-services.ps1` registers both as Windows scheduled tasks for the signed-in user. They start at sign-in and need no admin rights.
+- Each runs under `tools\keepalive.ps1`, which restarts the process whenever it stops. A process that keeps failing straight after start is retried with a growing pause, up to 5 minutes.
+- The task restarts the wrapper itself if that ever dies.
+- Logs are `logs\Scraper.log` and `logs\Scheduler.log`: the process output plus a `[keepalive]` line for every start and stop, with the exit code. They roll over at 10 MB.
+- `-Status` shows whether each is running; `-Uninstall` stops and removes both.
+- The scraper runs without `--reload` here. Under `--reload`, a child process keeps the port after its parent dies, and a new scraper can't bind. Install and uninstall stop such children too.
+- On a server, NSSM (Windows service) or systemd does the same job and also runs before anyone signs in.
 
 ## Database
 

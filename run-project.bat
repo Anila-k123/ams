@@ -5,16 +5,20 @@ REM ---------------------------------------------------------------------------
 REM Opens one window per service. Close a window to stop that service.
 REM
 REM The scraper lives in a SEPARATE repository (all scraping is kept out of the
-REM AMS backend), so its path is configurable below. Nothing auto-starts it and
-REM nothing restarts it: while it is down, every court feature - display boards,
-REM Daily Status, case import, cause lists - fails with a 503. It is started
-REM here so that is one less thing to forget.
+REM AMS backend), so its path is configurable below. While it is down, every
+REM court feature - display boards, Daily Status, case import, cause lists -
+REM fails with a 503.
+REM
+REM Preferred: tools\install-services.ps1 runs the scraper and the notifications
+REM scheduler as sign-in tasks that restart them if they stop. When they are
+REM already running (port 8000 in use / a run_scheduler process), this script
+REM leaves them alone instead of starting a second copy.
 REM ---------------------------------------------------------------------------
 
 set "ROOT=%~dp0"
 set "BE=%ROOT%Advocate-app-BE-Django"
 set "FE=%ROOT%Advocate-app-FE-main"
-if not defined SCRAPER_DIR set "SCRAPER_DIR=C:\Users\ANILA\scrap"
+if not defined SCRAPER_DIR set "SCRAPER_DIR=%USERPROFILE%\scrap"
 
 echo ========================================
 echo Starting Advocate Management System
@@ -43,13 +47,24 @@ if not exist "%FE%\package.json" (
 )
 
 REM --- Court scraper (port 8000) -------------------------------------------
-if exist "%SCRAPER_DIR%\api\main.py" (
+netstat -ano | findstr /R /C:"127.0.0.1:8000 .*LISTENING" >nul
+if not errorlevel 1 (
+    echo Scraper already running on port 8000 - not starting another.
+) else if exist "%SCRAPER_DIR%\api\main.py" (
     start "Court Scraper" cmd /k "cd /d "%SCRAPER_DIR%" && venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000"
 ) else (
     echo WARNING: scraper not found at %SCRAPER_DIR%
     echo Court features ^(display boards, cause lists, case import^) will return 503.
     echo Set SCRAPER_DIR to override.
     echo.
+)
+
+REM --- Notifications scheduler (reminders + sending) -------------------------
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manage\.py run_scheduler' }) { exit 0 } else { exit 1 }"
+if not errorlevel 1 (
+    echo Notifications scheduler already running - not starting another.
+) else (
+    start "Scheduler" cmd /k "cd /d "%BE%" && venv\Scripts\python.exe manage.py run_scheduler"
 )
 
 REM --- Backend (port 8080) --------------------------------------------------

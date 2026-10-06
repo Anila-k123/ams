@@ -75,3 +75,6 @@ pnpm-debug.log*
 Thumbs.db
 .DS_Store
 .claude/
+
+# Background process logs (tools/keepalive.ps1)
+/logs/

@@ -176,7 +176,13 @@ zero mentions of Django or PostgreSQL. It was left untouched deliberately:
 bolting new features onto a document describing the wrong stack would make it
 worse. It needs its own rewrite.
 
-### 5.2 The scraper has no supervision
+### 5.2 The scraper has no supervision — DONE (2026-10-06)
+
+`tools\install-services.ps1` runs the scraper and the notifications scheduler as
+sign-in tasks under `tools\keepalive.ps1`, which restarts them and logs every
+stop (see docs/OPERATIONS.md). Still open for a real server: run them as
+services (NSSM) so they're up before anyone signs in. The original note:
+
 
 `C:\Users\ANILA\scrap` is started by hand and nothing restarts it. **It died once
 unnoticed during development**, which silently disabled display boards, Daily

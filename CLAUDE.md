@@ -23,7 +23,9 @@ A third service, the **court scraper** (FastAPI, port 8000), lives in a **separa
 
 ## Commands
 
-Start everything (Windows): `run-project.bat` (scraper + backend + frontend in separate windows).
+Start everything (Windows): `run-project.bat` (scraper + scheduler + backend + frontend in separate windows; it skips the scraper/scheduler if they're already running).
+
+Background processes: `tools\install-services.ps1` registers **PactPro Scraper** and **PactPro Scheduler** as sign-in tasks. Each runs under `tools\keepalive.ps1`, which restarts it whenever it stops and logs to `logs\<Name>.log`. Use `-Status` to check and `-Uninstall` to remove. Without the scheduler, no hearing, overdue-invoice or task-deadline reminders are sent.
 
 Backend (`Advocate-app-BE-Django/`):
 ```bat
@@ -31,7 +33,7 @@ venv\Scripts\python.exe manage.py runserver 0.0.0.0:8080
 venv\Scripts\python.exe manage.py test                 # all tests
 venv\Scripts\python.exe manage.py test cases           # one app
 venv\Scripts\python.exe manage.py test cases.tests.SomeTestCase.test_x
-venv\Scripts\python.exe manage.py process_notifications # notifications worker (see run-scheduler.bat)
+venv\Scripts\python.exe manage.py run_scheduler        # notifications: send queue every 60s + reminder scan every 15 min (run-scheduler.bat / PactPro Scheduler task)
 ```
 Config via `.env` (python-decouple; copy `.env.example`): `DB_*`, `MAIL_*`, `LLM_*`, `WHATSAPP_VERIFY_TOKEN`.
 

@@ -244,14 +244,21 @@ export default function SystemActivity() {
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- buildParams reads only the state listed here
   }, [page, size, search, module, actionType, status, datePreset, customFrom, customTo, withLoading, toast]);
 
+  // A filter or the search changing reloads from page 0; paging loads that
+  // page. search and the custom dates were missing here, so pressing Search on
+  // page 0 (or picking a custom range) never reloaded. fetchData itself isn't a
+  // dependency: these lists say exactly what should trigger a fetch.
   useEffect(() => {
     fetchData(0);
-  }, [module, actionType, status, datePreset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- trigger on filter / search changes only
+  }, [module, actionType, status, datePreset, search, customFrom, customTo]);
 
   useEffect(() => {
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- trigger on page changes only
   }, [page]);
 
   const handleSearch = () => {

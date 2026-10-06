@@ -163,7 +163,7 @@ export function DashboardFilterProvider({ children, token }) {
     })();
 
     return () => { cancelled = true; };
-  }, [token, view, currentDate, formatApiParams, advocateEmail, refreshKey]);
+  }, [token, view, currentDate, formatApiParams, advocateEmail, refreshKey, data]);
 
   // Silent background refresh: re-fetches the current period without toggling
   // the loading spinner, so the numbers/charts update in place. Cache is busted
@@ -230,7 +230,10 @@ export function DashboardFilterProvider({ children, token }) {
       lastKeyRef.current = "";
       setRefreshKey(k => k + 1);
     },
-  }), [view, currentDate, periodLabel, navigatePrev, navigateNext, isNextDisabled, data, isLoading, error, lastUpdated, silentRefresh, setExternalLoading, formatApiParams, advocateEmail, refreshKey]);
+    // refreshKey isn't read here: it's listed so a forced refresh gives every
+    // consumer a new context value and re-renders it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberate re-render on forced refresh
+  }), [view, currentDate, periodLabel, navigatePrev, navigateNext, isNextDisabled, data, isLoading, error, lastUpdated, silentRefresh, setExternalLoading, formatApiParams, advocateEmail, refreshKey, setView]);
 
   return (
     <DashboardFilterContext.Provider value={value}>

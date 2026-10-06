@@ -37,6 +37,7 @@ export default function RoleManagement() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   useEffect(() => { loadData(); }, []);
 
   const openCreate = () => {

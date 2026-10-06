@@ -490,7 +490,6 @@ export default function CaseDetail() {
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // ---------- Inline edit (app-owned case fields) ----------
@@ -635,7 +634,6 @@ export default function CaseDetail() {
       const res = await api.get("/api/clients/my-clients");
       setClients(res.data || []);
     } catch { /* picker falls back to the current client only */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clients.length]);
 
   const fetchEvents = useCallback(async () => {
@@ -643,7 +641,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/workspace/cases/${id}/events`);
       setEvents(res.data || []);
     } catch { setEvents([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchDocs = useCallback(async () => {
@@ -651,7 +648,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/documents/by-case/${id}`);
       setDocs(res.data || []);
     } catch { setDocs([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchNotes = useCallback(async () => {
@@ -659,7 +655,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/workspace/cases/${id}/notes`);
       setNotes(res.data || []);
     } catch { setNotes([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchTasks = useCallback(async () => {
@@ -667,7 +662,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/workspace/cases/${id}/tasks`);
       setTasks(res.data || []);
     } catch { setTasks([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchFinancials = useCallback(async () => {
@@ -675,7 +669,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/workspace/cases/${id}/financials`);
       setFinancials(res.data);
     } catch { setFinancials(null); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchParties = useCallback(async () => {
@@ -683,7 +676,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/workspace/cases/${id}/parties`);
       setParties(res.data || []);
     } catch { setParties([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchRelated = useCallback(async () => {
@@ -691,7 +683,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/workspace/cases/${id}/related`);
       setRelated(res.data || []);
     } catch { setRelated([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchLinkableCases = useCallback(async () => {
@@ -699,7 +690,6 @@ export default function CaseDetail() {
       const res = await api.get(`/api/cases/my-cases`);
       setLinkableCases((res.data || []).filter((c) => c.id !== Number(id)));
     } catch { setLinkableCases([]); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const addExpense = async () => {

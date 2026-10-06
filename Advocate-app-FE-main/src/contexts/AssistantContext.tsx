@@ -187,7 +187,7 @@ export function AssistantProvider({ children, token }) {
       setMessageText(botId, acc || "Sorry, I couldn't reach the assistant. Please try again.");
     }
     return true;
-  }, [token, addMessage, setMessageText, setMessageFields]);
+  }, [addMessage, setMessageText, setMessageFields]);
 
   // Show a /query reply (quick command or basic mode) and act on it.
   const showQueryReply = useCallback((data, note = "") => {

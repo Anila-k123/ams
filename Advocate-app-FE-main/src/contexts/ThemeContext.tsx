@@ -1,9 +1,17 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 
-const ThemeContext = createContext();
+type Theme = 'dark' | 'light';
+type ThemeContextValue = {
+  theme: Theme;
+  toggleTheme: () => void;
+  setTheme: (t: string) => void;
+};
 
-export function ThemeProvider({ children }) {
-  const [theme, setThemeState] = useState(() => localStorage.getItem('theme') || 'dark');
+const ThemeContext = createContext<ThemeContextValue | null>(null);
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [theme, setThemeState] = useState<Theme>(
+    () => (localStorage.getItem('theme') === 'light' ? 'light' : 'dark'));
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -18,7 +26,7 @@ export function ThemeProvider({ children }) {
     setThemeState(prev => prev === 'dark' ? 'light' : 'dark');
   }, []);
 
-  const setTheme = useCallback((t) => {
+  const setTheme = useCallback((t: string) => {
     if (t === 'dark' || t === 'light') setThemeState(t);
   }, []);
 

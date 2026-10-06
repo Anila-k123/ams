@@ -109,7 +109,7 @@ function Clients() {
     } finally {
       setPageLoading(false);
     }
-  }, [token, page, size, showArchived]);
+  }, [page, size, showArchived]);
 
   useEffect(() => {
     if (!token) {
@@ -121,7 +121,7 @@ function Clients() {
       return;
     }
     fetchClients(searchKeyword);
-  }, [fetchClients, searchKeyword]);
+  }, [fetchClients, searchKeyword, token]);
 
   // Quick Actions / Lisa: open the New Client form.
   usePageModal(["create-client"], () => {
@@ -142,7 +142,7 @@ function Clients() {
     return () => {
       window.removeEventListener("assistant-search", handleSearch);
     };
-  }, []);
+  }, [fetchClients]);
 
   // Scroll the highlighted row (from global search) into view.
   useEffect(() => {
@@ -161,6 +161,7 @@ function Clients() {
       fetchClients(kw);
       window.history.replaceState({}, document.title);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on a new hand-off; location.state persists, so fetchClients here would re-search on every page change
   }, [location.state]);
 
   const handleSearch = (e: any) => {
@@ -286,7 +287,7 @@ function Clients() {
     } finally {
       setClientDocsLoading(false);
     }
-  }, [token]);
+  }, []);
 
   const handleClientDocDownload = async (docId: any, fileName: string) => {
     try {

@@ -81,6 +81,15 @@ class Command(BaseCommand):
             # ADVANCE list is explicitly tentative.
             rows = [r for r in rows if (r.get('listType') or 'DAILY') == 'DAILY']
 
+            # An empty answer is "not published yet" or an upstream hiccup, never
+            # "the court cleared its list". Replacing on it would let the 12:30
+            # re-run wipe a good morning list, so keep what is stored.
+            if not rows:
+                kept = CauseListItem.objects.filter(court=court, list_date=on).count()
+                self.stdout.write('{} {}: nothing published{}.'.format(
+                    court, on, ' - kept the {} items already stored'.format(kept) if kept else ''))
+                continue
+
             with transaction.atomic():
                 deleted, _ = (CauseListItem.objects
                               .filter(court=court, list_date=on).delete())

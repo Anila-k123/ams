@@ -379,6 +379,7 @@ export default function DraftPage() {
       loadedRef.current = true
       setDirty(false)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seeds once (loadedRef); resolveDocTitle is re-created every render
   }, [editor, session])
 
   // Underline the verbatim excerpts that playbook findings point at (omission

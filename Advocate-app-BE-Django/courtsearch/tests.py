@@ -191,3 +191,33 @@ class ScraperClientResponseTest(SimpleTestCase):
         from . import client
         with self.assertRaises(client.ScraperUnavailable):
             client._handle(self.response(404, '<!doctype html><title>Page not found</title>', 'text/html'))
+
+
+class SyncCauseListKeepsOnEmptyTest(TestCase):
+    """A later empty fetch (not published yet / upstream hiccup) must not wipe
+    a day's stored cause list - the 12:30 re-run would otherwise erase the
+    good 06:30 one."""
+
+    def _sync(self, rows):
+        import datetime
+        from io import StringIO
+        from unittest import mock
+        from django.core.management import call_command
+        out = StringIO()
+        with mock.patch('courtsearch.client.get_causelist', return_value={'rows': rows}), \
+                mock.patch('notifications.causelist_alerts.causelist_alerts', return_value=[]):
+            call_command('sync_causelist', '--court', 'sci', '--date', '2026-10-06', stdout=out)
+        from courtsearch.models import CauseListItem
+        return CauseListItem.objects.filter(court='sci', list_date=datetime.date(2026, 10, 6)).count(), out.getvalue()
+
+    def test_empty_fetch_keeps_stored_rows(self):
+        row = {'courtNumber': '1', 'itemNumber': '5', 'caseString': 'SLP(C) 1/2026', 'listType': 'DAILY'}
+        self.assertEqual(self._sync([row, dict(row, itemNumber='6')])[0], 2)
+        count, out = self._sync([])
+        self.assertEqual(count, 2)
+        self.assertIn('kept the 2 items', out)
+
+    def test_new_list_still_replaces(self):
+        row = {'courtNumber': '1', 'itemNumber': '5', 'caseString': 'SLP(C) 1/2026', 'listType': 'DAILY'}
+        self._sync([row, dict(row, itemNumber='6')])
+        self.assertEqual(self._sync([dict(row, itemNumber='9')])[0], 1)

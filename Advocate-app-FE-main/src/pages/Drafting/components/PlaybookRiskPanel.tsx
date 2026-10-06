@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from 'primereact/button'
 import { Dialog } from 'primereact/dialog'
 import { Tag } from 'primereact/tag'
@@ -77,9 +77,14 @@ export default function PlaybookRiskPanel({ sessionId, initialPlaybookId, initia
     playbookApi.list().then(list => setPlaybooks(list.filter(p => p.status === 'ready')))
   }, [])
 
+  // The parent may pass a new function each render; calling it through a ref
+  // uses the latest one without re-fetching the risks every render.
+  const onRisksLoadedRef = useRef(onRisksLoaded)
+  onRisksLoadedRef.current = onRisksLoaded
+
   useEffect(() => {
     if (initialRiskStatus === 'ready') {
-      playbookApi.listSessionRisks(sessionId).then(r => { setRisks(r); onRisksLoaded(buildRiskMap(r)) })
+      playbookApi.listSessionRisks(sessionId).then(r => { setRisks(r); onRisksLoadedRef.current(buildRiskMap(r)) })
     }
   }, [sessionId, initialRiskStatus])
 

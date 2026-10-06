@@ -141,7 +141,7 @@ function Cases() {
         if (res.data && res.data.length) setLkCourtId(res.data[0].court_id);
       } catch { /* lookup is optional; leave the panel empty on failure */ }
     })();
-  }, [showModal, editCaseId]);
+  }, [showModal, editCaseId, lkCourts.length]);
 
   // Load case types whenever the lookup court changes.
   useEffect(() => {
@@ -212,7 +212,7 @@ function Cases() {
     } finally {
       setPageLoading(false);
     }
-  }, [token, page, size, searchKeyword, showArchived, filterStatus, filterCourt, sort]);
+  }, [page, size, searchKeyword, showArchived, filterStatus, filterCourt, sort]);
 
   // ---------------- FETCH CLIENTS ----------------
   const fetchClients = async () => {
@@ -239,7 +239,7 @@ function Cases() {
     } catch (err) {
       console.error("Error fetching workspace meta:", err);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -248,7 +248,7 @@ function Cases() {
     }
     fetchClients();
     fetchWorkspaceMeta();
-  }, [token]);
+  }, [token, fetchWorkspaceMeta]);
 
   useEffect(() => {
     if (!token) return;
@@ -282,7 +282,7 @@ function Cases() {
     return () => {
       window.removeEventListener("assistant-search", handleSearch);
     };
-  }, []);
+  }, [fetchCases]);
 
   // Global Search navigation — read incoming state
   useEffect(() => {
@@ -296,6 +296,7 @@ function Cases() {
         .then(res => setCases(res.data)).catch(() => {});
       window.history.replaceState({}, document.title);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on a new hand-off; location.state persists, so fetchCases here would re-search on every filter change
   }, [location.state]);
 
   const setField = (name: string, value: any) => {
@@ -408,7 +409,7 @@ function Cases() {
     } finally {
       setCaseDocsLoading(false);
     }
-  }, [token]);
+  }, []);
 
   const handleDocDownload = async (docId: any, fileName: string) => {
     try {

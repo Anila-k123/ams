@@ -14,6 +14,8 @@ export default function usePagination({ defaultSize = 20, resetOn = [] } = {}) {
       setPageState(0);
       prevDeps.current = resetOn;
     }
+  // The caller's resetOn values ARE the dependencies (compared one by one above).
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- dynamic list by design
   }, resetOn);
 
   const setPage = useCallback((fn) => {

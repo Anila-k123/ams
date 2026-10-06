@@ -14,6 +14,7 @@ Drafting is a feature inside AMS, served under `/api/drafting/` and on the front
 | Frontend | `npm run dev` in `Advocate-app-FE-main` (prod: `npm run build`, serve `dist/`) | always |
 | Court lookup scraper | the separate scraper service at `COURT_API_BASE` (task **PactPro Scraper**) | for every court feature |
 | Notifications scheduler | `python manage.py run_scheduler` (task **PactPro Scheduler**, or `run-scheduler.bat`) | for reminders (hearings, overdue invoices, task deadlines) and retries |
+| Cause-list sync | `scripts\sync_causelist.bat` (task **PactPro Cause List Sync**, 06:30 and 12:30 daily) | for the Daily Causelist and "you are listed" alerts |
 | Celery worker | `celery -A advocate_backend worker -l info` | the permanent job setup (`CELERY_TASK_ALWAYS_EAGER=False`); until then the API starts its own stopgap worker process |
 | Redis | any Redis at `REDIS_URL` | only with the worker |
 
@@ -23,7 +24,8 @@ Drafting is a feature inside AMS, served under `/api/drafting/` and on the front
 - Each runs under `tools\keepalive.ps1`, which restarts the process whenever it stops. A process that keeps failing straight after start is retried with a growing pause, up to 5 minutes.
 - The task restarts the wrapper itself if that ever dies.
 - Logs are `logs\Scraper.log` and `logs\Scheduler.log`: the process output plus a `[keepalive]` line for every start and stop, with the exit code. They roll over at 10 MB.
-- `-Status` shows whether each is running; `-Uninstall` stops and removes both.
+- It also registers **PactPro Cause List Sync**. This is a run at 06:30 and 12:30 daily, not a process kept alive. It fetches today's and tomorrow's lists for `sci chennai madurai chennai_dc` and logs to `Advocate-app-BE-Django\logs\sync_causelist.log`. It needs the scraper up. If the PC was off at 06:30, it runs when the PC is back.
+- `-Status` shows each task's state and the sync's last and next run; `-Uninstall` stops and removes all three.
 - The scraper runs without `--reload` here. Under `--reload`, a child process keeps the port after its parent dies, and a new scraper can't bind. Install and uninstall stop such children too.
 - On a server, NSSM (Windows service) or systemd does the same job and also runs before anyone signs in.
 

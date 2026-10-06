@@ -10,7 +10,19 @@ Companion docs: `ARCHITECTURE.md` (court-data design), `LOCAL_DEVELOPMENT.md`
 
 ## 1. Blocking — the cause-list feature has no data without this
 
-### 1.1 Schedule `sync_causelist`
+### 1.1 Schedule `sync_causelist` — DONE (2026-10-06)
+
+`tools\install-services.ps1` registers **PactPro Cause List Sync**, which runs
+`Advocate-app-BE-Django\scripts\sync_causelist.bat` daily at 06:30 and 12:30 for
+`sci chennai madurai chennai_dc`, today and tomorrow. Log:
+`Advocate-app-BE-Django\logs\sync_causelist.log`.
+- First run, 6 Oct: SCI 5,709 (plus 1,600 for tomorrow), Madras HC 5,156, Madurai 2,907.
+  Madras is fetched through the scraper's cause-list feed, so §3.2's block no
+  longer applies to the daily list.
+- An empty fetch now **keeps** the stored day instead of replacing it with
+  nothing, so the 12:30 re-run can't wipe a good morning list.
+
+The original note:
 
 Nothing runs it. Until it does, "Your matters today" and the `Your Item` column
 are permanently empty — **and empty looks exactly like broken**, which cost real
@@ -30,7 +42,10 @@ logging pattern) so it fits the existing set.
 
 **Depends on the scraper being up** (port 8000) — the fetch takes ~47s.
 
-### 1.2 Remove the synthetic demo rows
+### 1.2 Remove the synthetic demo rows — DONE (the UIPROOF rows are gone)
+
+The 8 `seed_demo` rows (8 and 15 Sept) belong to the Kumar & Associates demo seed
+and are on past dates, so they never show as today. The original note:
 
 Two rows were inserted so the banner would render while nothing real was listed:
 

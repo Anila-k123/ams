@@ -6,6 +6,10 @@ they start at sign-in and come back if they stop:
     PactPro Scheduler   manage.py run_scheduler: sends queued notifications
                         every minute and raises hearing / overdue-invoice /
                         task-deadline reminders every 15 minutes
+    PactPro Cause List Sync
+                        scripts\sync_causelist.bat at 06:30 and 12:30 daily:
+                        fetches today's and tomorrow's cause lists (a run, not
+                        a process kept alive; log: logs\sync_causelist.log)
 
 Each task runs tools\keepalive.ps1, which restarts the process whenever it
 stops and logs to <repo>\logs\. Tasks are for the signed-in user, run hidden,
@@ -27,6 +31,8 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $be = Join-Path $repo 'Advocate-app-BE-Django'
 $keepalive = Join-Path $PSScriptRoot 'keepalive.ps1'
+$syncTask = 'PactPro Cause List Sync'
+$syncBat = Join-Path $be 'scripts\sync_causelist.bat'
 
 $services = @(
     @{ Task = 'PactPro Scraper'; Name = 'Scraper'; WorkDir = $ScraperDir; Exe = 'venv\Scripts\python.exe'
@@ -61,6 +67,12 @@ if ($Status) {
         "{0,-18} task: {1,-12} process running: {2}   log: {3}" -f $svc.Task,
             $(if ($t) { $t.State } else { 'not installed' }), $running, (Join-Path $repo "logs\$($svc.Name).log")
     }
+    $t = Get-ScheduledTask -TaskName $syncTask -ErrorAction SilentlyContinue
+    if ($t) {
+        $i = $t | Get-ScheduledTaskInfo
+        "{0,-18} last run: {1}  result: {2}  next run: {3}   log: {4}" -f 'PactPro Cause List',
+            $i.LastRunTime, $i.LastTaskResult, $i.NextRunTime, (Join-Path $be 'logs\sync_causelist.log')
+    } else { "PactPro Cause List task: not installed" }
     return
 }
 
@@ -71,7 +83,10 @@ foreach ($svc in $services) {
     }
     Stop-Service-Processes $svc
 }
-if ($Uninstall) { "Removed both tasks and stopped their processes."; return }
+if (Get-ScheduledTask -TaskName $syncTask -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName $syncTask -Confirm:$false
+}
+if ($Uninstall) { "Removed all three tasks and stopped their processes."; return }
 
 foreach ($svc in $services) {
     if (-not (Test-Path (Join-Path $svc.WorkDir $svc.Exe))) {
@@ -90,3 +105,14 @@ foreach ($svc in $services) {
     Start-ScheduledTask -TaskName $svc.Task
     "Installed and started: $($svc.Task)"
 }
+
+# The cause-list sync is a run at fixed times, not a process to keep alive.
+# 06:30: after the courts publish; 12:30: lists published late or revised.
+$action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$syncBat`"" -WorkingDirectory $be
+$triggers = @((New-ScheduledTaskTrigger -Daily -At '06:30'), (New-ScheduledTaskTrigger -Daily -At '12:30'))
+# StartWhenAvailable: if the PC was off or asleep at 06:30, run once it's back.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 1) -StartWhenAvailable `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $syncTask -Action $action -Trigger $triggers -Settings $settings `
+    -Description 'PactPro: fetch today''s and tomorrow''s cause lists (scripts\sync_causelist.bat). Log: Advocate-app-BE-Django\logs\sync_causelist.log' | Out-Null
+"Installed: $syncTask (daily 06:30 and 12:30)"

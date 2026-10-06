@@ -25,7 +25,7 @@ A third service, the **court scraper** (FastAPI, port 8000), lives in a **separa
 
 Start everything (Windows): `run-project.bat` (scraper + scheduler + backend + frontend in separate windows; it skips the scraper/scheduler if they're already running).
 
-Background processes: `tools\install-services.ps1` registers **PactPro Scraper** and **PactPro Scheduler** as sign-in tasks. Each runs under `tools\keepalive.ps1`, which restarts it whenever it stops and logs to `logs\<Name>.log`. Use `-Status` to check and `-Uninstall` to remove. Without the scheduler, no hearing, overdue-invoice or task-deadline reminders are sent.
+Background processes: `tools\install-services.ps1` registers **PactPro Scraper** and **PactPro Scheduler** as sign-in tasks, and **PactPro Cause List Sync** (daily 06:30 and 12:30, `scripts\sync_causelist.bat`). Each runs under `tools\keepalive.ps1`, which restarts it whenever it stops and logs to `logs\<Name>.log`. Use `-Status` to check and `-Uninstall` to remove. Without the scheduler, no hearing, overdue-invoice or task-deadline reminders are sent.
 
 Backend (`Advocate-app-BE-Django/`):
 ```bat
@@ -63,7 +63,7 @@ API base: `VITE_API_BASE` (default `http://127.0.0.1:8080`, see `src/api/client.
 
 - Entry `src/main.jsx` → `src/App.tsx` (routes). Pages in `src/pages/` (Drafting under `src/pages/Drafting/`), shared UI in `src/components/`, API wrappers in `src/api/` and `src/services/`, state in `src/contexts/`, styles in `src/assets/styles/`.
 - Migrated to TypeScript; new files should be `.ts`/`.tsx`.
-- **Lint:** `npm run lint` covers `.ts`/`.tsx` too (typescript-eslint parser, `eslint.config.js`). `react-hooks/rules-of-hooks` is an **error**: hooks go above any early `return` (a hook below one blanked the Users page). `exhaustive-deps` is a warning. Type-checking stays with `tsc`.
+- **Lint:** `npm run lint` covers `.ts`/`.tsx` too (typescript-eslint parser, `eslint.config.js`). `react-hooks/rules-of-hooks` is an **error**: hooks go above any early `return` (a hook below one blanked the Users page). `exhaustive-deps` is a warning, and lint is clean: keep it at 0. Fix a dependency warning for real when that keeps behaviour. Never just add a function that's re-created every render, because that re-fetches in a loop; use a ref or `useCallback`. If an effect deliberately runs only on certain changes, keep the list and add `// eslint-disable-next-line react-hooks/exhaustive-deps -- <why>`. Type-checking stays with `tsc`.
 - **Tooltips go above the element:** PrimeReact defaults to the right, which covers the next button in a row. Every `tooltip=` gets `tooltipOptions={{ position: "top" }}` (or `"bottom"`). The small text size is global, in `prime-bridge.css`.
 
 ## Conventions

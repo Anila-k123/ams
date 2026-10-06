@@ -13,12 +13,13 @@ export default function FilePreviewModal({ doc, onClose, onDownload }: {
   const [error, setError] = useState<string | null>(null);
   const [contentType, setContentType] = useState("");
 
+  const docId = doc?.id;
   useEffect(() => {
-    if (!doc) return;
+    if (!docId) return;
     setLoading(true);
     setError(null);
     let url: string | null = null;
-    fetch(apiUrl(`/api/documents/preview/${doc.id}`), { headers: authHeaders() })
+    fetch(apiUrl(`/api/documents/preview/${docId}`), { headers: authHeaders() })
       .then(async (res) => {
         if (!res.ok) throw new Error("Preview unavailable");
         setContentType(res.headers.get("Content-Type") || "");
@@ -29,7 +30,7 @@ export default function FilePreviewModal({ doc, onClose, onDownload }: {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
     return () => { if (url) URL.revokeObjectURL(url); };
-  }, [doc?.id]);
+  }, [docId]);
 
   const isImage = contentType.startsWith("image/");
   const isPdf = contentType === "application/pdf";

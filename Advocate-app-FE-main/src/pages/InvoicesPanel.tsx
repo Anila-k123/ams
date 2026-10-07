@@ -108,7 +108,7 @@ export default function InvoicesPanel() {
 
   const { withLoading } = useLoading() as any;
   const { success, error } = useToast() as any;
-  const { hasPermission } = usePermission() as any;
+  const { hasPermission, loading: permsLoading } = usePermission() as any;
   const { advocateId: myId } = useAuth();
   // Raising a bill and issuing it are separate: advocates raise, accounts
   // (and seniors) issue. Without INVOICE_ISSUE the form sends it to accounts.
@@ -153,6 +153,8 @@ export default function InvoicesPanel() {
   }, [page, size, searchText]);
 
   const fetchCases = async () => {
+    // Roles without CASE_VIEW (e.g. accounts) are refused this list; don't ask.
+    if (!hasPermission("CASE_VIEW")) return;
     try {
       const res = await api.get("/api/cases/my-cases");
       setCases(res.data || []);
@@ -174,10 +176,12 @@ export default function InvoicesPanel() {
     fetchInvoices();
   }, [fetchInvoices]);
 
+  useEffect(() => { fetchSummary(); }, []);
+  // Cases wait for permissions, or the CASE_VIEW check would skip them on first paint.
   useEffect(() => {
-    fetchCases();
-    fetchSummary();
-  }, []);
+    if (!permsLoading) fetchCases();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permsLoading]);
 
   // Keep the open drawer in step with a refreshed list (after a payment, say).
   useEffect(() => {

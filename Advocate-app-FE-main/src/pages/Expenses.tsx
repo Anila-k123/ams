@@ -78,7 +78,7 @@ function Expenses() {
   const { token } = useAuth();
   const { withLoading } = useLoading() as any;
   const { success, error } = useToast() as any;
-  const { hasPermission } = usePermission() as any;
+  const { hasPermission, loading: permsLoading } = usePermission() as any;
 
   // ----------------- FORMS -----------------
   const [newExpense, setNewExpense] = useState<any>({
@@ -112,8 +112,10 @@ function Expenses() {
       setErrorMessage("Please login first.");
       return;
     }
+    if (permsLoading) return;   // wait for permissions, or the CASE_VIEW check misfires
     fetchCases();
-  }, [token]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, permsLoading]);
 
   // AI Assistant / quick actions: open the Add Expense form. It opens without
   // a case, so the form shows a case picker (see pickCase).
@@ -152,6 +154,12 @@ function Expenses() {
   }, [filteredCases, highlightedId]);
 
   const fetchCases = async () => {
+    // Expenses are kept per case; a role without CASE_VIEW is refused the case list.
+    if (!hasPermission("CASE_VIEW")) {
+      setErrorMessage("Expenses are kept per case, and your role can't open cases. Ask an admin for case access.");
+      setPageLoading(false);
+      return;
+    }
     setPageLoading(true);
     try {
       const res = await api.get("/api/cases/my-cases");

@@ -207,7 +207,8 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
     # Senior review (drafting/access.py): a reviewer may open a junior's submitted draft
     # and use these read-only actions (refine / consistency-check only return
     # suggestions)...
-    REVIEW_READ = {'retrieve', 'status', 'refine', 'consistency_check', 'list_risks', 'risk_report'}
+    REVIEW_READ = {'retrieve', 'status', 'refine', 'consistency_check', 'list_risks', 'risk_report',
+                   'versions'}
     # ...and edit it while the task awaits their review. Re-draft, delete, legal-code
     # rewrite, risk runs and filing stay with the author.
     REVIEW_WRITE = {'save_blocks', 'edit', 'accept_edit', 'reject_edit'}
@@ -278,6 +279,25 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         if to_update:
             DraftBlock.objects.bulk_update(to_update, ['heading', 'content_html', 'text', 'is_edited'])
         return Response(DraftSessionSerializer(session, context={'request': request}).data)
+
+    @action(detail=True, methods=['get', 'post'])
+    def versions(self, request, pk=None):
+        """GET: the draft's saved versions (newest first, without their content).
+        POST {label}: save the draft as it is now. Saving follows the same rule as
+        editing (drafting/access.py::can_write)."""
+        session = self.get_object()
+        if request.method == 'POST':
+            from rest_framework.exceptions import PermissionDenied
+            from .access import can_write
+            from .versions import save_version
+            if not can_write(session, request.user):
+                raise PermissionDenied('This draft can only be changed while it awaits your review.')
+            label = (request.data.get('label') or '').strip()
+            if save_version(session, label=label, user_id=request.user.id) is None:
+                return Response({'error': 'The draft is empty.'}, status=400)
+        rows = session.versions.order_by('-number').values(
+            'id', 'number', 'label', 'kind', 'created_by_id', 'created_at')
+        return Response(list(rows), status=201 if request.method == 'POST' else 200)
 
     @action(detail=True, methods=['post'])
     @_metered_action('draft.edit')

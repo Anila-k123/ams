@@ -1147,6 +1147,11 @@ def generate_draft(self, session_id: int):
         session.status = DraftSession.Status.READY
         session.save(update_fields=['status'])
 
+        # Keep the AI's draft as a version, so later redlines can compare against it.
+        from .versions import save_version
+        from .models import DraftVersion
+        save_version(session, DraftVersion.Kind.GENERATED, 'AI draft', session.created_by_id)
+
     except Exception as exc:
         from .models import DraftSession
         logger.exception('generate_draft failed for session %s', session_id)

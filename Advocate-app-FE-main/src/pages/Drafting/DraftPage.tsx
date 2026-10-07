@@ -23,6 +23,9 @@ import { PlaceholderHighlight } from './editor/placeholder'
 import { RiskHighlight } from './editor/riskHighlight'
 import EditorToolbar from './components/EditorToolbar'
 import DraftChat from './components/DraftChat'
+import DraftVersions from './components/DraftVersions'
+import RedlineDialog from './components/RedlineDialog'
+import DownloadPanel from './components/DownloadPanel'
 import ConsistencyPanel from './components/ConsistencyPanel'
 import PlaybookRiskPanel from './components/PlaybookRiskPanel'
 import InlineDocViewer from './components/InlineDocViewer'
@@ -153,6 +156,11 @@ const DOC_TITLE_RE = /\b(agreement|deed|nda|mou|memorandum|affidavit|vakalatnama
 function extractDocTitle(blocks?: DraftBlock[]): string {
   const first = (blocks || [])[0]
   if (!first) return ''
+  // A heading that names a document ("RESIDENTIAL LEASE DEED") is the title. Saving drops the
+  // title line from the text (it's shown as the H1, not in the body), so after the first save
+  // the heading is the only place it remains. Same rule as the Word export (export/docx.py).
+  const heading = (first.heading || '').replace(/\s+/g, ' ').trim()
+  if (heading && heading.split(' ').length <= 12 && DOC_TITLE_RE.test(heading)) return heading
   const line = (stripMd(first.text || '').split('\n').find(l => l.trim()) || '').trim()
   if (!line || line.split(/\s+/).length > 12) return ''
   const letters = line.replace(/[^a-z]/gi, '')
@@ -287,7 +295,7 @@ export default function DraftPage() {
   const [leftW, setLeftW] = useState(() => Number(localStorage.getItem('pp_editor_left_w')) || 244)
   const [rightW, setRightW] = useState(() => Number(localStorage.getItem('pp_editor_right_w')) || 300)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const [dlAnchor, setDlAnchor] = useState<HTMLElement | null>(null)   // popup for PDF / Word export
+  const [dlAnchor, setDlAnchor] = useState<HTMLElement | null>(null)   // Download panel anchor (PDF / Word / redline)
   const loadedRef = useRef(false)   // seeded the editor once
   const citationsRef = useRef<Record<number, Citation>>({})  // blockId → citation (for the [N] markers)
   const suppressRef = useRef(false) // ignore the update fired by programmatic setContent
@@ -453,13 +461,20 @@ export default function DraftPage() {
     // they're only stripped from the downloaded PDF/Word.
     const serializer = DOMSerializer.fromSchema(editor.schema)
     const updates: { id: number; heading: string; content_html: string; text: string }[] = []
+    const title = resolveDocTitle()
+    const stored = new Map((session?.blocks ?? []).map(b => [b.id, b.heading || '']))
     editor.state.doc.forEach(node => {
       if (node.type.name !== 'clause' || node.attrs.blockId == null) return
       const div = document.createElement('div')
       div.appendChild(serializer.serializeFragment(node.content))
+      const id = Number(node.attrs.blockId)
+      // The editor hides a heading that only repeats the document title (displayHeading).
+      // Write the stored one back, or saving would delete the title for good.
+      const prev = stored.get(id) || ''
+      const hidden = !node.attrs.heading && prev && displayHeading(prev, title) === ''
       updates.push({
-        id: Number(node.attrs.blockId),
-        heading: (node.attrs.heading as string) || '',
+        id,
+        heading: hidden ? prev : ((node.attrs.heading as string) || ''),
         content_html: div.innerHTML,
         text: node.textBetween(0, node.content.size, '\n', phLeafText),
       })
@@ -588,25 +603,30 @@ export default function DraftPage() {
   // Word: a real .docx rendered by the server from the SAVED draft, so unsaved edits
   // are saved first. `branding` = on the AMS letterhead (AMS-linked accounts only).
   const [exporting, setExporting] = useState(false)
-  const downloadDocx = async (branding = false) => {
+  const [showRedline, setShowRedline] = useState(false)
+  const [redlineLetterhead, setRedlineLetterhead] = useState(false)
+  // PDF goes the same way (the Word file converted on the server), so both match.
+  const downloadDocx = async (branding = false, format: 'docx' | 'pdf' = 'docx') => {
     if (!sessionId) return
     if (dirty && !(await save())) return
     setExporting(true); setError('')
     try {
-      const { blob, filename } = await draftingApi.exportDocx(Number(sessionId), branding)
+      const { blob, filename } = await draftingApi.exportDocx(Number(sessionId), branding, format)
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob); a.download = filename
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href)
-    } catch {
-      setError('Could not create the Word file — please try again.')
+    } catch (e) {
+      // No LibreOffice on this server: fall back to the browser's print dialog.
+      if (format === 'pdf' && (e as { response?: { status?: number } })?.response?.status === 503) printPdf()
+      else setError(`Could not create the ${format === 'pdf' ? 'PDF' : 'Word file'} — please try again.`)
     } finally {
       setExporting(false)
     }
   }
 
-  // PDF: render into a hidden iframe and open the browser's print dialog
+  // Fallback PDF: render into a hidden iframe and open the browser's print dialog
   // (defaults to "Save as PDF") — vector, selectable text, proper pagination.
-  const downloadPdf = () => {
+  const printPdf = () => {
     const iframe = document.createElement('iframe')
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
     document.body.appendChild(iframe)
@@ -799,17 +819,19 @@ export default function DraftPage() {
             <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}><Icon name="eye" size="sm" />Preview</button>
           </div>
         )}
+        <DraftVersions sessionId={session.id} canSave={!!canEdit}
+          beforeSave={async () => !dirty || !!(await save())} />
         {hasPermission('DRAFT_EXPORT') && (
           <Button size="sm" icon="download" aria-haspopup="menu" loading={exporting} disabled={exporting}
             onClick={e => setDlAnchor(dlAnchor ? null : e.currentTarget)}>Download</Button>
         )}
         {dlAnchor && (
-          <PopMenu anchor={dlAnchor} onClose={() => setDlAnchor(null)} width={230} align="right" items={[
-            { label: 'PDF', icon: 'file', onClick: downloadPdf },
-            { label: 'Word (.docx)', icon: 'file', onClick: () => downloadDocx() },
-            { label: 'Word on PactPro letterhead', icon: 'file', onClick: () => downloadDocx(true) },
-          ]} />
+          <DownloadPanel anchor={dlAnchor} onClose={() => setDlAnchor(null)}
+            onDownload={(letterhead, format) => downloadDocx(letterhead, format)}
+            onRedline={letterhead => { setRedlineLetterhead(letterhead); setShowRedline(true) }} />
         )}
+        <RedlineDialog sessionId={session.id} visible={showRedline} onHide={() => setShowRedline(false)}
+          beforeExport={async () => !dirty || !!(await save())} letterhead={redlineLetterhead} />
         {isReviewer ? null : confirmRedraft ? (
           <div className="row wrap" style={{ gap: 4 }}>
             <span className="small muted">Re-draft? Existing content will be replaced.</span>

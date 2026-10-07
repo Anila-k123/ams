@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .ams_cases import AmsCasesView, AmsLinkCaseView
 from .ams_documents import AmsDocumentImportView, AmsDocumentsView
-from .export.views import DraftDocxExportView
+from .export.views import DraftDocxExportView, DraftRedlineExportView
 from .filing import DraftAmsTaskView, SendToAmsView
 from .views import (
     TemplateViewSet, SampleViewSet,
@@ -28,6 +28,8 @@ urlpatterns = [
     path('ams-documents/', AmsDocumentsView.as_view(), name='drafting-ams-documents'),
     path('ams-documents/<int:pk>/import/', AmsDocumentImportView.as_view(), name='drafting-ams-document-import'),
     path('drafts/<int:pk>/export/docx/', DraftDocxExportView.as_view(), name='draft-export-docx'),
+    # Word tracked changes between two saved versions (docs/DRAFT_EXPORT.md).
+    path('drafts/<int:pk>/export/redline/', DraftRedlineExportView.as_view(), name='draft-export-redline'),
     # File the draft on its AMS case / task, and read the task's review state
     # (merge phase 07, in-process: drafting/filing.py).
     path('drafts/<int:pk>/send-to-ams/', SendToAmsView.as_view(), name='draft-send-to-ams'),

@@ -152,6 +152,16 @@ export interface DraftReview {
 
 /** Senior review of a delegated AMS task (AMS workspace/review.py). */
 export type AmsReviewStatus = 'SUBMITTED' | 'CHANGES_REQUESTED' | 'APPROVED'
+// A frozen copy of a draft (drafting.DraftVersion), listed without its content.
+export interface DraftVersion {
+  id: number
+  number: number
+  label: string
+  kind: 'generated' | 'sent' | 'manual'
+  created_by_id: number | null
+  created_at: string
+}
+
 export interface AmsTaskReview {
   id: number
   title: string
@@ -228,12 +238,31 @@ export const draftingApi = {
     ams_task_id?: number | null // the AMS task this draft was started from
   }) => api.post<DraftSession>('/draft-sessions/', data).then(r => r.data),
   // Server-rendered Word file of the SAVED draft; `branding` puts it on the AMS letterhead.
-  exportDocx: (id: number, branding = false) =>
-    api.get<Blob>(`/drafts/${id}/export/docx/`, { params: branding ? { branding: 1 } : {}, responseType: 'blob' })
-      .then(r => {
+  // `format: 'pdf'` = the same file converted on the server (LibreOffice); 503 when it isn't installed.
+  exportDocx: (id: number, branding = false, format: 'docx' | 'pdf' = 'docx') =>
+    api.get<Blob>(`/drafts/${id}/export/docx/`, {
+      params: { ...(branding ? { branding: 1 } : {}), ...(format === 'pdf' ? { output: 'pdf' } : {}) }, responseType: 'blob',
+    }).then(r => {
         const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
-        return { blob: r.data, filename: m ? m[1] : `draft_${id}.docx` }
+        return { blob: r.data, filename: m ? m[1] : `draft_${id}.${format}` }
       }),
+  // Tracked changes from version `from` to version `to` (omitted = the current draft), as Word or PDF.
+  exportRedline: (id: number, from: number, to?: number, branding = false, format: 'docx' | 'pdf' = 'docx') =>
+    api.get<Blob>(`/drafts/${id}/export/redline/`, {
+      params: { from, ...(to ? { to } : {}), ...(branding ? { branding: 1 } : {}), ...(format === 'pdf' ? { output: 'pdf' } : {}) },
+      responseType: 'blob',
+    }).then(r => {
+      const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
+      return {
+        blob: r.data, filename: m ? m[1] : `draft_${id}_redline.docx`,
+        inserted: Number(r.headers['x-redline-inserted'] || 0), deleted: Number(r.headers['x-redline-deleted'] || 0),
+      }
+    }),
+  // Saved versions of the draft (newest first): the "before" side of a redline.
+  getVersions: (id: number) =>
+    api.get<DraftVersion[]>(`/draft-sessions/${id}/versions/`).then(r => r.data),
+  saveVersion: (id: number, label = '') =>
+    api.post<DraftVersion[]>(`/draft-sessions/${id}/versions/`, { label }).then(r => r.data),
   // File the saved draft on its AMS case (+ task). `caseId` links an unlinked draft first.
   // `note`: what the author changed, when resubmitting after changes were requested.
   sendToAms: (id: number, caseId?: number, note?: string) =>

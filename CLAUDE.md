@@ -16,7 +16,7 @@ Guidance for Claude Code when working in this repository (AMS — Advocate Manag
 | `Advocate-app-FE-main/` | Frontend — React 19 + Vite 7 + TypeScript, Red Tape design system (`src/ui`), TipTap editor. Port **5173**. |
 | `Advocate-app-BE-main/` | Legacy Spring backend remnant — only `uploads/` remains. Do not add code here. |
 | `roadmap/` | InstaDraft ↔ AMS integration plan (`00-README.md` … `08-*`, `PROGRESS.md`). |
-| `docs/` | `DEPLOYMENT.md` (new-server setup, Windows + Linux), `DEMO_GUIDE.md`, `DEMO_AS700_2025.md` (role-by-role demo, case built live), `AI_ASSISTANT.md` (Lisa: flow, tools, permissions, masking), `DEMO_OS900_2025.md` (the meeting demo: one matter built from scratch through every role; reset with `manage.py reset_demo_client --name Kannan --firm rajesh@kumar-associates.demo --yes`), `OPERATIONS.md`, `UI_REDESIGN.md` (Red Tape design system and page migration), `merge-plan/` (repo merge steps 00–08). |
+| `docs/` | `DEPLOYMENT.md` (new-server setup, Windows + Linux), `DEMO_GUIDE.md`, `DEMO_AS700_2025.md` (role-by-role demo, case built live), `AI_ASSISTANT.md` (Lisa: flow, tools, permissions, masking), `DEMO_OS900_2025.md` (the meeting demo: one matter built from scratch through every role; reset with `manage.py reset_demo_client --name Kannan --firm rajesh@kumar-associates.demo --yes`), `OPERATIONS.md`, `UI_REDESIGN.md` (Red Tape design system and page migration), `DRAFT_EXPORT.md` (draft versions, redline/PDF export), `DEMO_REDLINE.md` (assign task → AI draft → review → redline, step by step), `merge-plan/` (repo merge steps 00–08). |
 | Root docs | `README.md`, `ARCHITECTURE.md` (court data integration), `FEATURES.md`, `LOCAL_DEVELOPMENT.md`, `NEXT_STEPS.md`, `AUDIT_ams.md`, `INSTADRAFT_INTEGRATION_PROMPT.md` |
 
 A third service, the **court scraper** (FastAPI, port 8000), lives in a **separate repo** (`SCRAPER_DIR`, default `C:\Users\ANILA\scrap`). While it is down, all court features (display board, cause lists, case import, Daily Status) return 503 — check port 8000 first.
@@ -24,6 +24,8 @@ A third service, the **court scraper** (FastAPI, port 8000), lives in a **separa
 ## Commands
 
 Start everything (Windows): `run-project.bat` (scraper + scheduler + backend + frontend in separate windows; it skips the scraper/scheduler if they're already running).
+
+Dev instance beside the test one (same machine): `run-dev.bat` — backend 8081, frontend 5174, DB `pactpro_db1`, emails to console, no scraper/scheduler (the test instance owns 8080/5173/`PactPro_db` and its scheduler).
 
 Background processes: `tools\install-services.ps1` registers **PactPro Scraper** and **PactPro Scheduler** as sign-in tasks, and **PactPro Cause List Sync** (daily 06:30 and 12:30, `scripts\sync_causelist.bat`). Each runs under `tools\keepalive.ps1`, which restarts it whenever it stops and logs to `logs\<Name>.log`. Use `-Status` to check and `-Uninstall` to remove. Without the scheduler, no hearing, overdue-invoice or task-deadline reminders are sent.
 
@@ -35,7 +37,9 @@ venv\Scripts\python.exe manage.py test cases           # one app
 venv\Scripts\python.exe manage.py test cases.tests.SomeTestCase.test_x
 venv\Scripts\python.exe manage.py run_scheduler        # notifications: send queue every 60s + reminder scan every 15 min (run-scheduler.bat / PactPro Scheduler task)
 ```
-Config via `.env` (python-decouple; copy `.env.example`): `DB_*`, `MAIL_*`, `LLM_*`, `WHATSAPP_VERIFY_TOKEN`.
+Config via `.env` (python-decouple; copy `.env.example`): `DB_*`, `MAIL_*`, `LLM_*`, `WHATSAPP_VERIFY_TOKEN`, `LIBREOFFICE_PATH` (draft PDF export; needs LibreOffice installed, else PDF is a 503 — `docs/DRAFT_EXPORT.md`).
+
+Export query params: never name one `format` — DRF treats `?format=` as its renderer switch and returns 404 (draft PDF uses `?output=pdf`).
 
 Frontend (`Advocate-app-FE-main/`):
 ```bat

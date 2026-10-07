@@ -412,3 +412,164 @@ class DraftReviewAccessTest(TestCase):
     def test_task_payload_links_the_draft(self, dispatch):
         tasks = self.client.get(f'/api/workspace/cases/{self.case.id}/tasks', **auth(self.senior)).json()
         self.assertEqual([t['draftSessionId'] for t in tasks if t['id'] == self.task.id], [self.session.id])
+
+
+@mock.patch('drafting.views._dispatch')
+class DraftVersionTest(TestCase):
+    """Saved versions: frozen copies of a draft that redlines compare against."""
+    databases = {'default'}
+
+    def setUp(self):
+        from .models import DraftBlock
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.outsider = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(session=self.session, position=0, block_type='clause',
+                                               heading='Rent', text='Rent is Rs. 5,00,000.', source='generated')
+        self.url = f'/api/drafting/draft-sessions/{self.session.id}/versions/'
+
+    def save(self, who, label=''):
+        return self.client.post(self.url, {'label': label}, content_type='application/json', **auth(who))
+
+    def test_save_and_list_newest_first(self, dispatch):
+        self.assertEqual(self.save(self.owner, 'Sent to client').status_code, 201)
+        resp = self.save(self.owner)
+        self.assertEqual([(v['number'], v['label']) for v in resp.json()], [(2, ''), (1, 'Sent to client')])
+        self.assertEqual(self.client.get(self.url, **auth(self.owner)).json()[0]['number'], 2)
+
+    def test_version_does_not_change_after_later_edits(self, dispatch):
+        self.save(self.owner)
+        self.block.text = 'Rent is Rs. 7,50,000.'
+        self.block.save()
+        version = self.session.versions.get()
+        self.assertEqual(version.blocks[0]['text'], 'Rent is Rs. 5,00,000.')
+        self.assertEqual(version.blocks[0]['block_id'], self.block.id)
+
+    def test_empty_draft_refused(self, dispatch):
+        self.block.delete()
+        self.assertEqual(self.save(self.owner).status_code, 400)
+
+    def test_other_advocates_cannot_see_or_save(self, dispatch):
+        self.assertEqual(self.client.get(self.url, **auth(self.outsider)).status_code, 404)
+        self.assertEqual(self.save(self.outsider).status_code, 404)
+
+
+def _block(block_id, heading, html):
+    return {'block_id': block_id, 'position': 0, 'block_type': 'clause', 'heading': heading,
+            'text': '', 'content_html': html, 'style_json': {}}
+
+
+def _redline_xml(before, after):
+    import io
+    import zipfile
+    from .export.redline import render_redline_docx
+    data, stats = render_redline_docx(before, after, author='A. Advocate')
+    return zipfile.ZipFile(io.BytesIO(data)).read('word/document.xml').decode(), stats
+
+
+class RedlineDocxTest(TestCase):
+    """Word tracked changes: <w:ins> / <w:del> around exactly the words that changed."""
+
+    def test_changed_words_only(self):
+        xml, stats = _redline_xml([_block(1, 'Rent', '<p>Monthly rent is Rs. 5,00,000 payable in advance.</p>')],
+                                  [_block(1, 'Rent', '<p>Monthly rent is Rs. 7,50,000 payable in advance.</p>')])
+        self.assertIn('<w:delText xml:space="preserve">5</w:delText>', xml)
+        self.assertIn('w:author="A. Advocate"', xml)
+        self.assertRegex(xml, r'<w:ins [^>]*>.*?<w:t xml:space="preserve">7</w:t>')
+        self.assertIn('payable in advance', xml)                 # unchanged text stays plain
+        self.assertEqual(stats, {'inserted': 2, 'deleted': 2})   # "5","00,000" → "7","50,000" as tokens
+
+    def test_added_and_removed_clauses(self):
+        xml, stats = _redline_xml(
+            [_block(1, 'Rent', '<p>Rent.</p>'), _block(2, 'Arbitration', '<p>Disputes go to arbitration.</p>')],
+            [_block(1, 'Rent', '<p>Rent.</p>'), _block(3, 'Jurisdiction', '<p>Courts at Chennai.</p>')])
+        self.assertIn('<w:delText xml:space="preserve">Disputes go to arbitration.</w:delText>', xml)
+        self.assertRegex(xml, r'<w:ins [^>]*><w:r><w:t xml:space="preserve">Courts at Chennai.</w:t>')
+        self.assertGreater(stats['deleted'], 0)
+
+    def test_redrafted_clause_paired_by_heading(self):
+        # A re-draft gives the clause a new block id; the heading still pairs it, so only
+        # the changed word is marked, not the whole clause.
+        _, stats = _redline_xml([_block(1, 'Term', '<p>The term is three years.</p>')],
+                                [_block(9, 'Term', '<p>The term is five years.</p>')])
+        self.assertEqual(stats, {'inserted': 1, 'deleted': 1})
+
+    def test_identical_versions_have_no_marks(self):
+        blocks = [_block(1, 'Rent', '<p>Rent is <strong>due</strong> monthly.</p><ul><li><p>One</p></li></ul>')]
+        xml, stats = _redline_xml(blocks, blocks)
+        self.assertNotIn('<w:ins', xml)
+        self.assertNotIn('<w:del ', xml)
+        self.assertEqual(stats, {'inserted': 0, 'deleted': 0})
+
+
+@mock.patch('drafting.views._dispatch')
+class RedlineExportViewTest(TestCase):
+    databases = {'default'}
+
+    def setUp(self):
+        from .models import DraftBlock
+        from .versions import save_version
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(session=self.session, position=0, block_type='clause',
+                                               heading='Rent', text='Rent is Rs. 5,00,000.', source='generated')
+        self.url = f'/api/drafting/drafts/{self.session.id}/export/redline/'
+        self.save_version = save_version
+
+    def test_needs_a_version(self, dispatch):
+        self.assertEqual(self.client.get(self.url, **auth(self.owner)).status_code, 400)
+
+    def test_compares_last_version_with_current(self, dispatch):
+        v1 = self.save_version(self.session)
+        self.block.text = 'Rent is Rs. 7,50,000.'
+        self.block.save()
+        resp = self.client.get(self.url, **auth(self.owner))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(f'redline_v{v1.number}-current', resp['Content-Disposition'])
+        self.assertEqual((resp['X-Redline-Inserted'], resp['X-Redline-Deleted']), ('2', '2'))
+
+    def test_other_sessions_versions_refused(self, dispatch):
+        other = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        from .models import DraftBlock
+        DraftBlock.objects.create(session=other, position=0, block_type='clause', text='x', source='generated')
+        foreign = self.save_version(other)
+        self.assertEqual(self.client.get(self.url + f'?from={foreign.id}', **auth(self.owner)).status_code, 404)
+
+    def test_outsider_cannot_export(self, dispatch):
+        self.save_version(self.session)
+        outsider = make_advocate(permissions=ALL_PERMISSIONS)
+        self.assertEqual(self.client.get(self.url, **auth(outsider)).status_code, 404)
+
+
+@mock.patch('drafting.views._dispatch')
+class PdfExportTest(TestCase):
+    """?output=pdf converts the Word export with LibreOffice; 503 when it is missing."""
+    databases = {'default'}
+
+    def setUp(self):
+        from .models import DraftBlock
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        DraftBlock.objects.create(session=self.session, position=0, block_type='clause',
+                                  heading='Rent', text='Rent is due.', source='generated')
+        self.base = f'/api/drafting/drafts/{self.session.id}/export/'
+
+    @override_settings(LIBREOFFICE_PATH=r'C:\nowhere\soffice.exe')
+    def test_503_without_libreoffice(self, dispatch):
+        resp = self.client.get(self.base + 'docx/?output=pdf', **auth(self.owner))
+        self.assertEqual(resp.status_code, 503)
+        # The Word export is unaffected.
+        self.assertEqual(self.client.get(self.base + 'docx/', **auth(self.owner)).status_code, 200)
+
+    @mock.patch('drafting.export.pdf.docx_to_pdf', return_value=b'%PDF-1.7 converted')
+    def test_pdf_of_draft_and_redline(self, convert, dispatch):
+        from .versions import save_version
+        resp = self.client.get(self.base + 'docx/?output=pdf', **auth(self.owner))
+        self.assertEqual((resp.status_code, resp['Content-Type']), (200, 'application/pdf'))
+        self.assertTrue(resp['Content-Disposition'].endswith('.pdf"'))
+        self.assertEqual(resp.content, b'%PDF-1.7 converted')
+        self.assertTrue(convert.call_args[0][0].startswith(b'PK'))   # it converted a .docx
+        v = save_version(self.session)
+        resp = self.client.get(self.base + f'redline/?from={v.id}&output=pdf', **auth(self.owner))
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        self.assertIn('X-Redline-Inserted', resp)

@@ -38,6 +38,8 @@ from workspace.models import CaseTask, CaseTaskDocument
 
 from .access import own_sessions, viewable_sessions
 from .ams_cases import link_case
+from .models import DraftVersion
+from .versions import save_version
 
 DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
@@ -138,6 +140,12 @@ class SendToAmsView(APIView):
             session.ams_document_version = doc.version
             session.ams_synced_at = timezone.now()
             session.save(update_fields=['ams_document_id', 'ams_document_version', 'ams_synced_at'])
+            # Name the AMS document version in words: a bare "(v2)" next to the draft's own
+            # "v3" read as a second draft number.
+            save_version(session, DraftVersion.Kind.SENT,
+                         '{} · filed as document v{}'.format(
+                             'Submitted for review' if task is not None else 'Saved to PactPro', doc.version),
+                         user.id)
         if task is not None:
             task.refresh_from_db()
         return Response({'documentId': doc.id, 'version': doc.version, 'taskLinked': task is not None,

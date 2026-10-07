@@ -154,6 +154,10 @@ COURT_PDF_CACHE_DIR = config(
     default=str(BASE_DIR / 'court_pdf_cache'),
 )
 
+# --- Draft PDF export: LibreOffice converts the Word export (drafting/export/pdf.py).
+# Blank = `soffice` on PATH or the usual install folder; without it PDF export is a 503. ---
+LIBREOFFICE_PATH = config('LIBREOFFICE_PATH', default='')
+
 # --- AI assistant's name (what it calls itself; the frontend shows
 # src/constants/assistant.ts). ---
 ASSISTANT_NAME = config('ASSISTANT_NAME', default='Lisa')
@@ -335,4 +339,4 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Kolkata'
 
 # Let the frontend read download filenames (DOCX export).
-CORS_EXPOSE_HEADERS = ['Content-Disposition']
+CORS_EXPOSE_HEADERS = ['Content-Disposition', 'X-Redline-Inserted', 'X-Redline-Deleted']

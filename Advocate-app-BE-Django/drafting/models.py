@@ -335,6 +335,33 @@ class DraftBlock(models.Model):
         ordering = ['position']
 
 
+class DraftVersion(models.Model):
+    """A frozen copy of a whole draft at one moment, the "before" side of a redline.
+
+    Blocks are copied into `blocks` (not referenced) because DraftBlock rows are
+    edited in place and replaced on regenerate; a version must never change after it
+    is saved. Taken automatically when the AI finishes a draft and when it is sent to
+    AMS / for review, and by hand ("Save version")."""
+    class Kind(models.TextChoices):
+        GENERATED = 'generated', 'AI draft'
+        SENT = 'sent', 'Sent to AMS / review'
+        MANUAL = 'manual', 'Saved by user'
+
+    session = models.ForeignKey(DraftSession, on_delete=models.CASCADE, related_name='versions')
+    number = models.PositiveIntegerField()  # 1, 2, 3… per session
+    label = models.CharField(max_length=255, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.MANUAL)
+    # [{block_id, position, block_type, heading, text, content_html, style_json}] in document order.
+    blocks = models.JSONField(default=list)
+    created_by_id = models.BigIntegerField(null=True, blank=True)  # AMS advocate id (plain id, see above)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = '"drf"."draft_version"'
+        ordering = ['number']
+        constraints = [models.UniqueConstraint(fields=['session', 'number'], name='draft_version_unique_number')]
+
+
 class DraftEdit(models.Model):
     """One turn of the chat-edit loop: an instruction, the AI's proposed rewrite
     of a clause (before/after), and whether the lawyer accepted it. Kept as the

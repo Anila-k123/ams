@@ -1,0 +1,220 @@
+/* ==========================================================================
+   PactPro "Night Court" theme (dark-first command centre)
+   Blue-slate console, one signal-teal accent, all-sans Geist type, bento tiles.
+   Layered on top of styles.css. The build sets data-theme="dark" on first visit.
+   ========================================================================== */
+
+/* ---------- 1. Tokens: light (secondary mode) ---------- */
+:root {
+  --paper: #EDF1F5;
+  --surface: #FFFFFF;
+  --surface-2: #F5F7FA;
+  --surface-3: #E5EAF0;
+  --overlay: rgba(8, 12, 18, .5);
+  --ink: #0F1720;
+  --ink-2: #3B4858;
+  --ink-3: #566373;
+  --ink-inverse: #FFFFFF;
+  --line: #D6DDE6;
+  --line-strong: #BAC5D2;
+  --tape: #0D8C7C;           /* signal teal */
+  --tape-ink: #08695D;
+  --tape-soft: #DCF2EE;
+  --act: #0D7A6D;            /* primary action fill */
+  --on-act: #FFFFFF;
+  --glow: rgba(13, 140, 124, .0);
+  --ok: #1F7A4D;   --ok-soft: #DFF2E7;
+  --warn: #8A5A00; --warn-soft: #F8ECD1;
+  --bad: #B42A22;  --bad-soft: #FBE2DF;
+  --info: #2C5BB8; --info-soft: #E2EAFA;
+  --mute: #566373; --mute-soft: #E7EBF0;
+  --side-bg: #0B1118;
+  --side-ink: #C4CEDB;
+  --side-ink-2: #7F8C9C;
+  --side-hover: #121A24;
+  --side-active: #16212D;
+  --f-display: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --f-body: 'Geist', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --f-mono: 'Geist Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --r-xs: 4px; --r-sm: 7px; --r-md: 10px; --r-lg: 14px;
+  --e-1: 0 1px 2px rgba(15, 23, 32, .05);
+  --e-2: 0 10px 28px -10px rgba(15, 23, 32, .22);
+  --e-3: 0 30px 70px -20px rgba(8, 12, 18, .45), 0 4px 14px rgba(8, 12, 18, .1);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px #0D8C7C;
+  --tile-hi: inset 0 1px 0 rgba(255, 255, 255, .6);
+}
+
+/* ---------- 1b. Tokens: dark (the primary mode) ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0A0E13; --surface: #111821; --surface-2: #151D28; --surface-3: #1C2633; --overlay: rgba(2, 5, 9, .7);
+  --ink: #E6EDF5; --ink-2: #A8B5C5; --ink-3: #8393A6; --ink-inverse: #0A0E13;
+  --line: #1F2A38; --line-strong: #2C3A4C;
+  --tape: #36D1BC; --tape-ink: #5FE0CE; --tape-soft: #0F2F2C;
+  --act: #36D1BC; --on-act: #04201C; --glow: rgba(54, 209, 188, .22);
+  --ok: #5DD39B; --ok-soft: #10291F; --warn: #F0B44C; --warn-soft: #2D2312;
+  --bad: #FF7B71; --bad-soft: #33191A; --info: #82A9FF; --info-soft: #172341;
+  --mute: #9AA7B8; --mute-soft: #1B2430;
+  --side-bg: #070A0E; --side-ink: #C4CEDB; --side-ink-2: #7A8798; --side-hover: #0F151D; --side-active: #131C27;
+  --e-1: 0 1px 0 rgba(0, 0, 0, .4); --e-2: 0 12px 30px -10px rgba(0, 0, 0, .7); --e-3: 0 30px 80px -20px rgba(0, 0, 0, .85);
+  --focus: 0 0 0 2px var(--paper), 0 0 0 4px #36D1BC;
+  --tile-hi: inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #0A0E13; --surface: #111821; --surface-2: #151D28; --surface-3: #1C2633; --overlay: rgba(2, 5, 9, .7);
+    --ink: #E6EDF5; --ink-2: #A8B5C5; --ink-3: #8393A6; --ink-inverse: #0A0E13;
+    --line: #1F2A38; --line-strong: #2C3A4C;
+    --tape: #36D1BC; --tape-ink: #5FE0CE; --tape-soft: #0F2F2C;
+    --act: #36D1BC; --on-act: #04201C; --glow: rgba(54, 209, 188, .22);
+    --ok: #5DD39B; --ok-soft: #10291F; --warn: #F0B44C; --warn-soft: #2D2312;
+    --bad: #FF7B71; --bad-soft: #33191A; --info: #82A9FF; --info-soft: #172341;
+    --mute: #9AA7B8; --mute-soft: #1B2430;
+    --side-bg: #070A0E; --side-ink: #C4CEDB; --side-ink-2: #7A8798; --side-hover: #0F151D; --side-active: #131C27;
+    --e-1: 0 1px 0 rgba(0, 0, 0, .4); --e-2: 0 12px 30px -10px rgba(0, 0, 0, .7); --e-3: 0 30px 80px -20px rgba(0, 0, 0, .85);
+    --focus: 0 0 0 2px var(--paper), 0 0 0 4px #36D1BC;
+    --tile-hi: inset 0 1px 0 rgba(255, 255, 255, .04);
+  }
+}
+
+/* ---------- 2. Type: one sans family, tight and technical ---------- */
+body { font-size: 14px; letter-spacing: -.003em; font-feature-settings: 'ss01', 'tnum'; }
+h1 { font: 650 2rem/1.1 var(--f-display); letter-spacing: -.03em; }
+h2 { font: 650 1.5rem/1.2 var(--f-display); letter-spacing: -.025em; }
+.page-head h1 { font-size: 1.75rem; }
+.figure .val, .slip .item b, .stamp b { font-family: var(--f-mono) !important; letter-spacing: -.04em; }
+.figure .val { font-weight: 500; font-size: 2.1rem; }
+.t th { font: 500 12px/1.2 var(--f-mono); color: var(--ink-3); letter-spacing: 0; }
+
+/* ---------- 3. Ground: faint console grid ---------- */
+body { background:
+  radial-gradient(1200px 500px at 70% -10%, var(--glow), transparent 60%),
+  var(--paper); background-attachment: fixed; }
+.content::before { content: none; }
+
+/* ---------- 4. Sidebar: instrument rail ---------- */
+.side { border-right: 1px solid #141C26; }
+.brand .seal { border-radius: 8px; background: linear-gradient(135deg, #36D1BC, #1C8F84); color: #04201C; font: 700 14px/1 var(--f-mono); box-shadow: 0 0 0 1px rgba(54, 209, 188, .4), 0 0 18px rgba(54, 209, 188, .35); }
+.brand b { font: 650 18px/1 var(--f-display); letter-spacing: -.02em; }
+.brand small { font-family: var(--f-mono); font-size: 11px; }
+.side-search { border-radius: 9px; background: #0F151D; border-color: #1C2633; }
+.nav-group > .nav-label { font: 500 11px/1.4 var(--f-mono); color: #7A8798; padding-top: 6px; }
+.nav a, .nav button.nav-item { border-radius: 8px; }
+.nav a.active { background: #131C27; box-shadow: inset 0 0 0 1px #1F2B3A; }
+.nav a.active::before { left: auto; right: 8px; top: 50%; bottom: auto; width: 6px; height: 6px; border-radius: 50%; transform: translateY(-50%); background: #36D1BC; box-shadow: 0 0 10px #36D1BC; }
+.nav a.active .i { color: #36D1BC; }
+.nav .count { font-family: var(--f-mono); }
+.nav a.active .count { margin-right: 14px; }
+.nav .count.hot { background: #36D1BC; color: #04201C; }
+
+/* ---------- 5. Top bar ---------- */
+.top { background: color-mix(in srgb, var(--paper) 78%, transparent); border-bottom-color: var(--line); }
+.crumbs { font-family: var(--f-mono); font-size: 12px; }
+.top-search, .user-btn { border-radius: 10px; background: var(--surface); }
+.icon-btn { border-radius: 9px; }
+.icon-btn .dot { background: var(--tape); color: var(--on-act); border-color: var(--paper); }
+
+/* ---------- 6. Buttons ---------- */
+.btn { border-radius: 8px; font-weight: 550; border-color: var(--line-strong); background: var(--surface-2); }
+.btn.primary { background: var(--act); border-color: var(--act); color: var(--on-act); box-shadow: 0 0 0 1px var(--act), 0 6px 18px -8px var(--tape); }
+.btn.primary:hover { background: color-mix(in srgb, var(--act) 88%, #fff); }
+.btn.tape { background: var(--act); border-color: var(--act); color: var(--on-act); }
+.btn.ghost { background: none; }
+.seg { border-radius: 10px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.seg button { border-radius: 7px; }
+.seg button[aria-pressed="true"] { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pager button { border-radius: 7px; }
+.pager button[aria-current="true"] { background: var(--act); border-color: var(--act); color: var(--on-act); }
+.filter-chip { border-radius: 8px; }
+.filter-chip[aria-pressed="true"] { border-color: var(--tape); color: var(--tape-ink); background: var(--tape-soft); }
+
+/* ---------- 7. Bento tiles: layered surfaces, inner highlight ---------- */
+.panel { border-radius: var(--r-lg); background: linear-gradient(180deg, var(--surface), var(--surface-2)); box-shadow: var(--tile-hi), var(--e-1); }
+.panel-head h3 { font-weight: 600; letter-spacing: -.01em; }
+.panel-head .sub { font-family: var(--f-mono); }
+/* Figures become separate tiles in a bento row */
+.figures { border: 0; background: none; gap: 12px; overflow: visible; }
+.figure { border: 1px solid var(--line) !important; border-radius: var(--r-lg); background: linear-gradient(180deg, var(--surface), var(--surface-2)); box-shadow: var(--tile-hi); position: relative; overflow: hidden; }
+.figure::after { content: ''; position: absolute; left: 18px; right: 18px; bottom: 0; height: 2px; border-radius: 2px 2px 0 0; background: linear-gradient(90deg, var(--tape), transparent); opacity: .7; }
+a.figure:hover { border-color: var(--tape) !important; background: linear-gradient(180deg, var(--surface), var(--surface-2)); }
+.figure .lbl { font: 500 12px/1.3 var(--f-mono); color: var(--ink-3); }
+.table-wrap { border-radius: var(--r-lg); }
+.t tbody tr:hover { background: color-mix(in srgb, var(--tape) 6%, transparent); }
+.chip { border-radius: 6px; font-family: var(--f-mono); font-size: 11.5px; font-weight: 500; }
+.tag { border-radius: 6px; }
+.tag.hot { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad); }
+.avatar { border-radius: 9px; }
+
+/* ---------- 8. Forms ---------- */
+.input { border-radius: 8px; background: var(--surface-2); }
+.input:focus { border-color: var(--tape); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tape) 22%, transparent); }
+.check input { accent-color: var(--tape); }
+.switch input:checked { background: var(--tape); }
+.dropzone { border-radius: var(--r-lg); }
+.dropzone:hover, .dropzone.over { border-color: var(--tape); background: var(--tape-soft); }
+
+/* ---------- 9. Tabs: pill track ---------- */
+.tabs { border-bottom: 0; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; }
+.tabs button { border-radius: 8px; padding: 7px 12px; }
+.tabs button[aria-selected="true"] { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.tabs button[aria-selected="true"]::after { display: none; }
+
+/* ---------- 10. Signature: case header as a status console ---------- */
+.docket { border-radius: var(--r-lg); background:
+  radial-gradient(600px 200px at 100% 0%, color-mix(in srgb, var(--tape) 16%, transparent), transparent 70%),
+  radial-gradient(circle, color-mix(in srgb, var(--ink) 9%, transparent) 1px, transparent 1.5px) 0 0 / 18px 18px,
+  linear-gradient(180deg, var(--surface), var(--surface-2));
+  box-shadow: var(--tile-hi), var(--e-1); }
+.docket::after { right: auto; left: 0; top: 18px; bottom: 18px; height: auto; width: 3px; border-radius: 0 3px 3px 0; background: var(--tape); box-shadow: 0 0 14px var(--tape); opacity: 1; }
+.docket h1 { font: 650 2.25rem/1.1 var(--f-display); letter-spacing: -.035em; padding-right: 0; }
+.docket h1 .vs { font-style: normal; font-family: var(--f-mono); font-size: .5em; vertical-align: middle; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink-3); }
+.docket .no { color: var(--tape-ink); }
+
+/* Cause slips: mono item readout, glowing marker on the next matter */
+.slip::before { left: 8px; top: 50%; bottom: auto; width: 8px; height: 8px; border-radius: 50%; transform: translateY(-50%); background: var(--line-strong); }
+.slip.now::before { background: var(--tape); box-shadow: 0 0 0 4px color-mix(in srgb, var(--tape) 20%, transparent), 0 0 14px var(--tape); }
+.slip .item b { font-size: 26px; color: var(--ink); }
+.slip .item span, .slip .what .where { font-family: var(--f-mono); font-size: 11px; }
+.slip .what .ttl { font-weight: 600; }
+.slip .when b { color: var(--tape-ink); }
+.stamp { border-radius: 9px; }
+.stamp span { font-family: var(--f-mono); }
+.stamp.today { border-color: var(--tape); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tape) 18%, transparent); }
+.stamp.today span { background: var(--tape); color: var(--on-act); }
+.cal { border-radius: var(--r-lg); }
+.cal-head div { font-family: var(--f-mono); font-size: 11px; }
+.cal-day.today .d { background: var(--tape); color: var(--on-act); border-radius: 6px; box-shadow: 0 0 12px var(--glow); }
+.ev { border-radius: 5px; }
+.ev.hearing::before { background: var(--tape); }
+.tl-item.key::before { border-color: var(--tape); background: var(--tape); box-shadow: 0 0 8px var(--tape); }
+.doc-tile { border-radius: var(--r-lg); }
+.doc-tile .ext { background: var(--tape); color: var(--on-act); border-radius: 4px; }
+.lane { border-radius: var(--r-lg); }
+.card-mini { border-radius: 10px; }
+
+/* ---------- 11. Overlays: glass ---------- */
+.modal, .drawer, .palette, .popover { background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3); }
+.modal, .palette { border-radius: 16px; }
+.modal-foot { border-radius: 0 0 16px 16px; }
+.palette { box-shadow: var(--e-3), 0 0 0 1px var(--line-strong), 0 0 60px -20px var(--glow); }
+.palette-item { border-radius: 8px; }
+.palette-item[aria-selected="true"] { background: var(--tape-soft); color: var(--ink); }
+.toast { background: #0F1620; border-color: #22303F; border-radius: 12px; }
+.toast.ok .i { color: #36D1BC; }
+.notif.unread .ic { background: var(--tape-soft); color: var(--tape-ink); }
+
+/* ---------- 12. Auth: console boot screen ---------- */
+.auth-art { background:
+  radial-gradient(700px 400px at 30% 30%, rgba(54, 209, 188, .16), transparent 70%),
+  radial-gradient(circle, rgba(255, 255, 255, .07) 1px, transparent 1.5px) 0 0 / 22px 22px,
+  #070A0E; }
+.auth-art .tape-strand { right: auto; left: 56px; top: auto; bottom: 120px; width: 140px; height: 2px; transform: none; background: linear-gradient(90deg, #36D1BC, transparent); box-shadow: 0 0 12px #36D1BC; }
+.auth-art blockquote { font: 650 40px/1.1 var(--f-display); letter-spacing: -.035em; }
+.auth-art cite { font-family: var(--f-mono); font-size: 12px; color: #36D1BC; }
+
+/* ---------- 13. Portal & editor ---------- */
+.preview-banner { background: #0B1118; color: #C4CEDB; border-bottom: 1px solid #1F2A38; }
+.portal-top { border-bottom-color: var(--line); }
+.editor-shell { border-radius: var(--r-lg); }
+.paper-sheet { border-radius: 4px; box-shadow: 0 0 0 1px var(--line), var(--e-3); }

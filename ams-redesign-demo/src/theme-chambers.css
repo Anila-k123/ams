@@ -1,0 +1,223 @@
+/* ==========================================================================
+   PactPro "Chambers" theme
+   Layered on top of styles.css: ink-green panelling, antique brass fittings,
+   warm stone ground, and a bound-volume serif. Loaded only by the Chambers build.
+   ========================================================================== */
+
+/* ---------- 1. Tokens: light ---------- */
+:root {
+  --paper: #EFECE4;          /* stone */
+  --surface: #FBFAF6;        /* vellum */
+  --surface-2: #F4F1E9;
+  --surface-3: #E7E2D5;
+  --overlay: rgba(16, 24, 20, .5);
+  --ink: #1B2420;            /* text */
+  --ink-2: #48514B;
+  --ink-3: #62675F;
+  --ink-inverse: #FBFAF6;
+  --line: #DCD5C5;
+  --line-strong: #C4BBA6;
+  --green: #1F3A2F;          /* panelling: primary actions, headers */
+  --green-2: #2A4A3D;
+  --on-green: #F3EEDF;
+  --tape: #9C7A3C;           /* brass: the accent */
+  --tape-ink: #74581F;
+  --tape-soft: #F2E9D4;
+  --ok: #2E6A4E;   --ok-soft: #E2EEE6;
+  --warn: #8A5F12; --warn-soft: #F5EAD2;
+  --bad: #A3302A;  --bad-soft: #F7E1DD;
+  --info: #2F5A78; --info-soft: #E2EAF1;
+  --mute: #5E645D; --mute-soft: #E8E6DF;
+  --side-bg: #17231E;
+  --side-ink: #D8D2C0;
+  --side-ink-2: #939A8F;
+  --side-hover: #1F2E27;
+  --side-active: #26382F;
+  --f-display: 'Cormorant Garamond', 'Cormorant', Garamond, 'Palatino Linotype', Georgia, serif;
+  --f-body: 'Source Sans 3', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --r-xs: 2px; --r-sm: 3px; --r-md: 4px; --r-lg: 6px;
+  --e-1: 0 1px 0 rgba(27, 36, 32, .05);
+  --e-2: 0 8px 20px -8px rgba(27, 36, 32, .22), 0 2px 4px rgba(27, 36, 32, .06);
+  --e-3: 0 28px 64px -16px rgba(16, 24, 20, .38), 0 4px 12px rgba(16, 24, 20, .1);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px #9C7A3C;
+  --gilt: linear-gradient(90deg, #8A6A2F, #C9A45C 40%, #9C7A3C 70%, #7A5C24);
+}
+
+/* ---------- 1b. Tokens: dark (study at night) ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0F1512; --surface: #151E1A; --surface-2: #1A2520; --surface-3: #233029; --overlay: rgba(0, 0, 0, .62);
+  --ink: #ECE5D3; --ink-2: #BDB6A3; --ink-3: #969080; --ink-inverse: #0F1512;
+  --line: #29352F; --line-strong: #384740;
+  --green: #C9A45C; --green-2: #D6B26C; --on-green: #14100A;
+  --tape: #C9A45C; --tape-ink: #DABB78; --tape-soft: #2E291B;
+  --ok: #7CC09B; --ok-soft: #1B3127; --warn: #D9AE5C; --warn-soft: #33291A;
+  --bad: #EC8A7E; --bad-soft: #3A221F; --info: #93B6D3; --info-soft: #1D2B35;
+  --mute: #A6A99F; --mute-soft: #252D29;
+  --side-bg: #0B110E; --side-ink: #D8D2C0; --side-ink-2: #8B9187; --side-hover: #141D19; --side-active: #1B2721;
+  --e-1: 0 1px 0 rgba(0, 0, 0, .35); --e-2: 0 8px 24px -6px rgba(0, 0, 0, .55); --e-3: 0 28px 64px -16px rgba(0, 0, 0, .75);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px #C9A45C;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #0F1512; --surface: #151E1A; --surface-2: #1A2520; --surface-3: #233029; --overlay: rgba(0, 0, 0, .62);
+    --ink: #ECE5D3; --ink-2: #BDB6A3; --ink-3: #969080; --ink-inverse: #0F1512;
+    --line: #29352F; --line-strong: #384740;
+    --green: #C9A45C; --green-2: #D6B26C; --on-green: #14100A;
+    --tape: #C9A45C; --tape-ink: #DABB78; --tape-soft: #2E291B;
+    --ok: #7CC09B; --ok-soft: #1B3127; --warn: #D9AE5C; --warn-soft: #33291A;
+    --bad: #EC8A7E; --bad-soft: #3A221F; --info: #93B6D3; --info-soft: #1D2B35;
+    --mute: #A6A99F; --mute-soft: #252D29;
+    --side-bg: #0B110E; --side-ink: #D8D2C0; --side-ink-2: #8B9187; --side-hover: #141D19; --side-active: #1B2721;
+    --e-1: 0 1px 0 rgba(0, 0, 0, .35); --e-2: 0 8px 24px -6px rgba(0, 0, 0, .55); --e-3: 0 28px 64px -16px rgba(0, 0, 0, .75);
+    --focus: 0 0 0 2px var(--surface), 0 0 0 4px #C9A45C;
+  }
+}
+
+/* ---------- 2. Type: Cormorant needs more size and weight to hold up ---------- */
+body { font-size: 15px; font-feature-settings: normal; }
+h1 { font: 600 2.5rem/1.08 var(--f-display); letter-spacing: -.005em; }
+h2 { font: 600 1.875rem/1.15 var(--f-display); letter-spacing: 0; }
+.page-head h1 { font-size: 2.25rem; }
+.section-title h2, .modal-head h2 { font-size: 1.6rem; }
+.drawer-head h2 { font-size: 1.6rem !important; }
+.panel-head h3 { font: 600 1.25rem/1.2 var(--f-display); letter-spacing: .005em; }
+.mono { font-size: .86em; letter-spacing: 0; }
+.t { font-size: 14px; }
+.t th { font: italic 500 15px/1.2 var(--f-display); color: var(--ink-2); letter-spacing: .01em; }
+
+/* ---------- 3. Sidebar: green panelling with gilt fittings ---------- */
+.side { background: var(--side-bg); box-shadow: inset -1px 0 0 rgba(201, 164, 92, .18); }
+.brand { padding: 22px 18px 18px; position: relative; }
+.brand::after { content: ''; position: absolute; left: 18px; right: 18px; bottom: 6px; height: 1px; background: var(--gilt); opacity: .55; }
+.brand .seal { background: transparent; color: #C9A45C; box-shadow: inset 0 0 0 1.5px #C9A45C, inset 0 0 0 4px var(--side-bg), inset 0 0 0 5px rgba(201, 164, 92, .5); font: 600 16px/1 var(--f-display); width: 34px; height: 34px; }
+.brand b { font: 600 24px/1 var(--f-display); letter-spacing: .01em; color: #F3EEDF; }
+.brand small { font-style: italic; font-family: var(--f-display); font-size: 13px; color: #A9A38F; }
+.side-search { background: rgba(255, 255, 255, .04); border-color: rgba(201, 164, 92, .22); border-radius: 3px; }
+.nav-group > .nav-label { font: italic 500 15px/1.4 var(--f-display); color: #A9A38F; padding-top: 4px; }
+.nav a, .nav button.nav-item { border-radius: 2px; font-size: 14px; }
+.nav a.active { background: linear-gradient(90deg, rgba(201, 164, 92, .16), rgba(201, 164, 92, .03)); color: #F3EEDF; }
+/* The brass fitting: a small lozenge instead of a tape strip */
+.nav a.active::before { left: 2px; top: 50%; bottom: auto; width: 6px; height: 6px; border-radius: 0; transform: translateY(-50%) rotate(45deg); background: #C9A45C; }
+.nav a.active .i { color: #C9A45C; }
+.nav .count.hot { background: #9C7A3C; color: #14100A; }
+.side-foot { border-top-color: rgba(201, 164, 92, .18); }
+
+/* ---------- 4. Top bar ---------- */
+.top { background: color-mix(in srgb, var(--paper) 90%, transparent); border-bottom: 1px solid var(--line); }
+.top::after { content: ''; position: absolute; left: 0; right: 0; bottom: -3px; height: 1px; background: var(--line); opacity: .6; }
+.crumbs { font-family: var(--f-display); font-size: 16px; font-style: italic; }
+.crumbs b { font-style: normal; font-weight: 600; }
+.user-btn, .top-search { border-radius: 3px; }
+.icon-btn .dot { background: var(--tape); color: var(--on-green); border-color: var(--paper); }
+
+/* ---------- 5. Buttons: green panel primary, brass-rimmed secondary ---------- */
+.btn { border-radius: 2px; font-weight: 600; letter-spacing: .01em; border-color: var(--line-strong); }
+.btn.primary { background: var(--green); border-color: var(--green); color: var(--on-green); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .18); }
+.btn.primary:hover { background: var(--green-2); border-color: var(--green-2); }
+.btn.tape { background: var(--tape); border-color: var(--tape); color: #14100A; }
+.btn:not(.primary):not(.ghost):not(.tape):hover { border-color: var(--tape); }
+.seg { border-radius: 3px; background: var(--surface-3); }
+.seg button { border-radius: 2px; }
+.seg button[aria-pressed="true"] { box-shadow: 0 0 0 1px var(--tape), var(--e-1); }
+.pager button[aria-current="true"] { background: var(--green); border-color: var(--green); color: var(--on-green); }
+.filter-chip[aria-pressed="true"] { border-color: var(--tape); color: var(--tape-ink); }
+
+/* ---------- 6. Panels: vellum sheets with a gilt head rule ---------- */
+.panel { border-radius: var(--r-lg); position: relative; }
+.panel::before { content: ''; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--gilt); opacity: .75; }
+.panel.tinted::before { display: none; }
+.modal, .drawer, .palette { border-top: 2px solid var(--tape); }
+.figures { border-radius: var(--r-lg); border-top: 2px solid var(--tape); }
+.figure .lbl { font: italic 500 15px/1.3 var(--f-display); color: var(--ink-2); }
+.figure .val { font: 600 2.6rem/1 var(--f-display); letter-spacing: 0; }
+.chip { border-radius: 2px; font-weight: 600; }
+.chip.tape { background: var(--tape-soft); color: var(--tape-ink); }
+.tag { border-radius: 2px; }
+.tag.hot { border-color: var(--tape); color: var(--tape-ink); background: var(--tape-soft); }
+.avatar { border-radius: 50%; box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 2.5px rgba(156, 122, 60, .55); }
+
+/* ---------- 7. Forms ---------- */
+.input { border-radius: 2px; background: var(--surface); }
+.input:focus { border-color: var(--tape); box-shadow: 0 0 0 3px color-mix(in srgb, var(--tape) 22%, transparent); }
+.check input { accent-color: var(--green); }
+.switch input:checked { background: var(--green); }
+.fieldset-title { font: 600 1.15rem var(--f-display); }
+.dropzone { border-radius: var(--r-lg); border-color: var(--line-strong); }
+.dropzone:hover, .dropzone.over { border-color: var(--tape); background: var(--tape-soft); }
+
+/* ---------- 8. Tabs: brass underline ---------- */
+.tabs button { font-size: 14px; }
+.tabs button[aria-selected="true"]::after { background: var(--tape); height: 2px; }
+.tabs button[aria-selected="true"] { color: var(--ink); }
+
+/* ---------- 9. Signature: the docket becomes a bound brief ---------- */
+.docket { background: var(--green); color: var(--on-green); border-color: var(--green); border-radius: var(--r-lg); box-shadow: var(--e-2); }
+.docket::after { right: auto; left: 0; top: 0; width: 100%; height: 3px; background: var(--gilt); opacity: 1; }
+.docket::before { content: ''; position: absolute; inset: 8px; border: 1px solid rgba(201, 164, 92, .35); border-radius: 3px; pointer-events: none; }
+.docket h1 { color: var(--on-green); padding-right: 0; font-size: 2.75rem; }
+.docket h1 .vs { color: #C9A45C; }
+.docket .no, .docket .meta-line, .docket .muted, .docket .faint { color: color-mix(in srgb, var(--on-green) 78%, transparent); }
+.docket .meta-line .i { color: #C9A45C; }
+.docket .btn:not(.primary) { background: transparent; color: var(--on-green); border-color: rgba(201, 164, 92, .55); }
+.docket .btn:not(.primary):hover { background: rgba(201, 164, 92, .14); }
+.docket .btn.primary { background: #C9A45C; border-color: #C9A45C; color: #14100A; }
+.docket .btn.ghost, .docket .icon-btn { color: var(--on-green); }
+.docket .tag { background: transparent; color: var(--on-green); border-color: rgba(201, 164, 92, .5); }
+.docket .chip { background: rgba(255, 255, 255, .1); color: var(--on-green); }
+/* In dark mode --green turns brass, so the brief keeps a deep-green cover and parchment text */
+:root[data-theme="dark"] .docket { --on-green: #ECE5D3; background: #1B2A23; border-color: #2E4239; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .docket { --on-green: #ECE5D3; background: #1B2A23; border-color: #2E4239; }
+}
+
+/* Cause slips: brass item numerals, a lozenge marks the next matter */
+.slip::before { width: 2px; background: var(--line); }
+.slip.now::before { background: var(--tape); width: 3px; }
+.slip .item b { font: 600 34px/1 var(--f-display); color: var(--tape-ink); }
+.slip .item span { font-style: italic; font-family: var(--f-display); font-size: 13px; }
+.slip .what .ttl { font: 600 1.2rem/1.25 var(--f-display); }
+.stamp { border-radius: 2px; border-color: var(--line-strong); }
+.stamp span { font-family: var(--f-display); font-style: italic; font-size: 12px; background: var(--surface-3); }
+.stamp b { font: 600 22px/1.4 var(--f-display); }
+.stamp.today { border-color: var(--tape); }
+.stamp.today span { background: var(--green); color: var(--on-green); }
+.cal-day.today .d { background: var(--green); color: var(--on-green); border-radius: 2px; }
+.cal-head div { font: italic 500 15px var(--f-display); }
+.ev.hearing::before { background: var(--green); }
+.timeline::before { background: linear-gradient(var(--line-strong), var(--line)); }
+.tl-item::before { border-radius: 0; transform: rotate(45deg); width: 8px; height: 8px; }
+.tl-item.key::before { border-color: var(--tape); background: var(--tape); }
+.doc-tile { border-radius: var(--r-lg); }
+.doc-tile .ext { background: var(--green); color: var(--on-green); }
+.lane { border-radius: var(--r-lg); }
+.card-mini { border-radius: var(--r-md); border-left: 2px solid var(--tape); }
+
+/* ---------- 10. Overlays ---------- */
+.toast { background: #17231E; border-color: rgba(201, 164, 92, .35); border-radius: 3px; }
+.palette-item[aria-selected="true"] { background: var(--tape-soft); }
+.notif.unread .ic { background: var(--tape-soft); color: var(--tape-ink); }
+.notif.unread { background: color-mix(in srgb, var(--tape-soft) 45%, transparent); }
+
+/* ---------- 11. Auth: a panelled door with a brass seal ---------- */
+.auth-art { background:
+  radial-gradient(120% 80% at 20% 10%, rgba(201, 164, 92, .10), transparent 60%),
+  repeating-linear-gradient(90deg, rgba(255,255,255,.018) 0 2px, transparent 2px 120px),
+  #142019; }
+.auth-art .tape-strand { right: auto; left: 56px; top: 50%; bottom: auto; width: 64px; height: 2px; transform: none; background: var(--gilt); box-shadow: none; }
+.auth-art blockquote { font: italic 500 42px/1.15 var(--f-display); color: #F3EEDF; }
+.auth-art cite { font-family: var(--f-display); font-style: italic; font-size: 16px; color: #C9A45C; }
+.auth-card h1 { font-size: 3rem; }
+
+/* ---------- 12. Portal & editor ---------- */
+.preview-banner { background: var(--green); color: var(--on-green); }
+.portal-top { border-bottom: 2px solid var(--tape); }
+.paper-sheet { font-family: var(--f-display); font-size: 17px; border-top: 3px double #9C7A3C; }
+.editor-shell { border-radius: var(--r-lg); }
+
+/* ---------- 13. Fixes from visual review ---------- */
+.auth-art .tape-strand { display: none; }
+.docket button:not(.btn) { color: color-mix(in srgb, var(--on-green) 85%, transparent); border-color: rgba(201, 164, 92, .5); }
+.docket button:not(.btn):hover { color: var(--on-green); }

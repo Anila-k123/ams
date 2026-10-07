@@ -21,6 +21,7 @@ import { Button, Chip, StatusChip, Avatar, Panel, EmptyState, Skel, Spinner, Pop
 import { TextField, TextArea, SelectField, Field, Check, Tabs, SearchInput } from "../ui/forms";
 import { Modal, confirm } from "../ui/overlays";
 import "../ui/pages/casedetail.css";
+import { copyText } from "../utils/clipboard";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -826,10 +827,8 @@ export default function CaseDetail() {
       row.judge ? `Before: ${row.judge}` : "",
       row.causeList ? `List: ${row.causeList}` : "",
     ].filter(Boolean);
-    try {
-      await navigator.clipboard.writeText(parts.join("\n"));
-      success("Listing copied to clipboard.");
-    } catch { error("Couldn't copy to clipboard."); }
+    if (await copyText(parts.join("\n"))) success("Listing copied to clipboard.");
+    else error("Couldn't copy to clipboard.");
   };
 
   const alertClient = async (row, i) => {
@@ -1287,7 +1286,8 @@ export default function CaseDetail() {
   const activeTab: TabKey = tabs.some((t) => t.value === tab) ? tab : "overview";
 
   const copyCnr = async () => {
-    try { await navigator.clipboard.writeText(cnr); success(`CNR ${cnr} copied.`); } catch { error("Couldn't copy to clipboard."); }
+    if (await copyText(cnr)) success(`CNR ${cnr} copied.`);
+    else error("Couldn't copy to clipboard.");
   };
 
   const openDocSummary = (d: any) => setSummaryDoc(d);

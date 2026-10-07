@@ -4,6 +4,7 @@ import { useToast } from "../contexts/ToastContext";
 import { PageHead, Chip, EmptyState, Icon, Skel, Button } from "../ui/kit";
 import { SearchInput, Segmented, Tabs } from "../ui/forms";
 import "../ui/pages/research.css";
+import { copyText } from "../utils/clipboard";
 
 // The three act pairs replaced on 1 July 2024.
 const PAIRS = [
@@ -17,7 +18,7 @@ const kindChip = (r: any) =>
     : r.changed ? <Chip tone="warn">Changed</Chip> : <Chip tone="ok">Same</Chip>;
 
 export default function LawCodes() {
-  const { success } = useToast() as any;
+  const { success, error } = useToast() as any;
   const [pair, setPair] = useState("IPC-BNS");
   const [direction, setDirection] = useState("old-new"); // which side the query matches
   const [query, setQuery] = useState("");
@@ -61,12 +62,12 @@ export default function LawCodes() {
   // Keep a mapping open on the right: the clicked one, else the first result.
   const sel = rows.find((r) => r.id === selected?.id) || rows[0] || null;
 
-  const copyCitation = () => {
+  const copyCitation = async () => {
     const text = sel.repealed
       ? `Sec. ${sel.oldSection} ${sel.oldAct} (repealed, no ${sel.newAct} equivalent)`
       : `Sec. ${sel.oldSection} ${sel.oldAct} (now Sec. ${sel.newSection} ${sel.newAct})`;
-    try { navigator.clipboard?.writeText(text); } catch { /* clipboard blocked */ }
-    success(`Copied: ${text}`);
+    if (await copyText(text)) success(`Copied: ${text}`);
+    else error("Couldn't copy to clipboard.");
   };
 
   return (

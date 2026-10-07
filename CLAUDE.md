@@ -69,6 +69,7 @@ API base: `VITE_API_BASE` (default `http://127.0.0.1:8080`, see `src/api/client.
   - There is no component library: PrimeReact, PrimeFlex and PrimeIcons were removed. Page-area styles live in `src/ui/pages/*.css` and use only Red Tape tokens. Layout grids use `.cols`.
   - The approved reference prototype is `ams-redesign-demo/PactPro_UI_Redesign_Final.html`.
 - **Lint:** `npm run lint` covers `.ts`/`.tsx` too (typescript-eslint parser, `eslint.config.js`). `react-hooks/rules-of-hooks` is an **error**: hooks go above any early `return` (a hook below one blanked the Users page). `exhaustive-deps` is a warning, and lint is clean: keep it at 0. Fix a dependency warning for real when that keeps behaviour. Never just add a function that's re-created every render, because that re-fetches in a loop; use a ref or `useCallback`. If an effect deliberately runs only on certain changes, keep the list and add `// eslint-disable-next-line react-hooks/exhaustive-deps -- <why>`. Type-checking stays with `tsc`.
+- **Copy to clipboard:** always use `copyText()` from `src/utils/clipboard.ts`, never `navigator.clipboard` directly. The office opens AMS over plain http on the LAN, where `navigator.clipboard` does not exist; the helper falls back to `execCommand("copy")` and returns whether it worked.
 - **Hover hints:** use the native `title` attribute (plus `aria-label` on icon-only buttons); there is no tooltip component.
 
 ## Conventions

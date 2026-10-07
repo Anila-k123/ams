@@ -18,6 +18,36 @@ from core.jwt import decode_token
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import DocumentSerializer
+
+
+# File-type filter. Browsers report the same kind of file under different MIME
+# types (a ZIP from Windows is "application/x-zip-compressed", not
+# "application/zip"; some uploads arrive as "application/octet-stream"), so a
+# kind matches any of its MIME types or the file's extension.
+FILE_KINDS = {
+    'pdf': (['application/pdf'], ['.pdf']),
+    'image': (['image/'], ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff']),
+    'doc': (['application/msword'], ['.doc']),
+    'docx': (['application/vnd.openxmlformats-officedocument.wordprocessingml'], ['.docx']),
+    'zip': (['application/zip', 'application/x-zip', 'application/x-zip-compressed', 'multipart/x-zip'], ['.zip']),
+}
+# Older clients sent a MIME prefix; map the known ones onto their kind.
+_MIME_TO_KIND = {'application/pdf': 'pdf', 'image/': 'image', 'application/msword': 'doc',
+                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+                 'application/zip': 'zip'}
+
+
+def filter_file_kind(qs, value):
+    kind = _MIME_TO_KIND.get(value, value)
+    if kind not in FILE_KINDS:
+        return qs.filter(file_type__startswith=value)
+    mimes, exts = FILE_KINDS[kind]
+    q = Q()
+    for m in mimes:
+        q |= Q(file_type__istartswith=m)
+    for e in exts:
+        q |= Q(original_name__iendswith=e)
+    return qs.filter(q)
 from .models import DocumentSummary, DocumentVersion
 from .storage import add_version, create_document
 from core.practice import practice_ids
@@ -50,7 +80,7 @@ class DocumentListView(APIView):
         if p.get('status'):
             qs = qs.filter(status=p['status'])
         if p.get('fileType'):
-            qs = qs.filter(file_type__startswith=p['fileType'])
+            qs = filter_file_kind(qs, p['fileType'])
         sort_by = SORT_MAP.get(p.get('sortBy', 'uploadDate'), 'upload_date')
         sort_dir = p.get('sortDir', 'desc')
         qs = qs.order_by(sort_by if sort_dir == 'asc' else '-' + sort_by, '-id')
@@ -84,7 +114,7 @@ class DocumentFilterView(APIView):
         if p.get('status'):
             qs = qs.filter(status=p['status'])
         if p.get('fileType'):
-            qs = qs.filter(file_type__startswith=p['fileType'])
+            qs = filter_file_kind(qs, p['fileType'])
         return Response(DocumentSerializer(qs.order_by('-upload_date', '-id'), many=True).data)
 
 

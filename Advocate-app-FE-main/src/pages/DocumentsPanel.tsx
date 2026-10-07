@@ -26,13 +26,30 @@ const CATEGORIES = [
   "Identity Proof", "Address Proof", "Other"
 ];
 
+// Filter by kind of file, not one exact MIME type: the same kind arrives under
+// several (a ZIP from Windows is "application/x-zip-compressed"). The backend
+// (documents/views.py FILE_KINDS) and matchesKind below use the same rules.
 const FILE_TYPE_OPTIONS = [
-  { value: "application/pdf", label: "PDF" },
-  { value: "image/", label: "Images" },
-  { value: "application/msword", label: "DOC" },
-  { value: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", label: "DOCX" },
-  { value: "application/zip", label: "ZIP" },
+  { value: "pdf", label: "PDF" },
+  { value: "image", label: "Images" },
+  { value: "doc", label: "DOC" },
+  { value: "docx", label: "DOCX" },
+  { value: "zip", label: "ZIP" },
 ];
+const FILE_KINDS: Record<string, { mimes: string[]; exts: string[] }> = {
+  pdf: { mimes: ["application/pdf"], exts: [".pdf"] },
+  image: { mimes: ["image/"], exts: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"] },
+  doc: { mimes: ["application/msword"], exts: [".doc"] },
+  docx: { mimes: ["application/vnd.openxmlformats-officedocument.wordprocessingml"], exts: [".docx"] },
+  zip: { mimes: ["application/zip", "application/x-zip", "application/x-zip-compressed", "multipart/x-zip"], exts: [".zip"] },
+};
+const matchesKind = (d: any, kind: string) => {
+  const k = FILE_KINDS[kind];
+  if (!k) return true;
+  const type = String(d.fileType || "").toLowerCase();
+  const name = String(d.originalName || d.documentName || "").toLowerCase();
+  return k.mimes.some((m) => type.startsWith(m)) || k.exts.some((e) => name.endsWith(e));
+};
 
 const PAGE_SIZE = 20;
 const emptyUploadOptions = { category: "", caseId: "", clientId: "", documentName: "", description: "" };
@@ -94,7 +111,7 @@ export default function DocumentsPanel() {
           (!kw || `${d.documentName} ${d.originalName || ""} ${d.category || ""} ${d.description || ""}`.toLowerCase().includes(kw))
           && (!selectedCategory || d.category === selectedCategory)
           && (!selectedStatus || (d.status || "ACTIVE") === selectedStatus)
-          && (!selectedFileType || String(d.fileType || "").startsWith(selectedFileType)));
+          && (!selectedFileType || matchesKind(d, selectedFileType)));
         setTotalElements(rows.length);
         setDocuments(rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE));
         return;

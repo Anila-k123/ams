@@ -491,7 +491,15 @@ export default function DocumentsPanel() {
         </div>
       </Modal>
 
-      {previewDoc && <FilePreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} onDownload={handleDownload} />}
+      {previewDoc && (
+        <FilePreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} onDownload={handleDownload}
+          onSummary={handlers.onSummary} onVersions={handlers.onVersions} onEdit={handlers.onEdit}
+          onShareToggle={handlers.onShareToggle && ((d: any) => {
+            handlers.onShareToggle!(d);
+            // Keep the open drawer's "Shared" chip in step with the toggle.
+            setPreviewDoc((p: any) => (p && p.id === d.id ? { ...p, clientVisible: !p.clientVisible } : p));
+          })} />
+      )}
 
       {summaryDoc && (
         <DocumentSummaryModal doc={summaryDoc} onClose={() => setSummaryDoc(null)} canRegenerate={hasPermission("DOCUMENT_EDIT")} />

@@ -620,7 +620,14 @@ function Clients() {
         )}
       </Drawer>
 
-      {previewDoc && <FilePreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} onDownload={handleClientDocDownload} />}
+      {previewDoc && (
+        <FilePreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} onDownload={handleClientDocDownload}
+          onSummary={setSummaryDoc}
+          onShareToggle={hasPermission("DOCUMENT_EDIT") ? (d: any) => {
+            handleShareToggle(d);
+            setPreviewDoc((p: any) => (p && p.id === d.id ? { ...p, clientVisible: !p.clientVisible } : p));
+          } : undefined} />
+      )}
       {summaryDoc && <DocumentSummaryModal doc={summaryDoc} onClose={() => setSummaryDoc(null)} canRegenerate={hasPermission("DOCUMENT_EDIT")} />}
       <ClientPortalAccess client={portalFor} isOpen={!!portalFor} onClose={() => setPortalFor(null)} toast={toast}
         onChanged={(acc) => { if (openClient && portalFor?.id === openClient.id) setPortalLogins(acc); }} />

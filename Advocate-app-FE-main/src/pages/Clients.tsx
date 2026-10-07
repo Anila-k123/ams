@@ -452,9 +452,9 @@ function Clients() {
         </>}>
         <form id="client-form" className="form-grid cl-form" onSubmit={handleSubmit} noValidate>
           <p className="cl-form-section">Basic details</p>
-          {field("name", "Name", "Full name or firm name", { required: true })}
+          {field("name", "Name", "Name", { required: true })}
           {field("description", "Description", "Short description about the client")}
-          {field("website", "Website", "https://", { full: true })}
+          {field("website", "Website", "Website", { full: true })}
           {field("email", "Email", "name@example.com", { required: true, type: "email" })}
           {field("phone", "Phone", "+91 98765 43210", { required: true, type: "tel" })}
           {/* Billing currency is always INR for now (set in emptyClient), so no picker. */}
@@ -480,8 +480,8 @@ function Clients() {
               {(id, d) => <input id={id} aria-describedby={d} className="input" name="address" value={newClient.address || ""} onChange={handleChange} />}
             </Field>
           )}
-          {field("building", "Building", "Door no., building")}
-          {field("street", "Street", "Street, area")}
+          {field("building", "Building", "Building")}
+          {field("street", "Street", "Street")}
           {field("city", "City", "City")}
           {field("district", "District", "District")}
           {/* A free-typed value ("TAMIL NADU") from before the list existed still shows. */}

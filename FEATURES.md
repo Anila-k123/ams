@@ -2,7 +2,7 @@
 
 > A full-stack legal practice management platform for Indian advocates and law firms.
 > **Backend:** Django 5.1 (REST, JWT auth, PostgreSQL) — a drop-in, contract-compatible replacement for an earlier Spring Boot backend on the same database.
-> **Frontend:** React 19 + React Router 7, Recharts, React Big Calendar, Axios, STOMP WebSocket.
+> **Frontend:** React 19 + React Router 7, Recharts, Axios, the Red Tape design system (`src/ui`), STOMP WebSocket.
 
 This document catalogues **every** capability of the application — from the smallest UI affordance to the largest subsystem.
 
@@ -189,13 +189,13 @@ Every form field that takes a structured value is checked in the browser (as you
 
 ## 6. Hearings, Events & Calendar
 
-- **React Big Calendar** with Month / Week / Day / Agenda views.
+- **Calendar** (Red Tape, the app's own grid) with **Day / Week / Month** views. The period on screen is shown between Prev and Next. There's no "Today" button and no Agenda view, by the firm's decision. Clicking an empty part of a day adds an event on it.
 - Event types: Hearing, Client Meeting, Payment Due, Document Filing.
 - Hearing metadata: title, **purpose** (Arguments, Evidence, Framing of Issues, For Orders, Interim Application, Mention, Cross-examination, Other), court, bench/hall, judge, date, time, next hearing date, outcome.
 - Create/edit/delete events; each linked to a case.
 - "Today" and "Upcoming (30 days)" server views.
 - Deep-link navigation from global search to a specific date/view.
-- **Task deadlines on the calendar:** open tasks the user can see (the Tasks page's own list, `/api/workspace/tasks/all`) appear on their deadline date as outlined "✓ Task: …" items, red when overdue; clicking one opens it on the Tasks page. They are shown, not stored as events, so they never go stale or raise hearing reminders. They always show for users with `TASK_VIEW` (there is no toggle). The calendar views are Day, Week and Month, with the period on screen shown between Prev and Next.
+- **Task deadlines on the calendar:** open tasks the user can see (the Tasks page's own list, `/api/workspace/tasks/all`) appear on their deadline date as outlined "✓ Task: …" items, red when overdue; clicking one opens it on the Tasks page. They are shown, not stored as events, so they never go stale or raise hearing reminders. They show for users with `TASK_VIEW`. The type-filter chips above the calendar (Hearing, Client meeting, Payment due, Document filing, Task deadlines) can hide any type, tasks included.
 
 **Endpoints:** `GET /api/events`, `/my-events`, `/today`, `/upcoming`; `POST /api/events/create`; `PUT /api/events/update/<id>`; `DELETE /api/events/delete/<id>`.
 

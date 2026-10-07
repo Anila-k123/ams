@@ -1,6 +1,8 @@
 // Calendar: hearings, client meetings, payment dues and filings, plus open task
-// deadlines (read-only, from the Tasks list). Month / Week / Agenda views on the
+// deadlines (read-only, from the Tasks list). Day / Week / Month views on the
 // prototype's own grid; clicking an empty part of a day adds an event on it.
+// No "Today" button and no Agenda view: the firm decided against both (Prev /
+// Next and the period heading are enough, and Day covers what Agenda showed).
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "../contexts/ToastContext";
@@ -33,7 +35,7 @@ const emptyEvent = {
   purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "",
 };
 
-type View = "month" | "week" | "agenda";
+type View = "day" | "week" | "month";
 type Item = {
   id: any; kind: "event" | "task"; title: string; at: Date; hasTime: boolean;
   eventType?: string; raw?: any; taskId?: any; caseNumber?: string; overdue?: boolean;
@@ -63,6 +65,7 @@ function HearingsPage() {
   const [view, setView] = useState<View>("month");
   const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [weekStart, setWeekStart] = useState(() => monday(new Date()));
+  const [day, setDay] = useState(() => startOfDay(new Date()));   // the Day view's date
   const [types, setTypes] = useState<Set<string>>(() => new Set(FILTER_KEYS));
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -156,6 +159,7 @@ function HearingsPage() {
         const at = parseYmd(match.date);
         setCursor(new Date(at.getFullYear(), at.getMonth(), 1));
         setWeekStart(monday(at));
+        setDay(startOfDay(at));
         window.history.replaceState({}, document.title);
       }
     }
@@ -246,17 +250,23 @@ function HearingsPage() {
 
   // Prev / Next move by what the view shows.
   const step = (n: number) => {
-    if (view === "week") setWeekStart((w) => { const d = new Date(w); d.setDate(d.getDate() + 7 * n); return d; });
+    if (view === "day") setDay((d) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; });
+    else if (view === "week") setWeekStart((w) => { const d = new Date(w); d.setDate(d.getDate() + 7 * n); return d; });
     else setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1));
   };
-  const goToday = () => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); setWeekStart(monday(t)); };
-  // Keep week and month in step so switching views lands where you were looking.
+  // The date the current view is "on": switching views lands there, not back
+  // on today. Within the current month / week that means today itself.
+  const focusDate = () => {
+    const t = startOfDay(new Date());
+    if (view === "day") return day;
+    if (view === "week") return t >= weekStart && t < new Date(weekStart.getTime() + 7 * 86400000) ? t : weekStart;
+    return cursor.getMonth() === t.getMonth() && cursor.getFullYear() === t.getFullYear() ? t : cursor;
+  };
   const changeView = (v: View) => {
-    if (v === "week" && view !== "week") {
-      const t = new Date();
-      setWeekStart(monday(cursor.getMonth() === t.getMonth() && cursor.getFullYear() === t.getFullYear() ? t : cursor));
-    }
-    if (v !== "week" && view === "week") setCursor(new Date(weekStart.getFullYear(), weekStart.getMonth(), 1));
+    const f = focusDate();
+    setDay(startOfDay(f));
+    setWeekStart(monday(f));
+    setCursor(new Date(f.getFullYear(), f.getMonth(), 1));
     setView(v);
   };
   const toggleType = (k: string) => setTypes((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -304,37 +314,39 @@ function HearingsPage() {
         </div>
       </div>
     );
-  } else if (view === "agenda") {
-    title = fdate(cursor, { month: "long", year: "numeric" });
-    const inM = items.filter((it) => it.at.getMonth() === cursor.getMonth() && it.at.getFullYear() === cursor.getFullYear());
-    const groups: Record<string, Item[]> = {};
-    inM.forEach((it) => { (groups[ymd(it.at)] = groups[ymd(it.at)] || []).push(it); });
-    body = inM.length ? (
+  } else if (view === "day") {
+    title = longDate(day);
+    const list = items.filter((it) => sameDay(it.at, day));
+    body = (
       <div className="panel">
-        {Object.entries(groups).map(([k, list]) => {
-          const d = parseYmd(k);
-          return (
-            <div className="pp-agenda-day" key={k}>
-              <div className={`stamp${sameDay(d, today) ? " today" : ""}`} aria-label={longDate(d)}><span>{fdate(d, { weekday: "short" })}</span><b>{d.getDate()}</b></div>
-              <ul>
-                {list.map((it) => (
-                  <li key={it.id}>
-                    <span className="t">{it.hasTime ? ftime(it.at) : "All day"}</span>
-                    <span className="ellipsis">
-                      <button type="button" className="link court-linkbtn" onClick={() => openItem(it)}>{it.title}</button>
-                      {it.caseNumber && <span className="faint small mono"> {it.caseNumber}</span>}
-                    </span>
-                    {it.kind === "task"
-                      ? <Chip tone={it.overdue ? "bad" : "tape"}>{it.overdue ? "Overdue task" : "Task"}</Chip>
-                      : <Chip tone={typeOf(it.eventType)?.tone || ""}>{typeOf(it.eventType)?.label || it.eventType}</Chip>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
+        <div className="pp-agenda-day">
+          <div className={`stamp${sameDay(day, today) ? " today" : ""}`} aria-label={longDate(day)}><span>{fdate(day, { weekday: "short" })}</span><b>{day.getDate()}</b></div>
+          {list.length ? (
+            <ul>
+              {list.map((it) => (
+                <li key={it.id}>
+                  <span className="t">{it.hasTime ? ftime(it.at) : "All day"}</span>
+                  <span className="ellipsis">
+                    <button type="button" className="link court-linkbtn" onClick={() => openItem(it)}>{it.title}</button>
+                    {it.caseNumber && <span className="faint small mono"> {it.caseNumber}</span>}
+                  </span>
+                  {it.kind === "task"
+                    ? <Chip tone={it.overdue ? "bad" : "tape"}>{it.overdue ? "Overdue task" : "Task"}</Chip>
+                    : <Chip tone={typeOf(it.eventType)?.tone || ""}>{typeOf(it.eventType)?.label || it.eventType}</Chip>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState icon="calendar" title="Nothing scheduled this day" text="Use Prev / Next, change the filters, or add an event." />
+          )}
+        </div>
+        {canCreate && (
+          <div className="row court-gap-b">
+            <button type="button" className="btn" onClick={() => openModal(day)}><Icon name="plus" size="sm" />Add event on {fdate(day, { day: "numeric", month: "short" })}</button>
+          </div>
+        )}
       </div>
-    ) : <div className="panel"><EmptyState icon="calendar" title="Nothing scheduled this month" text="Change the filters or add an event." /></div>;
+    );
   } else {
     title = fdate(cursor, { month: "long", year: "numeric" });
     const start = new Date(cursor); start.setDate(1 - ((cursor.getDay() + 6) % 7));
@@ -374,11 +386,10 @@ function HearingsPage() {
 
       <div className="pp-cal-tool">
         <button type="button" className="btn icon" onClick={() => step(-1)} aria-label="Previous"><Icon name="chevronLeft" size="sm" /></button>
-        <button type="button" className="btn" onClick={goToday}>Today</button>
         <button type="button" className="btn icon" onClick={() => step(1)} aria-label="Next"><Icon name="chevron" size="sm" /></button>
         <h2 aria-live="polite">{title}</h2>
         <Segmented<View> label="View" value={view} onChange={changeView}
-          options={[{ value: "month", label: "Month" }, { value: "week", label: "Week" }, { value: "agenda", label: "Agenda" }]} />
+          options={[{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]} />
         <span className="grow" />
         <div className="row wrap" role="group" aria-label="Event types">
           {FILTER_KEYS.filter((k) => k !== "TASK" || canSeeTasks).map((k) => (

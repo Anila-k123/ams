@@ -1,11 +1,10 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { Dialog } from "primereact/dialog";
+import { Button } from "../ui/kit";
+import type { IconName } from "../ui/Icon";
+import { Modal } from "../ui/overlays";
 import { fetchCourtDocument, downloadHcOrderPdf } from "../services/courtDocuments";
-import "../assets/styles/CourtRecordView.css";
+import "../ui/pages/cases.css";
 
 // Known column order for Madras HC row-based sections (API sends headerless rows).
 const SECTION_COLUMNS: Record<string, string[]> = {
@@ -15,17 +14,22 @@ const SECTION_COLUMNS: Record<string, string[]> = {
 
 type ColDef = { header?: string; body: (row: any, i: number) => ReactNode };
 
-// One small PrimeReact table used by every record section. `showHeader` is off
-// for the headerless row sections the court APIs send.
+// One small table used by every record section. The header row is visually
+// hidden for the headerless row sections the court APIs send (it stays for
+// screen readers).
 function Tbl({ rows, cols, showHeader = true }: { rows: any[]; cols: ColDef[]; showHeader?: boolean }) {
-  const value = rows.map((r, i) => ({ __i: i, __r: r }));
   return (
-    <div className="cr-table-wrap">
-      <DataTable value={value} size="small" dataKey="__i" showHeaders={showHeader} className="cr-dt" stripedRows>
-        {cols.map((c, j) => (
-          <Column key={j} header={c.header || ""} body={(row: any) => c.body(row.__r, row.__i)} />
-        ))}
-      </DataTable>
+    <div className="table-wrap">
+      <table className="t">
+        <thead className={showHeader ? undefined : "sr-only"}>
+          <tr>{cols.map((c, j) => <th key={j} scope="col">{c.header || <span className="sr-only">Column {j + 1}</span>}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>{cols.map((c, j) => <td key={j}>{c.body(r, i)}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -71,10 +75,9 @@ function Parties({ title, list }: { title: string; list: any[] }) {
   );
 }
 
-function DocButton({ busy, icon, label, onClick }: { busy: boolean; icon: string; label: string; onClick: () => void }) {
+function DocButton({ busy, icon, label, onClick }: { busy: boolean; icon: IconName; label: string; onClick: () => void }) {
   return (
-    <Button type="button" size="small" outlined label={busy ? "…" : label} icon={busy ? undefined : icon}
-      disabled={busy} onClick={onClick} className="cr-doc-inline" />
+    <Button size="sm" icon={busy ? undefined : icon} loading={busy} disabled={busy} onClick={onClick}>{label}</Button>
   );
 }
 
@@ -122,7 +125,7 @@ function EcourtsRecord({ record, onFetchDoc, busyKey, compact }: any) {
                   { header: "", body: (h, i) => {
                     const key = `${idx}:h${i}`;
                     return canFetch && h.business ? (
-                      <DocButton busy={busyKey === key} icon="pi pi-eye" label="View"
+                      <DocButton busy={busyKey === key} icon="eye" label="View"
                         onClick={() => onFetchDoc(c, { kind: "hearing_business", token: h.business, label: `Business ${h.business_date}` }, key)} />
                     ) : null;
                   } },
@@ -139,7 +142,7 @@ function EcourtsRecord({ record, onFetchDoc, busyKey, compact }: any) {
                     const key = `${idx}:o${i}`;
                     const hasPdf = o.pdf && o.pdf.filename;
                     return canFetch && hasPdf ? (
-                      <DocButton busy={busyKey === key} icon="pi pi-download" label="Download"
+                      <DocButton busy={busyKey === key} icon="download" label="Download"
                         onClick={() => onFetchDoc(c, { kind: "order_pdf", token: o.pdf, label: `Order ${o.order_number || ""} ${o.order_date || ""}`.trim() }, key)} />
                     ) : null;
                   } },
@@ -231,7 +234,7 @@ function HcRecord({ record, compact }: any) {
                   { header: "", body: (o, i) => {
                     const key = `${idx}:o${i}`;
                     return o.pdf_url ? (
-                      <DocButton busy={busyKey === key} icon="pi pi-download" label="Download"
+                      <DocButton busy={busyKey === key} icon="download" label="Download"
                         onClick={() => download(o.pdf_url, `Order ${o.order_number || ""} ${o.order_date || ""}`.trim(), key)} />
                     ) : null;
                   } },
@@ -415,8 +418,7 @@ export default function CourtRecordView({ record, courtComplex, courtId, compact
       {body}
       {docError && <p className="cr-note cr-error">{docError}</p>}
 
-      <Dialog header="Daily Status" visible={!!modal} onHide={() => setModal(null)}
-        style={{ width: "640px" }} breakpoints={{ "720px": "95vw" }} dismissableMask>
+      <Modal title="Daily Status" open={!!modal} onClose={() => setModal(null)}>
         {modal && (
           <>
             {modal.court && <p className="cr-modal-court">{modal.court}</p>}
@@ -424,7 +426,7 @@ export default function CourtRecordView({ record, courtComplex, courtId, compact
             <KV obj={modal.fields || {}} />
           </>
         )}
-      </Dialog>
+      </Modal>
     </>
   );
 }

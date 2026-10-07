@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { InputText } from "primereact/inputtext";
-import { Tag } from "primereact/tag";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import "../assets/styles/Communication.css";
+import { PageHead, Chip, StatusChip, titleCase } from "../ui/kit";
+import { SearchInput } from "../ui/forms";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/research.css";
 
-const STATUS_ICONS: Record<string, any> = {
-  SENT: <i className="pi pi-check-circle" style={{ color: "var(--success)" }} />,
-  FAILED: <i className="pi pi-times-circle" style={{ color: "var(--danger)" }} />,
-  PENDING: <i className="pi pi-clock" style={{ color: "var(--warning)" }} />,
+const fmt = (iso: string) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
 export default function CommunicationHistory() {
@@ -36,26 +36,24 @@ export default function CommunicationHistory() {
       h.channel?.toLowerCase().includes(f)
   );
 
-  return (
-    <div className="comm-page">
-      <span className="p-input-icon-left w-full mb-3">
-        <i className="pi pi-search" />
-        <InputText
-          className="w-full"
-          placeholder="Search by recipient, subject, or channel..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </span>
+  const columns: Column<any>[] = [
+    { key: "status", label: "Status", sort: true, render: (h) => <StatusChip status={h.status || "PENDING"} /> },
+    { key: "channel", label: "Channel", sort: true, render: (h) => <Chip tone="info">{titleCase(h.channel)}</Chip> },
+    { key: "type", label: "Type", hideSm: true, sort: true, render: (h) => <span className="small nowrap">{titleCase(h.type) || "—"}</span> },
+    { key: "recipient", label: "Recipient", sort: true, render: (h) => <span className="cell-title">{h.recipient || "—"}</span> },
+    { key: "subject", label: "Subject", hideSm: true, render: (h) => <span className="small">{h.subject || "—"}</span> },
+    { key: "sentAt", label: "Sent", sort: (h) => (h.sentAt ? new Date(h.sentAt).getTime() : null), render: (h) => <span className="small nowrap">{fmt(h.sentAt)}</span> },
+  ];
 
-      <DataTable value={filtered} loading={loading} dataKey="id" emptyMessage="No history found" stripedRows size="small">
-        <Column header="Status" body={(h) => STATUS_ICONS[h.status] || <i className="pi pi-clock" />} />
-        <Column header="Channel" body={(h) => <Tag value={h.channel} severity="info" />} />
-        <Column header="Type" body={(h) => <Tag value={h.type} severity="secondary" />} />
-        <Column field="recipient" header="Recipient" />
-        <Column header="Subject" body={(h) => h.subject || "-"} />
-        <Column header="Sent At" body={(h) => (h.sentAt ? new Date(h.sentAt).toLocaleString() : "-")} />
-      </DataTable>
+  return (
+    <div>
+      <PageHead title="Message History" sub="Every message sent from the Client Messages channels, newest first." />
+      <div className="toolbar">
+        <SearchInput value={filter} onChange={setFilter} placeholder="Search recipient, subject or channel" />
+      </div>
+      <DataTable rows={filtered} columns={columns} rowKey={(h) => h.id} loading={loading} caption="Message history"
+        initialSort={{ key: "sentAt", dir: "desc" }}
+        empty={{ icon: "history", title: filter ? "No messages match" : "No messages yet", text: filter ? "Try a different name or subject." : "Messages appear here once PactPro sends one." }} />
     </div>
   );
 }

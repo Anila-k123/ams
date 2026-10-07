@@ -1,0 +1,57 @@
+/* Court work, calendar and tasks: Tasks, Calendar, Daily Cause List, Court Display
+   Board, Appeal Alerts. Only what redtape.css doesn't cover; Red Tape tokens only. */
+
+.court-gap-b { margin-bottom: var(--s4); }
+.court-gap-t { margin-top: var(--s6); }
+.court-min0 { min-width: 0; }
+.court-bad { color: var(--bad); }
+.court-self-start { align-self: flex-start; }
+.court-label { margin-bottom: 6px; }
+.court-acts { gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.court-chips { gap: 4px; }
+.court-nowrap-row { gap: 8px; white-space: nowrap; }
+.court-drawer { gap: var(--s5); }
+.court-date { width: auto; }
+.court-select { width: auto; }
+.court-search { flex: 1 1 220px; }
+.court-flush { border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.court-court-h { font-size: var(--t-lg); font-weight: 500; }
+.court-pad { padding: 0 var(--s5) var(--s4); }
+.court-linkbtn { border: 0; background: none; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+
+/* redtape.css carries a later, unscoped .pp-acc rule for the plain FAQ-style
+   accordion; on these pages the accordion is the card version. */
+.court .pp-acc { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); margin-bottom: var(--s3); overflow: hidden; }
+.court .pp-acc:first-child { border-top: 1px solid var(--line); }
+.court .pp-acc > summary { align-items: center; gap: var(--s3); padding: 14px var(--s5); }
+.court .pp-acc > summary .chev { color: var(--ink-3); }
+.court-acc-title { display: flex; flex-direction: column; min-width: 0; }
+.court-acc-title h3 { font: 500 var(--t-lg) var(--f-display); }
+.court-board-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); padding: 0 var(--s5) var(--s3); }
+
+/* Task due-date urgency */
+.court-due-overdue { color: var(--bad); }
+.court-due-today { color: var(--warn); }
+.court-due-soon { color: var(--ink-2); }
+.court-row-muted td { color: var(--ink-3); }
+
+.court-file { position: relative; justify-content: flex-start; cursor: pointer; }
+.court-chip-x { border: 0; background: none; padding: 0; margin-left: 4px; color: inherit; display: inline-flex; cursor: pointer; }
+
+/* Calendar: task deadlines are outlined so they read differently from events. */
+.ev.task { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.ev.task::before { background: var(--tape); }
+.ev.task.overdue { box-shadow: inset 0 0 0 1px var(--bad); color: var(--bad); }
+.week .wev.task { border-color: var(--tape); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.week .wev.task.overdue { border-color: var(--bad); color: var(--bad); }
+.ev.hl { box-shadow: 0 0 0 2px var(--tape); }
+.ev, .week .wev { cursor: pointer; }
+.week .hcell.addable { cursor: copy; }
+.court-legend { margin-top: var(--s4); }
+.court-legend-task { background: var(--surface); box-shadow: inset 0 0 0 1px var(--tape); }
+.court-more { gap: 6px; }
+.court-more .ev { font-size: var(--t-sm); padding: 6px 8px; }
+@media (max-width: 640px) {
+  .court-more .ev { font-size: var(--t-sm); height: auto; padding: 6px 8px; }
+  .court-more .ev::before { width: 3px; }
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Message } from 'primereact/message'
-import { ProgressSpinner } from 'primereact/progressspinner'
+import { Spinner } from '../../../ui/kit'
+import Icon from '../../../ui/Icon'
 import * as mammoth from 'mammoth'
 
 /** Inline document renderer (no dialog): PDF via a blob-URL iframe, DOCX via
@@ -35,10 +35,10 @@ export default function InlineDocViewer({ fileUrl, name }: { fileUrl?: string | 
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [fileUrl, isPdf, isDocx])
 
-  if (!fileUrl) return <Message severity="warn" className="w-full" text="No file available." />
-  if (loading) return <div className="flex justify-content-center p-5"><ProgressSpinner style={{ width: 38, height: 38 }} /></div>
-  if (error) return <Message severity="error" className="w-full" text={error} />
+  if (!fileUrl) return <div className="callout warn"><Icon name="warn" size="sm" /><div>No file available.</div></div>
+  if (loading) return <div className="row" style={{ justifyContent: 'center', padding: 32 }}><Spinner label="Loading document" /></div>
+  if (error) return <div className="callout bad"><Icon name="warn" size="sm" /><div>{error}</div></div>
   if (isPdf && pdfUrl) return <iframe title={name ?? 'document'} src={pdfUrl} style={{ width: '100%', height: '100%', border: 'none' }} />
   if (isDocx) return <div className="pp-docx-preview" style={{ fontSize: '0.85rem' }} dangerouslySetInnerHTML={{ __html: html }} />
-  return <Message severity="warn" className="w-full" text="In-app preview isn't supported for this file type." />
+  return <div className="callout warn"><Icon name="warn" size="sm" /><div>In-app preview isn't supported for this file type.</div></div>
 }

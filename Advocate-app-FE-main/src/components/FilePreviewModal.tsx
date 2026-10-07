@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { Dialog } from "primereact/dialog";
-import { Button } from "primereact/button";
-import { Skeleton } from "primereact/skeleton";
-import { Tag } from "primereact/tag";
+import { Modal } from "../ui/overlays";
+import { Button, Chip, EmptyState, Skel } from "../ui/kit";
+import "../ui/pages/clients.css";
 import { apiUrl, authHeaders } from "../api/client";
 
 export default function FilePreviewModal({ doc, onClose, onDownload }: {
@@ -39,53 +38,37 @@ export default function FilePreviewModal({ doc, onClose, onDownload }: {
 
   if (!doc) return null;
 
-  const header = (
-    <div className="flex align-items-center justify-content-between gap-2 pr-2">
-      <span className="text-overflow-ellipsis overflow-hidden white-space-nowrap">{doc.documentName}</span>
-      <Button icon="pi pi-download" className="p-button-rounded p-button-text" onClick={handleDownload} tooltip="Download" tooltipOptions={{ position: "top" }} aria-label="Download" />
-    </div>
-  );
-  const footer = (
-    <div className="flex flex-wrap gap-2 justify-content-start">
-      <Tag severity="info" value={doc.fileType?.split("/")[1]?.toUpperCase() || "FILE"} />
-      <Tag severity="secondary" value={doc.category || "Uncategorized"} />
-      {doc.caseEntity && <Tag severity="secondary" value={`Case: ${doc.caseEntity.caseNumber}`} />}
-      {doc.version > 1 && <Tag severity="secondary" value={`v${doc.version}`} />}
-    </div>
+  const ext = (doc.fileType?.split("/")[1] || (doc.originalName || "").split(".").pop() || "file").toUpperCase();
+  const fallback = (msg: string) => (
+    <EmptyState icon="file" title={msg} text="You can still download the file and open it on your computer."
+      action={onDownload ? <Button variant="primary" icon="download" onClick={handleDownload}>Download file</Button> : undefined} />
   );
 
   return (
-    <Dialog visible onHide={onClose} header={header} footer={footer} modal dismissableMask maximizable
-      style={{ width: "min(1000px, 95vw)" }} contentStyle={{ minHeight: "60vh" }}>
+    <Modal open onClose={onClose} size="xwide" title={doc.documentName}
+      sub={<span className="row wrap" style={{ gap: 6 }}>
+        <Chip plain>{ext.length > 6 ? "FILE" : ext}</Chip>
+        <Chip plain>{doc.category || "Uncategorised"}</Chip>
+        {doc.caseEntity && <Chip plain><span className="mono">{doc.caseEntity.caseNumber}</span></Chip>}
+        {doc.version > 1 && <Chip plain>v{doc.version}</Chip>}
+      </span>}
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Close</Button>
+        {onDownload && <Button variant="primary" icon="download" onClick={handleDownload}>Download</Button>}
+      </>}>
       {loading && (
-        <div className="flex flex-column align-items-center gap-2 p-5">
-          <Skeleton width="80px" height="80px" borderRadius="12px" />
-          <Skeleton width="60%" height="14px" />
-          <Skeleton width="40%" height="12px" />
+        <div className="stack" style={{ alignItems: "center", padding: "var(--s8) 0" }}>
+          <Skel w={80} h={80} />
+          <Skel w="60%" />
+          <Skel w="40%" h={12} />
         </div>
       )}
-      {error && (
-        <div className="flex flex-column align-items-center gap-3 p-5" style={{ color: "var(--text-muted)" }}>
-          <i className="pi pi-file" style={{ fontSize: 48 }} />
-          <p>{error}</p>
-          <Button label="Download instead" icon="pi pi-download" onClick={handleDownload} />
-        </div>
-      )}
+      {error && fallback("Preview unavailable")}
       {!loading && !error && previewUrl && (
-        isImage ? (
-          <div className="flex justify-content-center">
-            <img src={previewUrl} alt={doc.documentName} style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain" }} />
-          </div>
-        ) : isPdf || isText ? (
-          <iframe src={previewUrl} title={doc.documentName} style={{ width: "100%", height: "70vh", border: 0 }} />
-        ) : (
-          <div className="flex flex-column align-items-center gap-3 p-5" style={{ color: "var(--text-muted)" }}>
-            <i className="pi pi-file" style={{ fontSize: 64 }} />
-            <p>Preview not available for this file type</p>
-            <Button label="Download file" icon="pi pi-download" onClick={handleDownload} />
-          </div>
-        )
+        isImage ? <img className="pv-img" src={previewUrl} alt={doc.documentName} />
+          : isPdf || isText ? <iframe className="pv-frame" src={previewUrl} title={doc.documentName} />
+            : fallback("Preview not available for this file type")
       )}
-    </Dialog>
+    </Modal>
   );
 }

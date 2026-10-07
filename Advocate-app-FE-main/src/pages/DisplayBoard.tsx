@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
-import { Button } from "primereact/button";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { SelectButton } from "primereact/selectbutton";
+// Court Display Board: where each court hall has reached in its list, read live
+// from the court scraper through /api/workspace/display-board. Each forum is an
+// accordion that loads its board the first time it is opened, then refreshes
+// itself while open. Halls holding one of your matters are highlighted.
+import { useState, useEffect, useCallback, useRef } from "react";
 import api from "../api/client";
-import "../assets/styles/DisplayBoard.css";
+import { Icon, Chip, PageHead, Skel } from "../ui/kit";
+import { Segmented } from "../ui/forms";
+import "../ui/pages/court.css";
 
 // Fallback list until the courts endpoint responds.
 const FALLBACK_COURTS: any[] = [
@@ -14,13 +15,19 @@ const FALLBACK_COURTS: any[] = [
   { value: "madurai", label: "Madras High Court at Madurai" },
   { value: "kochi", label: "Kerala High Court" },
 ];
+// An open board refreshes itself this often, so "now at item" stays current.
+const POLL_MS = 2 * 60 * 1000;
 
 function formatFetchedAt(iso: string) {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }
+const fmtBoardDate = (s: string) => {
+  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
 
 // The Supreme Court's own site splits its board into "Regular Court" and
 // "Video Conferencing" toggles (same hearings), so the scraper exposes them as
@@ -33,7 +40,7 @@ function mergeSciCourts(list: any[]) {
         acc.push({
           value: "sci",
           label: "Supreme Court of India",
-          note: "Combines the Regular Court and Video Conferencing listings — same courtrooms, shown together.",
+          note: "Regular Court and Video Conferencing listings, shown together.",
         });
         inserted = true;
       }
@@ -68,40 +75,63 @@ async function fetchBenches(benchValues: string[]) {
   return results.map((r) => (r.status === "fulfilled" ? r.value.data : null));
 }
 
+// How far a hall is from your item: numbers when both parse, else null.
+const gapOf = (r: any) => {
+  const a = parseInt(r.itemNumber, 10), b = parseInt(r.yourItem, 10);
+  return Number.isFinite(a) && Number.isFinite(b) ? b - a : null;
+};
+const isOver = (r: any) => r.status === "list_over" || r.status === "no_case";
+
 // One catalog entry per possible board field. The table shows a column whenever
 // any row in the loaded board populates it. Never hardcode a court's column set.
-const FIELD_CATALOG: { key: string; label: string; has: (r: any) => boolean; render: (r: any) => any }[] = [
-  { key: "itemNumber", label: "Item", has: (r) => !!r.itemNumber, render: (r) => r.itemNumber },
+const FIELD_CATALOG: { key: string; label: string; hideSm?: boolean; has: (r: any) => boolean; render: (r: any) => any }[] = [
+  { key: "itemNumber", label: "Now at item", has: (r) => !!r.itemNumber, render: (r) => <span className="pp-now-item">{r.itemNumber}</span> },
   // Where YOUR case sits in this courtroom's list today, from the stored cause list.
-  { key: "yourItem", label: "Your Item", has: (r) => !!r.yourItem, render: (r) => <strong className="board-your-item">{r.yourItem}</strong> },
-  { key: "listType", label: "List", has: (r) => !!r.listType, render: (r) => r.listType },
-  { key: "caseString", label: "Case No.", has: (r) => !!r.caseString, render: (r) => r.caseString },
-  { key: "title", label: "Title", has: (r) => !!r.title, render: (r) => r.title },
   {
-    key: "judges", label: "Judge(s)",
+    key: "yourItem", label: "Your item", has: (r) => !!r.yourItem,
+    render: (r) => {
+      const gap = gapOf(r);
+      const hot = gap != null && gap >= 0 && gap <= 5 && !isOver(r);
+      return (
+        <span className="nowrap">
+          <span className={`mono${hot ? " pp-yours-hot" : ""}`}>{r.yourItem}</span>{" "}
+          {hot ? <span className="xs pp-yours-hot">Coming up</span>
+            : gap != null && gap < 0 ? <span className="faint xs">Passed</span>
+            : gap != null ? <span className="faint xs">{gap} to go</span> : null}
+        </span>
+      );
+    },
+  },
+  { key: "listType", label: "List", hideSm: true, has: (r) => !!r.listType, render: (r) => r.listType },
+  { key: "caseString", label: "Case no.", has: (r) => !!r.caseString, render: (r) => <span className="mono small">{r.caseString}</span> },
+  { key: "title", label: "Title", hideSm: true, has: (r) => !!r.title, render: (r) => r.title },
+  {
+    key: "judges", label: "Judge(s)", hideSm: true,
     has: (r) => !!(r.judge || (r.judges && r.judges.length)),
-    render: (r) => (r.judges && r.judges.length ? r.judges.map((j: string, k: number) => <div key={k}>{j}</div>) : r.judge || "—"),
+    render: (r) => <span className="small">{r.judges && r.judges.length ? r.judges.map((j: string, k: number) => <div key={k}>{j}</div>) : r.judge || "—"}</span>,
   },
-  { key: "advocates", label: "Advocates", has: (r) => !!r.advocates, render: (r) => r.advocates },
+  { key: "advocates", label: "Advocates", hideSm: true, has: (r) => !!r.advocates, render: (r) => <span className="small">{r.advocates}</span> },
   {
-    key: "vcLink", label: "VC Link", has: (r) => !!r.vcLink,
-    render: (r) => <a className="board-vc" href={r.vcLink} target="_blank" rel="noreferrer">VC link</a>,
+    key: "vcLink", label: "VC", has: (r) => !!r.vcLink,
+    render: (r) => <a className="btn sm ghost" href={r.vcLink} target="_blank" rel="noreferrer"><Icon name="external" size="sm" />Join</a>,
   },
-  { key: "cino", label: "CNR", has: (r) => !!r.cino, render: (r) => r.cino },
-  { key: "keptBack", label: "Kept Back", has: (r) => !!r.keptBack, render: (r) => r.keptBack },
-  { key: "venue", label: "Venue", has: (r) => !!r.venue, render: (r) => r.venue },
-  { key: "message", label: "Message", has: (r) => !!r.message, render: (r) => r.message },
-  { key: "stage", label: "Stage", has: (r) => !!r.stage, render: (r) => r.stage },
-  { key: "progress", label: "Progress", has: (r) => !!r.progress, render: (r) => r.progress },
-  { key: "reference", label: "Reference", has: (r) => !!r.reference, render: (r) => r.reference },
+  { key: "cino", label: "CNR", hideSm: true, has: (r) => !!r.cino, render: (r) => <span className="mono small">{r.cino}</span> },
+  { key: "keptBack", label: "Kept back", hideSm: true, has: (r) => !!r.keptBack, render: (r) => r.keptBack },
+  { key: "venue", label: "Venue", hideSm: true, has: (r) => !!r.venue, render: (r) => r.venue },
+  { key: "message", label: "Message", hideSm: true, has: (r) => !!r.message, render: (r) => r.message },
+  { key: "stage", label: "Stage", hideSm: true, has: (r) => !!r.stage, render: (r) => r.stage },
+  { key: "progress", label: "Progress", has: (r) => !!r.progress, render: (r) => <Chip tone={isOver(r) ? "" : "info"}>{r.progress}</Chip> },
+  { key: "reference", label: "Reference", hideSm: true, has: (r) => !!r.reference, render: (r) => r.reference },
 ];
 
-// One court row: header toggles open; the board loads lazily on first open.
-function CourtPanel({ court, isOpen, onToggle }: { court: any; isOpen: boolean; onToggle: () => void }) {
-  const [state, setState] = useState<{ status: string; board: any; error: string }>({ status: "idle", board: null, error: "" });
+// One forum: <details> toggles open; the board loads lazily on first open and
+// polls while open. `tick` bumps when the page-level Refresh is pressed.
+function CourtPanel({ court, tick }: { court: any; tick: number }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [state, setState] = useState<{ status: string; board: any; error: string; down?: boolean }>({ status: "idle", board: null, error: "" });
 
   const load = useCallback(async () => {
-    setState((s) => ({ ...s, status: "loading", error: "" }));
+    setState((s) => ({ ...s, status: s.board ? "refreshing" : "loading", error: "" }));
     try {
       if (court.value === "sci") {
         const [rcBoard, vcBoard] = await fetchBenches(["sci", "sci_vc"]);
@@ -120,81 +150,102 @@ function CourtPanel({ court, isOpen, onToggle }: { court: any; isOpen: boolean; 
       const res = await api.get("/api/workspace/display-board", { params: { bench: court.value } });
       setState({ status: "done", board: res.data, error: "" });
     } catch (err: any) {
-      const msg = err?.response?.data?.error || "Could not load this court's display board.";
-      setState({ status: "error", board: null, error: msg });
+      const down = err?.response?.status === 503;
+      const msg = err?.response?.data?.error || (down ? "The court data service is not reachable." : `Couldn't reach the ${court.label} board.`);
+      // Keep the last board on screen when a refresh fails.
+      setState((s) => ({ status: "error", board: s.board, error: msg, down }));
     }
-  }, [court.value]);
+  }, [court.value, court.label]);
 
   // Fetch the first time this panel is opened.
   useEffect(() => {
     if (isOpen && state.status === "idle") load();
   }, [isOpen, state.status, load]);
 
-  const { status, board, error } = state;
+  // Poll while open.
+  useEffect(() => {
+    if (!isOpen) return;
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, POLL_MS);
+    return () => clearInterval(t);
+  }, [isOpen, load]);
+
+  // Page-level refresh: reload boards that are open and already loaded.
+  const lastTick = useRef(tick);
+  useEffect(() => {
+    if (tick !== lastTick.current) { lastTick.current = tick; if (isOpen && state.status !== "idle") load(); }
+  }, [tick, isOpen, state.status, load]);
+
+  const { status, board, error, down } = state;
   const rows: any[] = board?.rows || [];
   const visibleFields = FIELD_CATALOG.filter((f) => rows.some(f.has));
+  const yours = rows.filter((r) => r.yourItem).length;
 
   return (
-    <div className={`court-panel ${isOpen ? "open" : ""}`}>
-      <button type="button" className="court-panel-header" onClick={onToggle} aria-expanded={isOpen}>
-        <span className="court-panel-title-group">
-          <span className="court-panel-title">{court.label}</span>
-          {court.note && <span className="court-panel-note">{court.note}</span>}
+    <details className="pp-acc" open={isOpen} onToggle={(e) => setIsOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary>
+        <Icon name="chevron" size="sm" className="chev" />
+        <span className="grow court-acc-title">
+          <h3>{court.label}</h3>
+          {court.note && <span className="faint xs">{court.note}</span>}
         </span>
-        <i className="pi pi-chevron-down court-panel-chevron" />
-      </button>
+        {board && <span className="faint small hide-sm">{rows.length} hall{rows.length === 1 ? "" : "s"}{yours ? `, ${yours} with your matters` : ""}</span>}
+      </summary>
 
-      {isOpen && (
-        <div className="court-panel-body">
-          {board && status === "done" && (
-            <div className="board-meta">
-              {board.boardDate && <span>Board date: <strong>{board.boardDate}</strong></span>}
-              <span>{rows.length} court{rows.length === 1 ? "" : "s"}</span>
-              {board.fetchedAt && <span>Data as of {formatFetchedAt(board.fetchedAt)}</span>}
-              <Button icon="pi pi-refresh" label="Refresh" className="p-button-outlined p-button-sm ml-auto" onClick={load} />
-            </div>
-          )}
-
-          {status === "loading" && (
-            <div className="board-empty flex align-items-center gap-2">
-              <ProgressSpinner style={{ width: 20, height: 20 }} strokeWidth="6" /> Loading display board…
-            </div>
-          )}
-
-          {status === "error" && (
-            <div className="board-error">
-              <i className="pi pi-exclamation-circle" />
-              <span>{error}</span>
-              <Button label="Retry" className="p-button-text p-button-sm p-button-danger" onClick={load} />
-            </div>
-          )}
-
-          {status === "done" && rows.length > 0 && (
-            <DataTable value={rows} size="small" responsiveLayout="scroll"
-              rowClassName={(r: any) => (r.status === "list_over" || r.status === "no_case" ? "row-over" : "")}>
-              <Column header="Court" body={(r: any) => r.courtNumber || "—"} className="board-court" />
-              {visibleFields.map((f) => (
-                <Column key={f.key} header={f.label} className={`board-field-${f.key}`}
-                  body={(r: any) => (f.has(r) ? f.render(r) : "—")} />
-              ))}
-            </DataTable>
-          )}
-
-          {status === "done" && rows.length === 0 && (
-            <div className="board-empty">No courts are currently on the board.</div>
-          )}
+      {(board || status === "error") && (
+        <div className="court-board-meta">
+          {board?.boardDate && <span className="small muted">Board of {fmtBoardDate(board.boardDate)}</span>}
+          {board?.fetchedAt && status !== "error" && <span className="pp-live"><i aria-hidden="true" />Live, updated {formatFetchedAt(board.fetchedAt)}</span>}
+          <span className="grow" />
+          <button type="button" className={`btn sm${status === "refreshing" ? " loading" : ""}`} onClick={load}><Icon name="refresh" size="sm" />Refresh</button>
         </div>
       )}
-    </div>
+
+      {status === "error" && (
+        <div className="court-pad">
+          <div className={`callout ${down ? "warn" : "bad"}`} role="alert">
+            <Icon name="warn" size="sm" />
+            <div className="grow">{error}{board?.fetchedAt ? ` Showing data from ${formatFetchedAt(board.fetchedAt)}.` : ""}</div>
+            <button type="button" className="btn sm" onClick={load}>Retry</button>
+          </div>
+        </div>
+      )}
+
+      {status === "loading" && <div className="court-pad stack"><Skel h={36} /><Skel h={36} /><Skel h={36} /></div>}
+
+      {board && rows.length > 0 && (
+        <div className="table-wrap">
+          <table className="t">
+            <thead>
+              <tr>
+                <th scope="col">Court hall</th>
+                {visibleFields.map((f) => <th key={f.key} scope="col" className={f.hideSm ? "hide-sm" : undefined}>{f.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`${r.courtNumber}-${i}`} className={`pp-board-row${isOver(r) ? " over" : ""}${r.yourItem ? " hl" : ""}`}>
+                  <td>{r.courtNumber || "—"}</td>
+                  {visibleFields.map((f) => <td key={f.key} className={f.hideSm ? "hide-sm" : undefined}>{f.has(r) ? f.render(r) : <span className="faint">—</span>}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {board && status !== "loading" && rows.length === 0 && (
+        <div className="court-pad faint small">No courts are currently on the board.</div>
+      )}
+    </details>
   );
 }
 
 export default function DisplayBoard() {
   const [courts, setCourts] = useState<any[]>(FALLBACK_COURTS);
-  const [openKey, setOpenKey] = useState<string | null>(null);
   const [myForums, setMyForums] = useState<any[]>([]);
   // Default to All Forums and switch once we know the practice has courts of its own.
-  const [tab, setTab] = useState("all");
+  const [tab, setTab] = useState<"mine" | "all">("all");
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -221,30 +272,23 @@ export default function DisplayBoard() {
   const mineKeys = new Set(myForums.map((c) => c.value));
   const shown = tab === "mine" ? courts.filter((c) => mineKeys.has(c.value)) : courts;
 
-  const tabOptions = [
-    { value: "mine", label: `My Forums${myForums.length ? ` (${myForums.length})` : ""}`, disabled: !myForums.length },
-    { value: "all", label: `All Forums (${courts.length})` },
-  ];
-
   return (
-    <div className="board-container">
-      <p className="board-sub mb-3">Select a court to see its live cause list.</p>
+    <div className="court">
+      <PageHead title="Court Display Board" sub="Where each court hall has reached in its list, so you know when to walk in. Open a forum to see its live board."
+        actions={<button type="button" className="btn" onClick={() => setTick((t) => t + 1)}><Icon name="refresh" size="sm" />Refresh</button>} />
 
-      <SelectButton className="mb-3" value={tab} options={tabOptions} optionDisabled="disabled"
-        onChange={(e) => e.value && setTab(e.value)} />
-
-      <div className="court-accordion">
-        {shown.map((c) => (
-          <CourtPanel key={c.value} court={c} isOpen={openKey === c.value}
-            onToggle={() => setOpenKey((k) => (k === c.value ? null : c.value))} />
-        ))}
-        {tab === "mine" && !shown.length && (
-          <p className="board-empty-note">
-            None of your cases could be matched to a court yet. Import a case
-            from the court record to link it, or use All Forums.
-          </p>
-        )}
+      <div className="toolbar">
+        <Segmented<"mine" | "all"> label="Forums" value={tab} onChange={(v) => { if (v === "mine" && !myForums.length) return; setTab(v); }}
+          options={[
+            { value: "mine", label: `My forums${myForums.length ? ` (${myForums.length})` : ""}` },
+            { value: "all", label: `All forums (${courts.length})` },
+          ]} />
       </div>
+
+      {shown.map((c) => <CourtPanel key={c.value} court={c} tick={tick} />)}
+      {tab === "mine" && !shown.length && (
+        <div className="callout info"><Icon name="info" size="sm" /><div>None of your cases could be matched to a court yet. Import a case from the court record to link it, or use All forums.</div></div>
+      )}
     </div>
   );
 }

@@ -1,9 +1,7 @@
 import { useState, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { InputText } from 'primereact/inputtext';
-import { Button } from 'primereact/button';
-import '../assets/styles/ForgotPassword.css';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
+import { AuthAlert, AuthFrame } from './Login';
 
 function VerifyOtp() {
   const navigate = useNavigate();
@@ -13,9 +11,19 @@ function VerifyOtp() {
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const inputRefs = useRef<any[]>([]);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   function handleChange(index: number, value: string) {
+    // A pasted or autofilled code arrives in one box: spread it across the rest.
+    const digits = value.replace(/\D/g, '');
+    if (digits.length > 1) {
+      const newOtp = [...otp];
+      digits.slice(0, 6 - index).split('').forEach((d, k) => { newOtp[index + k] = d; });
+      setOtp(newOtp);
+      setError('');
+      inputRefs.current[Math.min(index + digits.length, 5)]?.focus();
+      return;
+    }
     if (!/^\d?$/.test(value)) return;
     const newOtp = [...otp];
     newOtp[index] = value;
@@ -24,8 +32,10 @@ function VerifyOtp() {
     if (value && index < 5) inputRefs.current[index + 1]?.focus();
   }
 
-  function handleKeyDown(index: number, e: any) {
+  function handleKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Backspace' && !otp[index] && index > 0) inputRefs.current[index - 1]?.focus();
+    if (e.key === 'ArrowLeft' && index > 0) inputRefs.current[index - 1]?.focus();
+    if (e.key === 'ArrowRight' && index < 5) inputRefs.current[index + 1]?.focus();
   }
 
   async function handleSubmit(e: any) {
@@ -52,31 +62,38 @@ function VerifyOtp() {
   }
 
   return (
-    <div className="forgot-container">
-      <div className="forgot-box">
-        <Button link icon="pi pi-arrow-left" label="Back" className="forgot-back p-0" onClick={() => navigate('/forgot-password')} />
-        <h2>Verify Code</h2>
-        <p className="forgot-info">Enter the 6-digit code sent to <strong>{email}</strong>.</p>
-        <form onSubmit={handleSubmit} className="flex flex-column gap-3">
-          <div className="otp-inputs">
+    <AuthFrame>
+      <Link className="link small" to="/forgot-password">Back</Link>
+      <h1 className="auth-h-gap">Enter verification code</h1>
+      <p className="muted auth-lead">Type the 6-digit code we sent to <b className="mono">{email || 'your email'}</b>.</p>
+      <form onSubmit={handleSubmit} className="stack">
+        <fieldset className="auth-fieldset">
+          <legend className="label">Verification code</legend>
+          <div className="otp">
             {otp.map((digit, i) => (
-              <InputText
+              <input
                 key={i}
                 ref={(el) => { inputRefs.current[i] = el; }}
-                maxLength={1}
+                className="input"
+                inputMode="numeric"
+                autoComplete={i ? 'off' : 'one-time-code'}
+                aria-label={`Digit ${i + 1} of 6`}
+                aria-invalid={!!error || undefined}
                 value={digit}
                 onChange={(e) => handleChange(i, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(i, e)}
-                className="otp-digit"
+                onFocus={(e) => e.target.select()}
                 autoFocus={i === 0}
               />
             ))}
           </div>
-          {error && <small className="otp-error">{error}</small>}
-          <Button type="submit" className="w-full" loading={loading} disabled={loading} label={loading ? 'Verifying...' : 'Verify Code'} />
-        </form>
-      </div>
-    </div>
+        </fieldset>
+        {error && <AuthAlert>{error}</AuthAlert>}
+        <button type="submit" className={`btn primary pp-full${loading ? ' loading' : ''}`} disabled={loading}>
+          {loading ? 'Verifying…' : 'Verify code'}
+        </button>
+      </form>
+    </AuthFrame>
   );
 }
 

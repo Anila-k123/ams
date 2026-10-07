@@ -1,0 +1,44 @@
+/* Sign-in flow and public homepage. Red Tape tokens only; the frame itself
+   (.auth, .auth-art, .pp-*) lives in redtape.css. */
+
+.auth-lead { margin: 0 0 24px; }
+.auth-h-gap { margin-top: 16px; }
+.auth-foot { margin-top: 18px; }
+.auth-tight { gap: 8px; }
+.auth-rules { list-style: none; margin: 0; padding: 0; }
+.auth-rules li { gap: 6px; }
+.auth-match { min-height: 18px; margin-top: -8px; }
+.auth-ok { gap: 4px; color: var(--ok); }
+.auth-bad { gap: 4px; color: var(--bad); }
+.auth-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.auth-fieldset legend { margin-bottom: 8px; padding: 0; }
+.auth-linkbtn { border: 0; background: none; padding: 0; font: inherit; }
+.auth-card .callout svg { flex: none; margin-top: 1px; color: var(--bad); }
+
+/* ---- Public homepage: the auth art panel, full screen ---- */
+.home {
+  position: relative; min-height: 100vh; overflow: hidden;
+  background: var(--side-bg); color: var(--side-ink);
+  display: flex; flex-direction: column; padding: 32px 56px;
+}
+.home .tape-strand {
+  position: absolute; top: -10%; bottom: -10%; right: 18%; width: 14px;
+  background: var(--tape); transform: rotate(8deg);
+}
+.home-top { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.home-top .icon-btn { color: var(--side-ink); }
+.home-top .icon-btn:hover { background: var(--side-hover); color: var(--side-ink); }
+.home-hero { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 640px; padding: 48px 0; }
+.home-logo { width: 72px; height: auto; margin-bottom: 28px; border-radius: var(--r-md); }
+.home-hero .rule { width: 44px; height: 2px; background: var(--tape); margin-bottom: 22px; }
+.home-hero h1 { font: 400 clamp(44px, 7vw, 76px)/1.05 var(--f-display); letter-spacing: -.02em; margin: 0; color: var(--side-ink); }
+.home-lead { font: 400 clamp(19px, 2.2vw, 24px)/1.4 var(--f-display); color: var(--side-ink); margin: 18px 0 32px; max-width: 30ch; }
+.home-cta { align-self: flex-start; height: 44px; padding: 0 22px; font-size: var(--t-md); gap: 8px; }
+.home-note { margin: 16px 0 0; font-size: var(--t-sm); color: var(--side-ink-2); max-width: 44ch; }
+.home-foot { position: relative; }
+
+@media (max-width: 768px) {
+  .home { padding: 20px 16px; }
+  .home .tape-strand { right: 6%; width: 10px; }
+  .home-top .btn.tape { display: none; }
+}

@@ -1,6 +1,8 @@
 import { useState } from 'react'
-import { Button } from 'primereact/button'
 import { draftingApi, type ConsistencyFinding } from '../api/drafting'
+import { Button } from '../../../ui/kit'
+import Icon, { type IconName } from '../../../ui/Icon'
+import DIcon from './DIcon'
 
 interface Props {
   sessionId: number
@@ -11,10 +13,10 @@ interface Props {
   onJump: (blockId: number) => void
 }
 
-const SEVERITY: Record<string, { icon: string; label: string }> = {
-  error: { icon: 'pi-times-circle', label: 'Issue' },
-  warning: { icon: 'pi-exclamation-triangle', label: 'Check' },
-  info: { icon: 'pi-info-circle', label: 'Note' },
+const SEVERITY: Record<string, { icon: IconName; label: string; tone: string }> = {
+  error: { icon: 'warn', label: 'Issue', tone: 'bad' },
+  warning: { icon: 'alert', label: 'Check', tone: 'warn' },
+  info: { icon: 'info', label: 'Note', tone: 'info' },
 }
 const CATEGORY_LABEL: Record<string, string> = {
   unfilled_blank: 'Unfilled',
@@ -37,7 +39,7 @@ export default function ConsistencyPanel({ sessionId, model, getClauses, onJump 
       const report = await draftingApi.checkConsistency(sessionId, { clauses: getClauses(), model })
       setFindings(report.findings)
     } catch {
-      setError('Could not run the review — please try again.')
+      setError('Could not run the review. Please try again.')
     } finally {
       setRunning(false)
     }
@@ -47,11 +49,11 @@ export default function ConsistencyPanel({ sessionId, model, getClauses, onJump 
   const warnCount = findings?.filter(f => f.severity === 'warning').length ?? 0
 
   return (
-    <div className="pp-review" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-      <div className="pp-review-head">
+    <div className="ed-sec">
+      <div className="row between" style={{ alignItems: 'flex-start', marginBottom: 10 }}>
         <div>
-          <div className="pp-review-title"><i className="pi pi-verified mr-2" />Consistency review</div>
-          <div className="pp-review-sub">
+          <h3 style={{ marginBottom: 2 }}>Consistency</h3>
+          <div className="faint xs">
             {findings === null
               ? 'Scan the whole draft for contradictions and loose ends.'
               : findings.length === 0
@@ -59,62 +61,60 @@ export default function ConsistencyPanel({ sessionId, model, getClauses, onJump 
                 : `${errorCount ? `${errorCount} issue${errorCount === 1 ? '' : 's'}` : ''}${errorCount && warnCount ? ' · ' : ''}${warnCount ? `${warnCount} to check` : ''}`}
           </div>
         </div>
-        <Button label={findings === null ? 'Run check' : 'Re-check'} icon="pi pi-refresh"
-          size="small" loading={running} onClick={run} />
+        <Button size="sm" icon="refresh" loading={running} onClick={run}>{findings === null ? 'Run check' : 'Re-check'}</Button>
       </div>
 
-      {error && <div className="pp-review-error"><i className="pi pi-times-circle mr-2" />{error}</div>}
+      {error && <div className="callout bad" role="alert" style={{ marginBottom: 10 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
 
-      <div className="pp-review-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+      <div className="stack" style={{ gap: 10 }}>
         {running && findings === null && (
-          <div className="pp-review-empty"><i className="pi pi-spin pi-spinner mr-2" />Reviewing the draft…</div>
+          <p className="faint small"><span className="pp-spin" aria-hidden="true" /> Reviewing the draft…</p>
         )}
 
         {findings !== null && findings.length === 0 && !running && (
-          <div className="pp-review-clear">
-            <i className="pi pi-check-circle" />
-            <div>No contradictions or loose ends found.</div>
-            <small>Blanks, party names, cross-references and internal conflicts all check out.</small>
-          </div>
+          <div className="callout ok"><Icon name="ok" size="sm" /><div>
+            <b>No contradictions or loose ends found.</b>
+            <div className="faint xs">Blanks, party names, cross-references and internal conflicts all check out.</div>
+          </div></div>
         )}
 
         {findings === null && !running && (
-          <div className="pp-review-empty">
+          <p className="faint small">
             Run a check to flag unfilled fields, inconsistent party names,
             broken clause references, and contradictory terms.
-          </div>
+          </p>
         )}
 
         {(findings ?? []).map(f => {
           const sev = SEVERITY[f.severity] ?? SEVERITY.info
           return (
-            <div key={f.id} className={`pp-finding ${f.severity}`}>
-              <div className="pp-finding-head">
-                <i className={`pi ${sev.icon} pp-finding-icon`} />
-                <span className="pp-finding-title">{f.title}</span>
-                <span className="pp-finding-cat">{CATEGORY_LABEL[f.category] ?? f.category}</span>
+            <div key={f.id} className="panel tinted">
+              <div className="panel-body" style={{ padding: '10px 12px' }}>
+                <div className="row wrap" style={{ gap: 6 }}>
+                  <span className={`chip ${sev.tone}`}><Icon name={sev.icon} size="sm" />{sev.label}</span>
+                  <span className="chip">{CATEGORY_LABEL[f.category] ?? f.category}</span>
+                </div>
+                <p className="small" style={{ margin: '6px 0 0', fontWeight: 500 }}>{f.title}</p>
+                {f.detail && <p className="small muted" style={{ margin: '4px 0 0' }}>{f.detail}</p>}
+                {f.quotes.length > 0 && (
+                  <div className="stack" style={{ gap: 4, marginTop: 8 }}>
+                    {f.quotes.map((q, i) => (
+                      <button key={i} type="button" className="dr-quote"
+                        disabled={q.block_id == null}
+                        onClick={() => q.block_id != null && onJump(q.block_id)}
+                        title={q.block_id != null ? 'Jump to this clause' : undefined}>
+                        <span className="ellipsis">“{q.text}”</span>
+                        {q.block_id != null && <Icon name="chevron" size="sm" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {f.suggestion && <p className="faint xs row" style={{ margin: '8px 0 0', gap: 4, alignItems: 'flex-start' }}><DIcon name="bulb" />{f.suggestion}</p>}
+                {f.block_ids.length > 0 && (
+                  <button type="button" className="link xs" style={{ background: 'none', border: 0, padding: 0, marginTop: 6 }}
+                    onClick={() => onJump(f.block_ids[0])}>Go to clause</button>
+                )}
               </div>
-              {f.detail && <div className="pp-finding-detail">{f.detail}</div>}
-              {f.quotes.length > 0 && (
-                <div className="pp-finding-quotes">
-                  {f.quotes.map((q, i) => (
-                    <button key={i} type="button" className="pp-finding-quote"
-                      disabled={q.block_id == null}
-                      onClick={() => q.block_id != null && onJump(q.block_id)}
-                      title={q.block_id != null ? 'Jump to this clause' : undefined}>
-                      <span className="pp-finding-quote-text">“{q.text}”</span>
-                      {q.block_id != null && <i className="pi pi-arrow-right" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {f.suggestion && <div className="pp-finding-suggestion"><i className="pi pi-lightbulb mr-1" />{f.suggestion}</div>}
-              {f.block_ids.length > 0 && (
-                <div className="pp-finding-actions">
-                  <Button label="Go to clause" icon="pi pi-arrow-right" iconPos="right"
-                    size="small" text onClick={() => onJump(f.block_ids[0])} />
-                </div>
-              )}
             </div>
           )
         })}

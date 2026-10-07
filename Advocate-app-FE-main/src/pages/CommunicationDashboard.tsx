@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { usePermission } from "../contexts/PermissionContext";
-import { useNavigate } from "react-router-dom";
-import { Button } from "primereact/button";
-import { Skeleton } from "primereact/skeleton";
+import { useNavigate, Link } from "react-router-dom";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import "../assets/styles/Communication.css";
+import { PageHead, Chip, Icon, Skel, Button, type Tone } from "../ui/kit";
+import "../ui/pages/research.css";
 
 export default function CommunicationDashboard() {
   const navigate = useNavigate();
@@ -29,98 +28,86 @@ export default function CommunicationDashboard() {
   }, [token]);
 
   const val = (v: any) => (statsError ? "--" : v ?? "--");
+  const canEdit = hasPermission("SETTINGS_EDIT");
 
   // Three states, not two. "Enabled but not configured" and "configured but
   // every attempt today failed" are both real.
-  const emailState = (() => {
+  const emailState: { tone: Tone; label: string; detail: string } = (() => {
     if (!settings?.emailEnabled) {
-      return { tone: "disabled", label: "Off", detail: "Email notifications are switched off" };
+      return { tone: "", label: "Off", detail: "Email notifications are switched off." };
     }
     if (!stats?.emailConfigured) {
       return {
-        tone: "disabled",
+        tone: "warn",
         label: "Not configured",
-        detail: settings?.smtpHost ? "No sender address set" : "No SMTP server set - nothing can be sent",
+        detail: settings?.smtpHost ? "No sender address set." : "No SMTP server set, so nothing can be sent.",
       };
     }
     if (stats?.recentEmailFailures > 0) {
       return {
-        tone: "failing",
+        tone: "bad",
         label: "Failing",
-        detail: `${stats.recentEmailFailures} attempt(s) failed today - check the password`,
+        detail: `${stats.recentEmailFailures} attempt(s) failed today. Check the password.`,
       };
     }
-    return { tone: "connected", label: "Working", detail: settings?.senderEmail || "Configured" };
+    return { tone: "ok", label: "Working", detail: `Sending as ${settings?.senderEmail || "the configured sender"}.` };
   })();
 
-  if (loading)
-    return (
-      <div className="comm-page">
-        <div className="comm-stat-cards">
-          {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} height="76px" />)}
-        </div>
-      </div>
-    );
-
-  const statCard = (icon: string, tone: string, label: string, value: any) => (
-    <div className="comm-stat-card">
-      <div className={`comm-stat-icon ${tone}`}><i className={`pi ${icon}`} /></div>
-      <div className="flex flex-column">
-        <span className="comm-stat-label">{label}</span>
-        <span className="comm-stat-value">{value}</span>
-      </div>
-    </div>
-  );
-
   return (
-    <div className="comm-page">
-      <div className="comm-stat-cards">
-        {statCard("pi-send", "sent", "Total Sent", val(stats?.totalSent))}
-        {statCard("pi-envelope", "email", "Emails Attempted Today", val(stats?.emailsToday))}
-        {statCard("pi-whatsapp", "whatsapp", "WhatsApp Today", val(stats?.whatsappToday))}
-        {statCard("pi-times-circle", "failed", "Failed Total", val(stats?.failedTotal))}
-        {statCard("pi-exclamation-circle", "failed", "Failed Today", val(stats?.failedToday))}
-      </div>
+    <div>
+      <PageHead title="Client Messages"
+        sub="Reminders, updates and documents PactPro sends to your clients, and how each channel is doing."
+        actions={<>
+          <Link className="btn" to="/dashboard/communication/history"><Icon name="history" size="sm" />Message history</Link>
+          {canEdit && <Link className="btn primary" to="/dashboard/communication/settings"><Icon name="cog" size="sm" />Channel settings</Link>}
+        </>} />
 
-      <div className="comm-cards">
-        <div className="comm-card" onClick={() => navigate("/dashboard/communication/settings")}>
-          <div className="comm-card-icon email"><i className="pi pi-envelope" /></div>
-          <div className="flex flex-column gap-1">
-            <span className="comm-card-label">Email</span>
-            <span className={`comm-card-value ${emailState.tone}`}>{emailState.label}</span>
-            <span className="comm-card-sub">{emailState.detail}</span>
-          </div>
+      {loading ? (
+        <div className="figures" style={{ marginBottom: 20 }}>
+          {[1, 2, 3, 4, 5].map((i) => <div key={i} className="figure"><Skel h={12} w="60%" /><Skel h={28} w="40%" style={{ marginTop: 8 }} /></div>)}
         </div>
-
-        <div className="comm-card" onClick={() => navigate("/dashboard/communication/settings")}>
-          <div className="comm-card-icon whatsapp"><i className="pi pi-whatsapp" /></div>
-          <div className="flex flex-column gap-1">
-            <span className="comm-card-label">WhatsApp</span>
-            {/* WhatsApp delivery is not wired to Meta credentials yet. */}
-            <span className="comm-card-value disabled">Not available</span>
-            <span className="comm-card-sub">Business API not connected yet</span>
-          </div>
+      ) : (
+        <div className="figures" style={{ marginBottom: 20 }}>
+          <div className="figure"><div className="lbl">Total sent</div><div className="val">{val(stats?.totalSent)}</div></div>
+          <div className="figure"><div className="lbl">Emails today</div><div className="val">{val(stats?.emailsToday)}</div><div className="meta">Attempted since midnight</div></div>
+          <div className="figure"><div className="lbl">WhatsApp today</div><div className="val">{val(stats?.whatsappToday)}</div><div className="meta">Channel unavailable</div></div>
+          <div className="figure"><div className="lbl">Failed today</div><div className="val" style={stats?.failedToday ? { color: "var(--bad)" } : undefined}>{val(stats?.failedToday)}</div></div>
+          <div className="figure"><div className="lbl">Failed in total</div><div className="val">{val(stats?.failedTotal)}</div></div>
         </div>
+      )}
 
-        <div className="comm-card" onClick={() => navigate("/dashboard/communication/history")}>
-          <div className="comm-card-icon history"><i className="pi pi-clock" /></div>
-          <div className="flex flex-column gap-1">
-            <span className="comm-card-label">History</span>
-            <span className="comm-card-value">{val(stats?.totalSent + stats?.failedTotal)} entries</span>
-            <span className="comm-card-sub flex align-items-center gap-1">
-              <i className="pi pi-check-circle" style={{ color: "var(--success)" }} /> {val(stats?.sentToday ?? stats?.totalSent)} sent
-              <i className="pi pi-times-circle ml-2" style={{ color: "var(--danger)" }} /> {val(stats?.failedTotal)} failed
-            </span>
+      {statsError && (
+        <div className="callout warn" style={{ marginBottom: 20 }}><Icon name="warn" size="sm" /><div>Couldn't load message statistics. The figures above may be out of date.</div></div>
+      )}
+
+      <div className="cols g-3" style={{ alignItems: "start" }}>
+        <section className="panel">
+          <div className="panel-head"><div className="row"><Icon name="mail" /><h3>Email</h3></div>{!loading && <Chip tone={emailState.tone}>{emailState.label}</Chip>}</div>
+          <div className="panel-body stack">
+            {loading ? <Skel h={14} /> : <p className="small muted">{emailState.detail}</p>}
+            {canEdit && <div><Button size="sm" icon="cog" onClick={() => navigate("/dashboard/communication/settings")}>Email settings</Button></div>}
           </div>
-        </div>
-      </div>
+        </section>
 
-      <h3>Quick Actions</h3>
-      <div className="flex gap-2 flex-wrap">
-        {hasPermission("SETTINGS_EDIT") && (
-          <Button outlined icon="pi pi-cog" label="Configure Settings" onClick={() => navigate("/dashboard/communication/settings")} />
-        )}
-        <Button outlined icon="pi pi-chart-line" label="View History" onClick={() => navigate("/dashboard/communication/history")} />
+        <section className="panel rs-disabled">
+          <div className="panel-head"><div className="row"><Icon name="chat" /><h3>WhatsApp</h3></div><Chip>Not available</Chip></div>
+          <div className="panel-body">
+            {/* WhatsApp delivery is not wired to Meta credentials in this product. */}
+            <p className="small muted">WhatsApp Business isn't connected for this practice. Reminders go by email and in-app only.</p>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head"><div className="row"><Icon name="history" /><h3>History</h3></div>
+            <span className="faint small">{statsError ? "--" : (stats?.totalSent ?? 0) + (stats?.failedTotal ?? 0)} entries</span></div>
+          <div className="panel-body stack">
+            <div className="row wrap small" style={{ gap: 12 }}>
+              <span className="row" style={{ gap: 6 }}><Chip tone="ok">Sent</Chip>{val(stats?.sentToday ?? stats?.totalSent)}</span>
+              <span className="row" style={{ gap: 6 }}><Chip tone="bad">Failed</Chip>{val(stats?.failedTotal)}</span>
+            </div>
+            <div><Button size="sm" icon="history" onClick={() => navigate("/dashboard/communication/history")}>View history</Button></div>
+          </div>
+        </section>
       </div>
     </div>
   );

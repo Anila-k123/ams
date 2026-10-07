@@ -1,43 +1,36 @@
-import { useState, useEffect, useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Dropdown } from "primereact/dropdown";
-import { Calendar } from "primereact/calendar";
-import { Dialog } from "primereact/dialog";
-import { SelectButton } from "primereact/selectbutton";
-import { Tag } from "primereact/tag";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { DRAFTING, newDraftUrl } from "./Drafting/routes";
 import { ReviewActions, ReviewChip, ReviewNote, SubmissionHistory, SubmitWork } from "../components/TaskReview";
-import { canReviewTask } from "../utils/taskReview";
-import "../assets/styles/TasksPage.css";
+import { canReviewTask, canSubmitTask } from "../utils/taskReview";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
 import { useAuth } from "../context/AuthContext";
 import api from "../api/client";
+import { Icon, Chip, PageHead, Avatar } from "../ui/kit";
+import { TextField, SelectField, SearchInput, FilterChip, Field } from "../ui/forms";
+import { Modal, Drawer, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/court.css";
 
 const FILTERS = [
-  { value: "inprogress", label: "In Progress" },
+  { value: "inprogress", label: "In progress" },
   { value: "review", label: "To review" },
   { value: "completed", label: "Completed" },
   { value: "canceled", label: "Canceled" },
 ];
 const SCOPES = [
-  { value: "team", label: "Team" },
+  { value: "team", label: "Whole team" },
   { value: "mine", label: "Assigned to me" },
   { value: "created", label: "Created by me" },
 ];
 const PRIORITY_OPTIONS = [
-  { value: "HIGH", label: "High Priority" },
-  { value: "MEDIUM", label: "Medium Priority" },
-  { value: "LOW", label: "Low Priority" },
-];
-const PRIORITY_SHORT = [
   { value: "HIGH", label: "High" },
   { value: "MEDIUM", label: "Medium" },
   { value: "LOW", label: "Low" },
 ];
+const PRIORITY_TONE: Record<string, "bad" | "warn" | ""> = { HIGH: "bad", MEDIUM: "warn", LOW: "" };
 
 // Same document categories as the Documents upload, so a file attached to a task
 // is filed under the same taxonomy.
@@ -52,6 +45,7 @@ const toISODate = (d: Date | null | undefined) => {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+const fdate = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
 // How urgent an open task's deadline is. Dates compare as local yyyy-mm-dd, so
 // "today" is the user's today whatever the server time zone.
@@ -64,38 +58,38 @@ type Urgency = { kind: "overdue" | "today" | "soon" | "later" | "none"; label: s
 const deadlineState = (task: any): Urgency => {
   if (!task.deadline) return { kind: "none", label: "", days: Infinity };
   const days = dayDiff(task.deadline);
-  const date = new Date(`${task.deadline.slice(0, 10)}T00:00:00`).toLocaleDateString();
-  if (task.completed || task.cancelled) return { kind: "later", label: date, days };
-  if (days < 0) return { kind: "overdue", label: `Overdue · ${-days} day${days === -1 ? "" : "s"}`, days };
+  if (task.completed || task.cancelled) return { kind: "later", label: "", days };
+  if (days < 0) return { kind: "overdue", label: `${-days} day${days === -1 ? "" : "s"} overdue`, days };
   if (days === 0) return { kind: "today", label: "Due today", days };
   if (days <= 3) return { kind: "soon", label: days === 1 ? "Due tomorrow" : `Due in ${days} days`, days };
-  return { kind: "later", label: date, days };
+  return { kind: "later", label: "", days };
 };
 const PRIORITY_RANK: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-const prioClass = (p?: string) => `prio-${(p || "MEDIUM").toLowerCase()}`;
 const isOpen = (t: any) => !t.completed && !t.cancelled;
+const statusOf = (t: any): { label: string; tone: "ok" | "warn" | "info" | "" } =>
+  t.cancelled ? { label: "Canceled", tone: "" }
+    : t.completed ? { label: "Completed", tone: "ok" }
+    : t.needsReview && t.reviewStatus === "SUBMITTED" ? { label: "To review", tone: "warn" }
+    : { label: "In progress", tone: "info" };
 
 // The quick filters above the list.
-const QUICK: { key: string; label: string; icon: string; test: (t: any) => boolean }[] = [
-  { key: "overdue", label: "overdue", icon: "pi-exclamation-triangle", test: (t) => deadlineState(t).kind === "overdue" },
-  { key: "today", label: "due today", icon: "pi-clock", test: (t) => deadlineState(t).kind === "today" },
-  { key: "week", label: "due this week", icon: "pi-calendar", test: (t) => { const d = deadlineState(t).days; return d >= 0 && d <= 7; } },
-  { key: "high", label: "high priority", icon: "pi-flag", test: (t) => (t.priority || "MEDIUM") === "HIGH" },
+const QUICK: { key: string; label: string; test: (t: any) => boolean }[] = [
+  { key: "overdue", label: "Overdue", test: (t) => deadlineState(t).kind === "overdue" },
+  { key: "today", label: "Due today", test: (t) => deadlineState(t).kind === "today" },
+  { key: "week", label: "Due this week", test: (t) => { const d = deadlineState(t).days; return d >= 0 && d <= 7; } },
+  { key: "high", label: "High priority", test: (t) => (t.priority || "MEDIUM") === "HIGH" },
 ];
-
-const priorityValue = (opt: any) => opt
-  ? <span className={`task-prio-value ${prioClass(opt.value)}`}><i className="pi pi-flag-fill" /> {opt.label}</span>
-  : null;
 
 export default function TasksPage() {
   const { hasPermission } = usePermission();
   const { advocateId: myId } = useAuth();
   const [tasks, setTasks] = useState<any[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [cases, setCases] = useState<any[]>([]);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState("MEDIUM");
   const [deadline, setDeadline] = useState("");
-  const [linkedCase, setLinkedCase] = useState<any>(null);   // case id
+  const [linkedCase, setLinkedCase] = useState<any>("");   // case id
   const [files, setFiles] = useState<File[]>([]);
   const [docCategory, setDocCategory] = useState("");
   const [searchText, setSearchText] = useState("");
@@ -103,9 +97,11 @@ export default function TasksPage() {
   const [scope, setScope] = useState("team");   // team | mine | created
   const [quick, setQuick] = useState<string | null>(null);   // a QUICK key, or none
   const [showAddModal, setShowAddModal] = useState(false);
+  const [titleError, setTitleError] = useState(false);
   const [assignees, setAssignees] = useState<any[]>([]);
   const [assignTo, setAssignTo] = useState<any>("");   // "" = myself
   const [highlightedId, setHighlightedId] = useState<any>(null);
+  const [openId, setOpenId] = useState<any>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -120,6 +116,8 @@ export default function TasksPage() {
       setTasks(res.data || []);
     } catch (err) {
       console.error("Error fetching tasks:", err);
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -170,14 +168,14 @@ export default function TasksPage() {
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim()) { setTitleError(true); return; }
     try {
       await withLoading((async () => {
-        const caseId = linkedCase || null;
+        const caseId = linkedCase ? Number(linkedCase) : null;
         // 1) create the task
         const res = await api.post("/api/workspace/tasks/create", {
           title: title.trim(), priority, deadline: deadline || null, caseId,
-          assignedToId: assignTo || undefined,
+          assignedToId: assignTo ? Number(assignTo) : undefined,
         });
         const taskId = res.data.id;
         // 2) upload + attach documents
@@ -188,7 +186,7 @@ export default function TasksPage() {
           }
         }
       })(), "Creating Task...");
-      setTitle(""); setPriority("MEDIUM"); setDeadline(""); setLinkedCase(null); setFiles([]); setDocCategory(""); setAssignTo("");
+      setTitle(""); setPriority("MEDIUM"); setDeadline(""); setLinkedCase(""); setFiles([]); setDocCategory(""); setAssignTo("");
       setShowAddModal(false);
       fetchTasks();
       success("Task created.");
@@ -220,6 +218,10 @@ export default function TasksPage() {
       error(err.response?.data?.error || "Failed to update task.");
     }
   };
+  const askCancel = (t: any) => confirm({
+    title: "Cancel this task?", message: `"${t.title}" will move to Canceled. You can restore it later.`,
+    confirmLabel: "Cancel task", cancelLabel: "Keep it", danger: true, accept: () => handleCancel(t.id, true),
+  });
 
   const handleChangePriority = async (id: any, newPriority: string) => {
     try {
@@ -256,225 +258,261 @@ export default function TasksPage() {
   const caseOptions = cases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }));
   const assigneeOptions = assignees.map((a) => ({ value: a.id, label: a.fullName || a.email }));
 
-  const inScope = (t: any) =>
-    !(scope === "mine" && t.assignedToId !== myId) && !(scope === "created" && t.createdById !== myId);
-  // Counts for the quick filters: open tasks in the current scope.
+  const inScope = useCallback((t: any) =>
+    !(scope === "mine" && t.assignedToId !== myId) && !(scope === "created" && t.createdById !== myId), [scope, myId]);
+  // Figures and quick-filter counts: open tasks in the current scope.
   const openInScope = tasks.filter((t) => isOpen(t) && inScope(t));
-  const quickCounts = QUICK.map((q) => ({ ...q, count: openInScope.filter(q.test).length }));
+  const reviewCount = tasks.filter((t) => inScope(t) && canReviewTask(t, myId, canAssign)).length;
+  const countOf = (k: string) => openInScope.filter(QUICK.find((q) => q.key === k)!.test).length;
   const quickTest = QUICK.find((q) => q.key === quick)?.test;
 
-  const filtered = tasks.filter((t) => {
-    if (filter === "inprogress" && (t.completed || t.cancelled)) return false;
-    if (filter === "review" && !canReviewTask(t, myId, canAssign)) return false;
-    if (filter === "completed" && (!t.completed || t.cancelled)) return false;
-    if (filter === "canceled" && !t.cancelled) return false;
-    if (!inScope(t)) return false;
-    if (quickTest && !(isOpen(t) && quickTest(t))) return false;
-    if (searchText.trim()) {
-      const k = searchText.toLowerCase();
-      return (t.title || "").toLowerCase().includes(k)
-        || (t.caseNumber || "").toLowerCase().includes(k)
-        || (t.caseTitle || "").toLowerCase().includes(k);
-    }
-    return true;
-  });
-  // Open work, most urgent first: overdue, today, soonest, then no deadline;
-  // within a day High before Medium before Low. Done tabs keep server order.
-  const visibleTasks = filter === "inprogress" || filter === "review"
-    ? [...filtered].sort((a, b) =>
-      (deadlineState(a).days - deadlineState(b).days)
-      || (PRIORITY_RANK[a.priority || "MEDIUM"] - PRIORITY_RANK[b.priority || "MEDIUM"])
-      || (a.id - b.id))
-    : filtered;
+  const visibleTasks = useMemo(() => {
+    const filtered = tasks.filter((t) => {
+      if (filter === "inprogress" && (t.completed || t.cancelled)) return false;
+      if (filter === "review" && !canReviewTask(t, myId, canAssign)) return false;
+      if (filter === "completed" && (!t.completed || t.cancelled)) return false;
+      if (filter === "canceled" && !t.cancelled) return false;
+      if (!inScope(t)) return false;
+      if (quickTest && !(isOpen(t) && quickTest(t))) return false;
+      if (searchText.trim()) {
+        const k = searchText.toLowerCase();
+        return (t.title || "").toLowerCase().includes(k)
+          || (t.caseNumber || "").toLowerCase().includes(k)
+          || (t.caseTitle || "").toLowerCase().includes(k)
+          || (t.assignedToName || "").toLowerCase().includes(k);
+      }
+      return true;
+    });
+    // Open work, most urgent first: overdue, today, soonest, then no deadline;
+    // within a day High before Medium before Low. Done tabs keep server order.
+    return filter === "inprogress" || filter === "review"
+      ? [...filtered].sort((a, b) =>
+        (deadlineState(a).days - deadlineState(b).days)
+        || (PRIORITY_RANK[a.priority || "MEDIUM"] - PRIORITY_RANK[b.priority || "MEDIUM"])
+        || (a.id - b.id))
+      : filtered;
+  }, [tasks, filter, myId, canAssign, inScope, quickTest, searchText]);
+
+  const isAssigner = (t: any) => (t.assignedById ?? t.createdById) === myId;
+  const canToggle = (t: any) => hasPermission("TASK_EDIT") || t.assignedToId === myId;
+
+  // Row actions: hand back, review, or complete. Clicks here never open the drawer.
+  const rowActions = (t: any) => {
+    const submit = canSubmitTask(t, myId);
+    const review = canReviewTask(t, myId, canAssign);
+    return (
+      <div className="row court-acts" onClick={(e) => e.stopPropagation()}>
+        <SubmitWork task={t} myId={myId} toast={toast} onDone={() => fetchTasks()} />
+        <ReviewActions task={t} myId={myId} canAssign={canAssign} toast={toast} onDone={() => fetchTasks()} />
+        {!submit && !review && isOpen(t) && canToggle(t) && (
+          <button type="button" className="btn sm" onClick={() => handleToggle(t.id)}><Icon name="check" size="sm" />Complete</button>
+        )}
+        {!submit && !review && !isOpen(t) && <span className="faint xs">—</span>}
+      </div>
+    );
+  };
+
+  const columns: Column<any>[] = [
+    {
+      key: "title", label: "Task", sort: (t) => t.title || "",
+      render: (t) => <>
+        <div className="cell-title">{t.title}</div>
+        {t.caseNumber ? <div className="cell-sub mono">{t.caseNumber}</div> : <div className="cell-sub">General practice task</div>}
+      </>,
+    },
+    {
+      key: "case", label: "Case", hideSm: true, sort: (t) => t.caseNumber || "",
+      render: (t) => t.caseId
+        ? <Link className="link mono small" to={`/dashboard/cases/${t.caseId}`} title={t.caseTitle || ""} onClick={(e) => e.stopPropagation()}>{t.caseNumber}</Link>
+        : <span className="faint">—</span>,
+    },
+    {
+      key: "assignee", label: "Assigned to", hideSm: true, sort: (t) => t.assignedToName || "",
+      render: (t) => t.assignedToName
+        ? <span className="row court-nowrap-row"><Avatar name={t.assignedToName} size="sm" /><span>{t.assignedToId === myId ? "Me" : t.assignedToName}</span></span>
+        : <span className="faint">Unassigned</span>,
+    },
+    { key: "priority", label: "Priority", sort: (t) => PRIORITY_RANK[t.priority || "MEDIUM"], render: (t) => <Chip tone={PRIORITY_TONE[t.priority || "MEDIUM"]}>{PRIORITY_OPTIONS.find((p) => p.value === (t.priority || "MEDIUM"))?.label}</Chip> },
+    {
+      key: "due", label: "Due", sort: (t) => t.deadline || "9999",
+      render: (t) => {
+        if (!t.deadline) return <span className="faint">—</span>;
+        const d = deadlineState(t);
+        return <>
+          <span className="nowrap">{fdate(t.deadline)}</span>
+          {d.label && <div className={`cell-sub court-due-${d.kind}`}>{d.label}</div>}
+        </>;
+      },
+    },
+    {
+      key: "status", label: "Status", hideSm: true, sort: (t) => statusOf(t).label,
+      render: (t) => {
+        const s = statusOf(t);
+        return <div className="row wrap court-chips"><Chip tone={s.tone}>{s.label}</Chip>{s.label !== "To review" && <ReviewChip task={t} />}</div>;
+      },
+    },
+    { key: "actions", label: <span className="sr-only">Actions</span>, className: "actions", render: rowActions },
+  ];
+
+  const openTask = tasks.find((t) => t.id === openId) || null;
+  const filterLabel = FILTERS.find((f) => f.value === filter)?.label.toLowerCase();
 
   return (
-    <div className="tasks-page-container">
-      <div className="flex justify-content-end">
-        {hasPermission("TASK_CREATE") && (
-          <Button icon="pi pi-plus" label="Add Task" onClick={() => setShowAddModal(true)} />
-        )}
+    <div className="court">
+      <PageHead title="Tasks"
+        sub="Assignments, research, drafting and follow-ups across all matters. Review work that has been submitted to you and keep deadlines visible."
+        actions={hasPermission("TASK_CREATE") && (
+          <button type="button" className="btn primary" onClick={() => { setTitleError(false); setShowAddModal(true); }}><Icon name="plus" size="sm" />New task</button>
+        )} />
+
+      {/* Each figure narrows the list. */}
+      <div className="figures court-gap-b">
+        <button type="button" className="figure" aria-pressed={filter === "inprogress" && !quick} onClick={() => { setFilter("inprogress"); setQuick(null); }}>
+          <div className="lbl">Open tasks</div><div className="val">{openInScope.length}</div>
+        </button>
+        <button type="button" className="figure" aria-pressed={filter === "review"} onClick={() => { setFilter("review"); setQuick(null); }}>
+          <div className="lbl">Awaiting your review</div><div className="val">{reviewCount}</div>
+        </button>
+        <button type="button" className="figure" aria-pressed={quick === "today"} onClick={() => { setFilter("inprogress"); setQuick(quick === "today" ? null : "today"); }}>
+          <div className="lbl">Due today</div><div className="val">{countOf("today")}</div>
+        </button>
+        <button type="button" className="figure" aria-pressed={quick === "overdue"} onClick={() => { setFilter("inprogress"); setQuick(quick === "overdue" ? null : "overdue"); }}>
+          <div className="lbl">Overdue</div><div className={`val${countOf("overdue") ? " court-bad" : ""}`}>{countOf("overdue")}</div>
+        </button>
       </div>
 
-      {/* New Task Form (popup) */}
-      <Dialog visible={showAddModal} onHide={() => setShowAddModal(false)} header="New Task" modal
-        style={{ width: "36rem" }} breakpoints={{ "640px": "95vw" }}>
-        <form onSubmit={handleCreateTask} className="flex flex-column gap-3">
-          <div className="task-field">
-            <label htmlFor="task-title">Task</label>
-            <InputText id="task-title" placeholder="What needs to be done?" value={title}
-              onChange={(e) => setTitle(e.target.value)} required />
+      <div className="toolbar">
+        <SearchInput value={searchText} onChange={(v) => { setSearchText(v); setHighlightedId(null); }} placeholder="Search tasks, cases or people" className="court-search" />
+        <label className="sr-only" htmlFor="tk-scope">Whose tasks</label>
+        <select id="tk-scope" className="input court-select" value={scope} onChange={(e) => setScope(e.target.value)}>
+          {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <label className="sr-only" htmlFor="tk-status">Status</label>
+        <select id="tk-status" className="input court-select" value={filter} onChange={(e) => setFilter(e.target.value)}>
+          {FILTERS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        {QUICK.filter((q) => q.key === "week" || q.key === "high").map((q) => (
+          <FilterChip key={q.key} on={quick === q.key} onClick={() => setQuick(quick === q.key ? null : q.key)}>
+            {q.label} <span className="faint">{countOf(q.key)}</span>
+          </FilterChip>
+        ))}
+        {quick && <button type="button" className="btn ghost sm" onClick={() => setQuick(null)}>Show all</button>}
+      </div>
+
+      <DataTable rows={visibleTasks} columns={columns} rowKey={(t) => t.id} loading={!loaded}
+        onRow={(t) => setOpenId(t.id)}
+        rowClass={(t) => [highlightedId === t.id ? "hl" : "", t.cancelled ? "court-row-muted" : ""].filter(Boolean).join(" ") || undefined}
+        empty={{ icon: "tasks", title: `No ${filterLabel} tasks`, text: searchText || quick ? "Clear the search or filters to see more." : "All caught up." }} />
+
+      {/* Task details */}
+      <Drawer open={!!openTask} onClose={() => setOpenId(null)} title={openTask?.title || ""}
+        sub={openTask && <><Chip tone={statusOf(openTask).tone}>{statusOf(openTask).label}</Chip><Chip tone={PRIORITY_TONE[openTask.priority || "MEDIUM"]}>{PRIORITY_OPTIONS.find((p) => p.value === (openTask.priority || "MEDIUM"))?.label} priority</Chip><ReviewChip task={openTask} /></>}
+        footer={openTask && <>
+          {isAssigner(openTask) && (openTask.cancelled
+            ? <button type="button" className="btn" onClick={() => handleCancel(openTask.id, false)}><Icon name="restore" size="sm" />Restore task</button>
+            : <button type="button" className="btn danger" onClick={() => askCancel(openTask)}><Icon name="x" size="sm" />Cancel task</button>)}
+          <span className="grow" />
+          {openTask.completed && !openTask.cancelled && canToggle(openTask) && !openTask.needsReview && (
+            <button type="button" className="btn" onClick={() => handleToggle(openTask.id)}>Reopen</button>
+          )}
+          {rowActions(openTask)}
+        </>}>
+        {openTask && (
+          <div className="stack court-drawer">
+            <dl className="kv">
+              <dt>Case</dt>
+              <dd>{openTask.caseId ? <><Link className="link mono" to={`/dashboard/cases/${openTask.caseId}`}>{openTask.caseNumber}</Link>{openTask.caseTitle && <div className="faint xs">{openTask.caseTitle}</div>}</> : "General practice task"}</dd>
+              <dt>Assigned to</dt><dd>{openTask.assignedToName ? (openTask.assignedToId === myId ? "Me" : openTask.assignedToName) : "Unassigned"}</dd>
+              <dt>Assigned by</dt><dd>{openTask.assignedByName || openTask.createdByName || "—"}</dd>
+              <dt>Due</dt><dd>{openTask.deadline ? <>{fdate(openTask.deadline)}{deadlineState(openTask).label && <span className={`court-due-${deadlineState(openTask).kind}`}> · {deadlineState(openTask).label}</span>}</> : "—"}</dd>
+            </dl>
+
+            <ReviewNote task={openTask} />
+
+            {(openTask.draftSessionId || openTask.documents?.length > 0) && (
+              <div>
+                <div className="label court-label">Attached</div>
+                <div className="row wrap">
+                  {openTask.draftSessionId && (
+                    <button type="button" className="btn sm" onClick={() => navigate(DRAFTING.draft(openTask.draftSessionId))}><Icon name="pen" size="sm" />Open draft</button>
+                  )}
+                  {openTask.documents?.map((d: any) => (
+                    <button key={d.id} type="button" className="btn sm" onClick={() => viewDocument(d.id)} title={`View ${d.name}`}><Icon name="eye" size="sm" />{d.name}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Priority and cancel are the assigner's (the server enforces it). */}
+            {(isAssigner(openTask) || canAssign) && isOpen(openTask) && (
+              <div className="form-grid">
+                {isAssigner(openTask) && (
+                  <SelectField label="Priority" value={openTask.priority || "MEDIUM"} options={PRIORITY_OPTIONS}
+                    onChange={(e) => handleChangePriority(openTask.id, e.target.value)} />
+                )}
+                {canAssign && (
+                  <SelectField label="Assigned to" value={openTask.assignedToId || ""}
+                    options={[...(openTask.assignedToId ? [] : [{ value: "", label: "Unassigned", disabled: true }]), { value: myId, label: "Me" }, ...assigneeOptions.filter((a) => a.value !== myId)]}
+                    onChange={(e) => handleReassign(openTask.id, Number(e.target.value))} />
+                )}
+              </div>
+            )}
+
+            {isOpen(openTask) && hasPermission("DRAFT_CREATE") && (
+              <button type="button" className="btn court-self-start" onClick={() => navigate(newDraftUrl({ caseId: openTask.caseId, taskId: openTask.id }))}>
+                <Icon name="pen" size="sm" />Draft for this task
+              </button>
+            )}
+
+            <SubmissionHistory task={openTask} myId={myId} canAssign={canAssign} toast={toast}
+              onDone={() => fetchTasks()} onViewDocument={viewDocument}
+              onOpenDraft={() => navigate(DRAFTING.draft(openTask.draftSessionId))} />
           </div>
-          <div className="grid">
-            <div className="col-12 md:col-6 task-field">
-              <label htmlFor="task-priority">Priority</label>
-              <Dropdown inputId="task-priority" value={priority} options={PRIORITY_OPTIONS} onChange={(e) => setPriority(e.value)} />
-            </div>
-            <div className="col-12 md:col-6 task-field">
-              <label htmlFor="task-deadline">Deadline</label>
-              <Calendar inputId="task-deadline" value={deadline ? new Date(`${deadline}T00:00:00`) : null}
-                onChange={(e) => setDeadline(toISODate(e.value as Date))} dateFormat="dd/mm/yy" showIcon showButtonBar
-                // On the body, not inside the dialog: "self" let the dialog's
-                // scroll area clip the header and stretch the panel to the field.
-                appendTo={document.body} />
-            </div>
-          </div>
-          <div className="task-field">
-            <label>Link Case</label>
-            <Dropdown value={linkedCase} options={caseOptions} onChange={(e) => setLinkedCase(e.value ?? null)}
-              placeholder="Link case (optional)" filter showClear appendTo={document.body} />
-          </div>
-          {hasPermission("DOCUMENT_UPLOAD") && <div className="grid">
-            <div className="col-12 md:col-6 task-field">
-              <label>Documents</label>
-              <label className="task-attach-btn" title="Attach documents">
-                <i className="pi pi-paperclip" />
-                <span>{files.length ? `${files.length} file(s)` : "Attach files"}</span>
-                <input type="file" multiple style={{ display: "none" }}
-                  onChange={(e) => setFiles(Array.from(e.target.files || []))} />
-              </label>
-            </div>
-            <div className="col-12 md:col-6 task-field">
-              <label htmlFor="task-doc-category">Category</label>
-              <Dropdown inputId="task-doc-category" value={docCategory} placeholder="Select category" showClear
-                options={DOC_CATEGORIES.map((c) => ({ value: c, label: c }))} onChange={(e) => setDocCategory(e.value || "")} />
-            </div>
-          </div>}
+        )}
+      </Drawer>
+
+      {/* New task */}
+      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} title="New task"
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setShowAddModal(false)}>Cancel</button>
+          <button type="submit" form="task-form" className="btn primary"><Icon name="plus" size="sm" />Add task</button>
+        </>}>
+        <form id="task-form" onSubmit={handleCreateTask} className="form-grid" noValidate>
+          <TextField full label="Task" required placeholder="What needs to be done?" value={title} autoFocus
+            error={titleError && "Say what needs to be done."}
+            onChange={(e) => { setTitle(e.target.value); setTitleError(false); }} />
+          <SelectField label="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={(e) => setPriority(e.target.value)} />
+          <TextField label="Deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          <SelectField full label="Link case" value={linkedCase} placeholder="No case (general task)" options={caseOptions}
+            onChange={(e) => setLinkedCase(e.target.value)} />
+          {canAssign && (
+            <SelectField full label="Assign to" value={assignTo} options={[{ value: "", label: "Myself" }, ...assigneeOptions]}
+              onChange={(e) => setAssignTo(e.target.value)} />
+          )}
+          {hasPermission("DOCUMENT_UPLOAD") && <>
+            <Field label="Documents">
+              {(id) => (
+                <label className="btn court-file" htmlFor={id}>
+                  <Icon name="upload" size="sm" />{files.length ? `${files.length} file(s)` : "Attach files"}
+                  <input id={id} type="file" multiple className="sr-only" onChange={(e) => setFiles(Array.from(e.target.files || []))} />
+                </label>
+              )}
+            </Field>
+            <SelectField label="Category" value={docCategory} placeholder="Select category" options={DOC_CATEGORIES}
+              onChange={(e) => setDocCategory(e.target.value)} />
+          </>}
           {files.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="row wrap full">
               {files.map((f, i) => (
-                <Tag key={i} severity="info">
-                  <span className="flex align-items-center gap-1">
-                    {f.name}
-                    <i className="pi pi-times cursor-pointer" onClick={() => setFiles(files.filter((_, idx) => idx !== i))} />
-                  </span>
-                </Tag>
+                <span key={i} className="chip info">
+                  {f.name}
+                  <button type="button" className="court-chip-x" aria-label={`Remove ${f.name}`} onClick={() => setFiles(files.filter((_, idx) => idx !== i))}><Icon name="x" size="sm" /></button>
+                </span>
               ))}
             </div>
           )}
-          {canAssign && (
-            <div className="task-field">
-              <label htmlFor="task-assign-to">Assign to</label>
-              <Dropdown placeholder="Myself" inputId="task-assign-to" value={assignTo} options={[{ value: "", label: "Myself" }, ...assigneeOptions]}
-                onChange={(e) => setAssignTo(e.value)} />
-            </div>
-          )}
-          {hasPermission("TASK_CREATE") && (
-            <div className="flex justify-content-end">
-              <Button type="submit" icon="pi pi-plus" label="Add Task" />
-            </div>
-          )}
         </form>
-      </Dialog>
-
-      {/* Filter + search */}
-      <div className="flex flex-wrap align-items-center gap-2">
-        <SelectButton value={scope} options={SCOPES} onChange={(e) => e.value && setScope(e.value)} />
-        <SelectButton value={filter} options={FILTERS} onChange={(e) => e.value && setFilter(e.value)} />
-        <span className="p-input-icon-left flex-1" style={{ minWidth: 200, maxWidth: 320 }}>
-          <i className="pi pi-search" />
-          <InputText className="w-full" placeholder="Search tasks or cases..." value={searchText}
-            onChange={(e) => { setSearchText(e.target.value); setHighlightedId(null); }} />
-        </span>
-      </div>
-
-      {/* What needs attention first; each count narrows the list. */}
-      {quickCounts.some((q) => q.count > 0 || q.key === quick) && (
-        <div className="task-quick-row">
-          {quickCounts.filter((q) => q.count > 0 || q.key === quick).map((q) => (
-            <button key={q.key} type="button" className={`task-quick task-quick-${q.key}${quick === q.key ? " active" : ""}`}
-              onClick={() => setQuick(quick === q.key ? null : q.key)} aria-pressed={quick === q.key}>
-              <i className={`pi ${q.icon}`} /> {q.count} {q.label}
-            </button>
-          ))}
-          {quick && <button type="button" className="task-quick-clear" onClick={() => setQuick(null)}>Show all</button>}
-        </div>
-      )}
-
-      {/* Tasks List */}
-      {visibleTasks.length === 0 ? (
-        <p className="task-empty">All caught up! No tasks here.</p>
-      ) : (
-        <div className="flex flex-column gap-2">
-          {visibleTasks.map((task) => (
-            <div
-              key={task.id}
-              className={`task-row-card ${prioClass(task.priority)} ${task.completed ? "completed" : ""}${task.cancelled ? " cancelled" : ""}${highlightedId === task.id ? " highlight-row" : ""}`}
-              ref={(el) => { if (highlightedId === task.id && el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }}
-            >
-              <Button className="p-button-rounded p-button-text"
-                icon={task.completed ? "pi pi-check-square" : "pi pi-stop"}
-                onClick={() => handleToggle(task.id)} aria-label="Toggle complete"
-                disabled={!hasPermission("TASK_EDIT") && task.assignedToId !== myId}
-                tooltip={task.needsReview && task.assignedToId === myId && !task.completed ? "Submit for review" : undefined} tooltipOptions={{ position: "top" }} />
-              <div className="task-content">
-                <span className="task-title">{task.title}</span>
-                <div className="flex align-items-center flex-wrap gap-2 mt-1">
-                  {task.caseNumber && (
-                    <span className="task-chip task-case-chip" onClick={() => navigate(`/dashboard/cases/${task.caseId}`)} title={task.caseTitle || ""}>
-                      <i className="pi pi-briefcase" /> {task.caseNumber}
-                    </span>
-                  )}
-                  {task.deadline && (() => {
-                    const d = deadlineState(task);
-                    return (
-                      <span className={`task-chip task-due-${d.kind}`}
-                        title={`Deadline ${new Date(`${task.deadline.slice(0, 10)}T00:00:00`).toLocaleDateString()}`}>
-                        <i className={`pi ${d.kind === "overdue" ? "pi-exclamation-triangle" : d.kind === "today" ? "pi-clock" : "pi-calendar"}`} /> {d.label}
-                      </span>
-                    );
-                  })()}
-                  {task.draftSessionId && (
-                    <span className="task-chip task-doc-chip" onClick={() => navigate(DRAFTING.draft(task.draftSessionId))}
-                      title="Open the draft in the drafting editor">
-                      <i className="pi pi-file-edit" /> Open draft
-                    </span>
-                  )}
-                  {task.documents?.map((d: any) => (
-                    <span key={d.id} className="task-chip task-doc-chip" onClick={() => viewDocument(d.id)} title={`View ${d.name}`}>
-                      <i className="pi pi-eye" /> {d.name}
-                    </span>
-                  ))}
-                  {task.assignedToName && (
-                    <span className="task-chip" title={task.assignedToId === myId ? "Assigned to you" : `Assigned to ${task.assignedToName}`}>
-                      <i className="pi pi-user" /> {task.assignedToId === myId ? "You" : task.assignedToName}
-                    </span>
-                  )}
-                  {task.cancelled && <Tag severity="danger" value="Cancelled" />}
-                  <ReviewChip task={task} />
-                </div>
-                <ReviewNote task={task} />
-                <SubmissionHistory task={task} myId={myId} canAssign={canAssign} toast={toast}
-                  onDone={() => fetchTasks()} onViewDocument={viewDocument}
-                  onOpenDraft={() => navigate(DRAFTING.draft(task.draftSessionId))} />
-              </div>
-              <div className="flex align-items-center flex-wrap gap-1 justify-content-end">
-                {/* Priority and cancel are the assigner's (the server enforces it). */}
-                {(task.assignedById ?? task.createdById) === myId ? (
-                  <Dropdown className="p-inputtext-sm" value={task.priority || "MEDIUM"} options={PRIORITY_SHORT}
-                    valueTemplate={priorityValue} itemTemplate={priorityValue}
-                    onChange={(e) => handleChangePriority(task.id, e.value)} tooltip="Change priority" tooltipOptions={{ position: "top" }} />
-                ) : priorityValue(PRIORITY_SHORT.find((p) => p.value === (task.priority || "MEDIUM")))}
-                {canAssign && (
-                  <Dropdown className="p-inputtext-sm" value={task.assignedToId || ""} tooltip="Reassign task" tooltipOptions={{ position: "top" }}
-                    options={[{ value: myId, label: "Me" }, ...assigneeOptions]}
-                    onChange={(e) => handleReassign(task.id, e.value)} />
-                )}
-                <SubmitWork task={task} myId={myId} toast={toast} onDone={() => fetchTasks()} />
-                <ReviewActions task={task} myId={myId} canAssign={canAssign} toast={toast} onDone={() => fetchTasks()} />
-                {!task.completed && !task.cancelled && hasPermission("DRAFT_CREATE") && (
-                  <Button icon="pi pi-pencil" className="p-button-rounded p-button-text" tooltip="Draft for this task" tooltipOptions={{ position: "top" }} aria-label="Draft for this task"
-                    onClick={() => navigate(newDraftUrl({ caseId: task.caseId, taskId: task.id }))} />
-                )}
-                {(task.assignedById ?? task.createdById) === myId && (
-                  task.cancelled
-                    ? <Button icon="pi pi-replay" className="p-button-rounded p-button-text" tooltip="Restore task" tooltipOptions={{ position: "top" }} aria-label="Restore task" onClick={() => handleCancel(task.id, false)} />
-                    : <Button icon="pi pi-times-circle" className="p-button-rounded p-button-text p-button-danger" tooltip="Cancel task" tooltipOptions={{ position: "top" }} aria-label="Cancel task" onClick={() => handleCancel(task.id, true)} />
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      </Modal>
     </div>
   );
 }

@@ -13,10 +13,10 @@ Guidance for Claude Code when working in this repository (AMS — Advocate Manag
 | Path | What |
 |------|------|
 | `Advocate-app-BE-Django/` | Backend — Django 5.1 + DRF, PostgreSQL (`PactPro_db`). Port **8080**. |
-| `Advocate-app-FE-main/` | Frontend — React 19 + Vite 7 + TypeScript, PrimeReact, TipTap editor. Port **5173**. |
+| `Advocate-app-FE-main/` | Frontend — React 19 + Vite 7 + TypeScript, Red Tape design system (`src/ui`), TipTap editor. Port **5173**. |
 | `Advocate-app-BE-main/` | Legacy Spring backend remnant — only `uploads/` remains. Do not add code here. |
 | `roadmap/` | InstaDraft ↔ AMS integration plan (`00-README.md` … `08-*`, `PROGRESS.md`). |
-| `docs/` | `DEPLOYMENT.md` (new-server setup, Windows + Linux), `DEMO_GUIDE.md`, `DEMO_AS700_2025.md` (role-by-role demo, case built live), `AI_ASSISTANT.md` (Lisa: flow, tools, permissions, masking), `DEMO_OS900_2025.md` (the meeting demo: one matter built from scratch through every role; reset with `manage.py reset_demo_client --name Kannan --firm rajesh@kumar-associates.demo --yes`), `OPERATIONS.md`, `merge-plan/` (repo merge steps 00–08). |
+| `docs/` | `DEPLOYMENT.md` (new-server setup, Windows + Linux), `DEMO_GUIDE.md`, `DEMO_AS700_2025.md` (role-by-role demo, case built live), `AI_ASSISTANT.md` (Lisa: flow, tools, permissions, masking), `DEMO_OS900_2025.md` (the meeting demo: one matter built from scratch through every role; reset with `manage.py reset_demo_client --name Kannan --firm rajesh@kumar-associates.demo --yes`), `OPERATIONS.md`, `UI_REDESIGN.md` (Red Tape design system and page migration), `merge-plan/` (repo merge steps 00–08). |
 | Root docs | `README.md`, `ARCHITECTURE.md` (court data integration), `FEATURES.md`, `LOCAL_DEVELOPMENT.md`, `NEXT_STEPS.md`, `AUDIT_ams.md`, `INSTADRAFT_INTEGRATION_PROMPT.md` |
 
 A third service, the **court scraper** (FastAPI, port 8000), lives in a **separate repo** (`SCRAPER_DIR`, default `C:\Users\ANILA\scrap`). While it is down, all court features (display board, cause lists, case import, Daily Status) return 503 — check port 8000 first.
@@ -63,8 +63,13 @@ API base: `VITE_API_BASE` (default `http://127.0.0.1:8080`, see `src/api/client.
 
 - Entry `src/main.jsx` → `src/App.tsx` (routes). Pages in `src/pages/` (Drafting under `src/pages/Drafting/`), shared UI in `src/components/`, API wrappers in `src/api/` and `src/services/`, state in `src/contexts/`, styles in `src/assets/styles/`.
 - Migrated to TypeScript; new files should be `.ts`/`.tsx`.
+- **UI: Red Tape design system** (see `docs/UI_REDESIGN.md`).
+  - Tokens and component classes are in `src/ui/redtape.css`. React building blocks are in `src/ui/` (`kit`, `forms`, `overlays`, `DataTable`, `Icon`).
+  - The shell is in `src/layout/`: the sidebar model is `nav.ts`, and the sidebar and Ctrl+K palette sit next to it. `pages/Dashboard.tsx` hosts the shell and the routes.
+  - There is no component library: PrimeReact, PrimeFlex and PrimeIcons were removed. Page-area styles live in `src/ui/pages/*.css` and use only Red Tape tokens. Layout grids use `.cols`.
+  - The approved reference prototype is `ams-redesign-demo/PactPro_UI_Redesign_Final.html`.
 - **Lint:** `npm run lint` covers `.ts`/`.tsx` too (typescript-eslint parser, `eslint.config.js`). `react-hooks/rules-of-hooks` is an **error**: hooks go above any early `return` (a hook below one blanked the Users page). `exhaustive-deps` is a warning, and lint is clean: keep it at 0. Fix a dependency warning for real when that keeps behaviour. Never just add a function that's re-created every render, because that re-fetches in a loop; use a ref or `useCallback`. If an effect deliberately runs only on certain changes, keep the list and add `// eslint-disable-next-line react-hooks/exhaustive-deps -- <why>`. Type-checking stays with `tsc`.
-- **Tooltips go above the element:** PrimeReact defaults to the right, which covers the next button in a row. Every `tooltip=` gets `tooltipOptions={{ position: "top" }}` (or `"bottom"`). The small text size is global, in `prime-bridge.css`.
+- **Hover hints:** use the native `title` attribute (plus `aria-label` on icon-only buttons); there is no tooltip component.
 
 ## Conventions
 

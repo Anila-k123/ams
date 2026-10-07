@@ -1,18 +1,7 @@
+// Invoices: GST invoices against cases. Advocates raise, accounts issue; after
+// issue, accounts record payments against the invoice or cancel a wrong one.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { Dropdown } from "primereact/dropdown";
-import { Dialog } from "primereact/dialog";
-import { Paginator } from "primereact/paginator";
-import { Skeleton } from "primereact/skeleton";
-import { Tag } from "primereact/tag";
-import { IconField } from "primereact/iconfield";
-import { InputIcon } from "primereact/inputicon";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import api from "../api/client";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
@@ -21,10 +10,13 @@ import { useAuth } from "../context/AuthContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import { PAYMENT_MODES } from "../constants/payments";
 import usePagination from "../hooks/usePagination";
-import "../assets/styles/InvoicesPanel.css";
 import { usePageModal } from "../utils/pageModal";
-import FieldError from "../components/FieldError";
 import { gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+import { Button, Chip, Icon, PageHead, Panel, PopMenu, Skel, type MenuItem, type Tone } from "../ui/kit";
+import { Field, SearchInput, SelectField, TextArea, TextField } from "../ui/forms";
+import { Modal, Drawer, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/finance.css";
 
 const EMPTY_INVOICE = {
   invoiceDate: "",
@@ -49,8 +41,8 @@ const TAX_MODES = [
   { label: "Forward charge (firm charges GST)", value: "forward" },
 ];
 
-const STATUS_SEVERITY: Record<string, any> = {
-  PAID: "success", PARTIAL: "info", UNPAID: "warning", OVERDUE: "danger", CANCELLED: "secondary",
+const STATUS_TONE: Record<string, Tone> = {
+  PAID: "ok", PARTIAL: "info", UNPAID: "warn", OVERDUE: "bad", CANCELLED: "",
 };
 const STATUS_LABEL: Record<string, string> = {
   PAID: "Paid", PARTIAL: "Part-paid", UNPAID: "Unpaid", OVERDUE: "Overdue", CANCELLED: "Cancelled",
@@ -59,10 +51,37 @@ const today = () => new Date().toISOString().slice(0, 10);
 const EMPTY_PAYMENT = { amount: "", paymentMode: "", referenceNumber: "", paymentDate: "", description: "" };
 
 // An advocate-raised invoice waiting for accounts (invoices.models.InvoiceRequest).
-const REQUEST_STATUS: Record<string, { label: string; severity: any }> = {
-  SUBMITTED: { label: "With accounts", severity: "info" },
-  RETURNED: { label: "Returned", severity: "warning" },
+const REQUEST_STATUS: Record<string, { label: string; tone: Tone }> = {
+  SUBMITTED: { label: "With accounts", tone: "info" },
+  RETURNED: { label: "Returned", tone: "warn" },
 };
+
+// en-IN date (7 Oct 2026). Plain ISO dates are read as local dates so IST never shifts them.
+const fdate = (v?: string | null) => {
+  if (!v) return "—";
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00`) : new Date(v);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+const inr = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Indian-system amount in words for the paper invoice ("Rupees One Lakh ... Only").
+const ONES = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve",
+  "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+const two = (n: number) => (n < 20 ? ONES[n] : `${TENS[Math.floor(n / 10)]}${n % 10 ? ` ${ONES[n % 10]}` : ""}`);
+const three = (n: number) => [n >= 100 ? `${ONES[Math.floor(n / 100)]} Hundred` : "", two(n % 100)].filter(Boolean).join(" ");
+function rupeesInWords(amount: number) {
+  const r = Math.floor(Math.abs(amount));
+  const p = Math.round((Math.abs(amount) - r) * 100);
+  const parts: string[] = [];
+  const cr = Math.floor(r / 1e7), la = Math.floor((r % 1e7) / 1e5), th = Math.floor((r % 1e5) / 1e3), rest = r % 1e3;
+  if (cr) parts.push(`${cr >= 100 ? three(cr) : two(cr)} Crore`);
+  if (la) parts.push(`${two(la)} Lakh`);
+  if (th) parts.push(`${two(th)} Thousand`);
+  if (rest) parts.push(three(rest));
+  const words = parts.join(" ") || "Zero";
+  return `Rupees ${words}${p ? ` and ${two(p)} Paise` : ""} Only`;
+}
 
 // What the invoice form is doing:
 //   new     - a fresh invoice (issued directly, or sent to accounts)
@@ -105,6 +124,8 @@ export default function InvoicesPanel() {
   const [payment, setPayment] = useState<any>(EMPTY_PAYMENT);
   const [cancelling, setCancelling] = useState<any>(null);  // invoice being cancelled
   const [cancelReason, setCancelReason] = useState("");
+  const [viewing, setViewing] = useState<any>(null);        // invoice open in the drawer
+  const [menu, setMenu] = useState<{ el: HTMLElement; inv: any } | null>(null);
 
   const fetchRequests = useCallback(async () => {
     if (!canRaise) return;
@@ -158,6 +179,11 @@ export default function InvoicesPanel() {
     fetchSummary();
   }, []);
 
+  // Keep the open drawer in step with a refreshed list (after a payment, say).
+  useEffect(() => {
+    setViewing((v: any) => (v ? invoices.find((i) => i.id === v.id) || v : v));
+  }, [invoices]);
+
   // Quick Actions / Lisa: open Generate Invoice.
   usePageModal(["create-invoice"], () => setShowModal(true));
 
@@ -174,7 +200,7 @@ export default function InvoicesPanel() {
   // Scroll the highlighted row (from global search) into view.
   useEffect(() => {
     if (highlightedId == null) return;
-    requestAnimationFrame(() => document.querySelector(".invoices-table-card .highlight-row")
+    requestAnimationFrame(() => document.querySelector(".fin-invoices tr.hl")
       ?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }, [invoices, highlightedId]);
 
@@ -265,10 +291,11 @@ export default function InvoicesPanel() {
   };
 
   const withdrawRequest = (req: any) => {
-    confirmDialog({
+    confirm({
+      title: "Withdraw invoice?",
       message: "Withdraw this invoice? Accounts will no longer see it.",
-      header: "Withdraw invoice",
-      icon: "pi pi-undo",
+      confirmLabel: "Withdraw",
+      danger: true,
       accept: async () => {
         try {
           await withLoading(api.delete(`/api/invoices/requests/${req.id}`), "Withdrawing...");
@@ -313,7 +340,6 @@ export default function InvoicesPanel() {
   const gstRateNum = parseFloat(newInvoice.gstRate) || 0;
   const gstAmount = isForward ? Math.round(invoiceTotal * gstRateNum) / 100 : 0;
   const grandTotal = invoiceTotal + gstAmount;
-  const inr = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -366,18 +392,19 @@ export default function InvoicesPanel() {
     } catch (err: any) {
       setSubmitting(false);
       console.error("Error saving invoice:", err);
-      error(err.response?.data?.error || err.response?.data || "Failed to save invoice.");
+      const d = err.response?.data;
+      error(d?.error || (typeof d === "string" ? d : "") || "Failed to save invoice.");
     }
   };
 
   // The form's wording follows what pressing the button will do.
-  const formTitle = mode.kind === "review" ? "Review Invoice"
-    : mode.kind === "resend" ? "Edit Invoice" : "Generate Invoice";
+  const formTitle = mode.kind === "review" ? "Review invoice"
+    : mode.kind === "resend" ? "Edit invoice" : "Generate invoice";
   const formSubtitle = mode.kind === "review"
     ? `Raised by ${mode.request.requestedByName || "an advocate"}. Check it, correct if needed, then issue it or return it.`
     : canIssue && mode.kind === "new" ? "Create an invoice for the selected client."
     : "Accounts will check it and issue it to the client.";
-  const submitLabel = mode.kind === "review" || (mode.kind === "new" && canIssue) ? "Issue Invoice" : "Send to Accounts";
+  const submitLabel = mode.kind === "review" || (mode.kind === "new" && canIssue) ? "Issue invoice" : "Send to accounts";
 
   const doPay = async (id: any) => {
     try {
@@ -393,10 +420,10 @@ export default function InvoicesPanel() {
 
   // For money already recorded without being linked to this invoice.
   const handlePay = (id: any) => {
-    confirmDialog({
+    confirm({
+      title: "Mark paid?",
       message: "Mark this invoice as Paid without recording a payment? Use this only if the money was already recorded elsewhere.",
-      header: "Mark paid",
-      icon: "pi pi-check-circle",
+      confirmLabel: "Mark paid",
       accept: () => doPay(id),
     });
   };
@@ -464,370 +491,361 @@ export default function InvoicesPanel() {
     label: `${c.caseNumber} — ${c.caseTitle} (Client: ${c.clientName || "N/A"})`,
   }));
 
+  // What can be done to an issued invoice, by whom.
+  const invActions = (inv: any) => {
+    const open = inv.status !== "PAID" && inv.status !== "CANCELLED";
+    const untouched = open && !(inv.paidAmount > 0);
+    return {
+      pay: open && hasPermission("PAYMENT_CREATE"),
+      markPaid: untouched && hasPermission("INVOICE_EDIT"),
+      cancel: untouched && hasPermission("INVOICE_EDIT"),
+      pdf: hasPermission("REPORT_EXPORT"),
+    };
+  };
+  const menuItems = (inv: any): MenuItem[] => {
+    const a = invActions(inv);
+    const items: MenuItem[] = [{ label: "View", icon: "eye", onClick: () => setViewing(inv) }];
+    if (a.pay) items.push({ label: "Record payment", icon: "rupee", onClick: () => openPayment(inv) });
+    if (a.markPaid) items.push({ label: "Mark paid (recorded elsewhere)", icon: "check", onClick: () => handlePay(inv.id) });
+    if (a.pdf) items.push({ label: "Download PDF", icon: "download", onClick: () => handleDownloadPDF(inv.id, inv.invoiceNumber) });
+    if (a.cancel) items.push("-", { label: "Cancel invoice", icon: "x", danger: true, onClick: () => { setCancelling(inv); setCancelReason(""); } });
+    return items;
+  };
+
+  const statusChip = (s: string) => <Chip tone={STATUS_TONE[s] ?? "info"}>{STATUS_LABEL[s] || s}</Chip>;
+
+  const columns: Column<any>[] = [
+    { key: "invoiceNumber", label: "Invoice no", render: (inv) => (
+      <div>
+        <span className="mono small cell-title nowrap">{inv.invoiceNumber}</span>
+        {inv.issuedAt && (
+          <div className="cell-sub" title={inv.clientNotifiedAt
+            ? `Client emailed ${new Date(inv.clientNotifiedAt).toLocaleString("en-IN")}`
+            : "The client was not emailed: no email on file, or client email is switched off"}>
+            Issued {fdate(inv.issuedAt)}{inv.clientNotifiedAt ? " · client emailed" : " · client not emailed"}
+          </div>
+        )}
+      </div>
+    ) },
+    { key: "client", label: "Client", render: (inv) => inv.clientName || "—" },
+    { key: "case", label: "Case", hideSm: true, render: (inv) => (
+      <div><span className="mono small">{inv.caseEntity?.caseNumber || "—"}</span>
+        {inv.caseTitle && <div className="cell-sub ellipsis fin-maxw">{inv.caseTitle}</div>}</div>
+    ) },
+    { key: "date", label: "Date", hideSm: true, render: (inv) => <span className="nowrap">{fdate(inv.invoiceDate)}</span> },
+    { key: "due", label: "Due", render: (inv) => (
+      <span className={`nowrap${inv.status === "OVERDUE" ? " fin-bad" : inv.status === "PAID" || inv.status === "CANCELLED" ? " faint" : ""}`}>{fdate(inv.dueDate)}</span>
+    ) },
+    { key: "amount", label: "Total", align: "right", render: (inv) => (
+      <div>
+        <span className={`mono${inv.status === "CANCELLED" ? " fin-struck" : ""}`}>{inr(Number(inv.amount) || 0)}</span>
+        {inv.paidAmount > 0 && inv.balance > 0 && (
+          <div className="cell-sub">Paid {formatCurrency(inv.paidAmount)} · Due {formatCurrency(inv.balance)}</div>
+        )}
+      </div>
+    ) },
+    { key: "status", label: "Status", render: (inv) => (
+      <div>
+        {statusChip(inv.status)}
+        {inv.status === "CANCELLED" && inv.cancelReason && (
+          <div className="cell-sub">{inv.cancelReason}{inv.cancelledByName ? ` (${inv.cancelledByName})` : ""}</div>
+        )}
+      </div>
+    ) },
+    // One column for both people keeps the table narrow enough for its actions.
+    { key: "raised", label: "Raised / handled", hideSm: true, render: (inv) => (
+      <><div className="small nowrap">{inv.raisedByName || "—"}</div>
+        {inv.handledByName && inv.handledByName !== inv.raisedByName && <div className="cell-sub nowrap">{inv.handledByName}</div>}</>
+    ) },
+    { key: "a", label: <span className="sr-only">Actions</span>, className: "actions", render: (inv) => (
+      <div className="row fin-actions">
+        {invActions(inv).pay && (
+          <Button size="sm" icon="rupee" onClick={() => openPayment(inv)}>Record payment</Button>
+        )}
+        <button type="button" className="icon-btn" aria-label={`More actions for ${inv.invoiceNumber}`}
+          onClick={(e) => setMenu({ el: e.currentTarget, inv })}><Icon name="more" /></button>
+      </div>
+    ) },
+  ];
+
+  const requestColumns: Column<any>[] = [
+    { key: "caseNumber", label: "Case", render: (r) => <span className="mono small">{r.caseNumber || "—"}</span> },
+    { key: "clientName", label: "Client", render: (r) => r.clientName || "—" },
+    { key: "amount", label: "Amount", align: "right", render: (r) => <span className="mono">{inr(Number(r.amount) || 0)}</span> },
+    { key: "requestedByName", label: "Raised by", hideSm: true, render: (r) => r.requestedByName || "—" },
+    { key: "status", label: "Status", render: (r) => (
+      <div>
+        <Chip tone={REQUEST_STATUS[r.status]?.tone || "info"}>{REQUEST_STATUS[r.status]?.label || r.status}</Chip>
+        {r.status === "RETURNED" && r.note && <div className="cell-sub">{r.note}</div>}
+      </div>
+    ) },
+    { key: "a", label: <span className="sr-only">Actions</span>, className: "actions", render: (r) => {
+      const mine = r.requestedById === myId;
+      return (
+        <div className="row fin-actions">
+          {canIssue && r.status === "SUBMITTED" && (
+            <Button size="sm" variant="primary" icon="eye" onClick={() => openRequest(r, "review")}>Review</Button>
+          )}
+          {mine && (
+            <Button size="sm" icon="edit" onClick={() => openRequest(r, "resend")}>{r.status === "RETURNED" ? "Edit & resend" : "Edit"}</Button>
+          )}
+          {mine && (
+            <Button size="sm" variant="ghost" iconOnly icon="restore" aria-label="Withdraw" title="Withdraw" onClick={() => withdrawRequest(r)} />
+          )}
+        </div>
+      );
+    } },
+  ];
+
   if (loading) {
     return (
-      <div className="invoices-container flex flex-column gap-3">
-        <Skeleton height="2.5rem" />
-        <div className="grid">{[0, 1, 2].map((i) => <div key={i} className="col-12 md:col-4"><Skeleton height="6rem" /></div>)}</div>
-        <Skeleton height="20rem" />
+      <div className="stack fin-page">
+        <Skel h={40} w="40%" />
+        <Skel h={96} />
+        <Skel h={320} />
       </div>
     );
   }
 
-  const input = (name: string, label: string, placeholder = "", extra: any = {}) => (
-    <div className="inv-form-group">
-      <label htmlFor={`inv-${name}`}>{label}</label>
-      <InputText id={`inv-${name}`} name={name} value={newInvoice[name]} onChange={handleChange} placeholder={placeholder} {...extra} />
-    </div>
-  );
-
-  const card = (cls: string, icon: string, title: string, amount: any, count: number, note: string) => (
-    <div className="col-12 md:col-4">
-      <div className={`inv-card ${cls}`}>
-        <div className="inv-card-header">
-          <span>{title}</span>
-          <i className={`pi ${icon} card-icon`} />
-        </div>
-        <h3>{formatCurrency(amount)}</h3>
-        <p>{note} · {count} invoice{count === 1 ? "" : "s"}</p>
-      </div>
-    </div>
-  );
+  const v = viewing;
+  const vActs = v ? invActions(v) : null;
+  const vRows: any[] = v ? (v.particulars?.length ? v.particulars : [{ description: v.caseTitle || "Professional fees", amount: v.amount }]) : [];
 
   return (
-    <div className="invoices-container">
-      <ConfirmDialog />
-      <div className="flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-        <p className="subtle m-0">Track billing summaries, issue client invoices, and record payments.</p>
-        {hasPermission("INVOICE_CREATE") && (
-          <Button icon="pi pi-plus" label="Generate Invoice" onClick={() => setShowModal(true)} />
+    <div className="fin-page">
+      <PageHead title="Invoices" sub="GST invoices for legal services, SAC 998212. Issue to clients and record what they pay."
+        actions={canRaise && <Button variant="primary" icon="plus" onClick={() => setShowModal(true)}>Generate invoice</Button>} />
+
+      <div className="figures fin-figs">
+        <div className="figure"><div className="lbl">Collected</div><div className="val">{formatCurrency(summary.paidAmount)}</div>
+          <div className="meta">{summary.paid || 0} paid invoice{summary.paid === 1 ? "" : "s"}</div></div>
+        <div className="figure"><div className="lbl">Outstanding</div><div className="val">{formatCurrency(summary.unpaidAmount)}</div>
+          <div className="meta">{summary.unpaid || 0} unpaid</div></div>
+        <div className="figure"><div className="lbl">Overdue</div><div className={`val${summary.overdueAmount > 0 ? " fin-bad" : ""}`}>{formatCurrency(summary.overdueAmount)}</div>
+          <div className="meta">{summary.overdue || 0} past due date</div></div>
+        {canRaise && (
+          <div className="figure"><div className="lbl">Waiting to be issued</div><div className="val">{requests.length}</div>
+            <div className="meta">{canIssue ? "Raised by advocates" : "With accounts or returned"}</div></div>
         )}
-      </div>
-
-      <IconField iconPosition="left" className="mb-3">
-        <InputIcon className="pi pi-search" />
-        <InputText className="w-full" placeholder="Search by invoice number, client, or case..." value={searchText}
-          onChange={(e) => { setSearchText(e.target.value); setHighlightedId(null); }} />
-      </IconField>
-
-      <div className="grid mb-2">
-        {card("paid", "pi-check-circle", "Paid Invoices", summary.paidAmount, summary.paid, "Total cash collected")}
-        {card("unpaid", "pi-hourglass", "Unpaid Invoices", summary.unpaidAmount, summary.unpaid, "Outstanding client dues")}
-        {card("overdue", "pi-exclamation-circle", "Overdue Dues", summary.overdueAmount, summary.overdue, "Payment deadline passed")}
       </div>
 
       {(requests.length > 0 || canIssue) && (
-        <div className="invoices-table-card mb-3">
-          <div className="inv-requests-heading">
-            <strong>Waiting to be issued</strong>
-            <span className="subtle">
-              {canIssue ? "Raised by advocates. Review each one, then issue it or return it." : "Sent to accounts. Returned ones need your changes."}
-            </span>
-          </div>
-          {requests.length === 0 ? (
-            <p className="subtle m-0">Nothing waiting. Invoices advocates send to accounts appear here to review and issue.</p>
-          ) : (
-          <DataTable value={requests} dataKey="id" size="small" scrollable>
-            <Column header="Case Number" field="caseNumber" />
-            <Column header="Client" field="clientName" />
-            <Column header="Amount" body={(r) => formatCurrency(r.amount)} />
-            <Column header="Raised by" field="requestedByName" />
-            <Column header="Status" body={(r) => (
-              <div>
-                <Tag value={REQUEST_STATUS[r.status]?.label || r.status} severity={REQUEST_STATUS[r.status]?.severity || "info"} rounded />
-                {r.status === "RETURNED" && r.note && <div className="inv-request-note">{r.note}</div>}
-              </div>
-            )} />
-            <Column header="Actions" body={(r) => {
-              const mine = r.requestedById === myId;
-              return (
-                <div className="flex gap-2 white-space-nowrap">
-                  {canIssue && r.status === "SUBMITTED" && (
-                    <Button size="small" icon="pi pi-eye" label="Review" onClick={() => openRequest(r, "review")} />
-                  )}
-                  {mine && (
-                    <Button size="small" outlined icon="pi pi-pencil" label={r.status === "RETURNED" ? "Edit & Resend" : "Edit"}
-                      onClick={() => openRequest(r, "resend")} />
-                  )}
-                  {mine && (
-                    <Button size="small" text severity="danger" icon="pi pi-undo" tooltip="Withdraw" tooltipOptions={{ position: "top" }} aria-label="Withdraw"
-                      onClick={() => withdrawRequest(r)} />
-                  )}
-                </div>
-              );
-            }} />
-          </DataTable>
-          )}
-        </div>
+        <Panel title="Waiting to be issued" flush className="fin-block"
+          sub={canIssue ? "Raised by advocates. Review each one, then issue it or return it." : "Sent to accounts. Returned ones need your changes."}>
+          <DataTable rows={requests} rowKey={(r) => r.id} columns={requestColumns} flush pageSize={10} caption="Invoices waiting to be issued"
+            empty={{ icon: "receipt", title: "Nothing waiting", text: "Invoices advocates send to accounts appear here to review and issue." }} />
+        </Panel>
       )}
 
-      <div className="invoices-table-card">
-        {invoices.length === 0 ? (
-          <p className="no-data">No invoices generated yet.</p>
-        ) : (
-          <DataTable value={invoices} dataKey="id" size="small" scrollable
-            rowClassName={(inv: any) => (highlightedId === inv.id ? "highlight-row" : "")}>
-            <Column header="Invoice Number" body={(inv) => (
-              <div>
-                <strong>{inv.invoiceNumber}</strong>
-                {inv.issuedAt && (
-                  <div className="inv-sub-line" title={inv.clientNotifiedAt
-                    ? `Client emailed ${new Date(inv.clientNotifiedAt).toLocaleString()}`
-                    : "The client was not emailed: no email on file, or client email is switched off"}>
-                    Issued {new Date(inv.issuedAt).toLocaleDateString()}
-                    {inv.clientNotifiedAt ? " · client emailed" : " · client not emailed"}
-                  </div>
-                )}
-              </div>
-            )} />
-            <Column header="Client" field="clientName" />
-            <Column header="Case Number" body={(inv) => inv.caseEntity?.caseNumber} />
-            <Column header="Amount" body={(inv) => (
-              <div>
-                <div className={inv.status === "CANCELLED" ? "inv-struck" : undefined}>{formatCurrency(inv.amount)}</div>
-                {inv.paidAmount > 0 && inv.balance > 0 && (
-                  <div className="inv-sub-line">Paid {formatCurrency(inv.paidAmount)} · Due {formatCurrency(inv.balance)}</div>
-                )}
-              </div>
-            )} />
-            <Column header="Due Date" body={(inv) => new Date(inv.dueDate).toLocaleDateString()} />
-            <Column header="Status" body={(inv) => (
-              <div>
-                <Tag value={STATUS_LABEL[inv.status] || inv.status} severity={STATUS_SEVERITY[inv.status] || "info"} rounded />
-                {inv.status === "CANCELLED" && inv.cancelReason && (
-                  <div className="inv-request-note">{inv.cancelReason}{inv.cancelledByName ? ` (${inv.cancelledByName})` : ""}</div>
-                )}
-              </div>
-            )} />
-            <Column header="Raised by" body={(inv) => inv.raisedByName || "—"} />
-            <Column header="Handled by" body={(inv) => inv.handledByName || "—"} />
-            <Column header="Actions" body={(inv) => {
-              const open = inv.status !== "PAID" && inv.status !== "CANCELLED";
-              const untouched = open && !(inv.paidAmount > 0);
-              return (
-              <div className="flex gap-2 white-space-nowrap">
-                {open && hasPermission("PAYMENT_CREATE") && (
-                  <Button size="small" outlined severity="success" icon="pi pi-wallet" label="Record Payment" onClick={() => openPayment(inv)} />
-                )}
-                {untouched && hasPermission("INVOICE_EDIT") && (
-                  <Button size="small" text severity="success" icon="pi pi-check-circle" tooltip="Mark paid (money recorded elsewhere)" tooltipOptions={{ position: "top" }}
-                    aria-label="Mark paid" onClick={() => handlePay(inv.id)} />
-                )}
-                {untouched && hasPermission("INVOICE_EDIT") && (
-                  <Button size="small" text severity="danger" icon="pi pi-ban" tooltip="Cancel invoice" tooltipOptions={{ position: "top" }} aria-label="Cancel invoice"
-                    onClick={() => { setCancelling(inv); setCancelReason(""); }} />
-                )}
-                {hasPermission("REPORT_EXPORT") && (
-                  <Button size="small" outlined icon="pi pi-download" label="Export" tooltip="Download PDF" tooltipOptions={{ position: "top" }}
-                    onClick={() => handleDownloadPDF(inv.id, inv.invoiceNumber)} />
-                )}
-              </div>
-              );
-            }} />
-          </DataTable>
-        )}
-        {totalElements > 0 && (
-          <Paginator first={page * size} rows={size} totalRecords={totalElements} rowsPerPageOptions={[10, 20, 50, 100]}
-            onPageChange={(e) => { if (e.rows !== size) { setSize(e.rows); setPage(0); } else setPage(e.page); }} />
-        )}
+      <div className="toolbar">
+        <SearchInput value={searchText} placeholder="Search invoice no, client or case"
+          onChange={(val) => { setSearchText(val); setHighlightedId(null); }} />
+        <span className="grow" />
+        <label className="sr-only" htmlFor="inv-size">Rows per page</label>
+        <select id="inv-size" className="input" value={size} onChange={(e) => { setSize(Number(e.target.value)); setPage(0); }}>
+          {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n} per page</option>)}
+        </select>
       </div>
 
-      <Dialog visible={showModal} onHide={handleClose} closable={!submitting} closeOnEscape={!submitting} dismissableMask={!submitting}
-        style={{ width: "min(760px, 95vw)" }} modal
-        header={<div><div>{formTitle}</div><div className="inv-modal-subtitle">{formSubtitle}</div></div>}>
-        <form onSubmit={handleSubmit} className="inv-form" noValidate>
-          {mode.kind === "resend" && mode.request.status === "RETURNED" && mode.request.note && (
-            <div className="inv-request-note inv-request-note-box">
-              <strong>Returned by {mode.request.reviewedByName || "accounts"}:</strong> {mode.request.note}
+      <div className="fin-invoices">
+        <DataTable rows={invoices} rowKey={(inv) => inv.id} columns={columns} caption="Invoices"
+          onRow={(inv) => setViewing(inv)}
+          rowClass={(inv) => (highlightedId === inv.id ? "hl" : undefined)}
+          pageSize={size} page={page} total={totalElements} onPage={setPage}
+          empty={{ icon: "receipt", title: searchText ? "No invoices match" : "No invoices yet", text: "Generate an invoice against a case to bill a client." }} />
+      </div>
+
+      {menu && <PopMenu anchor={menu.el} items={menuItems(menu.inv)} onClose={() => setMenu(null)} align="right" />}
+
+      {/* ------------ Invoice preview: the paper invoice ------------ */}
+      <Drawer open={!!v} onClose={() => setViewing(null)} wide
+        title={<>Invoice <span className="mono">{v?.invoiceNumber}</span></>}
+        sub={v && <><span className="muted">{v.clientName || "—"}</span>{statusChip(v.status)}</>}
+        footer={v && <>
+          {vActs?.cancel && <Button variant="danger" icon="x" onClick={() => { setCancelling(v); setCancelReason(""); }}>Cancel invoice</Button>}
+          <span className="grow" />
+          {vActs?.markPaid && <Button icon="check" onClick={() => handlePay(v.id)}>Mark paid</Button>}
+          {vActs?.pdf && <Button icon="download" onClick={() => handleDownloadPDF(v.id, v.invoiceNumber)}>Download PDF</Button>}
+          {vActs?.pay && <Button variant="primary" icon="rupee" onClick={() => openPayment(v)}>Record payment</Button>}
+        </>}>
+        {v && (
+          <div className="p3-inv">
+            <div className="p3-inv-top">
+              <div>
+                <h3>Tax invoice</h3>
+                <div className="muted">Legal services, SAC 998212</div>
+              </div>
+              <dl className="kv">
+                <dt>Invoice no</dt><dd className="mono">{v.invoiceNumber}</dd>
+                <dt>Date</dt><dd>{fdate(v.invoiceDate)}</dd>
+                <dt>Due</dt><dd className={v.status === "OVERDUE" ? "fin-bad" : undefined}>{fdate(v.dueDate)}</dd>
+                {v.issuedAt && <><dt>Issued</dt><dd>{fdate(v.issuedAt)}</dd></>}
+              </dl>
             </div>
+            <div className="p3-box">
+              <div><div className="faint xs">Bill to</div><b>{v.clientName || "—"}</b>
+                <div className="faint xs">{v.clientNotifiedAt ? `Emailed ${fdate(v.clientNotifiedAt)}` : "Client not emailed"}</div></div>
+              <div><div className="faint xs">Matter</div><b className="mono">{v.caseEntity?.caseNumber || "—"}</b>
+                <div className="muted">{v.caseTitle}</div></div>
+            </div>
+            <div className="table-wrap">
+              <table className="t">
+                <thead><tr><th scope="col">#</th><th scope="col">Particulars</th><th scope="col" className="amt">Amount</th></tr></thead>
+                <tbody>
+                  {vRows.map((it: any, n: number) => (
+                    <tr key={n}><td>{n + 1}</td><td>{it.description || "—"}</td><td className="amt mono">{inr(Number(it.amount) || 0)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <dl className="kv p3-tot fin-tot">
+              <dt className="fin-tot-lbl">Total</dt><dd className="right fin-tot-val">₹ {inr(Number(v.amount) || 0)}</dd>
+              {v.paidAmount > 0 && <><dt>Received</dt><dd className="mono right">{inr(Number(v.paidAmount) || 0)}</dd></>}
+              {v.status !== "CANCELLED" && v.balance > 0 && <><dt>Balance due</dt><dd className="mono right">{inr(Number(v.balance) || 0)}</dd></>}
+            </dl>
+            <div className="p3-words"><span className="faint xs">Amount in words</span><div><b>{rupeesInWords(Number(v.amount) || 0)}</b></div></div>
+            {v.status === "CANCELLED" && (
+              <div className="callout bad fin-block-top"><Icon name="warn" size="sm" />
+                <div>Cancelled{v.cancelledByName ? ` by ${v.cancelledByName}` : ""}{v.cancelReason ? `: ${v.cancelReason}` : "."}</div></div>
+            )}
+            <dl className="kv fin-block-top">
+              <dt>Raised by</dt><dd>{v.raisedByName || "—"}</dd>
+              <dt>Handled by</dt><dd>{v.handledByName || "—"}</dd>
+            </dl>
+            <p className="faint xs fin-block-top">The PDF carries the firm letterhead, GST breakdown and bank details.</p>
+          </div>
+        )}
+      </Drawer>
+
+      {/* ------------ Generate / review / resend ------------ */}
+      <Modal open={showModal} onClose={handleClose} dismissable={!submitting} size="wide" title={formTitle} sub={formSubtitle}
+        footer={<>
+          <button type="button" className="btn ghost" onClick={handleClose} disabled={submitting}>Cancel</button>
+          {mode.kind === "review" && (
+            <Button icon="restore" disabled={submitting} onClick={() => { setReturning(mode.request); setReturnNote(""); }}>Return to advocate</Button>
           )}
-          <div className="inv-form-group">
-            <label htmlFor="inv-caseId">Associated Case</label>
-            {/* A raised invoice stays on its case; only a new one picks a case. */}
-            <Dropdown inputId="inv-caseId" value={newInvoice.caseId} options={caseOptions} filter autoFocus
-              disabled={mode.kind !== "new"}
-              placeholder={mode.kind !== "new" ? `${mode.request.caseNumber || ""} — ${mode.request.caseTitle || ""}` : "Select a case..."}
-              onChange={(e) => selectCase(e.value)} />
+          <Button type="submit" form="inv-form" variant="primary" loading={submitting}
+            disabled={submitting || !newInvoice.caseId || invoiceTotal <= 0}>{submitting ? "Saving…" : submitLabel}</Button>
+        </>}>
+        <form id="inv-form" onSubmit={handleSubmit} className="stack" noValidate>
+          {mode.kind === "resend" && mode.request.status === "RETURNED" && mode.request.note && (
+            <div className="callout warn"><Icon name="warn" size="sm" />
+              <div><b>Returned by {mode.request.reviewedByName || "accounts"}:</b> {mode.request.note}</div></div>
+          )}
+          {/* A raised invoice stays on its case; only a new one picks a case. */}
+          {mode.kind === "new" ? (
+            <SelectField label="Case" required value={newInvoice.caseId} options={caseOptions} placeholder="Select a case…"
+              autoFocus onChange={(e) => selectCase(e.target.value)} />
+          ) : (
+            <TextField label="Case" value={`${mode.request.caseNumber || ""} — ${mode.request.caseTitle || ""}`} disabled readOnly />
+          )}
+
+          <div className="form-grid">
+            <TextField label="Invoice date" type="date" name="invoiceDate" required value={newInvoice.invoiceDate} onChange={handleChange} />
+            <TextField label="Due date" type="date" name="dueDate" required value={newInvoice.dueDate} onChange={handleChange} />
           </div>
 
-          <div className="inv-form-row">
-            {input("invoiceDate", "Invoice Date", "", { type: "date", required: true })}
-            {input("dueDate", "Due Date", "", { type: "date", required: true })}
-          </div>
-
-          <div className="inv-particulars">
-            <div className="flex justify-content-between align-items-center">
-              <label>Particulars</label>
-              <Button type="button" text size="small" icon="pi pi-plus" label="Add Particulars" onClick={addParticular} />
-            </div>
+          <fieldset className="fin-fieldset">
+            <legend className="fieldset-title">Particulars</legend>
             {newInvoice.particulars.map((p: any, i: number) => (
-              <div className="inv-particular-row" key={i}>
-                <InputText
-                  className="inv-particular-desc"
-                  placeholder="Particulars"
-                  value={p.description}
-                  onChange={(e) => setParticular(i, "description", e.target.value)}
-                />
-                <InputText
-                  className="inv-particular-amt"
-                  type="number" step="0.01" min="0" placeholder="₹ Amount"
-                  value={p.amount}
-                  onChange={(e) => setParticular(i, "amount", e.target.value)}
-                />
-                <Button type="button" text rounded severity="danger" icon="pi pi-times" tooltip="Remove line" tooltipOptions={{ position: "top" }} aria-label="Remove line"
+              <div className="fin-line" key={i}>
+                <input className="input" aria-label={`Particular ${i + 1}`} placeholder="Particulars" value={p.description}
+                  onChange={(e) => setParticular(i, "description", e.target.value)} />
+                <input className="input mono fin-amt" aria-label={`Amount for line ${i + 1}`} type="number" step="0.01" min="0" placeholder="₹ Amount"
+                  value={p.amount} onChange={(e) => setParticular(i, "amount", e.target.value)} />
+                <Button variant="ghost" iconOnly icon="x" aria-label={`Remove line ${i + 1}`} title="Remove line"
                   onClick={() => removeParticular(i)} disabled={newInvoice.particulars.length === 1} />
               </div>
             ))}
-            <div className="inv-particulars-total">
-              <span>{isForward ? "Taxable value" : "Total"}</span>
-              <span>₹ {inr(invoiceTotal)}</span>
-            </div>
-            {isForward && (
-              <>
-                <div className="inv-particulars-total inv-tax-line">
-                  <span>GST @ {gstRateNum || 0}% (CGST+SGST / IGST)</span>
-                  <span>₹ {inr(gstAmount)}</span>
-                </div>
-                <div className="inv-particulars-total inv-grand-total">
-                  <span>Grand total</span>
-                  <span>₹ {inr(grandTotal)}</span>
-                </div>
-              </>
-            )}
-          </div>
+            <div><Button size="sm" variant="ghost" icon="plus" onClick={addParticular}>Add line</Button></div>
+            <dl className="kv fin-sum">
+              <dt>{isForward ? "Taxable value" : "Total"}</dt><dd className="mono right">₹ {inr(invoiceTotal)}</dd>
+              {isForward && <>
+                <dt>GST @ {gstRateNum || 0}% (CGST+SGST / IGST)</dt><dd className="mono right">₹ {inr(gstAmount)}</dd>
+                <dt className="fin-tot-lbl">Grand total</dt><dd className="mono right fin-tot-lbl">₹ {inr(grandTotal)}</dd>
+              </>}
+            </dl>
+          </fieldset>
 
-          <div className="inv-tax-details">
-            <label className="inv-tax-heading">Recipient / GST details <span>(for the tax invoice)</span></label>
-            <div className="inv-form-row">
-              <div className="inv-form-group">
-                <label htmlFor="inv-taxMode">GST treatment</label>
-                <Dropdown inputId="inv-taxMode" value={newInvoice.taxMode} options={TAX_MODES}
-                  onChange={(e) => setNewInvoice({ ...newInvoice, taxMode: e.value })} />
+          <fieldset className="fin-fieldset">
+            <legend className="fieldset-title">Recipient and GST details <span className="faint small">(for the tax invoice)</span></legend>
+            <div className="form-grid">
+              <SelectField label="GST treatment" value={newInvoice.taxMode} options={TAX_MODES}
+                onChange={(e) => setNewInvoice({ ...newInvoice, taxMode: e.target.value })} />
+              {isForward
+                ? <TextField label="GST rate (%)" name="gstRate" type="number" step="0.01" min="0" placeholder="18" value={newInvoice.gstRate} onChange={handleChange} />
+                : <div />}
+              <TextField full label="Kind Attn (contact person)" name="kindAttn" placeholder="e.g. Ms S V Archana" value={newInvoice.kindAttn} onChange={handleChange} />
+              <TextField label="Recipient GSTIN" name="recipientGstin" className="mono" maxLength={15}
+                placeholder="e.g. 33ABCDE1234F1Z7" value={newInvoice.recipientGstin}
+                onChange={handleChange} onBlur={() => setGstinTouched(true)}
+                error={gstinTouched ? recipientGstinError : ""}
+                hint={gstinStateMismatch(newInvoice.recipientGstin, newInvoice.recipientState) || "Leave blank if the client has none."} />
+              <div className="form-grid fin-state">
+                <TextField label="State" name="recipientState" placeholder="e.g. TAMIL NADU" value={newInvoice.recipientState} onChange={handleChange} />
+                <TextField label="State code" name="recipientStateCode" placeholder="e.g. 33" value={newInvoice.recipientStateCode} onChange={handleChange} />
               </div>
-              {isForward && input("gstRate", "GST rate (%)", "18", { type: "number", step: "0.01", min: "0" })}
+              <TextArea full label="Billing address" name="recipientAddress" rows={2} placeholder="Full billing address (one line per row)"
+                value={newInvoice.recipientAddress} onChange={handleChange} />
+              <TextField full label="Place of supply" name="placeOfSupply" placeholder="Defaults to State (e.g. TAMIL NADU - 33)"
+                value={newInvoice.placeOfSupply} onChange={handleChange} />
             </div>
-            {input("kindAttn", "Kind Attn (contact person)", "e.g. Ms S V Archana")}
-            <div className="inv-form-row">
-              <div className="inv-form-group">
-                <label htmlFor="inv-recipientGstin">Recipient GSTIN</label>
-                <InputText id="inv-recipientGstin" name="recipientGstin" value={newInvoice.recipientGstin}
-                  onChange={handleChange} onBlur={() => setGstinTouched(true)} maxLength={15}
-                  placeholder="e.g. 33ABCDE1234F1Z7 (blank if the client has none)"
-                  className={gstinTouched && recipientGstinError ? "p-invalid" : undefined} />
-                <FieldError error={gstinTouched ? recipientGstinError : ""}
-                  warning={gstinStateMismatch(newInvoice.recipientGstin, newInvoice.recipientState)} />
-              </div>
-              {input("recipientState", "State", "e.g. TAMIL NADU")}
-              {input("recipientStateCode", "State Code", "e.g. 33")}
-            </div>
-            <div className="inv-form-group">
-              <label htmlFor="inv-recipientAddress">Billing address</label>
-              <InputTextarea id="inv-recipientAddress" name="recipientAddress" rows={2} value={newInvoice.recipientAddress}
-                onChange={handleChange} placeholder="Full billing address (one line per row)" />
-            </div>
-            {input("placeOfSupply", "Place of Supply", "Defaults to State (e.g. TAMIL NADU - 33)")}
-          </div>
+          </fieldset>
 
           {selectedCase && (
-            <div className="inv-selected-case">
-              <div className="inv-case-detail-row">
-                <span className="inv-case-detail-label">Case Number</span>
-                <span className="inv-case-detail-value">{selectedCase.caseNumber}</span>
-              </div>
-              <div className="inv-case-detail-row">
-                <span className="inv-case-detail-label">Case Title</span>
-                <span className="inv-case-detail-value">{selectedCase.caseTitle}</span>
-              </div>
-              <div className="inv-case-detail-row">
-                <span className="inv-case-detail-label">Client Name</span>
-                <span className="inv-case-detail-value">{selectedCase.clientName || "—"}</span>
-              </div>
-            </div>
+            <dl className="kv fin-case">
+              <dt>Case number</dt><dd className="mono">{selectedCase.caseNumber}</dd>
+              <dt>Case title</dt><dd>{selectedCase.caseTitle}</dd>
+              <dt>Client</dt><dd>{selectedCase.clientName || "—"}</dd>
+            </dl>
           )}
-
-          <div className="flex justify-content-end gap-2 mt-2">
-            <Button type="button" outlined label="Cancel" onClick={handleClose} disabled={submitting} />
-            {mode.kind === "review" && (
-              <Button type="button" outlined severity="warning" icon="pi pi-reply" label="Return to Advocate"
-                disabled={submitting} onClick={() => { setReturning(mode.request); setReturnNote(""); }} />
-            )}
-            <Button type="submit" label={submitting ? "Saving..." : submitLabel} loading={submitting}
-              disabled={submitting || !newInvoice.caseId || invoiceTotal <= 0} />
-          </div>
         </form>
-      </Dialog>
+      </Modal>
 
-      <Dialog visible={!!returning} onHide={() => setReturning(null)} modal style={{ width: "min(480px, 95vw)" }}
-        header="Return to Advocate">
-        <div className="inv-form">
-          <div className="inv-form-group">
-            <label htmlFor="inv-return-note">What should {returning?.requestedByName || "the advocate"} change?</label>
-            <InputTextarea id="inv-return-note" rows={4} autoFocus value={returnNote}
-              onChange={(e) => setReturnNote(e.target.value)} placeholder="What to change" />
-          </div>
-          <div className="flex justify-content-end gap-2">
-            <Button type="button" outlined label="Cancel" onClick={() => setReturning(null)} />
-            <Button type="button" severity="warning" label="Return" disabled={!returnNote.trim()} onClick={sendBack} />
-          </div>
-        </div>
-      </Dialog>
+      <Modal open={!!returning} onClose={() => setReturning(null)} size="narrow" title="Return to advocate"
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setReturning(null)}>Cancel</button>
+          <Button variant="primary" icon="restore" disabled={!returnNote.trim()} onClick={sendBack}>Return</Button>
+        </>}>
+        <TextArea label={`What should ${returning?.requestedByName || "the advocate"} change?`} rows={4} autoFocus
+          value={returnNote} onChange={(e) => setReturnNote(e.target.value)} placeholder="What to change" />
+      </Modal>
 
-      <Dialog visible={!!paying} onHide={() => setPaying(null)} modal style={{ width: "min(480px, 95vw)" }}
-        header={<div><div>Record Payment</div><div className="inv-modal-subtitle">
-          {paying ? `${paying.invoiceNumber} · ${paying.clientName || ""} · due ${formatCurrency(due(paying))}` : ""}
-        </div></div>}>
-        <div className="inv-form">
-          <div className="inv-form-row">
-            <div className="inv-form-group">
-              <label htmlFor="pay-amount">Amount received</label>
-              <InputText id="pay-amount" type="number" step="0.01" min="0" autoFocus value={payment.amount}
-                onChange={(e) => setPayment({ ...payment, amount: e.target.value })} />
-            </div>
-            <div className="inv-form-group">
-              <label htmlFor="pay-date">Date</label>
-              <InputText id="pay-date" type="date" value={payment.paymentDate}
-                onChange={(e) => setPayment({ ...payment, paymentDate: e.target.value })} />
-            </div>
-          </div>
-          <div className="inv-form-row">
-            <div className="inv-form-group">
-              <label htmlFor="pay-mode">Mode</label>
-              <Dropdown inputId="pay-mode" value={payment.paymentMode} options={PAYMENT_MODES} placeholder="Payment mode"
-                onChange={(e) => setPayment({ ...payment, paymentMode: e.value })} />
-            </div>
-            <div className="inv-form-group">
-              <label htmlFor="pay-ref">Reference</label>
-              <InputText id="pay-ref" value={payment.referenceNumber} placeholder="Transaction / cheque no."
-                onChange={(e) => setPayment({ ...payment, referenceNumber: e.target.value })} />
-            </div>
-          </div>
+      <Modal open={!!paying} onClose={() => setPaying(null)} size="narrow" title="Record payment"
+        sub={paying ? <><span className="mono">{paying.invoiceNumber}</span> · {paying.clientName || ""} · due {formatCurrency(due(paying))}</> : undefined}
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setPaying(null)}>Cancel</button>
+          <Button variant="primary" icon="rupee" disabled={payAmount <= 0} onClick={savePayment}>Record payment</Button>
+        </>}>
+        <div className="form-grid">
+          <TextField label="Amount received" type="number" step="0.01" min="0" autoFocus className="mono" value={payment.amount}
+            onChange={(e) => setPayment({ ...payment, amount: e.target.value })} />
+          <TextField label="Date" type="date" value={payment.paymentDate}
+            onChange={(e) => setPayment({ ...payment, paymentDate: e.target.value })} />
+          <SelectField label="Mode" value={payment.paymentMode} options={PAYMENT_MODES} placeholder="Payment mode"
+            onChange={(e) => setPayment({ ...payment, paymentMode: e.target.value })} />
+          <TextField label="Reference" placeholder="Transaction / cheque no." value={payment.referenceNumber}
+            onChange={(e) => setPayment({ ...payment, referenceNumber: e.target.value })} />
           {paying && payAmount > 0 && payAmount < due(paying) - 0.005 && (
-            <p className="subtle m-0">Part-payment: {formatCurrency(due(paying) - payAmount)} will still be due.</p>
+            <Field full>{() => <div className="callout info"><Icon name="info" size="sm" />
+              <div>Part-payment: {formatCurrency(due(paying) - payAmount)} will still be due.</div></div>}</Field>
           )}
-          <div className="flex justify-content-end gap-2">
-            <Button type="button" outlined label="Cancel" onClick={() => setPaying(null)} />
-            <Button type="button" severity="success" label="Record Payment" disabled={payAmount <= 0} onClick={savePayment} />
-          </div>
         </div>
-      </Dialog>
+      </Modal>
 
-      <Dialog visible={!!cancelling} onHide={() => setCancelling(null)} modal style={{ width: "min(480px, 95vw)" }}
-        header="Cancel Invoice">
-        <div className="inv-form">
-          <p className="m-0">
-            {cancelling?.invoiceNumber} stays on record with its number but is no longer owed. Raise a new invoice if one is still needed.
+      <Modal open={!!cancelling} onClose={() => setCancelling(null)} size="narrow" title="Cancel invoice"
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setCancelling(null)}>Keep invoice</button>
+          <Button variant="danger-solid" disabled={!cancelReason.trim()} onClick={confirmCancel}>Cancel invoice</Button>
+        </>}>
+        <div className="stack">
+          <p className="muted">
+            <span className="mono">{cancelling?.invoiceNumber}</span> stays on record with its number but is no longer owed. Raise a new invoice if one is still needed.
           </p>
-          <div className="inv-form-group">
-            <label htmlFor="inv-cancel-reason">Reason</label>
-            <InputTextarea id="inv-cancel-reason" rows={3} autoFocus value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)} placeholder="Reason" />
-          </div>
-          <div className="flex justify-content-end gap-2">
-            <Button type="button" outlined label="Keep Invoice" onClick={() => setCancelling(null)} />
-            <Button type="button" severity="danger" label="Cancel Invoice" disabled={!cancelReason.trim()} onClick={confirmCancel} />
-          </div>
+          <TextArea label="Reason" rows={3} autoFocus value={cancelReason} required
+            onChange={(e) => setCancelReason(e.target.value)} placeholder="Reason" />
         </div>
-      </Dialog>
+      </Modal>
     </div>
   );
 }

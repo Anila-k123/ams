@@ -1,21 +1,16 @@
-import { useEffect, useState } from "react";
-import { Button } from "primereact/button";
-import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
-import { InputNumber } from "primereact/inputnumber";
-import { Password } from "primereact/password";
-import { Dropdown } from "primereact/dropdown";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Tag } from "primereact/tag";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+// Team Members: everyone who signs in for this firm, their roles and which
+// senior's practice they report to.
+import { useEffect, useMemo, useState } from "react";
 import rbacService from "../services/rbacService";
 import { usePermission } from "../contexts/PermissionContext";
 import { useToast } from "../contexts/ToastContext";
-import "../assets/styles/AdminManagement.css";
 import FieldError from "../components/FieldError";
 import { formatErrors } from "../utils/validators";
+import { PageHead, Button, Chip, Avatar, EmptyState, PopMenu, Icon, type MenuItem } from "../ui/kit";
+import { Field, TextField, SelectField, SearchInput, FilterChip } from "../ui/forms";
+import { Modal, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/firm.css";
 
 const EMPTY_FORM = { fullName: "", email: "", phone: "", barCouncilId: "", specialization: "", experience: 0 };
 // Checked as you leave a field, and again on the server (core/validators.py).
@@ -35,11 +30,15 @@ export default function UserManagement() {
   const [practiceOwnerId, setPracticeOwnerId] = useState("");
   const [rolesLoading, setRolesLoading] = useState(false);
   const [rolesLoadFailed, setRolesLoadFailed] = useState(false);
-  // Form validation display. Declared with the other hooks: below the early
-  // "loading" return they ran on some renders only, and React threw
-  // "Rendered more hooks than during the previous render" - a blank page.
+  // Hooks stay above every early return: below one they ran on some renders
+  // only and React threw "Rendered more hooks than during the previous render".
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [triedSave, setTriedSave] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [q, setQ] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [menu, setMenu] = useState<{ el: HTMLElement; user: any } | null>(null);
   const { hasPermission } = usePermission() as any;
   const { success, error } = useToast() as any;
   const canManage = hasPermission("USER_MANAGE");
@@ -59,6 +58,14 @@ export default function UserManagement() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount
   useEffect(() => { loadData(); }, []);
 
+  const shown = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return users.filter((u) =>
+      (!s || [u.fullName, u.email, u.phone].some((v) => String(v || "").toLowerCase().includes(s)))
+      && (!roleFilter || (u.roles || []).includes(roleFilter))
+      && (!statusFilter || (u.active === false ? "left" : "active") === statusFilter));
+  }, [users, q, roleFilter, statusFilter]);
+
   const openCreate = () => {
     setEditingUser(null);
     setForm(EMPTY_FORM);
@@ -67,6 +74,8 @@ export default function UserManagement() {
     setPassword("");
     setRolesLoading(false);
     setRolesLoadFailed(false);
+    setTouched({});
+    setTriedSave(false);
     setShowForm(true);
   };
 
@@ -81,6 +90,8 @@ export default function UserManagement() {
       experience: user.experience || 0,
     });
     setPracticeOwnerId(user.practiceOwnerId ? String(user.practiceOwnerId) : "");
+    setTouched({});
+    setTriedSave(false);
     // The users endpoint returns `roles` as NAMES; fetch the ids separately.
     setPassword("");
     setSelectedRoles([]);
@@ -99,11 +110,12 @@ export default function UserManagement() {
   };
 
   const handleSave = async () => {
-    if (!form.fullName.trim()) { error("Full name is required."); return; }
-    if (!form.email.trim()) { error("Email is required."); return; }
+    if (!form.fullName.trim()) { setTriedSave(true); error("Full name is required."); return; }
+    if (!form.email.trim()) { setTriedSave(true); error("Email is required."); return; }
     const bad = formatErrors(form, USER_FORMATS);
     if (Object.keys(bad).length) { setTriedSave(true); error(Object.values(bad)[0]); return; }
     if (!editingUser && password.length < 8) {
+      setTriedSave(true);
       error("Set an initial password of at least 8 characters.");
       return;
     }
@@ -112,6 +124,7 @@ export default function UserManagement() {
                          : "Cannot save: this user's current roles could not be loaded.");
       return;
     }
+    setSaving(true);
     try {
       const practiceOwner = practiceOwnerId ? Number(practiceOwnerId) : null;
       if (editingUser) {
@@ -130,6 +143,8 @@ export default function UserManagement() {
       loadData();
     } catch (err: any) {
       error(err.message || "Couldn't save the user.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -139,12 +154,11 @@ export default function UserManagement() {
     const prompt = user.sharesPractice
       ? `Remove ${user.email} from the practice? They will no longer be able to sign in. The cases, clients and invoices they created stay with the practice.`
       : `Delete ${user.email}? If they have created any records the account is closed instead, and those records are kept.`;
-    confirmDialog({
+    confirm({
+      title: user.sharesPractice ? `Remove ${user.fullName || user.email}?` : `Delete ${user.fullName || user.email}?`,
       message: prompt,
-      header: user.sharesPractice ? "Remove from practice" : "Delete user",
-      icon: "pi pi-exclamation-triangle",
-      acceptClassName: "p-button-danger",
-      style: { maxWidth: 480 },
+      danger: true,
+      confirmLabel: user.sharesPractice ? "Remove from practice" : "Delete user",
       accept: async () => {
         try {
           const res = await rbacService.deleteUser(user.id);
@@ -163,8 +177,9 @@ export default function UserManagement() {
     );
   };
 
-  if (loading) return <div className="flex justify-content-center p-5"><ProgressSpinner style={{ width: 40, height: 40 }} /></div>;
-  if (!canManage) return <div className="am-empty">You do not have permission to manage users.</div>;
+  if (!canManage) {
+    return <EmptyState icon="lock" title="No access" text="You do not have permission to manage users." />;
+  }
 
   const seniors = users.filter(
     (u) => u.isPracticeHead && u.active !== false && (!editingUser || u.id !== editingUser.id)
@@ -175,149 +190,167 @@ export default function UserManagement() {
     ...seniors.map((s) => ({ label: `Reports to ${s.fullName}`, value: String(s.id) })),
   ];
 
-  const field = (key: string, label: string, type = "text") => {
-    const msg = touched[key] || triedSave ? formatErrors(form, USER_FORMATS)[key] || "" : "";
-    return (
-      <div className="col-12 md:col-6 flex flex-column gap-1">
-        <label htmlFor={`um-${key}`}>{label}</label>
-        <InputText id={`um-${key}`} type={type} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-          onBlur={() => setTouched((t) => ({ ...t, [key]: true }))} className={msg ? "p-invalid" : undefined} />
-        <FieldError error={msg} />
-      </div>
-    );
+  const errs = formatErrors(form, USER_FORMATS) as Record<string, string>;
+  const required: Record<string, string> = {
+    fullName: form.fullName.trim() ? "" : "Enter the person's name.",
+    email: form.email.trim() ? "" : "Enter their work email.",
   };
+  const msgFor = (key: string) => (touched[key] || triedSave ? required[key] || errs[key] || "" : "");
 
-  const practiceBody = (u: any) =>
+  const text = (key: string, label: string, type = "text", extra: Record<string, any> = {}) => (
+    <Field label={label} required={key in required}>
+      {(id) => (
+        <>
+          <input id={id} type={type} className="input" value={form[key]} aria-invalid={!!msgFor(key) || undefined}
+            onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+            onBlur={() => setTouched((t) => ({ ...t, [key]: true }))} {...extra} />
+          <FieldError error={msgFor(key)} />
+        </>
+      )}
+    </Field>
+  );
+
+  const practiceCell = (u: any) =>
     u.active === false
-      ? <Tag severity="danger" value="Left" />
+      ? <Chip>Left</Chip>
       : u.firmWide
-        ? <Tag severity="info" value="Firm-wide" />
+        ? <Chip tone="info">Firm-wide</Chip>
         : u.isPracticeHead
-          ? <Tag severity="success" value={`Head${u.memberCount ? ` (${u.memberCount})` : ""}`} />
-          : <Tag severity="info" value={`Reports to ${nameById[u.practiceOwnerId] || "—"}`} />;
+          ? <Chip tone="ok">{`Head${u.memberCount ? ` (${u.memberCount})` : ""}`}</Chip>
+          : <span className="small">Reports to {nameById[u.practiceOwnerId] || "—"}</span>;
 
-  const actionsBody = (u: any) => (
-    <div className="flex gap-1">
-      <Button icon="pi pi-pencil" rounded text tooltip="Edit" tooltipOptions={{ position: "top" }} onClick={() => openEdit(u)} />
-      <Button
-        icon="pi pi-trash" rounded text severity="danger"
-        tooltip={u.sharesPractice ? "Remove from practice" : "Delete"} tooltipOptions={{ position: "top" }}
-        onClick={() => handleDelete(u)}
-      />
-    </div>
-  );
+  const columns: Column<any>[] = [
+    {
+      key: "fullName", label: "Team member", sort: true, render: (u) => (
+        <div className="row" style={{ gap: 10 }}>
+          <Avatar name={u.fullName} />
+          <div style={{ minWidth: 0 }}>
+            <div className="cell-title">{u.fullName || "—"}</div>
+            <div className="cell-sub ellipsis">{u.email}</div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "roles", label: "Roles", render: (u) => (u.roles || []).length
+        ? <div className="row wrap" style={{ gap: 4 }}>{u.roles.map((r: string) => <Chip key={r} tone={r === "Super Admin" ? "tape" : ""} plain={r !== "Super Admin"}>{r}</Chip>)}</div>
+        : <span className="faint">No role</span>,
+    },
+    { key: "practice", label: "Practice", hideSm: true, render: practiceCell },
+    { key: "phone", label: "Phone", hideSm: true, render: (u) => u.phone ? <span className="num nowrap">{u.phone}</span> : <span className="faint">—</span> },
+    { key: "specialization", label: "Specialisation", hideSm: true, sort: true, render: (u) => u.specialization || <span className="faint">—</span> },
+    { key: "status", label: "Status", render: (u) => u.active === false ? <Chip>Left</Chip> : <Chip tone="ok">Active</Chip> },
+    {
+      key: "act", label: <span className="sr-only">Actions</span>, width: 48, render: (u) => (
+        <button type="button" className="btn ghost sm icon" aria-label={`Actions for ${u.fullName || u.email}`} aria-haspopup="menu"
+          onClick={(e) => setMenu({ el: e.currentTarget, user: u })}>
+          <Icon name="more" size="sm" />
+        </button>
+      ),
+    },
+  ];
 
-  const footer = (
-    <div className="flex justify-content-end gap-2">
-      <Button label="Cancel" severity="secondary" outlined onClick={() => setShowForm(false)} />
-      <Button
-        label="Save"
-        icon="pi pi-save"
-        onClick={handleSave}
-        disabled={!!editingUser && (rolesLoading || rolesLoadFailed)}
-      />
-    </div>
-  );
+  const menuItems: MenuItem[] = menu ? [
+    { label: "Edit", icon: "edit", onClick: () => openEdit(menu.user) },
+    "-",
+    { label: menu.user.sharesPractice ? "Remove from practice" : "Delete", icon: "trash", danger: true, onClick: () => handleDelete(menu.user) },
+  ] : [];
+
+  const saveBlocked = !!editingUser && (rolesLoading || rolesLoadFailed);
 
   return (
-    <div className="admin-management">
-      <ConfirmDialog />
-      <div className="flex justify-content-end mb-3">
-        <Button label="Create User" icon="pi pi-user-plus" onClick={openCreate} />
+    <div>
+      <PageHead
+        title="Team Members"
+        sub="Everyone who signs in for the firm. Clients are managed from their client page."
+        actions={<Button variant="primary" icon="plus" onClick={openCreate}>Add team member</Button>}
+      />
+
+      <div className="toolbar">
+        <SearchInput value={q} onChange={setQ} placeholder="Search name, email or phone" />
+        <select className="input" aria-label="Role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} style={{ width: "auto" }}>
+          <option value="">All roles</option>
+          {roles.map((r) => <option key={r.id} value={r.name}>{r.name}</option>)}
+        </select>
+        <select className="input" aria-label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ width: "auto" }}>
+          <option value="">Any status</option>
+          <option value="active">Active</option>
+          <option value="left">Left</option>
+        </select>
       </div>
 
-      <Dialog
-        visible={showForm}
-        onHide={() => setShowForm(false)}
-        header={editingUser ? "Edit User" : "Create User"}
-        footer={footer}
-        style={{ width: "min(640px, 95vw)" }}
-        dismissableMask
-      >
-        <div className="grid">
-          {field("fullName", "Full Name")}
-          {field("email", "Email", "email")}
-          {field("phone", "Phone")}
-          {field("barCouncilId", "Bar Council ID")}
-          {field("specialization", "Specialization")}
-          <div className="col-12 md:col-6 flex flex-column gap-1">
-            <label htmlFor="um-experience">Experience (years)</label>
-            <InputNumber inputId="um-experience" value={form.experience} onValueChange={(e) => setForm({ ...form, experience: Number(e.value) || 0 })} useGrouping={false} />
-          </div>
-          {!editingUser && (
-            <div className="col-12 md:col-6 flex flex-column gap-1">
-              <label htmlFor="um-password">Initial Password</label>
-              <Password
-                inputId="um-password"
-                value={password}
-                feedback={false}
-                toggleMask
-                autoComplete="new-password"
-                placeholder="Min. 8 characters"
-                onChange={(e) => setPassword(e.target.value)}
-                inputClassName="w-full"
-                className="w-full"
-              />
-            </div>
-          )}
-        </div>
-        {!editingUser && (
-          <p className="am-empty text-left py-1">
-            Share this password with the user directly and ask them to change it after first sign-in.
-          </p>
-        )}
-        {seniors.length > 0 ? (
-          <div className="flex flex-column gap-1 mt-2">
-            <strong>Practice</strong>
-            <Dropdown value={practiceOwnerId} options={practiceOptions} onChange={(e) => setPracticeOwnerId(e.value)} />
-            <small className="am-muted">
-              Pick the senior this person reports to — they join that team's loop
-              (its cases, cause-list and hearing alerts). Choose “Head / firm-wide”
-              for a senior who leads their own team, or for common staff (the
-              accountant) who serve the whole firm through their role. A new
-              senior's team is part of this firm, but the other seniors' teams
-              do not see its cases; the Super Admin and Accountant see every team.
-            </small>
-          </div>
-        ) : (
-          <p className="am-empty text-left py-1">
-            This account will head its own practice. Once you add colleagues, you'll be able to assign who reports to whom here.
-          </p>
-        )}
-        <div className="mt-3">
-          <h4 className="mb-2">Assign Roles</h4>
-          {rolesLoading && <p className="am-empty">Loading this user's roles…</p>}
-          {rolesLoadFailed && (
-            <p className="am-empty">
-              Couldn't load this user's current roles. Close and retry — saving now would overwrite them.
-            </p>
-          )}
-          <div className="flex flex-wrap gap-2" hidden={rolesLoading || rolesLoadFailed}>
-            {roles.map((r) => (
-              <Button
-                key={r.id}
-                type="button"
-                size="small"
-                rounded
-                label={r.name}
-                outlined={!selectedRoles.includes(r.id)}
-                icon={selectedRoles.includes(r.id) ? "pi pi-check" : undefined}
-                onClick={() => toggleRole(r.id)}
-              />
-            ))}
-          </div>
-        </div>
-      </Dialog>
+      <DataTable
+        rows={shown}
+        columns={columns}
+        rowKey={(u) => u.id}
+        loading={loading}
+        onRow={openEdit}
+        initialSort={{ key: "fullName", dir: "asc" }}
+        caption="Team members"
+        empty={{ icon: "users", title: users.length ? "No one matches" : "No team members yet", text: users.length ? "Try a different search or filter." : "Add the first colleague to get started." }}
+      />
+      {menu && <PopMenu anchor={menu.el} items={menuItems} onClose={() => setMenu(null)} align="right" width={210} />}
 
-      <DataTable value={users} dataKey="id" stripedRows size="small" emptyMessage="No users.">
-        <Column field="fullName" header="Name" />
-        <Column field="email" header="Email" />
-        <Column field="phone" header="Phone" />
-        <Column field="specialization" header="Specialization" />
-        <Column header="Roles" body={(u: any) => (u.roles || []).join(", ")} />
-        <Column header="Practice" body={practiceBody} />
-        <Column header="Actions" body={actionsBody} />
-      </DataTable>
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        size="wide"
+        title={editingUser ? "Edit team member" : "Add team member"}
+        sub={editingUser ? editingUser.email : "Share the initial password with them directly and ask them to change it after first sign-in."}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
+          <Button variant="primary" loading={saving} onClick={handleSave} disabled={saveBlocked || saving}
+            title={saveBlocked ? (rolesLoading ? "Loading roles…" : "Roles could not be loaded") : undefined}>
+            {editingUser ? "Save changes" : "Add team member"}
+          </Button>
+        </>}
+      >
+        <form className="stack" style={{ gap: 20 }} noValidate onSubmit={(e) => { e.preventDefault(); handleSave(); }}>
+          <div className="form-grid">
+            {text("fullName", "Full name")}
+            {text("email", "Work email", "email", { autoComplete: "off" })}
+            {text("phone", "Phone", "tel")}
+            {text("barCouncilId", "Bar Council no.", "text", { placeholder: "Advocates only", className: "input mono" })}
+            {text("specialization", "Specialisation")}
+            <TextField label="Experience (years)" type="number" min={0} value={form.experience}
+              onChange={(e) => setForm({ ...form, experience: Number(e.target.value) || 0 })} />
+            {!editingUser && (
+              <TextField label="Initial password" type="password" required autoComplete="new-password" placeholder="Min. 8 characters"
+                value={password} onChange={(e) => setPassword(e.target.value)}
+                hint="At least 8 characters. Share it with them privately."
+                error={triedSave && password.length < 8 ? "Use at least 8 characters." : null} />
+            )}
+            {seniors.length > 0 ? (
+              <SelectField label="Practice" full value={practiceOwnerId} options={practiceOptions}
+                onChange={(e) => setPracticeOwnerId(e.target.value)}
+                hint={"Pick the senior this person reports to: they join that team's loop (its cases, cause-list and hearing alerts). "
+                  + "Choose “Head / firm-wide” for a senior who leads their own team, or for common staff (the accountant) who serve the whole firm through their role. "
+                  + "A new senior's team is part of this firm, but the other seniors' teams do not see its cases; the Super Admin and Accountant see every team."} />
+            ) : (
+              <div className="callout info full"><Icon name="info" className="i" size="sm" />
+                <div>This account will head its own practice. Once you add colleagues, you'll be able to assign who reports to whom here.</div>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="label" id="um-roles-l" style={{ marginBottom: 8 }}>Roles</div>
+            {rolesLoading && <p className="faint small">Loading this user's roles…</p>}
+            {rolesLoadFailed && (
+              <div className="callout warn"><Icon name="warn" className="i" size="sm" />
+                <div>Couldn't load this user's current roles. Close and retry: saving now would overwrite them.</div>
+              </div>
+            )}
+            <div className="row wrap" role="group" aria-labelledby="um-roles-l" hidden={rolesLoading || rolesLoadFailed}>
+              {roles.map((r) => (
+                <FilterChip key={r.id} on={selectedRoles.includes(r.id)} onClick={() => toggleRole(r.id)}>
+                  {selectedRoles.includes(r.id) && <Icon name="check" size="sm" />}{r.name}
+                </FilterChip>
+              ))}
+            </div>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

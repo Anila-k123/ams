@@ -1,18 +1,21 @@
 import { useEffect, useState, useCallback } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { Tag } from "primereact/tag";
-import { ProgressSpinner } from "primereact/progressspinner";
+import { Link } from "react-router-dom";
 import api from "../api/client";
 import { useToast } from "../contexts/ToastContext";
-import "../assets/styles/AppealAlert.css";
+import { Icon, Chip, PageHead, EmptyState, Skel, titleCase } from "../ui/kit";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/court.css";
 
 // Appeal Alert is entirely automatic: the nightly scan_appeals sweep reads each
 // decided case, works out which higher court would hear an appeal, and searches
 // it by party name. Nothing here computes a limitation period - a confidently
 // wrong date would be worse than none.
-const STATUS_SEVERITY: Record<string, any> = { CONFIRMED: "success", DISMISSED: "secondary", NEW: "warning" };
+const STATUS_TONE: Record<string, "ok" | "warn" | ""> = { CONFIRMED: "ok", NEW: "warn", DISMISSED: "" };
+const fdate = (s?: string) => {
+  if (!s) return "—";
+  const d = new Date(`${String(s).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? s : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
 
 function AppealAlert() {
   const [detections, setDetections] = useState<any[]>([]);
@@ -40,7 +43,8 @@ function AppealAlert() {
     setBusyId(id);
     try {
       await api.put(`/api/appeal-detections/${id}`, { status });
-      success(status === "CONFIRMED" ? "Marked as a real appeal." : "Dismissed as unrelated.");
+      success(status === "CONFIRMED" ? "Marked as a real appeal. Check the limitation and file your appearance."
+        : status === "DISMISSED" ? "Dismissed as unrelated. You can restore it below." : "Restored to the review list.");
       fetchDetections();
     } catch {
       error("Couldn't update that detection.");
@@ -51,65 +55,94 @@ function AppealAlert() {
 
   const open = detections.filter((d) => d.status !== "DISMISSED");
   const dismissed = detections.filter((d) => d.status === "DISMISSED");
+  const nNew = open.filter((d) => d.status === "NEW").length;
 
-  const table = (rows: any[]) => (
-    <DataTable value={rows} dataKey="id" size="small" stripedRows
-      rowClassName={(d: any) => (d.status === "DISMISSED" ? "appeal-row-dismissed" : "")}>
-      <Column header="Your Case" body={(d) => d.sourceCaseNumber || "-"} />
-      <Column header="Appeal Found" body={(d) => d.appealCaseNumber || "(number not listed)"} />
-      <Column header="Forum" body={(d) => d.forum || d.forumCourtId} />
-      <Column header="Parties" body={(d) => d.appealParties || "-"} className="appeal-parties-cell" />
-      <Column header="Filed" body={(d) => d.appealFiledOn || "-"} />
-      <Column header="Matched On" body={(d) => (
-        <>
-          <span>{d.matchedOn || "-"}</span>
-          {typeof d.matchScore === "number" && (
-            <span className="appeal-score"> ({Math.round(d.matchScore * 100)}%)</span>
-          )}
-        </>
-      )} />
-      <Column header="Status" body={(d) => <Tag value={d.status} severity={STATUS_SEVERITY[d.status] || "info"} />} />
-      <Column body={(d) => (
-        <div className="flex gap-2 flex-wrap">
+  const yourCase = (d: any) => d.sourceCaseId
+    ? <Link className="mono link" to={`/dashboard/cases/${d.sourceCaseId}`}>{d.sourceCaseNumber || "—"}</Link>
+    : <span className="mono">{d.sourceCaseNumber || "—"}</span>;
+
+  const columns: Column<any>[] = [
+    { key: "source", label: "Your case", sort: (d) => d.sourceCaseNumber || "", render: (d) => <>{yourCase(d)}{d.sourceCaseTitle && <div className="cell-sub">{d.sourceCaseTitle}</div>}</> },
+    { key: "appeal", label: "Appeal found", render: (d) => d.appealCaseNumber ? <span className="mono">{d.appealCaseNumber}</span> : <span className="faint">(number not listed)</span> },
+    { key: "forum", label: "Forum", sort: (d) => d.forum || d.forumCourtId || "", hideSm: true, render: (d) => d.forum || d.forumCourtId || "—" },
+    { key: "parties", label: "Parties", hideSm: true, render: (d) => <span className="small">{d.appealParties || "—"}</span> },
+    { key: "filed", label: "Filed", sort: (d) => d.appealFiledOn || "", hideSm: true, render: (d) => <span className="nowrap">{fdate(d.appealFiledOn)}</span> },
+    {
+      key: "matched", label: "Matched", sort: (d) => d.matchedOn || "",
+      render: (d) => {
+        const score = typeof d.matchScore === "number" ? Math.round(d.matchScore * 100) : null;
+        return (
+          <>
+            <div className="small nowrap">{fdate(d.matchedOn)}</div>
+            {score != null && (
+              <div className="pp-score" title={`Match score ${score} of 100`}>
+                <div className="bar-track"><i style={{ width: `${score}%`, background: score >= 80 ? "var(--ink)" : "var(--ink-3)" }} /></div>
+                <span className="mono xs">{score}</span>
+              </div>
+            )}
+          </>
+        );
+      },
+    },
+    { key: "status", label: "Status", sort: true, render: (d) => <Chip tone={STATUS_TONE[d.status] ?? "info"}>{d.status === "NEW" ? "New" : titleCase(d.status)}</Chip> },
+    {
+      key: "act", label: <span className="sr-only">Actions</span>, className: "actions",
+      render: (d) => (
+        <div className="row court-acts">
           {d.status !== "CONFIRMED" && (
-            <Button size="small" severity="success" label="It is an appeal" disabled={busyId === d.id}
-              onClick={() => setDetectionStatus(d.id, "CONFIRMED")} />
+            <button type="button" className="btn sm primary" disabled={busyId === d.id} onClick={() => setDetectionStatus(d.id, "CONFIRMED")}>It's an appeal</button>
           )}
-          {d.status !== "DISMISSED" && (
-            <Button size="small" severity="danger" outlined label="Not related" disabled={busyId === d.id}
-              onClick={() => setDetectionStatus(d.id, "DISMISSED")} />
-          )}
+          <button type="button" className="btn sm ghost" disabled={busyId === d.id} onClick={() => setDetectionStatus(d.id, "DISMISSED")}>Not related</button>
         </div>
-      )} />
-    </DataTable>
-  );
+      ),
+    },
+  ];
 
   return (
-    <div className="appeal-alert-page">
-      <div className="appeal-list-section">
-        <h3>Detected Appeals</h3>
-        {loading ? (
-          <div className="appeal-empty"><ProgressSpinner style={{ width: 32, height: 32 }} strokeWidth="5" /></div>
-        ) : open.length === 0 ? (
-          <div className="appeal-empty">No appeals detected against your decided cases.</div>
-        ) : (
-          <>
-            {/* A caveat about the rows beneath: they are party-name matches, i.e. candidates. */}
-            <p className="appeal-detect-note">
-              Candidates matched from the court record — verify before acting.
-              No filing or limitation deadline is calculated.
-            </p>
-            {table(open)}
-          </>
-        )}
-      </div>
+    <div className="court">
+      <PageHead title="Appeal Alerts"
+        sub="Appeals filed in higher courts against your decided cases, found by the nightly court-record check. Verify before acting; no limitation period is calculated." />
 
-      {dismissed.length > 0 && (
-        <div className="appeal-list-section">
-          <h3>Dismissed as unrelated</h3>
-          <p className="appeal-detect-note">Kept so the nightly check does not report them again.</p>
-          {table(dismissed)}
-        </div>
+      {loading ? (
+        <div className="panel"><div className="panel-body stack"><Skel h={36} /><Skel h={36} /><Skel h={36} /></div></div>
+      ) : (
+        <>
+          {nNew === 0 && (
+            <div className="panel court-gap-b">
+              <EmptyState icon="ok" title="No new appeals to review"
+                text={open.length ? "The nightly check found nothing new. Confirmed matches stay listed below." : "No appeals have been detected against your decided cases."} />
+            </div>
+          )}
+          {open.length > 0 && (
+            <>
+              <div className="callout info court-gap-b"><Icon name="info" size="sm" /><div>Candidates matched from the court record by party name. Verify before acting.</div></div>
+              <DataTable rows={open} columns={columns} rowKey={(d) => d.id} initialSort={{ key: "matched", dir: "desc" }}
+                rowClass={(d) => (d.status === "NEW" ? "hl" : undefined)}
+                empty={{ icon: "alert", title: "No appeals found", text: "Matches from the nightly check appear here." }} />
+            </>
+          )}
+
+          <section className="panel court-gap-t">
+            <div className="panel-head"><h3>Dismissed as unrelated</h3><span className="sub">{dismissed.length}</span></div>
+            <div className={`panel-body${dismissed.length ? " flush" : ""}`}>
+              {dismissed.length ? (
+                <div className="list">
+                  {dismissed.map((d) => (
+                    <div className="list-item" key={d.id}>
+                      <div className="grow court-min0">
+                        <div className="small"><span className="mono">{d.appealCaseNumber || "(number not listed)"}</span> <span className="faint">{d.forum || d.forumCourtId}</span></div>
+                        <div className="faint xs">{d.appealParties ? `${d.appealParties}. ` : ""}Matched to <span className="mono">{d.sourceCaseNumber || "—"}</span></div>
+                      </div>
+                      <button type="button" className="btn sm" disabled={busyId === d.id} onClick={() => setDetectionStatus(d.id, "NEW")}>
+                        <Icon name="restore" size="sm" />Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="muted small">Nothing dismissed. Dismissed matches are kept so the nightly check does not report them again.</p>}
+            </div>
+          </section>
+        </>
       )}
     </div>
   );

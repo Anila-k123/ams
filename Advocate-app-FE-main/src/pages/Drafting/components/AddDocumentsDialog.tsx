@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react'
 import CaseField from './CaseField'
-import { Dialog } from 'primereact/dialog'
-import { Button } from 'primereact/button'
-import { InputText } from 'primereact/inputtext'
-import { Checkbox } from 'primereact/checkbox'
-import { FileUpload } from 'primereact/fileupload'
-import { Message } from 'primereact/message'
-import { Tag } from 'primereact/tag'
+import FilePick from './FilePick'
+import { Modal } from '../../../ui/overlays'
+import { Button } from '../../../ui/kit'
+import { SearchInput, Tabs } from '../../../ui/forms'
+import Icon from '../../../ui/Icon'
 import { draftingApi, type Sample } from '../api/drafting'
 import { amsDocumentsApi, amsDocName, type AmsDocument, type AmsCase } from '../api/ams'
 
@@ -16,6 +14,8 @@ interface Props {
   onAdd: (samples: Sample[]) => void // called with the documents the user picked/uploaded
   alreadySelected: number[]          // ids already chosen in the wizard (shown as added)
 }
+
+const fmtDate = (s?: string | null) => s ? new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
 
 /**
  * "Add Documents" picker: choose one or more existing documents (My Documents) or
@@ -93,7 +93,7 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
       onAdd(samples)
       onHide()
     } catch {
-      setError('Could not open one of those documents — try again.')
+      setError('Could not open one of those documents. Try again.')
     } finally {
       setBusy(false)
     }
@@ -113,7 +113,7 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
       onAdd([sample])
       onHide()
     } catch {
-      setError('Upload failed — check the file is a PDF or DOCX.')
+      setError('Upload failed. Check the file is a PDF or DOCX.')
     } finally {
       setBusy(false)
     }
@@ -121,122 +121,92 @@ export default function AddDocumentsDialog({ visible, onHide, onAdd, alreadySele
 
   const nChecked = fromAms ? amsChecked.size : checked.size
   const footer = tab === 'existing' ? (
-    <div className="flex align-items-center justify-content-between w-full">
-      <span className="text-sm text-color-secondary">{nChecked} document{nChecked === 1 ? '' : 's'} selected</span>
-      <div className="flex gap-2">
-        <Button label="Cancel" icon="pi pi-times" text onClick={onHide} />
-        <Button label={`Add Selected (${nChecked})`} icon="pi pi-check" disabled={nChecked === 0 || busy}
-          loading={busy} onClick={fromAms ? addAms : addExisting} />
-      </div>
-    </div>
-  ) : null
+    <>
+      <span className="faint small grow">{nChecked} document{nChecked === 1 ? '' : 's'} selected</span>
+      <button type="button" className="btn ghost" onClick={onHide}>Cancel</button>
+      <Button variant="primary" icon="check" disabled={nChecked === 0 || busy} loading={busy}
+        onClick={fromAms ? addAms : addExisting}>Add selected ({nChecked})</Button>
+    </>
+  ) : undefined
+
+  const errBox = error && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{error}</div></div>
 
   return (
-    <Dialog header="Add Documents" visible={visible} onHide={onHide} footer={footer}
-      style={{ width: '46rem', maxWidth: '95vw' }} contentStyle={{ paddingTop: 0 }}>
-      {/* Tabs */}
-      <div className="flex gap-4 mb-3" style={{ borderBottom: '1px solid var(--surface-300, #e5e7eb)' }}>
-        {(['existing', 'upload'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer', padding: '0.6rem 0.2rem',
-              fontWeight: 600, fontSize: '0.9rem',
-              color: tab === t ? 'var(--primary-color)' : 'var(--text-color-secondary, #64748b)',
-              borderBottom: `2px solid ${tab === t ? 'var(--primary-color)' : 'transparent'}`,
-            }}>
-            <i className={`mr-2 ${t === 'existing' ? 'pi pi-file' : 'pi pi-upload'}`} />
-            {t === 'existing' ? (fromAms ? 'My PactPro Documents' : 'My Documents') : 'Upload New'}
-          </button>
-        ))}
-      </div>
+    <Modal title="Add documents" sub="Reference documents the draft is built from." open={visible} onClose={onHide} footer={footer} size="wide">
+      <Tabs<'existing' | 'upload'> value={tab} onChange={setTab} label="Add documents" tabs={[
+        { value: 'existing', label: fromAms ? 'Case documents' : 'My documents' },
+        { value: 'upload', label: 'Upload new' },
+      ]} />
 
       {tab === 'existing' && fromAms ? (
-        <div>
-          {error && <Message severity="error" className="w-full mb-2" text={error} />}
-          <span className="p-input-icon-left w-full mb-3 block">
-            <i className="pi pi-search" />
-            <InputText value={query} onChange={e => setQuery(e.target.value)}
-              placeholder="Search your PactPro documents by name, case or client…" className="w-full" />
-          </span>
-          <div style={{ maxHeight: '46vh', overflow: 'auto' }}>
-            {loading && <div className="text-color-secondary p-3">Loading…</div>}
+        <div className="stack" style={{ gap: 10 }}>
+          {errBox}
+          <SearchInput value={query} onChange={setQuery} placeholder="Search documents by name, case or client" />
+          <div className="panel dr-pick-list" style={{ maxHeight: '46vh', overflow: 'auto' }}>
+            {loading && <p className="faint small" style={{ padding: 12 }}>Loading…</p>}
             {!loading && amsDocs.length === 0 && (
-              <div className="text-color-secondary p-3">No PDF or Word documents in PactPro yet.</div>
+              <p className="faint small" style={{ padding: 12 }}>No PDF or Word documents in PactPro yet.</p>
             )}
             {!loading && amsDocs.map(d => {
               const already = !!d.sample && alreadySelected.includes(d.sample.id)
               return (
-                <label key={d.id} className="flex align-items-center gap-3 p-2"
-                  style={{ borderBottom: '1px solid var(--surface-200, #f1f5f9)', cursor: already ? 'default' : 'pointer' }}>
-                  <Checkbox checked={amsChecked.has(d.id) || already} disabled={already}
+                <label key={d.id} className="list-item check" style={{ cursor: already ? 'default' : 'pointer' }}>
+                  <input type="checkbox" checked={amsChecked.has(d.id) || already} disabled={already}
                     onChange={() => toggleAms(d.id)} />
-                  <i className={`text-color-secondary ${/\.pdf$/i.test(d.originalName) ? 'pi pi-file-pdf' : 'pi pi-file-word'}`} />
-                  <div className="flex-1" style={{ minWidth: 0 }}>
-                    <div className="font-medium" style={{ wordBreak: 'break-word' }}>{amsDocName(d)}</div>
-                    <div className="text-xs text-color-secondary">
+                  <Icon name="file" size="sm" />
+                  <span className="grow" style={{ minWidth: 0 }}>
+                    <span className="small" style={{ display: 'block', fontWeight: 500, wordBreak: 'break-word' }}>{amsDocName(d)}</span>
+                    <span className="faint xs">
                       {[d.caseNumber, d.clientName, d.uploadedByName && `by ${d.uploadedByName}`, `v${d.version}`]
                         .filter(Boolean).join(' · ')}
-                    </div>
-                  </div>
-                  {already && <Tag value="Added" severity="info" style={{ fontSize: '0.65rem' }} />}
-                  {!already && d.sample?.status === 'ready' && d.sample.current && (
-                    <Tag value="Ready" severity="success" style={{ fontSize: '0.65rem' }} />
-                  )}
+                    </span>
+                  </span>
+                  {already && <span className="chip info">Added</span>}
+                  {!already && d.sample?.status === 'ready' && d.sample.current && <span className="chip ok">Ready</span>}
                 </label>
               )
             })}
           </div>
-          <p className="text-xs text-color-secondary mt-2 mb-0">
-            Documents come from your case files; the first time you use one it is prepared for drafting.
+          <p className="faint xs">
+            Documents come from your case files. The first time you use one it is prepared for drafting.
           </p>
         </div>
       ) : tab === 'existing' ? (
-        <div>
-          <span className="p-input-icon-left w-full mb-3 block">
-            <i className="pi pi-search" />
-            <InputText value={query} onChange={e => setQuery(e.target.value)} placeholder="Search documents…" className="w-full" />
-          </span>
-          <div style={{ maxHeight: '46vh', overflow: 'auto' }}>
-            {loading && <div className="text-color-secondary p-3">Loading…</div>}
-            {!loading && filtered.length === 0 && <div className="text-color-secondary p-3">No documents found.</div>}
+        <div className="stack" style={{ gap: 10 }}>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search documents" />
+          <div className="panel" style={{ maxHeight: '46vh', overflow: 'auto' }}>
+            {loading && <p className="faint small" style={{ padding: 12 }}>Loading…</p>}
+            {!loading && filtered.length === 0 && <p className="faint small" style={{ padding: 12 }}>No documents found.</p>}
             {filtered.map(d => {
               const already = alreadySelected.includes(d.id)
               const ready = d.status === 'ready'
               return (
-                <label key={d.id}
-                  className="flex align-items-center gap-3 p-2"
-                  style={{ borderBottom: '1px solid var(--surface-200, #f1f5f9)', cursor: ready && !already ? 'pointer' : 'default', opacity: ready ? 1 : 0.6 }}>
-                  <Checkbox checked={checked.has(d.id) || already} disabled={already || !ready}
+                <label key={d.id} className="list-item check"
+                  style={{ cursor: ready && !already ? 'pointer' : 'default', opacity: ready ? 1 : 0.6 }}>
+                  <input type="checkbox" checked={checked.has(d.id) || already} disabled={already || !ready}
                     onChange={() => toggle(d.id)} />
-                  <i className="pi pi-file text-color-secondary" />
-                  <div className="flex-1" style={{ minWidth: 0 }}>
-                    <div className="font-medium" style={{ wordBreak: 'break-word' }}>{d.name}</div>
-                    <div className="text-xs text-color-secondary">
-                      {(d.language ?? 'en').toUpperCase()} · {d.created_at ? new Date(d.created_at).toLocaleDateString() : '—'}
-                    </div>
-                  </div>
-                  {already && <Tag value="Added" severity="info" style={{ fontSize: '0.65rem' }} />}
-                  {!already && !ready && <Tag value={d.status} severity="warning" style={{ fontSize: '0.65rem' }} />}
+                  <Icon name="file" size="sm" />
+                  <span className="grow" style={{ minWidth: 0 }}>
+                    <span className="small" style={{ display: 'block', fontWeight: 500, wordBreak: 'break-word' }}>{d.name}</span>
+                    <span className="faint xs">{(d.language ?? 'en').toUpperCase()} · {fmtDate(d.created_at)}</span>
+                  </span>
+                  {already && <span className="chip info">Added</span>}
+                  {!already && !ready && <span className="chip warn">{d.status}</span>}
                 </label>
               )
             })}
           </div>
         </div>
       ) : (
-        <div className="flex flex-column gap-3 pt-2">
-          {error && <Message severity="error" className="w-full" text={error} />}
+        <div className="stack" style={{ gap: 14 }}>
+          {errBox}
           <CaseField value={amsCase} onChange={setAmsCase} disabled={busy} />
-          <div className="flex flex-column gap-2">
-            <label className="font-medium text-sm">Document (PDF or DOCX)</label>
-            <FileUpload mode="basic" accept=".pdf,.docx" maxFileSize={10000000}
-              customUpload uploadHandler={handleUpload} auto chooseLabel="Choose & upload"
-              disabled={busy} />
-          </div>
-          <p className="text-sm text-color-secondary m-0">
-            On upload the document is processed; it'll be added to your selection and is ready to use once processing completes.
+          <FilePick label={busy ? 'Uploading…' : 'Choose a file to upload'} onUpload={handleUpload} disabled={busy} />
+          <p className="faint small">
+            The document is processed after upload. It is added to your selection and is ready to use once processing completes.
           </p>
         </div>
       )}
-    </Dialog>
+    </Modal>
   )
 }

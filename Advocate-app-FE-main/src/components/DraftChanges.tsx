@@ -1,6 +1,6 @@
 import { diffWords } from "diff";
-import { Tag } from "primereact/tag";
-import "../assets/styles/TaskReview.css";
+import { Chip, type Tone } from "../ui/kit";
+import "../ui/pages/casedetail.css";
 
 // What a resubmitted draft changed since the last version the reviewer saw
 // (backend: workspace/review.compare_drafts). Shown in the task's View work
@@ -14,10 +14,10 @@ export type DraftChange = {
   after: string;
 };
 
-const KIND: Record<DraftChange["kind"], { label: string; severity: "warning" | "success" | "danger" }> = {
-  edited: { label: "Edited", severity: "warning" },
-  added: { label: "Added", severity: "success" },
-  removed: { label: "Removed", severity: "danger" },
+const KIND: Record<DraftChange["kind"], { label: string; tone: Tone }> = {
+  edited: { label: "Edited", tone: "warn" },
+  added: { label: "Added", tone: "ok" },
+  removed: { label: "Removed", tone: "bad" },
 };
 
 // Unchanged text longer than this is shortened to its ends, so a one-figure
@@ -58,7 +58,7 @@ export default function DraftChanges({ changes }: { changes?: DraftChange[] | nu
         <div key={i} className="draft-change">
           <div className="draft-change-head">
             <strong>{c.heading || "Untitled section"}</strong>
-            <Tag value={KIND[c.kind].label} severity={KIND[c.kind].severity} rounded />
+            <Chip tone={KIND[c.kind].tone}>{KIND[c.kind].label}</Chip>
           </div>
           {c.kind === "edited" && <WordDiff before={c.before} after={c.after} />}
           {c.kind === "added" && <div className="draft-diff"><ins>{c.after}</ins></div>}

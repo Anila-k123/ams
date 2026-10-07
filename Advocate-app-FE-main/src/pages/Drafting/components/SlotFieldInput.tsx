@@ -1,10 +1,7 @@
-import { InputText } from 'primereact/inputtext'
-import { Dropdown } from 'primereact/dropdown'
-import { Calendar } from 'primereact/calendar'
-import { Tag } from 'primereact/tag'
-import type { Nullable } from 'primereact/ts-helpers'
 import type { SlotField } from '../api/drafting'
 import { fieldOptions } from '../constants/legal'
+import { Field } from '../../../ui/forms'
+import Icon from '../../../ui/Icon'
 
 interface Props {
   field: SlotField
@@ -13,53 +10,51 @@ interface Props {
   badge?: string // small tag beside the label, e.g. "from case details" for a value prefilled from the linked case
 }
 
-// Facts are stored as strings; dates use dd/mm/yyyy.
-const pad = (n: number) => String(n).padStart(2, '0')
-const fmtDate = (d: Date) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`
-const parseDate = (s: string): Nullable<Date> => {
+// Facts are stored as strings; dates use dd/mm/yyyy. The native date input speaks
+// yyyy-mm-dd, so convert at the edge and keep the stored format unchanged.
+const toIso = (s: string) => {
   const m = (s || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
-  if (!m) return null
-  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
-  return isNaN(d.getTime()) ? null : d
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : ''
+}
+const fromIso = (s: string) => {
+  const m = (s || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
 }
 
 /** Renders one case-fact field with the right widget for its type:
- *  date → Calendar (with icon), select → Dropdown, else → text input. */
+ *  date → date input, select → select, else → text input. */
 export default function SlotFieldInput({ field, value, onChange, badge }: Props) {
   const label = (
-    <label className="font-medium flex align-items-center gap-1">
-      <span>{field.label}{field.required && <span style={{ color: '#dc2626' }} className="ml-1">*</span>}</span>
+    <span className="row" style={{ gap: 6, display: 'inline-flex' }}>
+      <span>{field.label}</span>
       {field.hint && (
-        <i className="pi pi-question-circle pp-help-icon" title={field.hint}
-          style={{ fontSize: '0.8rem', color: 'var(--pp-slate-400)', cursor: 'help' }} />
+        <span title={field.hint} className="faint" style={{ display: 'inline-flex', cursor: 'help' }}>
+          <Icon name="info" size="sm" /><span className="sr-only">{field.hint}</span>
+        </span>
       )}
-      {badge && <Tag value={badge} severity="info" className="ml-1" style={{ fontSize: '0.65rem', padding: '0 0.4rem' }} />}
-    </label>
+      {badge && <span className="chip info plain">{badge}</span>}
+    </span>
   )
 
-  // No placeholders — the "?" tooltip already explains each field.
-  let control
-  if (field.type === 'date') {
-    control = (
-      <Calendar value={parseDate(value)} onChange={e => onChange(e.value ? fmtDate(e.value as Date) : '')}
-        dateFormat="dd/mm/yy" showIcon showButtonBar readOnlyInput className="w-full"
-        panelClassName="pp-cal-panel" appendTo={typeof document !== 'undefined' ? document.body : undefined} />
-    )
-  } else if (field.type === 'select') {
-    control = (
-      <Dropdown value={value || null} options={fieldOptions(field)} onChange={e => onChange(e.value ?? '')}
-        filter showClear className="w-full" />
-    )
-  } else {
-    control = (
-      <InputText value={value} onChange={e => onChange(e.target.value)} className="w-full" />
-    )
-  }
-
   return (
-    <div className="flex flex-column gap-1">
-      {label}
-      {control}
-    </div>
+    <Field label={label} required={field.required}>
+      {id => {
+        if (field.type === 'date') {
+          return <input id={id} type="date" className="input" value={toIso(value)} onChange={e => onChange(fromIso(e.target.value))} />
+        }
+        if (field.type === 'select') {
+          const opts = fieldOptions(field)
+          return (
+            <select id={id} className="input" value={value || ''} onChange={e => onChange(e.target.value)}>
+              <option value="">Select</option>
+              {/* Keep a prefilled value that is not in the list selectable. */}
+              {value && !opts.includes(value) && <option value={value}>{value}</option>}
+              {opts.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )
+        }
+        return <input id={id} className="input" value={value} onChange={e => onChange(e.target.value)} />
+      }}
+    </Field>
   )
 }

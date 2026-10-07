@@ -1,0 +1,45 @@
+/* Finance & Reports (Invoices, Expenses, Practice Reports). Red Tape tokens only. */
+.fin-page .figures { margin-bottom: var(--s5); }
+.fin-page .stack > .figures { margin-bottom: 0; }
+.fin-block { margin-bottom: var(--s5); }
+.fin-block-top { margin-top: var(--s4); }
+.fin-bad { color: var(--bad); }
+.fin-ok { color: var(--ok); }
+.fin-struck { text-decoration: line-through; color: var(--ink-3); }
+.fin-maxw { max-width: 240px; }
+.fin-actions { justify-content: flex-end; gap: 4px; }
+.fin-val-sm.val { font-size: var(--t-2xl); }
+.fin-h4 { font-size: var(--t-sm); font-weight: 600; margin: 0 0 8px; }
+
+/* Invoice form */
+.fin-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.fin-fieldset > legend.fieldset-title { padding: 0; margin-bottom: var(--s2); border: 0; }
+.fin-line { display: grid; grid-template-columns: minmax(0, 1fr) 140px 36px; gap: var(--s2); align-items: center; }
+.fin-amt { text-align: right; }
+.fin-sum { grid-template-columns: 1fr auto; margin-left: auto; min-width: min(320px, 100%); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.fin-tot-lbl { color: var(--ink); font-weight: 600; }
+.fin-tot { grid-template-columns: 1fr auto; }
+.fin-tot-val { font: 500 var(--t-xl) var(--f-display); }
+.fin-state { gap: var(--s2); }
+.fin-case { padding: var(--s3); background: var(--surface-2); border-radius: var(--r-md); }
+.fin-date { width: auto; }
+
+/* Charts */
+.fin-tip { position: static; padding: 8px 10px; min-width: 160px; font-size: var(--t-xs); animation: none; }
+.fin-tip-h { color: var(--ink-2); margin-bottom: 4px; font-weight: 500; }
+.fin-tip-row { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.fin-tip-row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.fin-tip-row b { color: var(--ink); font-weight: 500; }
+.fin-donut { position: relative; }
+.fin-donut-c { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }
+.fin-donut-c b { font: 500 var(--t-2xl)/1 var(--f-display); color: var(--ink); }
+.fin-donut-c span { font-size: var(--t-xs); color: var(--ink-3); }
+.fin-reports .recharts-text { fill: var(--ink-3); }
+
+@media (max-width: 1024px) {
+  .fin-cols.g-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 768px) {
+  .fin-cols.g-3, .fin-cols.g-2 { grid-template-columns: minmax(0, 1fr); }
+  .fin-line { grid-template-columns: minmax(0, 1fr) 110px 36px; }
+}

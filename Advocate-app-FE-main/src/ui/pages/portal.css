@@ -1,0 +1,28 @@
+/* Client portal (Client role). Red Tape tokens only; the frame (.portal*, .pp-case-card)
+   lives in redtape.css. */
+
+.pt-center { display: grid; place-items: center; padding: 24px 16px; }
+.pt-h { margin: 0 0 6px; }
+.pt-h-gap { margin-bottom: 20px; }
+.pt-lead { margin: 0 0 24px; }
+.pt-figs { margin-bottom: 28px; }
+.pt-figs-sm { margin-bottom: 20px; }
+.pt-st { margin-top: 0; }
+.pt-strong { font-weight: 500; }
+.pt-warn { color: var(--warn); }
+.pt-gap { gap: 16px; }
+.pt-top { align-items: start; }
+.pt-note { margin: 14px 0 0; }
+.pt-docket { margin: 12px 0 20px; }
+.pt-case-title { font: 500 var(--t-xl)/1.25 var(--f-display); margin: 8px 0 6px; }
+.pt-case-foot { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; flex-wrap: wrap; }
+.pt-kv-row { display: contents; }
+.pt-firm { font-size: 19px; font-weight: 500; }
+.pt-foot-firm { color: var(--ink-2); }
+.pt-logo { height: 34px; width: auto; max-width: 120px; object-fit: contain; flex: none; }
+.pt-doc > svg { flex: none; color: var(--ink-3); }
+
+@media (max-width: 560px) {
+  .pt-doc { flex-wrap: wrap; }
+  .pt-doc .row { width: 100%; justify-content: flex-end; }
+}

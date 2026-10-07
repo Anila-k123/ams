@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import api from "../api/client";
 import { topZIndex } from "../utils/topZIndex";
-import "../assets/styles/DefinableText.css";
+import Icon from "../ui/Icon";
+import "../ui/pages/clients.css";
 
 /**
  * Renders text where any word can be clicked to look up its legal-dictionary
@@ -69,10 +70,10 @@ function DefinePopover({ pop, onClose }: { pop: any; onClose: () => void }) {
   return createPortal(
     <>
       <div className="def-pop-backdrop" style={{ zIndex: z }} onClick={onClose} />
-      <div className="def-pop" style={{ left, top, zIndex: z + 1 }} onClick={(e) => e.stopPropagation()}>
-        <button className="def-pop-close" onClick={onClose}><i className="pi pi-times" style={{ fontSize: 12 }} /></button>
-        {pop.loading && <div className="def-pop-muted">Looking up “{pop.word}”…</div>}
-        {pop.notFound && <div className="def-pop-muted">No dictionary entry for “{pop.word}”.</div>}
+      <div className="def-pop" role="dialog" aria-label="Definition" style={{ left, top, zIndex: z + 1 }} onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="icon-btn pop-close" onClick={onClose} aria-label="Close"><Icon name="x" size="sm" /></button>
+        {pop.loading && <div className="pop-muted">Looking up “{pop.word}”…</div>}
+        {pop.notFound && <div className="pop-muted">No dictionary entry for “{pop.word}”.</div>}
         {pop.term && (
           <>
             <div className="def-pop-head">
@@ -80,7 +81,7 @@ function DefinePopover({ pop, onClose }: { pop: any; onClose: () => void }) {
                 ? <div className="def-pop-term def-pop-hindi" lang="hi">{pop.hindi.split(" ; ")[0]}</div>
                 : <div className="def-pop-term">{pop.term}</div>}
               {pop.hindi && (
-                <button type="button" className="def-pop-lang" onClick={() => setShowHindi((v) => !v)}
+                <button type="button" className="btn sm ghost" onClick={() => setShowHindi((v) => !v)}
                   aria-label={showHindi ? "Show in English" : "Show in Hindi"}>
                   {showHindi ? "English" : "हिंदी"}
                 </button>
@@ -88,9 +89,9 @@ function DefinePopover({ pop, onClose }: { pop: any; onClose: () => void }) {
             </div>
             {showHindi && pop.hindi ? (
               <div className="def-pop-def def-pop-hindi" lang="hi">
-                <div className="def-pop-muted">English: {pop.term}</div>
+                <div className="pop-muted">English: {pop.term}</div>
                 <ul>{pop.hindi.split(" ; ").map((h: string, i: number) => <li key={i}>{h}</li>)}</ul>
-                <div className="def-pop-muted">Official Hindi — Legal Glossary, Legislative Department.</div>
+                <div className="pop-muted">Official Hindi — Legal Glossary, Legislative Department.</div>
               </div>
             ) : (
               <div className="def-pop-def">

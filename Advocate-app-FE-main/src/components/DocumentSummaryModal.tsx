@@ -1,8 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Dialog } from "primereact/dialog";
-import { Button } from "primereact/button";
-import { Tag } from "primereact/tag";
-import { ProgressSpinner } from "primereact/progressspinner";
+import { Modal } from "../ui/overlays";
+import { Button, Chip, Icon, Spinner } from "../ui/kit";
 import { jsPDF } from "jspdf";
 import DefinableText from "./DefinableText";
 import CodeRefText from "./CodeRefText";
@@ -13,7 +11,7 @@ import documentService from "../services/DocumentService";
 const RichText = ({ text }: { text: any }) => (
   <CodeRefText text={String(text)} renderPlain={(t: string) => <DefinableText text={t} />} />
 );
-import "../assets/styles/DocumentSummaryModal.css";
+import "../ui/pages/clients.css";
 
 // The labelled key-point sections, in display order. Each field is best-effort;
 // empty ones are skipped. `kind` decides how the value is rendered.
@@ -41,7 +39,7 @@ function isEmpty(v: any) {
 function Section({ section, value }: { section: any; value: any }) {
   if (isEmpty(value)) return null;
   return (
-    <div className="ds-section">
+    <section>
       <h4 className="ds-section-label">{section.label}</h4>
       {section.kind === "text" && <p className="ds-text"><RichText text={String(value)} /></p>}
       {section.kind === "list" && (
@@ -69,7 +67,7 @@ function Section({ section, value }: { section: any; value: any }) {
           })}
         </ul>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -184,81 +182,70 @@ export default function DocumentSummaryModal({ doc, onClose, canRegenerate = fal
     pdf.save(`${safe}_summary.pdf`);
   };
 
+  const notReady = !loading && !loadError;
   return (
-    <Dialog
-      visible={!!doc}
-      onHide={onClose}
-      header={`Summary — ${doc?.documentName || "Document"}`}
-      modal
-      style={{ width: "50vw" }}
-      breakpoints={{ "900px": "92vw" }}
-    >
-      <div className="ds-modal">
-        {loading && (
-          <div className="ds-state flex-row align-items-center">
-            <ProgressSpinner style={{ width: 20, height: 20, margin: 0 }} strokeWidth="4" /> Loading summary…
+    <Modal open={!!doc} onClose={onClose} size="wide" title="Document summary" sub={doc?.documentName || "Document"}
+      footer={notReady && status === "READY" ? (
+        <>
+          {canRegenerate && (
+            <Button variant="ghost" icon="refresh" onClick={regenerate} disabled={busy} loading={busy}>
+              {busy ? "Regenerating…" : "Regenerate"}
+            </Button>
+          )}
+          <Button variant="primary" icon="download" onClick={downloadPdf}>Download PDF</Button>
+        </>
+      ) : undefined}>
+      {loading && <div className="ds-state"><Spinner label="Loading summary" /></div>}
+
+      {!loading && loadError && (
+        <div className="ds-state bad">
+          <span><Icon name="warn" size="sm" />{loadError}</span>
+          <Button size="sm" icon="refresh" onClick={load}>Retry</Button>
+        </div>
+      )}
+
+      {notReady && (status === "PENDING" || status === "PROCESSING") && (
+        <div className="ds-state">
+          <span><Icon name="clock" size="sm" />The summary is being generated. This usually takes a few seconds…</span>
+          <Button size="sm" icon="refresh" onClick={load} disabled={busy}>Refresh</Button>
+        </div>
+      )}
+
+      {notReady && status === "UNSUPPORTED" && (
+        <div className="callout warn">
+          <Icon name="warn" size="sm" />
+          <span>A summary isn&apos;t available for this file type. Only text-based PDFs, Word documents and text
+          files can be summarised (scanned images aren&apos;t supported).</span>
+        </div>
+      )}
+
+      {notReady && (status === "NONE" || status === "FAILED") && (
+        <div className="ds-state">
+          {status === "FAILED" ? (
+            <span><Icon name="warn" size="sm" />Summarisation failed{data?.error ? `: ${data.error}` : "."}</span>
+          ) : (
+            <span><Icon name="sparkle" size="sm" />No summary has been generated for this document yet.</span>
+          )}
+          {canRegenerate && (
+            <Button size="sm" variant="primary" icon="sparkle" onClick={regenerate} disabled={busy} loading={busy}>
+              {busy ? "Starting…" : status === "FAILED" ? "Retry" : "Generate summary"}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {notReady && status === "READY" && (
+        <div className="stack">
+          {keyPoints.document_type && <div><Chip tone="info">{keyPoints.document_type}</Chip></div>}
+          {summaryText && <p className="ds-summary"><RichText text={summaryText} /></p>}
+          <p className="faint xs">Click a word for its legal meaning, or an old code reference (IPC, CrPC, Evidence Act) for its new equivalent.</p>
+          <div className="ds-sections">
+            {SECTIONS.filter((s) => s.key !== "document_type").map((s) => (
+              <Section key={s.key} section={s} value={keyPoints[s.key]} />
+            ))}
           </div>
-        )}
-
-        {!loading && loadError && (
-          <div className="ds-state ds-state-error">
-            <span><i className="pi pi-exclamation-triangle mr-2" />{loadError}</span>
-            <Button size="small" outlined icon="pi pi-refresh" label="Retry" onClick={load} />
-          </div>
-        )}
-
-        {!loading && !loadError && (status === "PENDING" || status === "PROCESSING") && (
-          <div className="ds-state">
-            <span><i className="pi pi-clock mr-2" />The summary is being generated. This usually takes a few seconds…</span>
-            <Button size="small" outlined icon="pi pi-refresh" label="Refresh" onClick={load} disabled={busy} />
-          </div>
-        )}
-
-        {!loading && !loadError && status === "UNSUPPORTED" && (
-          <div className="ds-state">
-            <span><i className="pi pi-exclamation-triangle mr-2" />A summary isn&apos;t available for this file type. Only
-            text-based PDFs, Word documents, and text files can be summarized
-            (scanned images aren&apos;t supported).</span>
-          </div>
-        )}
-
-        {!loading && !loadError && (status === "NONE" || status === "FAILED") && (
-          <div className="ds-state">
-            {status === "FAILED" ? (
-              <span><i className="pi pi-exclamation-triangle mr-2" />Summarization failed{data?.error ? `: ${data.error}` : "."}</span>
-            ) : (
-              <span><i className="pi pi-bolt mr-2" />No summary has been generated for this document yet.</span>
-            )}
-            {canRegenerate && (
-              <Button size="small" icon="pi pi-bolt" onClick={regenerate} disabled={busy}
-                label={busy ? "Starting…" : status === "FAILED" ? "Retry" : "Generate summary"} />
-            )}
-          </div>
-        )}
-
-        {!loading && !loadError && status === "READY" && (
-          <div className="ds-content">
-            {keyPoints.document_type && (
-              <Tag className="ds-doctype" rounded value={keyPoints.document_type} />
-            )}
-            {summaryText && <p className="ds-summary"><RichText text={summaryText} /></p>}
-
-            <div className="ds-sections">
-              {SECTIONS.filter((s) => s.key !== "document_type").map((s) => (
-                <Section key={s.key} section={s} value={keyPoints[s.key]} />
-              ))}
-            </div>
-
-            <div className="ds-footer">
-              <Button size="small" icon="pi pi-download" label="Download PDF" onClick={downloadPdf} />
-              {canRegenerate && (
-                <Button size="small" outlined icon="pi pi-refresh" onClick={regenerate} disabled={busy}
-                  label={busy ? "Regenerating…" : "Regenerate"} />
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </Dialog>
+        </div>
+      )}
+    </Modal>
   );
 }

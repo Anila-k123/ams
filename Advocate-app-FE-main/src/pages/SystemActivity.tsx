@@ -1,21 +1,16 @@
+// Audit Log: every change made in AMS, who made it and from where. Server-paged
+// from /api/audit; exports fetch the whole filtered set.
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { InputText } from "primereact/inputtext";
-import { Button } from "primereact/button";
-import { Dropdown } from "primereact/dropdown";
-import { Calendar } from "primereact/calendar";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Paginator } from "primereact/paginator";
-import { Sidebar } from "primereact/sidebar";
-import { Tag } from "primereact/tag";
-import { IconField } from "primereact/iconfield";
-import { InputIcon } from "primereact/inputicon";
 import api from "../api/client";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
 import { useDownload } from "../hooks/useDownload";
 import DownloadLoader from "../components/DownloadLoader";
-import "../assets/styles/SystemActivity.css";
+import { PageHead, Button, Chip, Avatar, PopMenu, type Tone } from "../ui/kit";
+import { SearchInput } from "../ui/forms";
+import { Drawer } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/firm.css";
 
 const API = "/api/audit";
 
@@ -129,60 +124,35 @@ function getDateRange(preset: string) {
   return { dateFrom: start.toISOString(), dateTo: end.toISOString() };
 }
 
-function getActionColor(type: any) {
-  if (!type) return "var(--text-muted)";
-  if (type.includes("CREATED") || type.includes("SENT") || type.includes("RECEIVED") || type.includes("GENERATED") || type.includes("PAID") || type === "LOGIN") return "#10b981";
-  if (type.includes("UPDATED") || type.includes("CHANGED") || type.includes("RESET") || type.includes("RESCHEDULED")) return "#3b82f6";
-  if (type.includes("DELETED") || type === "FAILED_LOGIN") return "#ef4444";
-  if (type.includes("EXPORT") || type.includes("DOWNLOAD")) return "#8b5cf6";
-  return "#f59e0b";
+// Action words keep their colour family (create/update/delete/export) as a chip tone.
+function actionTone(type: any): Tone {
+  if (!type) return "";
+  if (type.includes("CREATED") || type.includes("SENT") || type.includes("RECEIVED") || type.includes("GENERATED") || type.includes("PAID") || type === "LOGIN") return "ok";
+  if (type.includes("UPDATED") || type.includes("CHANGED") || type.includes("RESET") || type.includes("RESCHEDULED")) return "info";
+  if (type.includes("DELETED") || type === "FAILED_LOGIN") return "bad";
+  if (type.includes("EXPORT") || type.includes("DOWNLOAD")) return "";
+  return "warn";
 }
 
 // Render one audit value for display. null/"" are meaningful in a diff - a
 // field being cleared is a change worth seeing - so they get a visible marker
 // rather than rendering as nothing.
 function fmtVal(v: any) {
-  if (v === null || v === undefined) return <em className="sa-change-empty">empty</em>;
+  if (v === null || v === undefined) return <em className="faint">empty</em>;
   if (typeof v === "boolean") return v ? "yes" : "no";
   const s = String(v);
-  if (s === "") return <em className="sa-change-empty">empty</em>;
-  if (s === "***") return <em className="sa-change-empty">hidden</em>;
+  if (s === "") return <em className="faint">empty</em>;
+  if (s === "***") return <em className="faint">hidden</em>;
   return s;
 }
 
-// Calendar <-> the "YYYY-MM-DD" strings the filter logic has always used.
-const toDate = (s: string) => {
-  if (!s) return null;
-  const [y, m, d] = s.split("-").map(Number);
-  return new Date(y, m - 1, d);
-};
-const fromDate = (d: any) => {
-  if (!(d instanceof Date)) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
-
 function ActionBadge({ type }: { type: any }) {
-  const c = getActionColor(type);
-  return (
-    <span className="sa-action-badge" style={{ backgroundColor: c + "20", color: c, borderColor: c + "40" }}>
-      {type}
-    </span>
-  );
+  return <Chip tone={actionTone(type)}><span className="mono xs">{type || "—"}</span></Chip>;
 }
 
 function StatusTag({ status }: { status: any }) {
   const s = (status || "").toUpperCase();
-  return <Tag value={status || "-"} severity={s === "SUCCESS" ? "success" : s === "FAILED" ? "danger" : "secondary"} />;
-}
-
-function Row({ label, children }: { label: any; children: any }) {
-  return (
-    <div className="sa-detail-row">
-      <span className="sa-detail-label">{label}</span>
-      <span className="sa-detail-value">{children}</span>
-    </div>
-  );
+  return <Chip tone={s === "SUCCESS" ? "ok" : s === "FAILED" ? "bad" : ""}>{status ? status.charAt(0) + status.slice(1).toLowerCase() : "—"}</Chip>;
 }
 
 export default function SystemActivity() {
@@ -202,6 +172,7 @@ export default function SystemActivity() {
   const [page, setPage] = useState(0);
   const [size] = useState(25);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
+  const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
 
   // audit_log.metadata carries {"changes":[...]}; unparseable text falls
   // through to the raw view rather than blanking the panel.
@@ -248,9 +219,8 @@ export default function SystemActivity() {
   }, [page, size, search, module, actionType, status, datePreset, customFrom, customTo, withLoading, toast]);
 
   // A filter or the search changing reloads from page 0; paging loads that
-  // page. search and the custom dates were missing here, so pressing Search on
-  // page 0 (or picking a custom range) never reloaded. fetchData itself isn't a
-  // dependency: these lists say exactly what should trigger a fetch.
+  // page. fetchData itself isn't a dependency: these lists say exactly what
+  // should trigger a fetch.
   useEffect(() => {
     fetchData(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- trigger on filter / search changes only
@@ -418,191 +388,204 @@ export default function SystemActivity() {
 
   const ev = selectedEvent;
 
+  const columns: Column<any>[] = [
+    {
+      key: "createdAt", label: "Time", render: (i) => (
+        <div className="nowrap small">{formatDate(i.createdAt)}<div className="cell-sub">{formatTime(i.createdAt)}</div></div>
+      ),
+    },
+    {
+      key: "userName", label: "User", render: (i) => i.userName
+        ? <div className="row" style={{ gap: 8 }}><Avatar name={i.userName} size="sm" /><span className="nowrap">{i.userName}</span></div>
+        : <span className="faint">Unknown</span>,
+    },
+    { key: "actionType", label: "Action", render: (i) => <ActionBadge type={i.actionType} /> },
+    { key: "module", label: "Module", hideSm: true, render: (i) => i.module || <span className="faint">—</span> },
+    { key: "title", label: "Detail", hideSm: true, render: (i) => <span className="small">{i.title || "—"}</span> },
+    { key: "status", label: "Status", render: (i) => <StatusTag status={i.status} /> },
+  ];
+
+  const sel = (label: string, value: string, set: (v: string) => void, options: { value: string; label: string }[], all: string) => (
+    <select className="input fm-sel" aria-label={label} value={value} onChange={(e) => { set(e.target.value); setPage(0); }}>
+      <option value="">{all}</option>
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+
   return (
-    <div className="system-activity-container">
+    <div>
       {isDownloading && <DownloadLoader />}
-      <div className="flex justify-content-end mb-2">
-        <span className="sa-total">{data.totalElements} records</span>
-      </div>
-
-      <div className="flex flex-wrap align-items-center gap-2 mb-2">
-        <IconField iconPosition="left">
-          <InputIcon className="pi pi-search" />
-          <InputText
-            placeholder="Search title, description..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-          />
-        </IconField>
-        {searchInput && (
-          <Button icon="pi pi-times" rounded text severity="secondary" aria-label="Clear search" onClick={() => { setSearchInput(""); setSearch(""); }} />
-        )}
-        <Button label="Search" onClick={handleSearch} />
-        <Dropdown placeholder="All Modules" value={module} options={[{ value: "", label: "All Modules" }, ...MODULES]} onChange={(e) => { setModule(e.value); setPage(0); }} />
-        <Dropdown placeholder="All Actions" value={actionType} options={[{ value: "", label: "All Actions" }, ...ACTION_TYPES]} filter onChange={(e) => { setActionType(e.value); setPage(0); }} />
-        <Dropdown placeholder="All Statuses" value={status} options={[{ value: "", label: "All Statuses" }, ...STATUSES]} onChange={(e) => { setStatus(e.value); setPage(0); }} />
-        <Dropdown value={datePreset} options={DATE_PRESETS} onChange={(e) => { setDatePreset(e.value); setPage(0); }} />
-        {hasFilters && <Button label="Clear" icon="pi pi-times" outlined severity="secondary" onClick={handleClearFilters} />}
-      </div>
-      {datePreset === "custom" && (
-        <div className="flex flex-wrap align-items-center gap-2 mb-2">
-          <label>From:</label>
-          <Calendar value={toDate(customFrom)} onChange={(e) => setCustomFrom(fromDate(e.value))} dateFormat="dd/mm/yy" showIcon />
-          <label>To:</label>
-          <Calendar value={toDate(customTo)} onChange={(e) => setCustomTo(fromDate(e.value))} dateFormat="dd/mm/yy" showIcon />
-          <Button label="Apply" onClick={() => { setPage(0); fetchData(0); }} />
-        </div>
-      )}
-
-      <div className="flex gap-2 mb-3">
-        <Button label="CSV" icon="pi pi-download" outlined severity="success" onClick={exportCSV} disabled={exporting} />
-        <Button label="Excel" icon="pi pi-download" outlined severity="info" onClick={exportExcel} disabled={exporting} />
-        <Button label="PDF" icon="pi pi-download" outlined severity="danger" onClick={exportPDF} disabled={exporting} />
-      </div>
-
-      <DataTable
-        value={data.content || []}
-        dataKey="id"
-        loading={loading}
-        size="small"
-        stripedRows
-        selectionMode="single"
-        selection={selectedEvent}
-        onSelectionChange={(e) => setSelectedEvent(e.value)}
-        emptyMessage="No activity records found"
-        className="sa-table"
-      >
-        <Column header="Timestamp" body={(i: any) => (
-          <div className="flex flex-column">
-            <span>{formatDate(i.createdAt)}</span>
-            <span className="sa-time">{formatTime(i.createdAt)}</span>
-          </div>
-        )} />
-        <Column header="User" body={(i: any) => i.userName || "-"} />
-        <Column header="Action" body={(i: any) => <ActionBadge type={i.actionType} />} />
-        <Column header="Module" body={(i: any) => i.module || "-"} />
-        <Column header="Title" body={(i: any) => i.title || "-"} />
-        <Column header="Status" body={(i: any) => <StatusTag status={i.status} />} />
-        <Column header="Details" body={(i: any) => (
-          <Button label="View" size="small" text onClick={(e) => { e.stopPropagation(); setSelectedEvent(i); }} />
-        )} />
-      </DataTable>
-
-      <Paginator
-        first={page * size}
-        rows={size}
-        totalRecords={data.totalElements || 0}
-        onPageChange={(e) => setPage(e.page)}
-        template="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
-        currentPageReportTemplate="{first}-{last} of {totalRecords}"
+      <PageHead
+        title="Audit Log"
+        sub="Every change made in AMS, who made it and from where."
+        actions={<span className="faint small num">{data.totalElements ?? 0} records</span>}
       />
 
-      <Sidebar
-        visible={!!ev}
-        position="right"
-        onHide={() => setSelectedEvent(null)}
-        style={{ width: "min(560px, 100vw)" }}
-        header={<h3 className="m-0"><i className="pi pi-bolt mr-2" />Event Details</h3>}
+      <div className="toolbar">
+        <form className="row fm-search" role="search" onSubmit={(e) => { e.preventDefault(); handleSearch(); }}>
+          <SearchInput value={searchInput} placeholder="Search title or description"
+            onChange={(v) => { setSearchInput(v); if (!v && search) setSearch(""); }} />
+          <Button type="submit" size="sm">Search</Button>
+        </form>
+        {sel("Module", module, setModule, MODULES, "All modules")}
+        {sel("Action", actionType, setActionType, ACTION_TYPES, "All actions")}
+        {sel("Status", status, setStatus, STATUSES, "Any status")}
+        <select className="input fm-sel" aria-label="Date range" value={datePreset} onChange={(e) => { setDatePreset(e.target.value); setPage(0); }}>
+          {DATE_PRESETS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        {hasFilters && <Button size="sm" variant="ghost" icon="x" onClick={handleClearFilters}>Clear</Button>}
+        <span className="grow" />
+        <Button size="sm" icon="download" aria-haspopup="menu" disabled={exporting}
+          onClick={(e) => setExportAnchor(exportAnchor ? null : e.currentTarget)}>Export</Button>
+      </div>
+      {datePreset === "custom" && (
+        <div className="toolbar">
+          <label className="row small" style={{ gap: 6 }}>From
+            <input type="date" className="input fm-sel" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+          </label>
+          <label className="row small" style={{ gap: 6 }}>To
+            <input type="date" className="input fm-sel" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} />
+          </label>
+          <Button size="sm" onClick={() => { setPage(0); fetchData(0); }}>Apply</Button>
+        </div>
+      )}
+      {exportAnchor && (
+        <PopMenu anchor={exportAnchor} align="right" width={190} onClose={() => setExportAnchor(null)} items={[
+          { label: "CSV", icon: "file", onClick: exportCSV },
+          { label: "Excel", icon: "file", onClick: exportExcel },
+          { label: "PDF", icon: "file", onClick: exportPDF },
+        ]} />
+      )}
+
+      <DataTable
+        rows={data.content || []}
+        columns={columns}
+        rowKey={(i) => i.id}
+        loading={loading}
+        onRow={setSelectedEvent}
+        pageSize={size}
+        page={page}
+        total={data.totalElements || 0}
+        onPage={setPage}
+        caption="Audit log"
+        empty={{ icon: "history", title: "No activity records found", text: hasFilters ? "Try clearing the filters." : undefined }}
+      />
+
+      <Drawer
+        open={!!ev}
+        onClose={() => setSelectedEvent(null)}
+        wide
+        title="Event details"
+        sub={ev ? <span className="faint small"><span className="mono">#{ev.id}</span>, {formatDateTime(ev.createdAt)}</span> : null}
+        footer={<Button variant="primary" onClick={() => setSelectedEvent(null)}>Done</Button>}
       >
         {ev && (
-          <div className="flex flex-column gap-3">
-            <div className="sa-detail-section">
-              <h4>Basic Info</h4>
-              <Row label="ID">#{ev.id}</Row>
-              <Row label="Action Type"><ActionBadge type={ev.actionType} /></Row>
-              <Row label="Module">{ev.module || "-"}</Row>
-              <Row label="Status"><StatusTag status={ev.status} /></Row>
-              <Row label="Title">{ev.title || "-"}</Row>
-              <Row label="Description">{ev.description || "-"}</Row>
-            </div>
-            <div className="sa-detail-section">
-              <h4>Entity</h4>
-              <Row label="Entity Type">{ev.entityType || "-"}</Row>
-              <Row label="Entity ID">{ev.entityId != null ? `#${ev.entityId}` : "-"}</Row>
-            </div>
-            <div className="sa-detail-section">
-              <h4><i className="pi pi-user mr-2" />User</h4>
-              <Row label="Name">{ev.userName || "-"}</Row>
-              <Row label="Advocate ID">#{ev.advocateId}</Row>
-            </div>
-            <div className="sa-detail-section">
-              <h4><i className="pi pi-server mr-2" />Request</h4>
-              <Row label="Method"><code>{ev.requestMethod || "-"}</code></Row>
-              <Row label="URI"><code>{ev.requestUri || "-"}</code></Row>
-            </div>
-            <div className="sa-detail-section">
-              <h4><i className="pi pi-desktop mr-2" />Device</h4>
-              <Row label={<><i className="pi pi-globe mr-1" />IP Address</>}><code>{ev.ipAddress || "-"}</code></Row>
-              <Row label={<><i className="pi pi-desktop mr-1" />Browser</>}>{ev.browser || "-"}</Row>
-              <Row label={<><i className="pi pi-mobile mr-1" />OS</>}>{ev.operatingSystem || "-"}</Row>
-              <Row label="Device">{ev.device || "-"}</Row>
-            </div>
-            <div className="sa-detail-section">
-              <h4><i className="pi pi-calendar mr-2" />Timestamp</h4>
-              <Row label="Date">{formatDate(ev.createdAt)}</Row>
-              <Row label="Time">{formatTime(ev.createdAt)}</Row>
-              <Row label="Full">{formatDateTime(ev.createdAt)}</Row>
-            </div>
+          <div className="stack" style={{ gap: 22 }}>
+            <section>
+              <h4 className="fm-h4">Basic info</h4>
+              <dl className="kv">
+                <dt>Action</dt><dd><ActionBadge type={ev.actionType} /></dd>
+                <dt>Module</dt><dd>{ev.module || "—"}</dd>
+                <dt>Status</dt><dd><StatusTag status={ev.status} /></dd>
+                <dt>Title</dt><dd>{ev.title || "—"}</dd>
+                <dt>Description</dt><dd>{ev.description || "—"}</dd>
+              </dl>
+            </section>
+            <section>
+              <h4 className="fm-h4">Entity</h4>
+              <dl className="kv">
+                <dt>Entity type</dt><dd>{ev.entityType || "—"}</dd>
+                <dt>Entity ID</dt><dd className="mono">{ev.entityId != null ? `#${ev.entityId}` : "—"}</dd>
+              </dl>
+            </section>
+            <section>
+              <h4 className="fm-h4">User</h4>
+              <dl className="kv">
+                <dt>Name</dt><dd>{ev.userName || "Not signed in"}</dd>
+                <dt>Advocate ID</dt><dd className="mono">#{ev.advocateId}</dd>
+              </dl>
+            </section>
+            <section>
+              <h4 className="fm-h4">Request</h4>
+              <dl className="kv">
+                <dt>Method</dt><dd className="mono">{ev.requestMethod || "—"}</dd>
+                <dt>URI</dt><dd className="mono" style={{ wordBreak: "break-all" }}>{ev.requestUri || "—"}</dd>
+              </dl>
+            </section>
+            <section>
+              <h4 className="fm-h4">Device</h4>
+              <dl className="kv">
+                <dt>IP address</dt><dd className="mono">{ev.ipAddress || "—"}</dd>
+                <dt>Browser</dt><dd>{ev.browser || "—"}</dd>
+                <dt>Operating system</dt><dd>{ev.operatingSystem || "—"}</dd>
+                <dt>Device</dt><dd>{ev.device || "—"}</dd>
+              </dl>
+            </section>
 
             {parsedChanges.length > 0 && (
-              <div className="sa-detail-section">
-                <h4>What changed</h4>
-                {parsedChanges.map((rec: any, i: number) => (
-                  <div key={i} className="sa-change-block">
-                    <div className="flex align-items-center gap-2 mb-2">
-                      <span className={`sa-change-action ${rec.action}`}>{rec.action}</span>
-                      <span className="sa-change-target">
-                        {(rec.table || "record").replace(/_/g, " ")}
-                        {rec.id != null && <> #{rec.id}</>}
-                      </span>
+              <section>
+                <h4 className="fm-h4">What changed</h4>
+                <div className="stack" style={{ gap: 14 }}>
+                  {parsedChanges.map((rec: any, i: number) => (
+                    <div key={i} className="stack" style={{ gap: 8 }}>
+                      <div className="row" style={{ gap: 8 }}>
+                        <Chip tone={rec.action === "created" ? "ok" : rec.action === "deleted" ? "bad" : "info"}>{rec.action}</Chip>
+                        <span className="small">
+                          {(rec.table || "record").replace(/_/g, " ")}
+                          {rec.id != null && <span className="mono"> #{rec.id}</span>}
+                        </span>
+                      </div>
+
+                      {rec.action === "updated" && rec.changes && Object.keys(rec.changes).length > 0 && (
+                        <div className="table-wrap">
+                          <table className="t">
+                            <thead><tr><th scope="col">Field</th><th scope="col">Before</th><th scope="col">After</th></tr></thead>
+                            <tbody>
+                              {Object.entries(rec.changes).map(([field, d]: [string, any]) => (
+                                <tr key={field}>
+                                  <td>{field.replace(/_/g, " ")}</td>
+                                  <td className="fm-before">{fmtVal(d.from)}</td>
+                                  <td className="fm-after">{fmtVal(d.to)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Create/delete carry the whole row; on delete it is the only surviving copy. */}
+                      {(rec.action === "created" || rec.action === "deleted") && rec.values && (
+                        <div className="table-wrap">
+                          <table className="t">
+                            <thead><tr><th scope="col">Field</th><th scope="col">{rec.action === "deleted" ? "Deleted value" : "Value"}</th></tr></thead>
+                            <tbody>
+                              {Object.entries(rec.values).map(([field, v]) => (
+                                <tr key={field}>
+                                  <td>{field.replace(/_/g, " ")}</td>
+                                  <td>{fmtVal(v)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {rec.note && <p className="faint small">{rec.note}</p>}
                     </div>
-
-                    {rec.action === "updated" && rec.changes && Object.keys(rec.changes).length > 0 && (
-                      <table className="sa-change-table">
-                        <thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead>
-                        <tbody>
-                          {Object.entries(rec.changes).map(([field, d]: [string, any]) => (
-                            <tr key={field}>
-                              <td className="sa-change-field">{field.replace(/_/g, " ")}</td>
-                              <td className="sa-change-before">{fmtVal(d.from)}</td>
-                              <td className="sa-change-after">{fmtVal(d.to)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-
-                    {/* Create/delete carry the whole row; on delete it is the only surviving copy. */}
-                    {(rec.action === "created" || rec.action === "deleted") && rec.values && (
-                      <table className="sa-change-table">
-                        <thead><tr><th>Field</th><th>{rec.action === "deleted" ? "Deleted value" : "Value"}</th></tr></thead>
-                        <tbody>
-                          {Object.entries(rec.values).map(([field, v]) => (
-                            <tr key={field}>
-                              <td className="sa-change-field">{field.replace(/_/g, " ")}</td>
-                              <td className="sa-change-after">{fmtVal(v)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-
-                    {rec.note && <p className="sa-change-note">{rec.note}</p>}
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </section>
             )}
 
             {parsedChanges.length === 0 && ev.metadata && (
-              <div className="sa-detail-section">
-                <h4>Metadata</h4>
-                <pre className="sa-metadata">{ev.metadata}</pre>
-              </div>
+              <section>
+                <h4 className="fm-h4">Metadata</h4>
+                <pre className="fm-pre mono">{ev.metadata}</pre>
+              </section>
             )}
           </div>
         )}
-      </Sidebar>
+      </Drawer>
     </div>
   );
 }

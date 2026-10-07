@@ -1,18 +1,8 @@
+// Clients: the practice's client list. A row opens the client in a wide drawer
+// (contact, portal access, their matters, invoices and documents); the form adds
+// or edits a client, and the portal dialog manages the client's own logins.
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useLocation } from "react-router-dom";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { Dropdown } from "primereact/dropdown";
-import { Dialog } from "primereact/dialog";
-import { Paginator } from "primereact/paginator";
-import { Skeleton } from "primereact/skeleton";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { Message } from "primereact/message";
-import { IconField } from "primereact/iconfield";
-import { InputIcon } from "primereact/inputicon";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useLoading } from "../contexts/LoadingContext";
@@ -20,18 +10,26 @@ import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
 import ReportService from "../services/ReportService";
 import usePagination from "../hooks/usePagination";
-import "../assets/styles/Clients.css";
 import ClientPortalAccess from "../components/ClientPortalAccess";
+import DocumentCard from "../components/DocumentCard";
+import FilePreviewModal from "../components/FilePreviewModal";
+import DocumentSummaryModal from "../components/DocumentSummaryModal";
 import { INDIAN_STATES } from "./Drafting/constants/legal";
 import FieldError from "../components/FieldError";
 import { formatErrors, gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+import { usePageModal } from "../utils/pageModal";
+import { formatCurrency } from "../utils/formatCurrency";
+import { Avatar, Button, Chip, EmptyState, Icon, PageHead, PopMenu, Skel, StatusChip, type MenuItem } from "../ui/kit";
+import { Field, FilterChip, SearchInput } from "../ui/forms";
+import { Drawer, Modal, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/clients.css";
 
 // Checked here as you leave a field, and again on the server (core/validators.py).
 const CLIENT_FORMATS = { email: "email", phone: "phone", gstin: "gstin", pincode: "pincode" } as const;
-import { usePageModal } from "../utils/pageModal";
 
-// Indian states and UTs, southern states first: the same list drafting uses.
-const STATE_OPTIONS = INDIAN_STATES.map((s) => ({ label: s, value: s }));
+const fdate = (d?: string | null) =>
+  d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
 
 function Clients() {
   const [clients, setClients] = useState<any[]>([]);
@@ -61,6 +59,7 @@ function Clients() {
   const [highlightedId, setHighlightedId] = useState<any>(null);
   const [pageLoading, setPageLoading] = useState(true);
   const location = useLocation();
+  const navigate = useNavigate();
   const { token } = useAuth();
   const { withLoading } = useLoading() as any;
   const toast: any = useToast();
@@ -76,15 +75,20 @@ function Clients() {
       .then((res: any) => setHandlers(res.data || []))
       .catch(() => { /* the form still works without the pick */ });
   }, [showModal, canPickHandler, handlers.length]);
-  const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived] });
+  const { page, setPage, size } = usePagination({ defaultSize: 20, resetOn: [searchKeyword, showArchived] });
   const searchedFromGlobalNav = useRef(!!(location.state as any)?.search);
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; client: any } | null>(null);
 
-  // Document tab state
-  const [showClientDocs, setShowClientDocs] = useState(false);
-  const [docClient, setDocClient] = useState<any>(null);
+  // Client drawer state
+  const [openClient, setOpenClient] = useState<any>(null);
   const [clientDocs, setClientDocs] = useState<any[]>([]);
   const [clientDocsLoading, setClientDocsLoading] = useState(false);
+  const [clientCases, setClientCases] = useState<any[] | null>(null);
+  const [clientInvoices, setClientInvoices] = useState<any[] | null>(null);
+  const [portalLogins, setPortalLogins] = useState<any[] | null>(null);
   const [uploadClientDocFile, setUploadClientDocFile] = useState<File | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<any>(null);
+  const [summaryDoc, setSummaryDoc] = useState<any>(null);
 
   const errText = (err: any, fallback: string) => {
     const errData = err.response?.data;
@@ -164,8 +168,7 @@ function Clients() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on a new hand-off; location.state persists, so fetchClients here would re-search on every page change
   }, [location.state]);
 
-  const handleSearch = (e: any) => {
-    const keyword = e.target.value;
+  const handleSearch = (keyword: string) => {
     setSearchKeyword(keyword);
     fetchClients(keyword);
   };
@@ -223,14 +226,17 @@ function Clients() {
       // handlingAdvocate is the server's read-back; the write field is its id.
       const { handlingAdvocate, ...rest } = newClient;
       const payload = { ...rest, handlingAdvocateId: newClient.handlingAdvocateId ?? null };
+      let saved: any = null;
       if (editClientId) {
-        await withLoading(api.put(`/api/clients/update/${editClientId}`, payload), "Updating Client...");
+        saved = await withLoading(api.put(`/api/clients/update/${editClientId}`, payload), "Updating Client...");
       } else {
         await withLoading(api.post("/api/clients/create", payload), "Saving Client...");
       }
       setNewClient(emptyClient);
       setShowModal(false);
       fetchClients();
+      // Keep an open drawer in step with the edit.
+      if (editClientId && openClient?.id === editClientId) setOpenClient((c: any) => ({ ...c, ...(saved?.data || payload) }));
       success(editClientId ? "Client updated." : "Client created.");
     } catch (err: any) {
       console.error("Error saving client:", err);
@@ -247,19 +253,20 @@ function Clients() {
     try {
       await withLoading(api.delete(`/api/clients/delete/${id}`), "Deleting Client...");
       fetchClients();
+      if (openClient?.id === id) setOpenClient(null);
     } catch (err) {
       console.error("Error deleting client:", err);
       setErrorMessage(errText(err, "Failed to delete client."));
     }
   };
 
-  const handleDelete = (id: any) => {
-    confirmDialog({
-      message: "Archive this client?",
-      header: "Archive client",
-      icon: "pi pi-exclamation-triangle",
-      acceptClassName: "p-button-danger",
-      accept: () => doDelete(id),
+  const handleDelete = (c: any) => {
+    confirm({
+      title: "Archive this client?",
+      message: `${c.name} will be hidden from lists. Their cases, invoices and documents stay as they are. You can restore the client later.`,
+      confirmLabel: "Archive client",
+      danger: true,
+      accept: () => doDelete(c.id),
     });
   };
 
@@ -273,10 +280,8 @@ function Clients() {
     }
   };
 
-  // Document functions
-  const openClientDocs = useCallback(async (c: any) => {
-    setDocClient(c);
-    setShowClientDocs(true);
+  // ---------------- CLIENT DRAWER ----------------
+  const loadClientDocs = useCallback(async (c: any) => {
     setClientDocsLoading(true);
     try {
       const res = await api.get(`/api/documents/by-client/${c.id}`);
@@ -289,36 +294,59 @@ function Clients() {
     }
   }, []);
 
-  const handleClientDocDownload = async (docId: any, fileName: string) => {
+  const openClientDrawer = (c: any) => {
+    setOpenClient(c);
+    setClientCases(null); setClientInvoices(null); setPortalLogins(null);
+    setClientDocs([]); setUploadClientDocFile(null);
+    if (hasPermission("DOCUMENT_VIEW")) loadClientDocs(c);
+    // No per-client endpoints for these: read the firm's lists and keep this client's rows.
+    if (hasPermission("CASE_VIEW")) {
+      api.get("/api/cases/my-cases")
+        .then((r: any) => setClientCases((r.data || []).filter((x: any) => x.clientId === c.id)))
+        .catch(() => setClientCases([]));
+    }
+    if (hasPermission("INVOICE_VIEW")) {
+      api.get("/api/invoices/my-invoices")
+        .then((r: any) => setClientInvoices((r.data || []).filter((x: any) => x.clientId === c.id)))
+        .catch(() => setClientInvoices([]));
+    }
+    if (hasPermission("CLIENT_EDIT")) {
+      api.get(`/api/clients/${c.id}/logins`)
+        .then((r: any) => setPortalLogins(r.data || []))
+        .catch(() => setPortalLogins(null));
+    }
+  };
+
+  const handleClientDocDownload = async (d: any) => {
     try {
-      const res = await api.get(`/api/documents/download/${docId}`, { responseType: "blob" });
+      const res = await api.get(`/api/documents/download/${d.id}`, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");
-      a.href = url; a.download = fileName;
+      a.href = url; a.download = d.originalName || d.documentName;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) { console.error("Download error:", err); }
   };
 
-  const handleClientDocPreview = async (docId: any) => {
+  const handleShareToggle = async (doc: any) => {
     try {
-      const res = await api.get(`/api/documents/preview/${docId}`, { responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      window.open(url, "_blank");
-    } catch (err) {
-      console.error("Preview error:", err);
+      const r = await api.put(`/api/documents/${doc.id}/client-visible`, { visible: !doc.clientVisible });
+      setClientDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, clientVisible: r.data.clientVisible } : d)));
+      success(r.data.clientVisible ? `"${doc.documentName}" is now visible to the client.` : `"${doc.documentName}" is no longer shared.`);
+    } catch (err: any) {
+      error(err.response?.data?.error || "Could not change sharing.");
     }
   };
 
   const uploadClientDoc = async () => {
-    if (!uploadClientDocFile || !docClient) return;
+    if (!uploadClientDocFile || !openClient) return;
     const formData = new FormData();
     formData.append("file", uploadClientDocFile);
-    formData.append("clientId", docClient.id);
+    formData.append("clientId", openClient.id);
     try {
       await withLoading(api.post("/api/documents/upload", formData), "Uploading Document...");
       setUploadClientDocFile(null);
-      openClientDocs(docClient);
+      loadClientDocs(openClient);
       success("Document uploaded.");
     } catch (err: any) {
       console.error("Upload error:", err);
@@ -326,198 +354,276 @@ function Clients() {
     }
   };
 
-  const field = (name: string, label: string, placeholder: string, opts: any = {}) => (
-    <div className="client-form-field">
-      <label htmlFor={`cf-${name}`}>{label}{opts.required && <span className="required"> *</span>}</label>
-      <InputText id={`cf-${name}`} name={name} placeholder={placeholder} value={newClient[name] || ""} onChange={handleChange}
-        onBlur={() => setTouched((t) => ({ ...t, [name]: true }))}
-        className={errFor(name) ? "p-invalid" : undefined} {...opts} />
-      <FieldError error={errFor(name)} warning={name === "gstin" ? gstinWarn : undefined} />
-    </div>
-  );
-
-  const actionsBody = (c: any) => (
-    <div className="flex gap-1 align-items-center">
-      {showArchived ? (
-        hasPermission("CLIENT_EDIT") && (
-          <Button size="small" text icon="pi pi-replay" label="Restore" onClick={() => handleRestore(c.id)} />
-        )
-      ) : (
-        <>
-          {hasPermission("CLIENT_EDIT") && (
-            <Button size="small" text label="Edit" icon="pi pi-pencil" onClick={() => openEdit(c)} />
-          )}
-          {hasPermission("CLIENT_EDIT") && (
-            <Button size="small" text label="Logins" icon="pi pi-users" tooltip="Logins for this client" tooltipOptions={{ position: "top" }} onClick={() => setPortalFor(c)} />
-          )}
-          {hasPermission("CLIENT_DELETE") && (
-            <Button size="small" text severity="danger" label="Archive" icon="pi pi-inbox" onClick={() => handleDelete(c.id)} />
-          )}
-        </>
-      )}
-      {hasPermission("REPORT_EXPORT") && (
-        <Button size="small" text rounded icon="pi pi-file-pdf" tooltip="Export PDF" tooltipOptions={{ position: "top" }} aria-label="Export PDF"
-          onClick={() => ReportService.downloadClientDetail(c.id, c.name)} />
-      )}
-    </div>
-  );
-
-  const cell = (key: string, dash = false) => (c: any) => {
-    const v = dash ? (c[key] || "—") : c[key];
-    return <span className="clients-cell" title={v}>{v}</span>;
+  // ---------------- FORM ----------------
+  const field = (name: string, label: string, placeholder: string, opts: any = {}) => {
+    const { full, hint, ...inputOpts } = opts;
+    return (
+      <Field label={label} required={inputOpts.required} full={full} hint={hint}>
+        {(id, d) => (
+          <>
+            <input id={id} aria-describedby={d} className="input" name={name} placeholder={placeholder} value={newClient[name] || ""}
+              onChange={handleChange} onBlur={() => setTouched((t) => ({ ...t, [name]: true }))}
+              aria-invalid={!!errFor(name) || undefined} {...inputOpts} />
+            <FieldError error={errFor(name)} warning={name === "gstin" ? gstinWarn : undefined} />
+          </>
+        )}
+      </Field>
+    );
   };
 
+  const rowMenu = (c: any): MenuItem[] => {
+    const items: MenuItem[] = [{ label: "Open", icon: "eye", onClick: () => openClientDrawer(c) }];
+    if (showArchived) {
+      if (hasPermission("CLIENT_EDIT")) items.push({ label: "Restore", icon: "restore", onClick: () => handleRestore(c.id) });
+    } else if (hasPermission("CLIENT_EDIT")) {
+      items.push({ label: "Edit", icon: "edit", onClick: () => openEdit(c) });
+      items.push({ label: "Portal access", icon: "key", onClick: () => setPortalFor(c) });
+    }
+    if (hasPermission("REPORT_EXPORT")) items.push({ label: "Export PDF", icon: "download", onClick: () => ReportService.downloadClientDetail(c.id, c.name) });
+    if (!showArchived && hasPermission("CLIENT_DELETE")) items.push("-", { label: "Archive", icon: "archive", danger: true, onClick: () => handleDelete(c) });
+    return items;
+  };
+
+  const columns: Column<any>[] = [
+    { key: "name", label: "Client", render: (c) => (
+      <div className="row" style={{ gap: 10, minWidth: 0 }}>
+        <Avatar name={c.name} size="sm" />
+        <div style={{ minWidth: 0 }}>
+          <div className="cell-title ellipsis" title={c.name}>{c.name}{showArchived && <> <Chip>Archived</Chip></>}</div>
+          {c.description && <div className="cell-sub ellipsis" style={{ maxWidth: 260 }} title={c.description}>{c.description}</div>}
+        </div>
+      </div>
+    ) },
+    { key: "phone", label: "Contact", hideSm: true, render: (c) => (
+      <><div className="small nowrap">{c.phone || "—"}</div><div className="cell-sub">{c.email}</div></>
+    ) },
+    { key: "city", label: "Location", hideSm: true, render: (c) => (
+      <>{c.city || <span className="faint">—</span>}{c.state && <div className="cell-sub">{c.state}</div>}</>
+    ) },
+    { key: "advocate", label: "Handling advocate", hideSm: true, render: (c) => c.handlingAdvocate?.name || <span className="faint">—</span> },
+    { key: "gstin", label: "GSTIN", hideSm: true, render: (c) => c.gstin ? <span className="mono xs">{c.gstin}</span> : <span className="faint">—</span> },
+    { key: "a", label: <span className="sr-only">Actions</span>, align: "right", render: (c) => (
+      <Button size="sm" variant="ghost" iconOnly icon="more" aria-label={`Actions for ${c.name}`} aria-haspopup="menu"
+        onClick={(e) => { e.stopPropagation(); setMenu({ anchor: e.currentTarget, client: c }); }} />
+    ) },
+  ];
+
+  const oc = openClient;
+  const portalOn = !!portalLogins?.some((a) => a.isActive);
+  const address = oc ? ([oc.building, oc.street, oc.city, oc.district, oc.state, oc.pincode].filter(Boolean).join(", ") || oc.address) : "";
+  const billed = (clientInvoices || []).filter((i) => !/CANCEL/i.test(i.status || "")).reduce((s, i) => s + Number(i.amount || 0), 0);
+  const outstanding = (clientInvoices || []).filter((i) => !/CANCEL/i.test(i.status || "")).reduce((s, i) => s + Number(i.balance || 0), 0);
+  const activeCases = (clientCases || []).filter((x) => !/CLOSED|DISPOSED/i.test(x.status || ""));
+
   return (
-    <div className="clients-container">
-      <div className="clients-header flex flex-wrap gap-2 align-items-center">
-        <IconField iconPosition="left" className="flex-1" style={{ minWidth: 220 }}>
-          <InputIcon className="pi pi-search" />
-          <InputText className="w-full" placeholder="Search by name, email, or phone" value={searchKeyword} onChange={handleSearch} />
-        </IconField>
-        {hasPermission("CLIENT_CREATE") && (
-          <Button icon="pi pi-plus" label="Add New Client" onClick={() => { setNewClient(emptyClient); setEditClientId(null); setShowModal(true); }} />
-        )}
-        <Button outlined icon={showArchived ? "pi pi-arrow-left" : "pi pi-inbox"} label={showArchived ? "Back to Active" : "View Archived"}
-          onClick={() => setShowArchived(!showArchived)} />
+    <div>
+      <PageHead title="Clients"
+        sub={`${totalElements} ${showArchived ? "archived " : ""}client${totalElements !== 1 ? "s" : ""}. Open a client to see their matters, invoices and documents.`}
+        actions={hasPermission("CLIENT_CREATE") && (
+          <Button variant="primary" icon="plus" onClick={() => { setNewClient(emptyClient); setEditClientId(null); setShowModal(true); }}>Add client</Button>
+        )} />
+
+      <div className="toolbar">
+        <SearchInput value={searchKeyword} onChange={handleSearch} placeholder="Search name, email or phone" aria-label="Search clients" />
+        <FilterChip on={showArchived} onClick={() => setShowArchived(!showArchived)}><Icon name="archive" size="sm" />Show archived</FilterChip>
       </div>
 
-      {errorMessage && <Message severity="error" text={errorMessage} className="w-full justify-content-start mb-3" />}
+      {errorMessage && <div className="callout bad" style={{ marginBottom: "var(--s4)" }}><Icon name="warn" size="sm" /><span>{errorMessage}</span></div>}
 
-      <Dialog visible={showModal} onHide={() => setShowModal(false)} header={editClientId ? "Edit Client" : "Add New Client"}
-        style={{ width: "min(720px, 95vw)" }} modal>
-        <form className="client-form" onSubmit={handleSubmit}>
-          <p className="client-form-section">Basic Details</p>
-          <div className="client-form-row">
-            {field("name", "Name", "Name", { required: true })}
-            {field("description", "Description", "Short Description about Client.")}
-          </div>
-          {field("website", "Website", "Website")}
-          <div className="client-form-row">
-            {field("email", "Email", "Email address", { required: true, type: "email" })}
-            {field("phone", "Phone", "Phone number", { required: true })}
-          </div>
+      <div className="clients-table">
+        <DataTable rows={clients} columns={columns} rowKey={(c) => c.id} loading={pageLoading} caption="Clients"
+          page={page} total={totalElements} onPage={setPage} pageSize={size}
+          onRow={openClientDrawer}
+          rowClass={(c) => (highlightedId === c.id ? "highlight-row" : undefined)}
+          empty={searchKeyword
+            ? { icon: "search", title: "No clients match", text: "Try a different name, email or phone number." }
+            : showArchived ? { icon: "archive", title: "No archived clients" }
+              : { icon: "users", title: "No clients yet", text: "Add your first client to open matters and raise invoices." }} />
+      </div>
+      {menu && <PopMenu anchor={menu.anchor} items={rowMenu(menu.client)} onClose={() => setMenu(null)} align="right" />}
+
+      {/* Add / edit client */}
+      <Modal open={showModal} onClose={() => setShowModal(false)} size="wide"
+        title={editClientId ? "Edit client" : "Add client"}
+        sub={editClientId ? newClient.name : "Contact details, GST registration and the advocate who will handle the matter."}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowModal(false)}>Cancel</Button>
+          <Button type="submit" variant="primary" form="client-form">{editClientId ? "Update client" : "Save client"}</Button>
+        </>}>
+        <form id="client-form" className="form-grid cl-form" onSubmit={handleSubmit} noValidate>
+          <p className="cl-form-section">Basic details</p>
+          {field("name", "Name", "Full name or firm name", { required: true })}
+          {field("description", "Description", "Short description about the client")}
+          {field("website", "Website", "https://", { full: true })}
+          {field("email", "Email", "name@example.com", { required: true, type: "email" })}
+          {field("phone", "Phone", "+91 98765 43210", { required: true, type: "tel" })}
           {/* Billing currency is always INR for now (set in emptyClient), so no picker. */}
-          <div className="client-form-row">
-            {field("gstin", "GSTIN", "15 characters, e.g. 33ABCDE1234F1Z7 (leave blank if none)", { maxLength: 15 })}
-          </div>
+          {field("gstin", "GSTIN", "e.g. 33ABCDE1234F1Z7", { maxLength: 15, hint: "15 characters. Leave blank if none.", className: "input mono" })}
           {canPickHandler && (
-            <div className="client-form-row">
-              <div className="client-form-field">
-                <label htmlFor="cf-handlingAdvocate">Handling Advocate</label>
-                <Dropdown inputId="cf-handlingAdvocate" value={newClient.handlingAdvocateId ?? null}
-                  options={handlers} optionLabel="name" optionValue="id" showClear filter
-                  placeholder="Who will take this client's case?"
-                  onChange={(e) => setNewClient({ ...newClient, handlingAdvocateId: e.value ?? null })} />
-                <small className="p-text-secondary">They're notified in the app and by email when you save.</small>
-              </div>
-            </div>
+            <Field label="Handling advocate" hint="They're notified in the app and by email when you save.">
+              {(id, d) => (
+                <select id={id} aria-describedby={d} className="input" value={newClient.handlingAdvocateId ?? ""}
+                  onChange={(e) => setNewClient({ ...newClient, handlingAdvocateId: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">Who will take this client&apos;s case?</option>
+                  {handlers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+                </select>
+              )}
+            </Field>
           )}
 
-          <p className="client-form-section">Client's Address (Primary)</p>
+          <p className="cl-form-section">Client&apos;s address (primary)</p>
           {/* Clients saved before the address was split into parts have only
               this one line. Show it so it can be read and corrected; typing
               the parts below replaces it on save. */}
           {editClientId && legacyAddress && (
-            <div className="client-form-row">
-              <div className="client-form-field" style={{ flex: 1 }}>
-                <label htmlFor="cf-address">Saved address</label>
-                <InputText id="cf-address" name="address" value={newClient.address || ""} onChange={handleChange} />
-                <small className="p-text-secondary">Saved before the address had separate fields. Fill in the fields below to replace it.</small>
-              </div>
-            </div>
+            <Field label="Saved address" full hint="Saved before the address had separate fields. Fill in the fields below to replace it.">
+              {(id, d) => <input id={id} aria-describedby={d} className="input" name="address" value={newClient.address || ""} onChange={handleChange} />}
+            </Field>
           )}
-          <div className="client-form-row">
-            {field("building", "Building", "Building")}
-            {field("street", "Street", "Street")}
-          </div>
-          <div className="client-form-row">
-            {field("city", "City", "City")}
-            {field("district", "District", "District")}
-          </div>
-          <div className="client-form-row">
-            <div className="client-form-field">
-              <label htmlFor="cf-state">State</label>
-              {/* Editable, so a value typed before the list existed ("TAMIL NADU") still shows. */}
-              <Dropdown inputId="cf-state" value={newClient.state || ""} options={STATE_OPTIONS}
-                filter editable placeholder="Select state" appendTo={document.body}
-                onChange={(e) => setNewClient({ ...newClient, state: e.value ?? "" })} />
-            </div>
-            {field("pincode", "Pincode", "6 digits", { maxLength: 6, inputMode: "numeric" })}
-          </div>
-          {field("country", "Country", "Country")}
-
-          <div className="flex justify-content-end gap-2 mt-3">
-            <Button type="button" outlined label="Cancel" onClick={() => setShowModal(false)} />
-            <Button type="submit" label={editClientId ? "Update Client" : "Save Client"} />
-          </div>
-        </form>
-      </Dialog>
-
-      <div className="clients-table">
-        {pageLoading ? (
-          <div className="flex flex-column gap-2 p-2">
-            {Array.from({ length: Math.min(size, 10) }).map((_, i) => <Skeleton key={i} height="2rem" />)}
-          </div>
-        ) : clients.length === 0 ? (
-          <p className="no-data">No clients found.</p>
-        ) : (
-          <DataTable value={clients} dataKey="id" size="small" scrollable
-            rowClassName={(c: any) => (highlightedId === c.id ? "highlight-row" : "")}>
-            <Column header="Name" body={cell("name")} />
-            <Column header="Email" body={cell("email")} />
-            <Column header="Phone" body={cell("phone")} />
-            <Column header="Advocate" body={(c: any) => {
-              const v = c.handlingAdvocate?.name || "—";
-              return <span className="clients-cell" title={v}>{v}</span>;
-            }} />
-            <Column header="GSTIN" body={cell("gstin", true)} />
-            <Column header="City" body={cell("city", true)} />
-            <Column header="State" body={cell("state", true)} />
-            <Column header="Actions" body={actionsBody} />
-          </DataTable>
-        )}
-        {totalElements > 0 && (
-          <Paginator first={page * size} rows={size} totalRecords={totalElements} rowsPerPageOptions={[10, 20, 50, 100]}
-            onPageChange={(e) => { if (e.rows !== size) { setSize(e.rows); setPage(0); } else setPage(e.page); }} />
-        )}
-      </div>
-
-      {/* Client Documents Modal */}
-      <Dialog visible={showClientDocs && !!docClient} onHide={() => setShowClientDocs(false)}
-        header={`Documents — ${docClient?.name || ""}`} style={{ width: "min(640px, 95vw)" }} modal>
-        {clientDocsLoading ? (
-          <div className="flex justify-content-center p-3"><ProgressSpinner style={{ width: 36, height: 36 }} /></div>
-        ) : (
-          <>
-            {clientDocs.length === 0 ? (
-              <p className="no-data">No documents linked to this client.</p>
-            ) : (
-              <div className="case-docs-list">
-                {clientDocs.map((d) => (
-                  <div key={d.id} className="case-doc-item">
-                    <i className="pi pi-folder" />
-                    <span className="case-doc-name">{d.documentName}</span>
-                    <span className="case-doc-meta">{d.category || "Other"}</span>
-                    <span className="case-doc-meta">{d.version > 1 ? `v${d.version}` : "v1"}</span>
-                    <div className="flex gap-1">
-                      <Button text rounded icon="pi pi-eye" tooltip="Preview" tooltipOptions={{ position: "top" }} onClick={() => handleClientDocPreview(d.id)} />
-                      <Button text rounded icon="pi pi-download" tooltip="Download" tooltipOptions={{ position: "top" }} onClick={() => handleClientDocDownload(d.id, d.originalName || d.documentName)} />
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {field("building", "Building", "Door no., building")}
+          {field("street", "Street", "Street, area")}
+          {field("city", "City", "City")}
+          {field("district", "District", "District")}
+          {/* A free-typed value ("TAMIL NADU") from before the list existed still shows. */}
+          <Field label="State">
+            {(id) => (
+              <>
+                <input id={id} className="input" list="cl-states" placeholder="Select state" value={newClient.state || ""}
+                  onChange={(e) => setNewClient({ ...newClient, state: e.target.value })} />
+                <datalist id="cl-states">{INDIAN_STATES.map((s: string) => <option key={s} value={s} />)}</datalist>
+              </>
             )}
-            {hasPermission("DOCUMENT_UPLOAD") && (
-              <div className="flex gap-2 align-items-center mt-3">
-                <input type="file" onChange={(e) => setUploadClientDocFile(e.target.files?.[0] || null)} />
-                <Button icon="pi pi-upload" label="Upload" onClick={uploadClientDoc} disabled={!uploadClientDocFile} />
+          </Field>
+          {field("pincode", "Pincode", "6 digits", { maxLength: 6, inputMode: "numeric" })}
+          {field("country", "Country", "Country")}
+        </form>
+      </Modal>
+
+      {/* Client detail */}
+      <Drawer open={!!oc} onClose={() => setOpenClient(null)} wide title="Client"
+        footer={oc && <>
+          {hasPermission("REPORT_EXPORT") && <Button icon="download" onClick={() => ReportService.downloadClientDetail(oc.id, oc.name)}>Export PDF</Button>}
+          <Button variant="primary" onClick={() => setOpenClient(null)}>Done</Button>
+        </>}>
+        {oc && (
+          <>
+            <div className="cl-head">
+              <Avatar name={oc.name} size="lg" />
+              <div className="grow">
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <Chip plain>{oc.gstin ? "GST registered" : "Client"}</Chip>
+                  {showArchived && <Chip>Archived</Chip>}
+                  {portalLogins && (portalOn ? <Chip tone="ok">Portal access on</Chip> : <Chip>No portal access</Chip>)}
+                  {oc.createdAt && <span className="faint small">Client since {new Date(oc.createdAt).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</span>}
+                </div>
+                <h2>{oc.name}</h2>
+                {oc.description && <p className="muted small" style={{ marginBottom: 8 }}>{oc.description}</p>}
+                <div className="meta-line">
+                  {oc.phone && <span><Icon name="phone" size="sm" /><a className="link" href={`tel:${oc.phone}`}>{oc.phone}</a></span>}
+                  {oc.email && <span><Icon name="mail" size="sm" /><a className="link" href={`mailto:${oc.email}`}>{oc.email}</a></span>}
+                  {address && <span><Icon name="pin" size="sm" />{address}</span>}
+                  {oc.handlingAdvocate?.name && <span><Icon name="user" size="sm" />{oc.handlingAdvocate.name}</span>}
+                  {oc.gstin && <span className="mono">GSTIN {oc.gstin}</span>}
+                  {oc.website && <span><Icon name="globe" size="sm" />{oc.website}</span>}
+                </div>
               </div>
+              {!showArchived && hasPermission("CLIENT_EDIT") && (
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <Button icon="edit" onClick={() => openEdit(oc)}>Edit</Button>
+                  <Button icon="globe" onClick={() => setPortalFor(oc)}>Portal access</Button>
+                </div>
+              )}
+            </div>
+
+            <div className="figures">
+              {hasPermission("CASE_VIEW") && (
+                <div className="figure"><div className="lbl">Active matters</div>
+                  <div className="val">{clientCases ? activeCases.length : "…"}</div>
+                  <div className="meta">{clientCases ? `${clientCases.length} in total` : "Loading"}</div></div>
+              )}
+              {hasPermission("INVOICE_VIEW") && <>
+                <div className="figure"><div className="lbl">Billed</div>
+                  <div className="val">{clientInvoices ? formatCurrency(billed) : "…"}</div>
+                  <div className="meta">{clientInvoices ? `${clientInvoices.length} invoice${clientInvoices.length !== 1 ? "s" : ""}` : "Loading"}</div></div>
+                <div className="figure"><div className="lbl">Outstanding</div>
+                  <div className="val">{clientInvoices ? formatCurrency(outstanding) : "…"}</div>
+                  <div className="meta">{outstanding ? "Unpaid on invoices" : "Nothing due"}</div></div>
+              </>}
+              {hasPermission("DOCUMENT_VIEW") && (
+                <div className="figure"><div className="lbl">Documents</div>
+                  <div className="val">{clientDocsLoading ? "…" : clientDocs.length}</div>
+                  <div className="meta">{clientDocs.filter((d) => d.clientVisible).length} shared on the portal</div></div>
+              )}
+            </div>
+
+            {hasPermission("CASE_VIEW") && (
+              <section className="cl-section">
+                <h3>Matters <span className="faint small">{clientCases?.length ?? ""}</span></h3>
+                <DataTable rows={clientCases || []} loading={!clientCases} rowKey={(x) => x.id} pageSize={8} caption="Matters"
+                  onRow={(x) => navigate(`/dashboard/cases/${x.id}`)}
+                  columns={[
+                    { key: "caseNumber", label: "Case", render: (x) => <><div className="mono small cell-title">{x.caseNumber}</div><div className="cell-sub ellipsis" style={{ maxWidth: 280 }}>{x.caseTitle}</div></> },
+                    { key: "courtLevel", label: "Court", hideSm: true, render: (x) => x.courtLevel || <span className="faint">—</span> },
+                    { key: "pendingFromClient", label: "Fee due", align: "right", render: (x) => Number(x.pendingFromClient) > 0 ? <span className="mono">{formatCurrency(x.pendingFromClient)}</span> : <span className="faint">Nil</span> },
+                    { key: "status", label: "Status", render: (x) => <StatusChip status={x.status} /> },
+                  ]}
+                  empty={{ icon: "case", title: "No matters yet", text: "Open a case for this client to start tracking hearings." }} />
+              </section>
+            )}
+
+            {hasPermission("INVOICE_VIEW") && (
+              <section className="cl-section">
+                <h3>Invoices <span className="faint small">{clientInvoices?.length ?? ""}</span></h3>
+                <DataTable rows={clientInvoices || []} loading={!clientInvoices} rowKey={(i) => i.id} pageSize={8} caption="Invoices"
+                  columns={[
+                    { key: "invoiceNumber", label: "Invoice no", render: (i) => <span className="mono small">{i.invoiceNumber}</span> },
+                    { key: "caseTitle", label: "Case", hideSm: true, render: (i) => i.caseEntity?.caseNumber ? <span className="mono small">{i.caseEntity.caseNumber}</span> : (i.caseTitle || <span className="faint">—</span>) },
+                    { key: "invoiceDate", label: "Date", render: (i) => fdate(i.invoiceDate) },
+                    { key: "amount", label: "Total", align: "right", render: (i) => <span className="mono">{formatCurrency(i.amount)}</span> },
+                    { key: "status", label: "Status", render: (i) => <StatusChip status={i.status} /> },
+                  ]}
+                  empty={{ icon: "receipt", title: "No invoices yet" }} />
+              </section>
+            )}
+
+            {hasPermission("DOCUMENT_VIEW") && (
+              <section className="cl-section">
+                <div className="row between wrap" style={{ gap: 8, marginBottom: 8 }}>
+                  <h3 style={{ fontSize: "var(--t-md)" }}>Documents</h3>
+                  {hasPermission("DOCUMENT_UPLOAD") && (
+                    <div className="row wrap" style={{ gap: 6 }}>
+                      <label className="btn sm">
+                        <Icon name="file" size="sm" />{uploadClientDocFile ? <span className="ellipsis" style={{ maxWidth: 160 }}>{uploadClientDocFile.name}</span> : "Choose file"}
+                        <input type="file" hidden onChange={(e) => setUploadClientDocFile(e.target.files?.[0] || null)} aria-label="Document to upload" />
+                      </label>
+                      <Button size="sm" variant="primary" icon="upload" onClick={uploadClientDoc} disabled={!uploadClientDocFile}>Upload</Button>
+                    </div>
+                  )}
+                </div>
+                <p className="faint xs" style={{ marginBottom: 10 }}>Shared documents appear on the client&apos;s portal.</p>
+                {clientDocsLoading ? (
+                  <div className="doc-grid">{[1, 2, 3].map((i) => <Skel key={i} h={200} />)}</div>
+                ) : clientDocs.length === 0 ? (
+                  <EmptyState icon="folder" title="No documents" text="No documents are linked to this client yet." />
+                ) : (
+                  <div className="doc-grid">
+                    {clientDocs.map((d) => (
+                      <DocumentCard key={d.id} doc={d} onPreview={setPreviewDoc} onDownload={handleClientDocDownload}
+                        onSummary={setSummaryDoc}
+                        onShareToggle={hasPermission("DOCUMENT_EDIT") ? handleShareToggle : undefined} />
+                    ))}
+                  </div>
+                )}
+              </section>
             )}
           </>
         )}
-      </Dialog>
-      <ConfirmDialog />
-      <ClientPortalAccess client={portalFor} isOpen={!!portalFor} onClose={() => setPortalFor(null)} toast={toast} />
+      </Drawer>
+
+      {previewDoc && <FilePreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} onDownload={handleClientDocDownload} />}
+      {summaryDoc && <DocumentSummaryModal doc={summaryDoc} onClose={() => setSummaryDoc(null)} canRegenerate={hasPermission("DOCUMENT_EDIT")} />}
+      <ClientPortalAccess client={portalFor} isOpen={!!portalFor} onClose={() => setPortalFor(null)} toast={toast}
+        onChanged={(acc) => { if (openClient && portalFor?.id === openClient.id) setPortalLogins(acc); }} />
     </div>
   );
 }

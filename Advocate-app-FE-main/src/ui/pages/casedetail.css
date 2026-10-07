@@ -1,0 +1,68 @@
+/* Case detail (/dashboard/cases/:id) plus the task review and draft-changes
+   pieces it shares with Tasks and Drafting. Red Tape tokens only. */
+
+/* ---------- Case page (prototype .cs-*) ---------- */
+.cs-big-date { font: 500 var(--t-3xl)/1.05 var(--f-display); letter-spacing: -.02em; }
+.cs-note { padding: 12px 0; border-top: 1px solid var(--line); }
+.cs-note:first-child { border-top: 0; }
+.cs-task { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; padding: 10px var(--s5); border-top: 1px solid var(--line); }
+.cs-task:first-child { border-top: 0; }
+.cs-task .ttl { font-size: var(--t-sm); font-weight: 500; }
+.cs-task.done .ttl, .cs-task.cancelled .ttl { text-decoration: line-through; color: var(--ink-3); }
+.cs-task .grow { min-width: 200px; }
+.cs-task .cs-task-side { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.cs-task-check { width: 22px; height: 22px; flex: none; border-radius: 50%; border: 1.5px solid var(--line-strong); background: var(--surface); display: grid; place-items: center; color: var(--ink-inverse); cursor: pointer; padding: 0; }
+.cs-task-check[aria-pressed="true"] { background: var(--ok); border-color: var(--ok); }
+.cs-task-check[disabled] { cursor: not-allowed; opacity: .5; }
+.cs-sub { font-size: var(--t-xs); color: var(--ink-3); margin-top: 2px; }
+.cs-today { color: var(--tape-ink); font-weight: 600; }
+.cs-sec-gap { display: flex; flex-direction: column; gap: var(--s5); }
+.cs-inline { display: inline-flex; align-items: center; gap: 4px; min-width: 0; flex-wrap: wrap; }
+.cs-inline .input { height: 30px; min-width: 160px; max-width: 100%; }
+.cs-court-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s3) var(--s4); margin-top: var(--s4); padding-top: var(--s4); border-top: 1px dashed var(--line-strong); }
+.cs-court-strip dt { font-size: var(--t-xs); color: var(--ink-3); }
+.cs-court-strip dd { margin: 2px 0 0; font-size: var(--t-sm); word-break: break-word; }
+.cs-docket-acts { margin-top: var(--s5); }
+.cs-file-btn { position: relative; overflow: hidden; }
+.cs-file-btn input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.cs-act-results { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); max-height: 260px; overflow-y: auto; }
+.cs-act-results button { display: block; width: 100%; text-align: left; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); background: none; font: inherit; font-size: var(--t-sm); color: var(--ink); cursor: pointer; }
+.cs-act-results button:first-child { border-top: 0; }
+.cs-act-results button:hover, .cs-act-results button[aria-pressed="true"] { background: var(--surface-2); }
+.cs-inv-line { display: grid; grid-template-columns: minmax(0, 1fr) 140px auto; gap: var(--s2); align-items: end; }
+.cs-inv-total { display: flex; justify-content: space-between; padding-top: var(--s3); border-top: 1px solid var(--line); font-weight: 600; }
+.cs-file-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-xs); color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 1px 8px; cursor: pointer; }
+.cs-file-chip:hover { border-color: var(--line-strong); }
+.cs-tl-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-extra-table td { word-break: break-word; }
+@media (max-width: 768px) {
+  .cs-inv-line { grid-template-columns: 1fr 110px auto; }
+  .cs-task .grow { min-width: 0; flex-basis: calc(100% - 40px); }
+  .cs-task .cs-task-side { justify-content: flex-start; padding-left: 34px; }
+}
+
+/* ---------- Task review (components/TaskReview.tsx) ---------- */
+.task-review-btn { white-space: nowrap; }
+.task-review-note { margin-top: 4px; font-size: var(--t-xs); color: var(--ink-2); padding: 4px 8px; border-left: 3px solid var(--ok); border-radius: var(--r-xs); background: var(--ok-soft); }
+.task-review-note.changes { border-left-color: var(--bad); background: var(--bad-soft); }
+.task-submission { font-size: var(--t-xs); padding: 4px 8px; border-left: 3px solid var(--ink-3); border-radius: var(--r-xs); background: var(--surface-2); }
+.task-submission-head { color: var(--ink-3); display: inline-flex; align-items: center; gap: 4px; }
+.task-submission-note { white-space: pre-wrap; color: var(--ink); margin-top: 2px; }
+.task-submission-summary { display: flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 4px; }
+.task-submission-summary .task-submission-head { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.task-work { display: flex; flex-direction: column; gap: 10px; }
+.task-work .task-submission { font-size: var(--t-sm); padding: 8px 10px; }
+.task-work-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: var(--t-sm); color: var(--ink-2); }
+.task-work-facts > span { display: inline-flex; align-items: center; gap: 4px; }
+.task-work-files { display: flex; flex-wrap: wrap; gap: 4px; border-top: 1px solid var(--line); padding-top: 8px; }
+.task-muted { color: var(--ink-3); font-style: italic; }
+
+/* ---------- Draft changes (components/DraftChanges.tsx) ---------- */
+.task-submission-changes { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line-strong); }
+.task-submission-changes-title { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); margin-bottom: 4px; }
+.draft-changes { display: flex; flex-direction: column; gap: 8px; }
+.draft-change-head { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.draft-diff { white-space: pre-wrap; line-height: 1.55; color: var(--ink); font-size: var(--t-sm); }
+.draft-diff ins { text-decoration: underline; text-decoration-color: var(--ok); background: var(--ok-soft); color: inherit; border-radius: 2px; }
+.draft-diff del { text-decoration: line-through; background: var(--bad-soft); color: var(--ink-3); border-radius: 2px; }
+.draft-changes-none { font-size: var(--t-sm); color: var(--ink-3); font-style: italic; }

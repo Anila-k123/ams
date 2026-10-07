@@ -1,15 +1,12 @@
+// Roles & Permissions: a role decides what its people can see and change.
 import { useEffect, useState } from "react";
-import { Button } from "primereact/button";
-import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
-import { Checkbox } from "primereact/checkbox";
-import { Card } from "primereact/card";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import rbacService from "../services/rbacService";
 import { usePermission } from "../contexts/PermissionContext";
 import { useToast } from "../contexts/ToastContext";
-import "../assets/styles/AdminManagement.css";
+import { PageHead, Button, Chip, EmptyState, Skel, Icon } from "../ui/kit";
+import { TextField } from "../ui/forms";
+import { Modal, confirm } from "../ui/overlays";
+import "../ui/pages/firm.css";
 
 export default function RoleManagement() {
   const [roles, setRoles] = useState<any[]>([]);
@@ -21,6 +18,8 @@ export default function RoleManagement() {
   const [selectedPerms, setSelectedPerms] = useState<any[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [triedSave, setTriedSave] = useState(false);
+  const [saving, setSaving] = useState(false);
   const { hasPermission } = usePermission() as any;
   const { success, error } = useToast() as any;
   const canManage = hasPermission("ROLE_MANAGE");
@@ -46,12 +45,14 @@ export default function RoleManagement() {
     setSelectedPerms([]);
     setPermsLoading(false);
     setLoadFailed(false);
+    setTriedSave(false);
     setShowForm(true);
   };
 
   const openEdit = async (role: any) => {
     setEditingRole(role);
     setLoadFailed(false);
+    setTriedSave(false);
     setForm({ name: role.name, description: role.description || "" });
     // GET roles/<id>/permissions returns full permission OBJECTS; map to ids
     // so saving never posts an empty list and wipes the role.
@@ -70,13 +71,14 @@ export default function RoleManagement() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { error("Role name is required."); return; }
+    if (!form.name.trim()) { setTriedSave(true); error("Role name is required."); return; }
     // Never write a permission set we failed to read — that is the wipe.
     if (editingRole && (permsLoading || loadFailed)) {
       error(permsLoading ? "Still loading this role's permissions…"
                          : "Cannot save: this role's current permissions could not be loaded.");
       return;
     }
+    setSaving(true);
     try {
       if (editingRole) {
         await rbacService.updateRole(editingRole.id, form);
@@ -92,18 +94,20 @@ export default function RoleManagement() {
       loadData();
     } catch (err: any) {
       error(err.message || "Couldn't save the role.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = (id: any) => {
-    confirmDialog({
+  const handleDelete = (role: any) => {
+    confirm({
+      title: `Delete ${role.name}?`,
       message: "Delete this role? This cannot be undone.",
-      header: "Delete role",
-      icon: "pi pi-exclamation-triangle",
-      acceptClassName: "p-button-danger",
+      danger: true,
+      confirmLabel: "Delete role",
       accept: async () => {
         try {
-          await rbacService.deleteRole(id);
+          await rbacService.deleteRole(role.id);
           success("Role deleted.");
           loadData();
         } catch (err: any) {
@@ -119,95 +123,120 @@ export default function RoleManagement() {
     );
   };
 
+  // "Select all in module": on adds every permission in the module, off removes them.
+  const toggleModule = (perms: any[], on: boolean) => {
+    const ids = perms.map((p) => p.id);
+    setSelectedPerms((prev) => (on ? [...new Set([...prev, ...ids])] : prev.filter((p) => !ids.includes(p))));
+  };
+
   const groupedPerms = permissions.reduce((acc: Record<string, any[]>, p: any) => {
     if (!acc[p.module]) acc[p.module] = [];
     acc[p.module].push(p);
     return acc;
   }, {});
 
-  if (loading) return <div className="flex justify-content-center p-5"><ProgressSpinner style={{ width: 40, height: 40 }} /></div>;
-  if (!canManage) return <div className="am-empty">You do not have permission to manage roles.</div>;
+  if (!canManage) {
+    return <EmptyState icon="lock" title="No access" text="You do not have permission to manage roles." />;
+  }
 
-  const footer = (
-    <div className="flex justify-content-end gap-2">
-      <Button label="Cancel" severity="secondary" outlined onClick={() => setShowForm(false)} />
-      <Button
-        label="Save"
-        icon="pi pi-save"
-        onClick={handleSave}
-        disabled={!!editingRole && (permsLoading || loadFailed)}
-      />
-    </div>
-  );
+  const saveBlocked = !!editingRole && (permsLoading || loadFailed);
 
   return (
-    <div className="admin-management">
-      <ConfirmDialog />
-      <div className="flex justify-content-end mb-3">
-        <Button label="Create Role" icon="pi pi-plus" onClick={openCreate} />
-      </div>
+    <div>
+      <PageHead
+        title="Roles & Permissions"
+        sub="A role decides what its people can see and change. Edit a role and everyone in it is updated at once."
+        actions={<Button variant="primary" icon="plus" onClick={openCreate}>Create role</Button>}
+      />
 
-      <Dialog
-        visible={showForm}
-        onHide={() => setShowForm(false)}
-        header={editingRole ? "Edit Role" : "Create Role"}
-        footer={footer}
-        style={{ width: "min(860px, 95vw)" }}
-        dismissableMask
-      >
-        <div className="grid">
-          <div className="col-12 md:col-6 flex flex-column gap-1">
-            <label htmlFor="role-name">Role Name</label>
-            <InputText id="role-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          </div>
-          <div className="col-12 md:col-6 flex flex-column gap-1">
-            <label htmlFor="role-desc">Description</label>
-            <InputText id="role-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          </div>
+      {loading ? (
+        <div className="pp-role-grid">
+          {[0, 1, 2].map((i) => <div key={i} className="panel pp-role"><Skel h={22} w="50%" /><Skel h={12} /><Skel h={12} w="70%" /></div>)}
         </div>
-        <h4 className="mt-3 mb-2">Permissions</h4>
-        {permsLoading && <p className="am-empty">Loading this role's permissions…</p>}
-        {loadFailed && (
-          <p className="am-empty">
-            Couldn't load this role's current permissions. Close and retry —
-            saving now would overwrite them.
-          </p>
-        )}
-        <div className="am-permission-grid" hidden={permsLoading || loadFailed}>
-          {Object.entries(groupedPerms).map(([module, perms]) => (
-            <div key={module} className="am-perm-group">
-              <h5 className="am-perm-module">{module}</h5>
-              {(perms as any[]).map((p) => (
-                <label key={p.id} className={`am-perm-item ${selectedPerms.includes(p.id) ? "active" : ""}`}>
-                  <Checkbox checked={selectedPerms.includes(p.id)} onChange={() => togglePerm(p.id)} />
-                  <span className="am-perm-name">{p.name}</span>
-                  <span className="am-perm-desc">{p.description}</span>
-                </label>
-              ))}
-            </div>
+      ) : roles.length === 0 ? (
+        <EmptyState icon="shield" title="No roles yet" text="Create a role, then assign it to team members." />
+      ) : (
+        <div className="pp-role-grid">
+          {roles.map((role) => (
+            <article key={role.id} className="panel pp-role">
+              <div className="row between">
+                <h3>{role.name}</h3>
+                {role.name === "Super Admin" && <Chip tone="tape">System</Chip>}
+              </div>
+              <p className="muted small grow">{role.description || "No description"}</p>
+              <div className="row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 2 }}>
+                <Button size="sm" icon="edit" onClick={() => openEdit(role)} aria-label={`Edit ${role.name}`}>Edit</Button>
+                <span className="grow" />
+                <Button size="sm" variant="ghost" className="danger" icon="trash" onClick={() => handleDelete(role)} aria-label={`Delete ${role.name}`}>Delete</Button>
+              </div>
+            </article>
           ))}
         </div>
-      </Dialog>
+      )}
 
-      <div className="grid">
-        {roles.map((role) => (
-          <div key={role.id} className="col-12 md:col-6 lg:col-4">
-            <Card className="h-full">
-              <div className="flex align-items-start gap-3">
-                <i className="pi pi-shield am-role-icon" />
-                <div>
-                  <h3 className="m-0">{role.name}</h3>
-                  <p className="am-muted mt-1 mb-0">{role.description || "No description"}</p>
-                </div>
-              </div>
-              <div className="flex gap-2 mt-3">
-                <Button size="small" outlined icon="pi pi-pencil" label="Edit" onClick={() => openEdit(role)} />
-                <Button size="small" outlined severity="danger" icon="pi pi-trash" label="Delete" onClick={() => handleDelete(role.id)} />
-              </div>
-            </Card>
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        size="xwide"
+        title={editingRole ? `Edit ${editingRole.name}` : "Create role"}
+        sub="Tick what people with this role can do."
+        footer={<>
+          <span className="faint xs grow" aria-live="polite">{selectedPerms.length} permissions selected</span>
+          <Button variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
+          <Button variant="primary" loading={saving} onClick={handleSave} disabled={saveBlocked || saving}>
+            {editingRole ? "Save role" : "Create role"}
+          </Button>
+        </>}
+      >
+        <form className="stack" style={{ gap: 16 }} noValidate onSubmit={(e) => { e.preventDefault(); handleSave(); }}>
+          <div className="form-grid">
+            <TextField label="Role name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+              error={triedSave && !form.name.trim() ? "Give the role a name." : null} />
+            <TextField label="Description" value={form.description} placeholder="What this role is for"
+              onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </div>
-        ))}
-      </div>
+          {permsLoading && <p className="faint small">Loading this role's permissions…</p>}
+          {loadFailed && (
+            <div className="callout warn"><Icon name="warn" className="i" size="sm" />
+              <div>Couldn't load this role's current permissions. Close and retry: saving now would overwrite them.</div>
+            </div>
+          )}
+          <div className="table-wrap" hidden={permsLoading || loadFailed}>
+            <table className="t pp-matrix">
+              <thead><tr><th scope="col" style={{ width: 200 }}>Module</th><th scope="col">Permissions</th></tr></thead>
+              <tbody>
+                {Object.entries(groupedPerms).map(([module, perms]) => {
+                  const list = perms as any[];
+                  const n = list.filter((p) => selectedPerms.includes(p.id)).length;
+                  return (
+                    <tr key={module}>
+                      <th scope="row" className="fm-mod">
+                        <div className="fm-mod-name">{module}</div>
+                        <label className="check xs" style={{ marginTop: 6 }}>
+                          <input type="checkbox" checked={n === list.length && n > 0}
+                            ref={(el) => { if (el) el.indeterminate = n > 0 && n < list.length; }}
+                            onChange={(e) => toggleModule(list, e.target.checked)} />
+                          Select all
+                        </label>
+                      </th>
+                      <td>
+                        <div className="perms">
+                          {list.map((p) => (
+                            <label key={p.id} className="check" title={p.description || p.name}>
+                              <input type="checkbox" checked={selectedPerms.includes(p.id)} onChange={() => togglePerm(p.id)} />
+                              <span>{p.description || p.name}<span className="mono faint xs fm-perm-code">{p.name}</span></span>
+                            </label>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

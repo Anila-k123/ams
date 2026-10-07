@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { InputText } from 'primereact/inputtext';
-import { Button } from 'primereact/button';
-import '../assets/styles/ForgotPassword.css';
+import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/client';
 import { useToast } from '../contexts/ToastContext';
+import { Icon } from '../ui/kit';
+import { AuthFrame } from './Login';
 
 function ForgotPassword() {
   const navigate = useNavigate();
@@ -26,33 +25,35 @@ function ForgotPassword() {
     }
   }
 
-  const back = <Button link icon="pi pi-arrow-left" label="Back to Login" className="forgot-back p-0" onClick={() => navigate('/login')} />;
-
   if (sent) {
     return (
-      <div className="forgot-container">
-        <div className="forgot-box">
-          {back}
-          <h2>Check Your Email</h2>
-          <p className="forgot-info">If an account exists with <strong>{email}</strong>, a verification code has been sent.</p>
-          <Button className="w-full" label="Enter Verification Code" onClick={() => navigate('/verify-otp', { state: { email } })} />
+      <AuthFrame>
+        <div role="status">
+          <div className="pp-success-ic"><Icon name="mail" size="lg" /></div>
+          <h1>Check your email</h1>
+          <p className="muted auth-lead">If an account exists with <b className="mono">{email}</b>, a 6-digit verification code has been sent. Check spam if it isn't in your inbox.</p>
+          <button type="button" className="btn primary pp-full" onClick={() => navigate('/verify-otp', { state: { email } })}>Enter the code</button>
+          <p className="small muted auth-foot">Wrong email? <button type="button" className="link auth-linkbtn" onClick={() => setSent(false)}>Use a different one</button></p>
         </div>
-      </div>
+      </AuthFrame>
     );
   }
 
   return (
-    <div className="forgot-container">
-      <div className="forgot-box">
-        {back}
-        <h2>Forgot Password</h2>
-        <p className="forgot-info">Enter your registered email address and we will send you a verification code.</p>
-        <form onSubmit={handleSubmit} className="flex flex-column gap-3">
-          <InputText type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full" />
-          <Button type="submit" className="w-full" loading={loading} disabled={loading} label={loading ? 'Sending...' : 'Send Verification Code'} />
-        </form>
-      </div>
-    </div>
+    <AuthFrame>
+      <Link className="link small" to="/login">Back to sign in</Link>
+      <h1 className="auth-h-gap">Reset your password</h1>
+      <p className="muted auth-lead">Enter the email you sign in with. We'll send a 6-digit verification code to it.</p>
+      <form onSubmit={handleSubmit} className="stack">
+        <div className="field">
+          <label htmlFor="f-email">Email <span className="req" aria-hidden="true">*</span></label>
+          <input id="f-email" className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </div>
+        <button type="submit" className={`btn primary pp-full${loading ? ' loading' : ''}`} disabled={loading}>
+          {loading ? 'Sending…' : 'Send verification code'}
+        </button>
+      </form>
+    </AuthFrame>
   );
 }
 

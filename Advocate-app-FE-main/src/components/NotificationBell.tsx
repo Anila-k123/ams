@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Button } from 'primereact/button';
-import { Badge } from 'primereact/badge';
-import { OverlayPanel } from 'primereact/overlaypanel';
+import { createPortal } from 'react-dom';
 import api from '../api/client';
 import { useWebSocketContext } from '../contexts/realtime/WebSocketProvider';
+import Icon from '../ui/Icon';
+import { EmptyState } from '../ui/kit';
 
-export default function NotificationBell({ onOpen }: { onOpen?: (route: string) => void }) {
+export default function NotificationBell({ onOpen, footer }: { onOpen?: (route: string) => void; footer?: { label: string; route: string } }) {
   const [count, setCount] = useState(0);
   const [alerts, setAlerts] = useState<any[]>([]);
-  const panelRef = useRef<OverlayPanel>(null);
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const { subscribe } = useWebSocketContext() as any;
   // Chime when the unread count rises.
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -40,7 +42,7 @@ export default function NotificationBell({ onOpen }: { onOpen?: (route: string) 
       }
       prevCount.current = rows.length;
     } catch {
-      /* the dropdown's empty state covers it */
+      /* the panel's empty state covers it */
     }
   }, []);
 
@@ -61,6 +63,18 @@ export default function NotificationBell({ onOpen }: { onOpen?: (route: string) 
     return unsub;
   }, [subscribe]);
 
+  // Close on outside click or Escape.
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => {
+      if (!panelRef.current?.contains(e.target as Node) && !btnRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); btnRef.current?.focus(); } };
+    document.addEventListener('mousedown', down);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [open]);
+
   // Marking read and navigating are separate actions.
   const markRead = useCallback(async (alert: any) => {
     if (!alert.id || String(alert.id).startsWith('live-')) {
@@ -80,14 +94,14 @@ export default function NotificationBell({ onOpen }: { onOpen?: (route: string) 
   }, []);
 
   // "Got it": clear it and stay; the panel stays open so a run can be cleared in one pass.
-  const handleDismiss = useCallback(async (e: any, alert: any) => {
+  const handleDismiss = useCallback(async (e: React.MouseEvent, alert: any) => {
     e.stopPropagation();
     await markRead(alert);
   }, [markRead]);
 
   const handleNotificationClick = useCallback(async (alert: any) => {
     if (!alert.route) return;
-    panelRef.current?.hide();
+    setOpen(false);
     await markRead(alert);
     if (onOpen) onOpen(alert.route);
   }, [markRead, onOpen]);
@@ -96,55 +110,58 @@ export default function NotificationBell({ onOpen }: { onOpen?: (route: string) 
     if (!ts) return '';
     const d = new Date(ts);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const sameDay = d.toDateString() === new Date().toDateString();
+    return sameDay
+      ? d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })
+      : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   };
 
+  const r = btnRef.current?.getBoundingClientRect();
+
   return (
-    <div className="live-notif-bell-wrapper p-overlay-badge">
-      <Button text rounded className="icon-btn live-notif-bell" icon="pi pi-bell"
-        aria-label={count > 0 ? `Notifications, ${count} unread` : 'Notifications'} tooltip="Notifications"
-        tooltipOptions={{ position: 'bottom' }} onClick={(e) => panelRef.current?.toggle(e)} />
-      {/* Outside the button: a PrimeReact button clips its overflow, which hid the count. */}
-      {count > 0 && <Badge className="live-notif-count" value={count > 99 ? '99+' : count} severity="danger" />}
-      <OverlayPanel ref={panelRef} className="live-notif-dropdown" style={{ width: 360 }}>
-        <div className="live-notif-header flex align-items-center justify-content-between mb-2">
-          <h4 className="m-0">Notifications</h4>
-          <Button text size="small" label="Close" onClick={() => panelRef.current?.hide()} />
-        </div>
-        <div className="live-notif-list">
-          {alerts.length === 0 ? (
-            <p className="no-data">Nothing unread.</p>
-          ) : (
-            alerts.map((a) => (
-              <div
-                key={a.id}
-                className={`live-notif-item${a.route ? ' clickable' : ''}`}
-                role={a.route ? 'button' : undefined}
-                tabIndex={a.route ? 0 : undefined}
-                title={a.route ? 'Open' : undefined}
+    <>
+      <button ref={btnRef} type="button" className="icon-btn" onClick={() => setOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={open}
+        aria-label={count > 0 ? `Notifications, ${count} unread` : 'Notifications'} title="Notifications">
+        <Icon name="bell" />
+        {count > 0 && <span className="dot">{count > 99 ? '99+' : count}</span>}
+      </button>
+      {open && r && createPortal(
+        <div ref={panelRef} className="popover notif-panel" role="dialog" aria-label="Notifications"
+          style={{ top: r.bottom + 6, right: Math.max(12, window.innerWidth - r.right) }}>
+          <div className="head">
+            <h3>Notifications</h3>
+            <span className="faint xs">{count ? `${count} unread` : 'All caught up'}</span>
+          </div>
+          <div style={{ maxHeight: 'min(440px, 60vh)', overflowY: 'auto' }}>
+            {alerts.length === 0 ? (
+              <EmptyState icon="ok" title="Nothing unread" text="Hearing reminders, task reviews and client replies appear here." />
+            ) : alerts.map((a) => (
+              <div key={a.id} className={`notif unread`} role={a.route ? 'button' : undefined} tabIndex={a.route ? 0 : undefined}
+                style={{ cursor: a.route ? 'pointer' : 'default' }}
                 onClick={() => handleNotificationClick(a)}
-                onKeyDown={(e) => {
-                  if (a.route && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault();
-                    handleNotificationClick(a);
-                  }
-                }}
-              >
-                <Button type="button" icon="pi pi-times" text rounded size="small" className="live-notif-dismiss"
-                  aria-label={`Mark as read: ${a.message}`} onClick={(e) => handleDismiss(e, a)} />
-                <div className="live-notif-msg">{a.message}</div>
-                <div className="live-notif-row flex align-items-center justify-content-between">
-                  <span className="live-notif-time">{formatTime(a.timestamp)}</span>
-                  <span className="live-notif-actions flex align-items-center gap-2">
-                    <Button type="button" text size="small" label="Got it" className="live-notif-gotit" onClick={(e) => handleDismiss(e, a)} />
-                    {a.route && <span className="live-notif-go">Open <i className="pi pi-angle-right" /></span>}
-                  </span>
+                onKeyDown={(e) => { if (a.route && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); handleNotificationClick(a); } }}>
+                <span className="ic"><Icon name="bell" size="sm" /></span>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="small">{a.message}</div>
+                  <div className="row xs faint" style={{ marginTop: 4 }}>
+                    <span>{formatTime(a.timestamp)}</span>
+                    <span className="grow" />
+                    <button type="button" className="btn sm ghost" onClick={(e) => handleDismiss(e, a)} aria-label={`Mark as read: ${a.message}`}>Got it</button>
+                    {a.route && <span className="row" style={{ gap: 2 }}>Open<Icon name="chevron" size="sm" /></span>}
+                  </div>
                 </div>
               </div>
-            ))
+            ))}
+          </div>
+          {footer && (
+            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--line)' }}>
+              <button type="button" className="link small" style={{ border: 0, background: 'none', padding: 0 }}
+                onClick={() => { setOpen(false); onOpen?.(footer.route); }}>{footer.label}</button>
+            </div>
           )}
-        </div>
-      </OverlayPanel>
-    </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }

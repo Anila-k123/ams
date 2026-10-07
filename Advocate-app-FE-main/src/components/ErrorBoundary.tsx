@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { Button } from 'primereact/button';
+import Icon from '../ui/Icon';
 
 interface State { hasError: boolean; error: any }
 
@@ -26,17 +26,14 @@ export default class ErrorBoundary extends Component<{ children?: ReactNode }, S
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex align-items-center justify-content-center p-4"
-          style={{ minHeight: '100vh', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-          <div className="text-center" style={{ maxWidth: 420 }}>
-            <i className="pi pi-exclamation-triangle mb-4" style={{ fontSize: 32, color: 'var(--danger)' }} />
-            <h1 className="text-xl font-bold mt-0 mb-2" style={{ color: 'var(--text-primary)' }}>Something went wrong</h1>
-            <p className="text-sm line-height-3 mt-0 mb-5" style={{ color: 'var(--text-secondary)' }}>
-              An unexpected error occurred. Please try reloading or return to the dashboard.
-            </p>
-            <div className="flex gap-3 justify-content-center">
-              <Button icon="pi pi-refresh" label="Reload" onClick={this.handleReload} />
-              <Button icon="pi pi-home" label="Dashboard" outlined onClick={this.handleGoHome} />
+        <div className="row" style={{ minHeight: '100vh', justifyContent: 'center', padding: 'var(--s4)', background: 'var(--paper)', color: 'var(--ink)' }}>
+          <div className="empty" style={{ maxWidth: 440 }}>
+            <div className="art" style={{ background: 'var(--bad-soft)', color: 'var(--bad)' }}><Icon name="alert" size="lg" /></div>
+            <h1 style={{ fontSize: 'var(--t-2xl)' }}>Something went wrong</h1>
+            <p>An unexpected error stopped this page. Reload to try again, or go back to Today.</p>
+            <div className="row" style={{ marginTop: 'var(--s3)' }}>
+              <button type="button" className="btn primary" onClick={this.handleReload}><Icon name="refresh" size="sm" />Reload</button>
+              <button type="button" className="btn" onClick={this.handleGoHome}><Icon name="home" size="sm" />Go to Today</button>
             </div>
           </div>
         </div>

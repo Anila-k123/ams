@@ -1,12 +1,9 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { InputText } from "primereact/inputtext";
-import { Checkbox } from "primereact/checkbox";
-import { Button } from "primereact/button";
-import { Message } from "primereact/message";
 import { apiUrl } from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import "./client.css";
+import { Check } from "../ui/forms";
+import { AuthAlert, AuthFrame } from "../pages/Login";
 
 /** /set-password?token= — a client sets their password from the emailed one-time link,
  *  then is signed in exactly as by the normal login. */
@@ -41,27 +38,29 @@ export default function SetPassword() {
   };
 
   return (
-    <div className="cl-auth">
-      <div className="cl-auth-card">
-        <div className="cl-auth-brand">Welcome</div>
-        <h1>Set your password</h1>
-        <p className="cl-muted">Your advocate has created a login for you to follow your cases.</p>
-        <form className="flex flex-column gap-2" onSubmit={submit}>
-          {!token && <Message severity="error" text="This link is incomplete. Open it from your email again." />}
-          {error && <Message severity="error" text={error} />}
-          <label htmlFor="cl-new-password">New password (at least 8 characters)</label>
-          <InputText id="cl-new-password" type={show ? "text" : "password"} autoComplete="new-password" minLength={8}
-            required value={password} onChange={(e) => setPassword(e.target.value)} />
-          <label htmlFor="cl-confirm-password">Confirm password</label>
-          <InputText id="cl-confirm-password" type={show ? "text" : "password"} autoComplete="new-password" minLength={8}
+    <AuthFrame>
+      <div className="pp-kicker">Client portal invitation</div>
+      <h1>Set your password</h1>
+      <p className="muted auth-lead">Your advocate has created a login for you to follow your cases: hearing dates, documents and invoices.</p>
+      <form className="stack" onSubmit={submit}>
+        {!token && <AuthAlert>This link is incomplete. Open it from your email again.</AuthAlert>}
+        {error && <AuthAlert>{error}</AuthAlert>}
+        <div className="field">
+          <label htmlFor="cl-new-password">New password <span className="req" aria-hidden="true">*</span></label>
+          <input id="cl-new-password" className="input" type={show ? "text" : "password"} autoComplete="new-password" minLength={8}
+            required value={password} onChange={(e) => setPassword(e.target.value)} aria-describedby="cl-new-hint" />
+          <span className="hint" id="cl-new-hint">At least 8 characters.</span>
+        </div>
+        <div className="field">
+          <label htmlFor="cl-confirm-password">Confirm password <span className="req" aria-hidden="true">*</span></label>
+          <input id="cl-confirm-password" className="input" type={show ? "text" : "password"} autoComplete="new-password" minLength={8}
             required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-          <div className="flex align-items-center gap-2">
-            <Checkbox inputId="cl-show" checked={show} onChange={(e) => setShow(!!e.checked)} />
-            <label htmlFor="cl-show">Show password</label>
-          </div>
-          <Button type="submit" label={busy ? "Saving…" : "Save and sign in"} loading={busy} disabled={busy || !token} />
-        </form>
-      </div>
-    </div>
+        </div>
+        <Check label="Show password" checked={show} onChange={(e) => setShow(e.target.checked)} />
+        <button type="submit" className={`btn primary pp-full${busy ? " loading" : ""}`} disabled={busy || !token}>
+          {busy ? "Saving…" : "Set password and open portal"}
+        </button>
+      </form>
+    </AuthFrame>
   );
 }

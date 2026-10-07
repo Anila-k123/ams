@@ -1,22 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Button } from "primereact/button";
-import { Dropdown } from "primereact/dropdown";
-import { Dialog } from "primereact/dialog";
-import { TabView, TabPanel } from "primereact/tabview";
-import { Tag } from "primereact/tag";
-import { Badge } from "primereact/badge";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { Message } from "primereact/message";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import api, { errorMessage } from "../api/client";
 import { useToast } from "../contexts/ToastContext";
-import "../assets/styles/Acts.css";
+import { Button, Chip, EmptyState, Icon, Skel, Spinner } from "../ui/kit";
+import { SelectField, SearchInput, Tabs } from "../ui/forms";
+import { Modal, confirm } from "../ui/overlays";
+import "../ui/pages/research.css";
 
 function formatDate(iso: string) {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
 // Section content/footnote come from India Code as light HTML. Strip anything
@@ -29,69 +24,57 @@ function sanitizeActHtml(html: string) {
     .replace(/\s(href|src)\s*=\s*(?:"(?:javascript|data):[^"]*"|'(?:javascript|data):[^']*')/gi, "");
 }
 
-const Spinner = () => (
-  <div className="flex justify-content-center p-3"><ProgressSpinner style={{ width: 32, height: 32 }} strokeWidth="5" /></div>
-);
-
-// One section row: expands in place, body fetched lazily on first open.
+// One section: a pp-acc accordion whose body is fetched lazily on first open.
 function SectionRow({ actId, section }: { actId: any; section: any }) {
-  const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const toggle = async () => {
-    const next = !open;
-    setOpen(next);
-    if (next && !detail && !loading) {
-      setLoading(true);
-      try {
-        const res = await api.get(`/api/acts/${actId}/sections/${section.id}`);
-        setDetail(res.data);
-        setError("");
-      } catch (err) {
-        setError(errorMessage(err, "Couldn't load this section."));
-      } finally {
-        setLoading(false);
-      }
+  const onToggle = async (e: React.SyntheticEvent<HTMLDetailsElement>) => {
+    if (!e.currentTarget.open || detail || loading) return;
+    setLoading(true);
+    try {
+      const res = await api.get(`/api/acts/${actId}/sections/${section.id}`);
+      setDetail(res.data);
+      setError("");
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't load this section."));
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="act-section-row">
-      <button type="button" className="act-section-link" onClick={toggle}>
-        <i className={`pi ${open ? "pi-chevron-down" : "pi-chevron-right"} mr-2`} style={{ fontSize: 11 }} />
-        Section {section.number} : {section.title}
-      </button>
-      {open && (
-        <div className="act-section-body">
-          {loading && <Spinner />}
-          {error && <Message severity="error" text={error} />}
-          {detail && (
-            <>
-              <div className="act-section-block-label">Contents:</div>
-              {detail.content ? (
-                <div className="act-section-block" dangerouslySetInnerHTML={{ __html: sanitizeActHtml(detail.content) }} />
-              ) : (
-                <div className="act-section-block">
-                  <span className="muted-dash">No digitized text available for this section.</span>
-                </div>
-              )}
-              <div className="act-section-block-label">Footnotes:</div>
-              {detail.footnote ? (
-                <div className="act-section-block" dangerouslySetInnerHTML={{ __html: sanitizeActHtml(detail.footnote) }} />
-              ) : (
-                <div className="act-section-block"><span className="muted-dash">—</span></div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <details className="pp-acc" onToggle={onToggle}>
+      <summary>
+        <Icon name="chevron" size="sm" className="chev" />
+        <span className="mono small nowrap">Sec. {section.number}</span>
+        <span className="small" style={{ fontWeight: 500 }}>{section.title}</span>
+      </summary>
+      <div className="rs-sec-body">
+        {loading && <Spinner />}
+        {error && <div className="callout bad"><Icon name="warn" size="sm" /><div>{error}</div></div>}
+        {detail && (
+          <>
+            {detail.content ? (
+              <div dangerouslySetInnerHTML={{ __html: sanitizeActHtml(detail.content) }} />
+            ) : (
+              <p className="faint">No digitised text available for this section.</p>
+            )}
+            {detail.footnote && (
+              <>
+                <div className="rs-sec-label">Footnotes</div>
+                <div className="small" dangerouslySetInnerHTML={{ __html: sanitizeActHtml(detail.footnote) }} />
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </details>
   );
 }
 
-const TABS = ["sections", "papers", "cases"];
+type TabKey = "sections" | "papers" | "cases";
 
 // Drop the "Summary of <title>" restatement at the start of India Code abstracts.
 function cleanSummary(text: string, title: string) {
@@ -112,12 +95,13 @@ function cleanSummary(text: string, title: string) {
 export default function ActDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { success } = useToast() as any;
+  const { success, error: toastError } = useToast() as any;
   const [act, setAct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState("sections");
+  const [tab, setTab] = useState<TabKey>("sections");
   const [descOpen, setDescOpen] = useState(false);
+  const [secQuery, setSecQuery] = useState("");
 
   // Cases Linked tab
   const [linkedCases, setLinkedCases] = useState<any[] | null>(null); // null = not loaded yet
@@ -128,7 +112,7 @@ export default function ActDetail() {
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [myCases, setMyCases] = useState<any[]>([]);
   const [myCasesLoading, setMyCasesLoading] = useState(false);
-  const [selectedCase, setSelectedCase] = useState<any>(null); // case id
+  const [selectedCase, setSelectedCase] = useState<any>(""); // case id
   const [linking, setLinking] = useState(false);
   const [linkError, setLinkError] = useState("");
 
@@ -166,7 +150,7 @@ export default function ActDetail() {
 
   const openLinkModal = async () => {
     setShowLinkModal(true);
-    setSelectedCase(null);
+    setSelectedCase("");
     setLinkError("");
     if (!myCases.length) {
       setMyCasesLoading(true);
@@ -182,7 +166,7 @@ export default function ActDetail() {
   };
 
   const confirmLink = async () => {
-    if (!selectedCase) return;
+    if (!selectedCase) { setLinkError("Choose the case to link."); return; }
     setLinking(true);
     try {
       await api.post(`/api/acts/${id}/cases`, { caseId: selectedCase });
@@ -196,161 +180,197 @@ export default function ActDetail() {
     }
   };
 
-  const unlinkCase = async (caseId: any) => {
-    try {
-      await api.delete(`/api/acts/${id}/cases/${caseId}`);
-      await Promise.all([fetchAct(), loadLinkedCases()]);
-    } catch { /* leave the row - user can retry */ }
+  const unlinkCase = (lc: any) => {
+    confirm({
+      title: "Unlink this case?",
+      message: `${lc.caseNumber || lc.caseTitle || "This case"} will no longer list this act. You can link it again later.`,
+      confirmLabel: "Unlink",
+      danger: true,
+      accept: async () => {
+        try {
+          await api.delete(`/api/acts/${id}/cases/${lc.caseId}`);
+          await Promise.all([fetchAct(), loadLinkedCases()]);
+        } catch (err) {
+          toastError(errorMessage(err, "Couldn't unlink this case."));
+        }
+      },
+    });
   };
 
-  if (loading) return <div className="acts-container"><Spinner /></div>;
-  if (error) return <div className="acts-container"><Message severity="error" text={error} /></div>;
+  if (loading) {
+    return (
+      <div className="stack">
+        <div className="panel"><div className="panel-body stack"><Skel h={14} w="25%" /><Skel h={28} w="60%" /><Skel h={12} /><Skel h={12} w="80%" /></div></div>
+        <Skel h={320} />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="panel">
+        <EmptyState icon="book" title="This act could not be opened" text={error}
+          action={<Link className="btn" to="/dashboard/acts">Back to Bare Acts</Link>} />
+      </div>
+    );
+  }
   if (!act) return null;
 
-  const tabHeader = (label: string, count?: number | null) => (
-    <span className="flex align-items-center gap-2">
-      {label}
-      {count != null && <Badge value={count} severity="secondary" />}
-    </span>
-  );
-
   const summary = act.description ? cleanSummary(act.description, act.title) : "";
+  const central = String(act.jurisdiction || "").toUpperCase() === "CENTRAL";
+  const sections: any[] = act.sections || [];
+  const sq = secQuery.trim().toLowerCase().replace(/^(sec\.?|section)\s*/, "");
+  const shownSections = sq
+    ? sections.filter((s) => String(s.number).toLowerCase().includes(sq) || String(s.title || "").toLowerCase().includes(sq))
+    : sections;
 
   return (
-    <div className="acts-container">
-      <Button text icon="pi pi-chevron-left" label="Back to Acts" className="mb-2" onClick={() => navigate("/dashboard/acts")} />
+    <div>
+      <nav className="crumbs small" aria-label="Breadcrumb" style={{ marginBottom: 10 }}>
+        <Link className="link" to="/dashboard/acts">Bare Acts</Link>
+      </nav>
 
-      <div className="act-detail-card">
-        <div className="flex align-items-center gap-2 flex-wrap mb-3">
-          <Tag value={act.jurisdiction} />
-          <Tag severity="secondary" value={`Act ${act.actNumber} of ${act.actYear}`} />
-          {act.pdfUrl && (
-            <a className="ml-auto p-button p-button-sm p-button-outlined no-underline" href={act.pdfUrl} target="_blank" rel="noreferrer">
-              <i className="pi pi-file-pdf mr-2" /> View PDF
-            </a>
+      <div className="panel" style={{ marginBottom: 20 }}>
+        <div className="panel-body" style={{ padding: 24 }}>
+          <div className="row wrap" style={{ gap: 10 }}>
+            <Chip tone={central ? "info" : "tape"}>{central ? "Central" : act.jurisdiction}</Chip>
+            <span className="mono faint small">Act {act.actNumber} of {act.actYear}</span>
+            {act.repealed && <Chip tone="bad">Repealed</Chip>}
+          </div>
+          <div className="row between wrap" style={{ alignItems: "flex-start", gap: 16, marginTop: 8 }}>
+            <h1 style={{ fontSize: "var(--t-2xl)", maxWidth: "30ch" }}>{act.title}</h1>
+            <div className="row wrap">
+              {act.pdfUrl && (
+                <a className="btn" href={act.pdfUrl} target="_blank" rel="noreferrer"><Icon name="file" size="sm" />View PDF</a>
+              )}
+              <Button variant="primary" icon="link" onClick={openLinkModal}>Link to a case</Button>
+            </div>
+          </div>
+          {summary && (
+            <>
+              <p className={`muted${descOpen ? "" : " pp-clamp"}`} style={{ marginTop: 10, maxWidth: "75ch" }}>{summary}</p>
+              {/* Only offer the toggle when there is more than a line to show. */}
+              {summary.length > 120 && (
+                <button type="button" className="link small" aria-expanded={descOpen}
+                  style={{ background: "none", border: 0, padding: 0, marginTop: 4 }}
+                  onClick={() => setDescOpen((v) => !v)}>{descOpen ? "Show less" : "Show more"}</button>
+              )}
+            </>
           )}
+          <dl className="kv" style={{ marginTop: 16 }}>
+            {act.ministry && <><dt>Ministry</dt><dd>{act.ministry}</dd></>}
+            {act.department && <><dt>Department</dt><dd>{act.department}</dd></>}
+            {act.enactmentDate && <><dt>Enactment date</dt><dd>{formatDate(act.enactmentDate)}</dd></>}
+            {act.enforcementDate && <><dt>Enforcement date</dt><dd>{act.enforcementDate}</dd></>}
+            <dt>Sections</dt><dd className="num">{sections.length}</dd>
+          </dl>
         </div>
-
-        <div className="act-detail-body">
-          <div>
-            <h2 className="act-detail-title">{act.title}</h2>
-            {summary && (
-              <div className="act-detail-summary">
-                <p className={`act-detail-desc${descOpen ? " open" : ""}`}>{summary}</p>
-                {/* Only offer the toggle when there is more than a line to show. */}
-                {summary.length > 120 && (
-                  <Button link size="small" className="p-0" aria-expanded={descOpen}
-                    label={descOpen ? "Show less" : "Show more"} onClick={() => setDescOpen((v) => !v)} />
-                )}
-              </div>
-            )}
-          </div>
-          <div className="act-detail-meta">
-            {act.department && <div><strong>Department</strong> : {act.department}</div>}
-            {act.ministry && <div><strong>Ministry</strong> : {act.ministry}</div>}
-            {act.enactmentDate && <div><strong>Enactment Date</strong> : {formatDate(act.enactmentDate)}</div>}
-            {act.enforcementDate && <div><strong>Enforcement Date</strong> : {act.enforcementDate}</div>}
-            {act.repealed && <Tag severity="danger" value="Repealed" />}
-          </div>
-        </div>
-
-        <div className="flex justify-content-end my-2">
-          <Button icon="pi pi-link" label="Link Cases" onClick={openLinkModal} />
-        </div>
-
-        <TabView activeIndex={TABS.indexOf(tab)} onTabChange={(e) => setTab(TABS[e.index])}>
-          <TabPanel header={tabHeader("Sections", act.sections?.length > 0 ? act.sections.length : null)}>
-            {act.noOfChapter > 0 && act.chapters?.length ? (
-              <div className="act-sections-grid">
-                <div className="act-chapters-col">
-                  {act.chapters.map((c: any) => (
-                    <div key={c.id} className="act-chapter-item">Chapter {c.number}: {c.title}</div>
-                  ))}
-                </div>
-                <div className="act-sections-col">
-                  {act.sections.map((s: any) => <SectionRow key={s.id} actId={act.id} section={s} />)}
-                </div>
-              </div>
-            ) : act.sections?.length ? (
-              <div className="act-sections-col">
-                {act.sections.map((s: any) => <SectionRow key={s.id} actId={act.id} section={s} />)}
-              </div>
-            ) : (
-              <p className="no-data">No sections found for this act.</p>
-            )}
-          </TabPanel>
-
-          <TabPanel header={tabHeader("Act Papers", act.papers?.length > 0 ? act.papers.length : null)}>
-            {!act.papers?.length ? (
-              <p className="no-data">No Act Papers found for this act.</p>
-            ) : (
-              <div className="act-list-rows">
-                {act.papers.map((p: any) => (
-                  <div key={p.id} className="act-list-row">
-                    <Tag severity="info" value={p.paperType} />
-                    {p.pdfUrl ? (
-                      <a className="act-section-link" href={p.pdfUrl} target="_blank" rel="noreferrer">{p.title}</a>
-                    ) : (
-                      <span className="act-papers-title">{p.title}</span>
-                    )}
-                    <span className="act-row-date">{formatDate(p.paperDate)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </TabPanel>
-
-          <TabPanel header={tabHeader("Cases Linked", act.caseLinksCount ?? 0)}>
-            {linkedCasesLoading ? (
-              <Spinner />
-            ) : linkedCasesError ? (
-              <Message severity="error" text={linkedCasesError} />
-            ) : !linkedCases?.length ? (
-              <p className="no-data">No cases linked to this act yet.</p>
-            ) : (
-              <div className="act-list-rows">
-                {linkedCases.map((lc) => (
-                  <div key={lc.id} className="act-list-row">
-                    <button type="button" className="act-section-link" onClick={() => navigate(`/dashboard/cases/${lc.caseId}`)}>
-                      {lc.caseTitle || lc.caseNumber || `Case #${lc.caseId}`}
-                    </button>
-                    <span className="act-row-date">{formatDate(lc.linkedAt)}</span>
-                    <Button icon="pi pi-trash" text rounded severity="danger" size="small" tooltip="Unlink" tooltipOptions={{ position: "top" }}
-                      aria-label="Unlink" onClick={() => unlinkCase(lc.caseId)} />
-                  </div>
-                ))}
-              </div>
-            )}
-          </TabPanel>
-        </TabView>
       </div>
 
-      <Dialog
-        header="Link a Case"
-        visible={showLinkModal}
-        onHide={() => setShowLinkModal(false)}
-        style={{ width: "32rem" }}
-        breakpoints={{ "640px": "95vw" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button text label="Cancel" onClick={() => setShowLinkModal(false)} />
-            <Button label={linking ? "Linking…" : "Link Case"} loading={linking} disabled={!selectedCase || linking} onClick={confirmLink} />
+      <Tabs<TabKey> label="Act" value={tab} onChange={setTab} tabs={[
+        { value: "sections", label: "Sections", count: sections.length || undefined },
+        { value: "papers", label: "Act papers", count: act.papers?.length || undefined },
+        { value: "cases", label: "Cases linked", count: act.caseLinksCount ?? 0 },
+      ]} />
+
+      {tab === "sections" && (
+        <div className="tab-panel">
+          {!sections.length ? (
+            <div className="panel"><EmptyState icon="book" title="No sections found for this act" /></div>
+          ) : (
+            <div className={act.noOfChapter > 0 && act.chapters?.length ? "split left-rail" : ""}>
+              {act.noOfChapter > 0 && act.chapters?.length > 0 && (
+                <div className="panel" style={{ padding: "6px 0" }}>
+                  <div className="faint xs" style={{ padding: "8px 20px 4px" }}>Chapters</div>
+                  <ul className="rs-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                    {act.chapters.map((c: any) => (
+                      <li key={c.id} className="list-item small"><span className="mono faint">{c.number}</span><span className="grow">{c.title}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <div className="toolbar">
+                  <SearchInput value={secQuery} onChange={setSecQuery} placeholder="Find a section by number or heading" />
+                  {sq && <span className="faint small">{shownSections.length} of {sections.length}</span>}
+                </div>
+                {shownSections.length ? shownSections.map((s) => <SectionRow key={s.id} actId={act.id} section={s} />)
+                  : <div className="panel"><EmptyState icon="search" title="No section matches" text="Check the section number, or search the heading." /></div>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "papers" && (
+        <div className="tab-panel">
+          {!act.papers?.length ? (
+            <div className="panel"><EmptyState icon="file" title="No act papers for this act" /></div>
+          ) : (
+            <div className="table-wrap">
+              <table className="t">
+                <thead><tr><th scope="col">Type</th><th scope="col">Title</th><th scope="col">Date</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+                <tbody>
+                  {act.papers.map((p: any) => (
+                    <tr key={p.id}>
+                      <td><Chip tone="info">{p.paperType}</Chip></td>
+                      <td>{p.title}</td>
+                      <td className="num nowrap">{formatDate(p.paperDate) || "—"}</td>
+                      <td className="right">
+                        {p.pdfUrl && <a className="btn ghost sm" href={p.pdfUrl} target="_blank" rel="noreferrer" aria-label={`PDF of ${p.title}`}><Icon name="download" size="sm" />PDF</a>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "cases" && (
+        <div className="tab-panel">
+          <div className="panel">
+            {linkedCasesLoading ? (
+              <div className="panel-body"><Spinner /></div>
+            ) : linkedCasesError ? (
+              <div className="panel-body"><div className="callout bad"><Icon name="warn" size="sm" /><div>{linkedCasesError}</div></div></div>
+            ) : !linkedCases?.length ? (
+              <EmptyState icon="link" title="No cases linked yet" text="Link this act to a case so it shows up in the case file."
+                action={<Button size="sm" icon="link" onClick={openLinkModal}>Link to a case</Button>} />
+            ) : (
+              linkedCases.map((lc) => (
+                <div key={lc.id} className="list-item">
+                  <Icon name="case" size="sm" />
+                  <div className="grow">
+                    <button type="button" className="link mono" style={{ background: "none", border: 0, padding: 0 }}
+                      onClick={() => navigate(`/dashboard/cases/${lc.caseId}`)}>
+                      {lc.caseNumber || `Case #${lc.caseId}`}
+                    </button>
+                    {lc.caseTitle && <div className="faint xs">{lc.caseTitle}</div>}
+                  </div>
+                  <span className="faint xs hide-sm">Linked {formatDate(lc.linkedAt)}</span>
+                  <Button variant="ghost" size="sm" icon="x" aria-label={`Unlink ${lc.caseNumber || lc.caseTitle || "case"}`}
+                    onClick={() => unlinkCase(lc)}>Unlink</Button>
+                </div>
+              ))
+            )}
           </div>
-        }
-      >
-        <p className="act-link-modal-hint">Choose one of your cases to link to this act.</p>
-        <Dropdown
-          className="w-full"
-          value={selectedCase}
-          options={myCases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }))}
-          onChange={(e) => setSelectedCase(e.value)}
+        </div>
+      )}
+
+      <Modal open={showLinkModal} onClose={() => setShowLinkModal(false)} size="narrow"
+        title="Link to a case" sub={act.title}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowLinkModal(false)}>Cancel</Button>
+          <Button variant="primary" loading={linking} disabled={linking} onClick={confirmLink}>Link act</Button>
+        </>}>
+        <SelectField label="Case" required value={selectedCase}
+          onChange={(e) => { setSelectedCase(e.target.value); setLinkError(""); }}
           placeholder={myCasesLoading ? "Loading your cases…" : "Select a case"}
-          loading={myCasesLoading}
-          filter
-          showClear
-        />
-        {linkError && <small className="block mt-2" style={{ color: "var(--danger)" }}>{linkError}</small>}
-      </Dialog>
+          disabled={myCasesLoading}
+          options={myCases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }))}
+          error={linkError || undefined} />
+      </Modal>
     </div>
   );
 }

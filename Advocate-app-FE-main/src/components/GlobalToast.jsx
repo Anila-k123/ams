@@ -12,66 +12,69 @@ import { useToast } from "../contexts/ToastContext";
 // never sees is worse than no confirmation, so this one depends on nothing.
 
 const ICONS = {
-  success: <FiCheckCircle size={22} />,
-  error: <FiAlertCircle size={22} />,
-  warning: <FiAlertTriangle size={22} />,
-  info: <FiInfo size={22} />,
+  success: <FiCheckCircle size={18} />,
+  error: <FiAlertCircle size={18} />,
+  warning: <FiAlertTriangle size={18} />,
+  info: <FiInfo size={18} />,
 };
 
-const COLORS = {
-  success: "#15803d",
-  error: "#b91c1c",
-  warning: "#b45309",
-  info: "#1d4ed8",
+// Red Tape toast: the same ink slab in both themes, with the meaning carried
+// by the icon colour (and the role), not by flooding the whole card in colour.
+const ICON_COLORS = {
+  success: "#7ED3AC",
+  error: "#FF9C93",
+  warning: "#F1C26A",
+  info: "#8DB3DE",
 };
 
 const containerStyle = {
   position: "fixed",
-  top: "24px",
-  right: "24px",
+  right: "20px",
+  bottom: "20px",
   zIndex: 2147483647,          // above every overlay in the app
   display: "flex",
   flexDirection: "column",
   alignItems: "flex-end",      // stack toasts flush to the right edge
-  gap: "12px",
+  gap: "8px",
   pointerEvents: "none",
-  maxWidth: "92vw",
+  maxWidth: "calc(100vw - 24px)",
 };
 
-function toastStyle(type) {
-  return {
-    display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    minWidth: "320px",
-    maxWidth: "92vw",
-    padding: "20px 26px",
-    borderRadius: "12px",
-    background: COLORS[type] || COLORS.info,
-    color: "#ffffff",
-    fontSize: "1.0625rem",
-    fontWeight: 600,
-    lineHeight: 1.4,
-    boxShadow: "0 18px 50px rgba(0,0,0,0.35)",
-    pointerEvents: "auto",
-    opacity: 1,
-  };
-}
+const toastStyle = {
+  display: "flex",
+  alignItems: "flex-start",
+  gap: "10px",
+  minWidth: "280px",
+  maxWidth: "420px",
+  padding: "12px 14px",
+  borderRadius: "8px",
+  background: "#1B1E25",
+  border: "1px solid #2E333D",
+  color: "#F1F2F4",
+  fontFamily: "'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif",
+  fontSize: "0.8125rem",
+  fontWeight: 500,
+  lineHeight: 1.45,
+  boxShadow: "0 24px 60px -12px rgba(20,23,30,.38), 0 4px 12px rgba(20,23,30,.12)",
+  pointerEvents: "auto",
+  animation: "toastIn 360ms cubic-bezier(.2,.7,.2,1)",
+};
 
 function ToastItem({ toast, onDismiss }) {
+  const urgent = toast.type === "error" || toast.type === "warning";
   return (
-    <div style={toastStyle(toast.type)} role="status" aria-live="polite">
-      <span style={{ display: "flex", flexShrink: 0 }}>{ICONS[toast.type] || ICONS.info}</span>
+    <div style={toastStyle} role={urgent ? "alert" : "status"} aria-live={urgent ? "assertive" : "polite"}>
+      <span style={{ display: "flex", flexShrink: 0, marginTop: 1, color: ICON_COLORS[toast.type] || ICON_COLORS.info }}>{ICONS[toast.type] || ICONS.info}</span>
       <span style={{ flex: 1 }}>{toast.message}</span>
       <button
         onClick={() => onDismiss(toast.id)}
         aria-label="Dismiss"
         style={{
-          background: "transparent", border: "none", color: "#ffffff",
-          cursor: "pointer", padding: 4, display: "flex", flexShrink: 0, opacity: 0.85,
+          background: "transparent", border: "none", color: "#F1F2F4",
+          cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, opacity: 0.7,
         }}
       >
-        <FiX size={18} />
+        <FiX size={16} />
       </button>
     </div>
   );

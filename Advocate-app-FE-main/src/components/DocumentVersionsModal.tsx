@@ -1,11 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Dialog } from "primereact/dialog";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { ProgressSpinner } from "primereact/progressspinner";
+import { Drawer } from "../ui/overlays";
+import { Button, Chip, EmptyState, Icon, Spinner } from "../ui/kit";
+import { TextField } from "../ui/forms";
 import documentService from "../services/DocumentService";
 import { formatBytes } from "./DocumentCard";
-import "../assets/styles/DocumentVersionsModal.css";
+import "../ui/pages/clients.css";
 
 export default function DocumentVersionsModal({ doc, onClose, canUpload = false, onUpdated }: {
   doc: any; onClose: () => void; canUpload?: boolean; onUpdated?: () => void;
@@ -70,49 +69,48 @@ export default function DocumentVersionsModal({ doc, onClose, canUpload = false,
   };
 
   return (
-    <Dialog visible={!!doc} onHide={onClose} header={`Versions — ${doc?.documentName || "Document"}`}
-      style={{ width: "36rem" }} breakpoints={{ "640px": "95vw" }} modal dismissableMask>
-      <div className="flex flex-column gap-3">
+    <Drawer open={!!doc} onClose={onClose} title="Version history" sub={<span className="muted small">{doc?.documentName || "Document"}</span>}
+      footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+      <div className="stack">
         {canUpload && (
-          <div className="dv-upload flex flex-column gap-2">
-            <InputText placeholder="What changed in this version? (optional)" value={note}
-              onChange={(e) => setNote(e.target.value)} disabled={busy} className="w-full" />
-            <Button icon="pi pi-cloud-upload" label={busy ? "Uploading…" : "Choose file & upload new version"}
-              onClick={() => fileRef.current?.click()} disabled={busy} loading={busy} />
-            <input ref={fileRef} type="file" style={{ display: "none" }} onChange={onPickFile} />
-            <small className="dv-muted">Replaces the current file; the old one is kept in history.</small>
-          </div>
+          <div className="panel"><div className="panel-body stack">
+            <TextField label="What changed in this version?" hint="Optional. Replaces the current file; the old one is kept in history."
+              value={note} onChange={(e) => setNote(e.target.value)} disabled={busy} placeholder="e.g. Signed copy" />
+            <div>
+              <Button variant="primary" icon="upload" onClick={() => fileRef.current?.click()} disabled={busy} loading={busy}>
+                {busy ? "Uploading…" : "Choose file and upload new version"}
+              </Button>
+            </div>
+            <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-label="New version file" />
+          </div></div>
         )}
 
-        {err && <div className="dv-error">{err}</div>}
+        {err && <div className="callout bad"><Icon name="warn" size="sm" /><span>{err}</span></div>}
         {loading ? (
-          <div className="flex align-items-center gap-2 dv-muted">
-            <ProgressSpinner style={{ width: 24, height: 24 }} strokeWidth="6" /> Loading…
-          </div>
+          <Spinner label="Loading versions" />
+        ) : versions.length === 0 ? (
+          <EmptyState icon="history" title="No versions found" />
         ) : (
           <ul className="dv-list">
             {versions.map((v) => (
               <li key={v.version} className={`dv-row${v.isCurrent ? " current" : ""}`}>
-                <span className="dv-ver">v{v.version}{v.isCurrent && <em> current</em>}</span>
-                <div className="dv-info">
-                  <span className="dv-name">{v.originalName || "(file)"}</span>
-                  {v.note && <span className="dv-note">“{v.note}”</span>}
-                  <span className="dv-muted">
+                <span className="dv-ver">v{v.version}</span>
+                <div className="grow">
+                  <div className="ellipsis small" title={v.originalName}><b>{v.originalName || "(file)"}</b>{v.isCurrent && <> <Chip tone="ok">Current</Chip></>}</div>
+                  {v.note && <div className="small muted">“{v.note}”</div>}
+                  <div className="faint xs">
                     {formatBytes(v.fileSize)}
-                    {v.uploadedByName ? ` · ${v.uploadedByName}` : ""}
-                    {v.createdAt ? ` · ${new Date(v.createdAt).toLocaleDateString()}` : ""}
-                  </span>
+                    {v.uploadedByName ? `, ${v.uploadedByName}` : ""}
+                    {v.createdAt ? `, ${new Date(v.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                  </div>
                 </div>
-                <Button icon="pi pi-download" className="p-button-rounded p-button-text" onClick={() => download(v.version)}
-                  tooltip="Download this version" tooltipOptions={{ position: "top" }} aria-label="Download this version" />
+                <Button size="sm" variant="ghost" iconOnly icon="download" onClick={() => download(v.version)}
+                  aria-label={`Download version ${v.version}`} title="Download this version" />
               </li>
             ))}
-            {versions.length === 0 && (
-              <li className="dv-muted"><i className="pi pi-clock" /> No versions found.</li>
-            )}
           </ul>
         )}
       </div>
-    </Dialog>
+    </Drawer>
   );
 }

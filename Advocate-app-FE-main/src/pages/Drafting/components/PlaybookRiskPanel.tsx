@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button } from 'primereact/button'
-import { Dialog } from 'primereact/dialog'
-import { Tag } from 'primereact/tag'
+import { Button } from '../../../ui/kit'
+import { Modal } from '../../../ui/overlays'
+import Icon from '../../../ui/Icon'
+import DIcon from './DIcon'
 import { draftingApi, playbookApi, type PlaybookListItem, type PlaybookRisk, type RiskReport, type RiskSeverity, type RiskStatus } from '../api/drafting'
 import type { RiskMap } from '../context/RiskContext'
 
@@ -14,17 +15,17 @@ interface Props {
   onRisksLoaded: (map: RiskMap) => void
 }
 
-const REC_CONFIG: Record<string, { label: string; severity: 'danger' | 'warning' | 'success' }> = {
-  decline:   { label: 'Decline',   severity: 'danger'  },
-  negotiate: { label: 'Negotiate', severity: 'warning' },
-  proceed:   { label: 'Proceed',   severity: 'success' },
+const REC_CONFIG: Record<string, { label: string; severity: 'bad' | 'warn' | 'ok' }> = {
+  decline:   { label: 'Decline',   severity: 'bad'  },
+  negotiate: { label: 'Negotiate', severity: 'warn' },
+  proceed:   { label: 'Proceed',   severity: 'ok' },
 }
 
 const SEV_CONFIG = {
-  critical: { icon: 'pi-times-circle',        label: 'Critical', severity: 'danger'    as const },
-  major:    { icon: 'pi-exclamation-triangle', label: 'Major',    severity: 'warning'   as const },
-  minor:    { icon: 'pi-info-circle',          label: 'Minor',    severity: 'info'      as const },
-  info:     { icon: 'pi-comment',              label: 'Note',     severity: 'secondary' as const },
+  critical: { label: 'Critical', severity: 'bad'  },
+  major:    { label: 'Major',    severity: 'tape' },
+  minor:    { label: 'Minor',    severity: 'warn' },
+  info:     { label: 'Note',     severity: ''     },
 }
 
 const SEV_ORDER = ['critical', 'major', 'minor', 'info'] as const
@@ -146,47 +147,36 @@ export default function PlaybookRiskPanel({ sessionId, initialPlaybookId, initia
 
   return (
     <>
-    <div className="pp-review" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-      <div className="pp-review-head">
+    <div className="ed-sec">
+      <div className="row between" style={{ alignItems: 'flex-start', marginBottom: 10 }}>
         <div>
-          <div className="pp-review-title"><i className="pi pi-shield mr-2" />Playbook review</div>
-          <div className="pp-review-sub">{subtitle}</div>
+          <h3 style={{ marginBottom: 2 }}>Playbook risk</h3>
+          <div className="faint xs">{subtitle}</div>
         </div>
-        <Button
-          label={risks === null ? 'Run' : 'Re-run'}
-          icon="pi pi-refresh"
-          size="small"
-          loading={running}
-          disabled={!selectedId}
-          onClick={run}
-        />
       </div>
 
       {/* Playbook selector — always visible so the user can switch playbooks */}
-      <div style={{ padding: '0 1rem 0.75rem' }}>
+      <div className="row" style={{ gap: 6, marginBottom: 12 }}>
+        <label className="sr-only" htmlFor={`pb-sel-${sessionId}`}>Playbook</label>
         <select
+          id={`pb-sel-${sessionId}`}
+          className="input grow"
           value={selectedId ?? ''}
           onChange={e => setSelectedId(e.target.value ? Number(e.target.value) : null)}
-          style={{
-            width: '100%', padding: '0.4rem 0.6rem', borderRadius: '6px',
-            border: '1px solid var(--pp-slate-300)', fontSize: '0.85rem',
-            background: 'var(--surface-0)', color: 'var(--text-color)',
-          }}
         >
           <option value="">Select playbook…</option>
           {playbooks.map(p => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
+        <Button size="sm" icon="refresh" loading={running} disabled={!selectedId || running} onClick={run}>{risks === null ? 'Run' : 'Re-run'}</Button>
       </div>
 
-      {error && <div className="pp-review-error"><i className="pi pi-times-circle mr-2" />{error}</div>}
+      {error && <div className="callout bad" role="alert" style={{ marginBottom: 10 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
 
-      <div className="pp-review-body" style={{ flex: 1, overflowY: 'auto', minHeight: 0, maxHeight: '100%' }}>
+      <div>
         {running && (
-          <div className="pp-review-empty">
-            <i className="pi pi-spin pi-spinner mr-2" />Analysing risks…
-          </div>
+          <p className="faint small"><span className="pp-spin" aria-hidden="true" /> Analysing risks…</p>
         )}
 
         {!running && report && (
@@ -201,25 +191,22 @@ export default function PlaybookRiskPanel({ sessionId, initialPlaybookId, initia
         )}
 
         {!running && !report && risks === null && (
-          <div className="pp-review-empty">
+          <div className="faint small">
             {selectedId ? 'Run to compare this draft against the playbook.' : 'Select a playbook first, then run.'}
           </div>
         )}
 
         {!running && !report && risks !== null && (
-          <div className="pp-review-empty">Re-run to generate the structured review.</div>
+          <div className="faint small">Re-run to generate the structured review.</div>
         )}
       </div>
     </div>
 
-    <Dialog
-      header="Playbook review"
-      visible={expanded}
-      onHide={() => setExpanded(false)}
-      style={{ width: '92vw', maxWidth: '1100px' }}
-      contentClassName="pp-report-dialog-body"
-      maximizable
-      dismissableMask
+    <Modal
+      title="Playbook review"
+      open={expanded}
+      onClose={() => setExpanded(false)}
+      size="xwide"
     >
       {report && (
         <RiskReportSummary
@@ -230,7 +217,7 @@ export default function PlaybookRiskPanel({ sessionId, initialPlaybookId, initia
           onStatus={updateStatus}
         />
       )}
-    </Dialog>
+    </Modal>
     </>
   )
 }
@@ -254,18 +241,18 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
     ) : (
       <div className="pp-report-actions">
         {risk.block != null && (
-          <button type="button" title="Go to clause"
+          <button type="button" title="Go to clause" aria-label="Go to clause"
             className="pp-report-act" onClick={() => onJump(risk.block!)}>
-            <i className="pi pi-arrow-right" />
+            <Icon name="chevron" size="sm" />
           </button>
         )}
-        <button type="button" title="Accept"
+        <button type="button" title="Accept" aria-label="Accept finding"
           className="pp-report-act pp-report-act--ok" onClick={() => onStatus(risk.id, 'accepted')}>
-          <i className="pi pi-check" />
+          <Icon name="check" size="sm" />
         </button>
-        <button type="button" title="Dismiss"
+        <button type="button" title="Dismiss" aria-label="Dismiss finding"
           className="pp-report-act pp-report-act--x" onClick={() => onStatus(risk.id, 'dismissed')}>
-          <i className="pi pi-times" />
+          <Icon name="x" size="sm" />
         </button>
       </div>
     )
@@ -275,10 +262,10 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
       <div className="pp-report-head">
         <span className="pp-report-title">{report.title}</span>
         <div className="pp-report-head-right">
-          <Tag value={rec.label} severity={rec.severity} />
+          <span className={`chip ${rec.severity}`}>{rec.label}</span>
           {onExpand && (
             <button type="button" className="pp-report-expand" title="Open full-width view" onClick={onExpand}>
-              <i className="pi pi-window-maximize mr-1" />Expand
+              <Icon name="external" size="sm" />Expand
             </button>
           )}
         </div>
@@ -286,21 +273,20 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
 
       <section className="pp-report-sec">
         <div className="pp-report-sec-title">
-          <i className="pi pi-list mr-2" />Risk register
+          Risk register
         </div>
         {groups.length === 0 ? (
-          <div className="pp-review-clear">
-            <i className="pi pi-check-circle" />
-            <div>No risks found.</div>
-            <small>All clauses align with the playbook positions.</small>
-          </div>
+          <div className="callout ok"><Icon name="ok" size="sm" /><div>
+            <b>No risks found.</b>
+            <div className="faint xs">All clauses align with the playbook positions.</div>
+          </div></div>
         ) : (
           <div className="pp-report-table-wrap">
             <table className="pp-report-table">
               <thead>
                 {wide
-                  ? <tr><th>Sev.</th><th>Issue</th><th>Suggestion</th><th aria-label="actions" /></tr>
-                  : <tr><th>Sev.</th><th>Finding</th><th aria-label="actions" /></tr>}
+                  ? <tr><th scope="col">Severity</th><th scope="col">Issue</th><th scope="col">Suggestion</th><th scope="col"><span className="sr-only">Actions</span></th></tr>
+                  : <tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col"><span className="sr-only">Actions</span></th></tr>}
               </thead>
               {groups.map(group => (
                 <tbody key={group.clause} className="pp-report-grp">
@@ -316,7 +302,7 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
                     return (
                       <tr key={risk.id} className={dismissed ? 'pp-report-row--dim' : ''}>
                         <td>
-                          <Tag value={cfg.label} severity={cfg.severity} style={{ fontSize: '0.6rem' }} />
+                          <span className={`chip ${cfg.severity}`}>{cfg.label}</span>
                         </td>
                         {wide ? (
                           <>
@@ -328,7 +314,7 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
                             <div className="pp-report-finding-issue">{risk.issue}</div>
                             {risk.suggestion && (
                               <div className="pp-report-finding-fix">
-                                <i className="pi pi-lightbulb mr-1" />{risk.suggestion}
+                                <DIcon name="bulb" /> {risk.suggestion}
                               </div>
                             )}
                           </td>
@@ -347,7 +333,7 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
       {report.deal_breakers.length > 0 && (
         <section className="pp-report-sec">
           <div className="pp-report-sec-title">
-            <i className="pi pi-flag-fill mr-2" />Deal-breakers
+            <Icon name="alert" size="sm" />Deal-breakers
           </div>
           <ul className="pp-report-list pp-report-list--danger">
             {report.deal_breakers.map((d, i) => <li key={i}>{d}</li>)}
@@ -358,7 +344,7 @@ function RiskReportSummary({ report, risks, variant, onJump, onStatus, onExpand 
       {report.open_questions.length > 0 && (
         <section className="pp-report-sec">
           <div className="pp-report-sec-title">
-            <i className="pi pi-question-circle mr-2" />Open questions for the client
+            <Icon name="info" size="sm" />Open questions for the client
           </div>
           <ul className="pp-report-list">
             {report.open_questions.map((q, i) => <li key={i}>{q}</li>)}

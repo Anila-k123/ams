@@ -1,5 +1,5 @@
-import { Button } from 'primereact/button'
 import AmsCasePicker from './AmsCasePicker'
+import Icon from '../../../ui/Icon'
 import { amsCaseLabel, type AmsCase } from '../api/ams'
 
 /** "AMS case (optional)" for drafting uploads. Replaces InstaDraft's client + project
@@ -11,20 +11,19 @@ export default function CaseField({ value, onChange, disabled }: {
   disabled?: boolean
 }) {
   return (
-    <div className="flex flex-column gap-2">
-      <label className="font-medium text-sm">PactPro case <span className="text-color-secondary font-normal">(optional)</span></label>
+    <div className="field">
+      <span className="label">Case <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></span>
       {value ? (
-        <div className="flex align-items-center justify-content-between gap-2 p-2 border-round"
-          style={{ border: '1px solid var(--card-border)' }}>
+        <div className="row between dr-picked">
           <div>
-            <div className="font-medium">{amsCaseLabel(value)}</div>
-            {value.clientName && <div className="text-sm text-color-secondary">{value.clientName}</div>}
+            <div className="small mono" style={{ fontWeight: 500 }}>{amsCaseLabel(value)}</div>
+            {value.clientName && <div className="faint xs">{value.clientName}</div>}
           </div>
-          <Button icon="pi pi-times" text rounded size="small" aria-label="Remove case"
-            disabled={disabled} onClick={() => onChange(null)} />
+          <button type="button" className="btn ghost sm icon" aria-label="Remove case"
+            disabled={disabled} onClick={() => onChange(null)}><Icon name="x" size="sm" /></button>
         </div>
       ) : (
-        <AmsCasePicker onPick={onChange} disabled={disabled} />
+        <AmsCasePicker onPick={onChange} disabled={disabled} label="Case" />
       )}
     </div>
   )

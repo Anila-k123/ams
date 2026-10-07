@@ -1,23 +1,17 @@
-import { useEffect, useState, useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-import { Calendar as BigCalendar, momentLocalizer, Views } from "react-big-calendar";
-import moment from "moment";
-import "react-big-calendar/lib/css/react-big-calendar.css";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { Dropdown } from "primereact/dropdown";
-import { Calendar } from "primereact/calendar";
-import { Dialog } from "primereact/dialog";
-import { SelectButton } from "primereact/selectbutton";
+// Calendar: hearings, client meetings, payment dues and filings, plus open task
+// deadlines (read-only, from the Tasks list). Month / Week / Agenda views on the
+// prototype's own grid; clicking an empty part of a day adds an event on it.
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
-import "../assets/styles/HearingsPage.css";
 import { useLoading } from "../contexts/LoadingContext";
 import api from "../api/client";
 import { usePageModal } from "../utils/pageModal";
-
-const localizer = momentLocalizer(moment);
+import { Icon, Chip, PageHead, EmptyState } from "../ui/kit";
+import { TextField, TextArea, SelectField, Segmented, FilterChip } from "../ui/forms";
+import { Modal, Drawer, confirm } from "../ui/overlays";
+import "../ui/pages/court.css";
 
 const PURPOSE_OPTIONS = [
   "Arguments", "Evidence", "Framing of Issues", "For Counter / Reply",
@@ -25,33 +19,36 @@ const PURPOSE_OPTIONS = [
 ];
 
 const EVENT_TYPES = [
-  { value: "HEARING", label: "Hearing" },
-  { value: "MEETING", label: "Client Meeting" },
-  { value: "PAYMENT_DUE", label: "Payment Due" },
-  { value: "DOCUMENT", label: "Document Filing" },
+  { value: "HEARING", label: "Hearing", cls: "hearing", tone: "" as const },
+  { value: "MEETING", label: "Client Meeting", cls: "meeting", tone: "info" as const },
+  { value: "PAYMENT_DUE", label: "Payment Due", cls: "payment", tone: "warn" as const },
+  { value: "DOCUMENT", label: "Document Filing", cls: "filing", tone: "ok" as const },
 ];
-
-const VIEW_OPTIONS = [
-  { value: Views.DAY, label: "Day" },
-  { value: Views.WEEK, label: "Week" },
-  { value: Views.MONTH, label: "Month" },
-];
+const typeOf = (t?: string) => EVENT_TYPES.find((x) => x.value === t);
+const FILTER_KEYS = [...EVENT_TYPES.map((t) => t.value), "TASK"];
+const FILTER_LABEL: Record<string, string> = { ...Object.fromEntries(EVENT_TYPES.map((t) => [t.value, t.label])), TASK: "Task deadlines" };
 
 const emptyEvent = {
   title: "", eventType: "", description: "", date: "", time: "", caseId: "" as any,
   purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "",
 };
 
-const p2 = (n: number) => String(n).padStart(2, "0");
-const toISODate = (d: Date | null | undefined) => (d ? `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}` : "");
-const toHHMM = (d: Date | null | undefined) => (d ? `${p2(d.getHours())}:${p2(d.getMinutes())}` : "");
-const fromISODate = (s: string) => (s ? new Date(`${s}T00:00:00`) : null);
-const fromHHMM = (s: string) => {
-  if (!s) return null;
-  const [h, m] = s.split(":").map(Number);
-  const d = new Date(); d.setHours(h, m, 0, 0);
-  return d;
+type View = "month" | "week" | "agenda";
+type Item = {
+  id: any; kind: "event" | "task"; title: string; at: Date; hasTime: boolean;
+  eventType?: string; raw?: any; taskId?: any; caseNumber?: string; overdue?: boolean;
 };
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const parseYmd = (s: string) => { const [y, m, d] = s.slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d); };
+const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const monday = (d: Date) => { const x = startOfDay(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+const fdate = (d: Date, o: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" }) => d.toLocaleDateString("en-IN", o);
+const ftime = (d: Date) => `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+const longDate = (d: Date) => fdate(d, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const itemCls = (it: Item) => it.kind === "task" ? `task${it.overdue ? " overdue" : ""}` : (typeOf(it.eventType)?.cls || "");
 
 function HearingsPage() {
   const [events, setEvents] = useState<any[]>([]);
@@ -63,18 +60,24 @@ function HearingsPage() {
   const [tasks, setTasks] = useState<any[]>([]);
   const navigate = useNavigate();
   const [cases, setCases] = useState<any[]>([]);
-  const [currentView, setCurrentView] = useState<any>(Views.MONTH);
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [view, setView] = useState<View>("month");
+  const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [weekStart, setWeekStart] = useState(() => monday(new Date()));
+  const [types, setTypes] = useState<Set<string>>(() => new Set(FILTER_KEYS));
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [highlightedId, setHighlightedId] = useState<any>(null);
+  const [open, setOpen] = useState<Item | null>(null);
+  const [moreDay, setMoreDay] = useState<Date | null>(null);
+  const [resched, setResched] = useState<{ date: string; time: string } | null>(null);
   const location = useLocation();
   const [newEvent, setNewEvent] = useState(emptyEvent);
 
   const { withLoading } = useLoading();
-  const { success } = useToast();
+  const { success, error } = useToast();
   const { hasPermission } = usePermission();
+  const canCreate = hasPermission("EVENT_CREATE");
 
   const fetchCases = async () => {
     try {
@@ -88,17 +91,7 @@ function HearingsPage() {
   const fetchEvents = useCallback(async () => {
     try {
       const res = await api.get("/api/events/my-events");
-      const formatted = res.data.map((e: any) => ({
-        id: e.id,
-        title: `${e.title} (${e.eventType})`,
-        start: new Date(`${e.date}T${e.time || "09:00"}`),
-        end: new Date(`${e.date}T${e.time || "10:00"}`),
-        allDay: false,
-        eventType: e.eventType,
-        description: e.description,
-        caseId: e.caseEntity?.id,
-      }));
-      setEvents(formatted);
+      setEvents(res.data || []);
     } catch (err) {
       console.error("Error fetching events:", err);
     }
@@ -109,23 +102,7 @@ function HearingsPage() {
     if (!canSeeTasks) return;
     try {
       const res = await api.get("/api/workspace/tasks/all");
-      const today = moment().startOf("day");
-      setTasks((res.data || [])
-        .filter((t: any) => t.deadline && !t.completed && !t.cancelled)
-        .map((t: any) => {
-          const due = moment(t.deadline, "YYYY-MM-DD");
-          return {
-            id: `task-${t.id}`,           // never clashes with an event id
-            taskId: t.id,
-            kind: "task",
-            title: `✓ Task: ${t.title}${t.caseNumber ? ` – ${t.caseNumber}` : ""}`,
-            plainTitle: t.title,
-            start: due.toDate(),
-            end: due.toDate(),
-            allDay: true,
-            overdue: due.isBefore(today),
-          };
-        }));
+      setTasks((res.data || []).filter((t: any) => t.deadline && !t.completed && !t.cancelled));
     } catch (err) {
       console.error("Error fetching tasks:", err);
     }
@@ -137,32 +114,50 @@ function HearingsPage() {
     fetchTasks();
   }, [fetchEvents, fetchTasks]);
 
+  const items: Item[] = useMemo(() => {
+    const today = startOfDay(new Date());
+    const evs: Item[] = events.map((e) => {
+      const at = parseYmd(e.date);
+      const t = e.time ? String(e.time).slice(0, 5) : "";
+      if (t) { const [h, m] = t.split(":").map(Number); at.setHours(h, m); } else at.setHours(9, 0);
+      return { id: e.id, kind: "event", title: e.title, at, hasTime: !!t, eventType: e.eventType, raw: e, caseNumber: e.caseEntity?.caseNumber };
+    });
+    const tks: Item[] = tasks.map((t) => {
+      const at = parseYmd(t.deadline);
+      return { id: `task-${t.id}`, kind: "task", taskId: t.id, title: t.title, at, hasTime: false, caseNumber: t.caseNumber, overdue: at < today, raw: t };
+    });
+    return [...evs, ...tks]
+      .filter((it) => types.has(it.kind === "task" ? "TASK" : it.eventType || ""))
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+  }, [events, tasks, types]);
+
   // A task on the calendar opens it on the Tasks page (search + highlight).
-  const onSelectEvent = (item: any) => {
-    if (item.kind === "task") {
-      navigate("/dashboard/tasks", { state: { search: item.plainTitle, id: item.taskId } });
-    }
+  const openItem = (it: Item) => {
+    if (it.kind === "task") navigate("/dashboard/tasks", { state: { search: it.title, id: it.taskId } });
+    else setOpen(it);
   };
 
-  const openModal = () => {
+  const openModal = (date?: Date) => {
     setFormError("");
+    if (date) setNewEvent((ev) => ({ ...ev, date: ymd(date) }));
     setShowModal(true);
   };
 
   // Quick Actions / Lisa: open the Add New Event form.
   usePageModal(["create-hearing", "create-event"], () => openModal());
 
-  // Global Search navigation — read incoming state
+  // Global Search navigation: jump to the event's month and open it.
   useEffect(() => {
     const st = location.state as any;
     if (st?.search && st?.id) {
       setHighlightedId(st.id);
       const match = events.find((e) => e.id === st.id);
       if (match) {
-        setCurrentDate(match.start);
-        setCurrentView(Views.DAY);
+        const at = parseYmd(match.date);
+        setCursor(new Date(at.getFullYear(), at.getMonth(), 1));
+        setWeekStart(monday(at));
+        window.history.replaceState({}, document.title);
       }
-      window.history.replaceState({}, document.title);
     }
   }, [location.state, events]);
 
@@ -207,7 +202,7 @@ function HearingsPage() {
       success("Event created successfully!");
     } catch (err: any) {
       console.error("Error adding event:", err);
-      setFormError(err.response?.data?.message || err.message || "Failed to create event. Please try again.");
+      setFormError(err.response?.data?.message || err.response?.data?.error || err.message || "Failed to create event. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -219,130 +214,272 @@ function HearingsPage() {
     setNewEvent(emptyEvent);
   };
 
-  // Prev / Next move by what the view shows.
-  const move = (dir: 1 | -1) => {
-    const m = moment(currentDate);
-    m.add(dir, currentView === Views.MONTH ? "month" : currentView === Views.DAY ? "day" : "week");
-    setCurrentDate(m.toDate());
-  };
-  const goToNext = () => move(1);
-  const goToPrev = () => move(-1);
+  const deleteEvent = (it: Item) => confirm({
+    title: "Delete this event?",
+    message: `${it.title} on ${fdate(it.at)} will be removed from the calendar. The case record is not changed.`,
+    confirmLabel: "Delete event", danger: true,
+    accept: async () => {
+      try {
+        await api.delete(`/api/events/delete/${it.id}`);
+        setOpen(null);
+        fetchEvents();
+        success("Event deleted.");
+      } catch (err: any) {
+        error(err.response?.data?.error || "Could not delete the event.");
+      }
+    },
+  });
 
-  // The calendar's own toolbar (with its "October 2026" label) is hidden in
-  // HearingsPage.css, so say here what period is on screen.
-  const periodLabel = (() => {
-    const d = moment(currentDate);
-    if (currentView === Views.MONTH) return d.format("MMMM YYYY");
-    if (currentView === Views.DAY) return d.format("ddd, D MMM YYYY");
-    const start = d.clone().startOf("week");
-    const end = d.clone().endOf("week");
-    return `${start.format(start.year() === end.year() ? "D MMM" : "D MMM YYYY")} – ${end.format("D MMM YYYY")}`;
-  })();
-
-  const eventStyleGetter = (event: any) => {
-    if (event.kind === "task") {
-      // Tasks look different from hearings and events: outlined, with overdue in red.
-      const colour = event.overdue ? "#c62828" : "#7b1fa2";
-      return {
-        style: {
-          backgroundColor: "#fff", color: colour, border: `1.5px solid ${colour}`,
-          borderRadius: "8px", padding: "1px 5px", fontWeight: event.overdue ? 600 : 500,
-        },
-      };
+  const saveResched = async () => {
+    if (!open || !resched?.date) return;
+    const e = open.raw;
+    try {
+      await api.put(`/api/events/update/${e.id}`, { title: e.title, eventType: e.eventType, date: resched.date, time: resched.time || null });
+      setResched(null);
+      setOpen(null);
+      fetchEvents();
+      success(`Moved to ${fdate(parseYmd(resched.date))}${resched.time ? `, ${resched.time}` : ""}.`);
+    } catch (err: any) {
+      error(err.response?.data?.error || "Could not reschedule the event.");
     }
-    let backgroundColor = "#1976d2";
-    if (event.eventType === "HEARING") backgroundColor = "#e53935";
-    else if (event.eventType === "MEETING") backgroundColor = "#43a047";
-    else if (event.eventType === "PAYMENT_DUE") backgroundColor = "#ffb300";
-    else if (event.eventType === "DOCUMENT") backgroundColor = "#6d4c41";
-    const isHighlighted = highlightedId === event.id;
-    return {
-      style: {
-        backgroundColor,
-        color: "#fff",
-        borderRadius: "8px",
-        padding: "2px 5px",
-        boxShadow: isHighlighted ? "0 0 0 3px #3b82f6, 0 0 20px rgba(59,130,246,0.4)" : "none",
-        transition: "box-shadow 2.8s ease-out",
-      },
-    };
   };
 
-  const caseOptions = cases.map((c) => ({
-    value: c.id,
-    label: `${c.caseNumber || "N/A"} — ${c.clientName || "Unknown"}`,
-  }));
+  // Prev / Next move by what the view shows.
+  const step = (n: number) => {
+    if (view === "week") setWeekStart((w) => { const d = new Date(w); d.setDate(d.getDate() + 7 * n); return d; });
+    else setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1));
+  };
+  const goToday = () => { const t = new Date(); setCursor(new Date(t.getFullYear(), t.getMonth(), 1)); setWeekStart(monday(t)); };
+  // Keep week and month in step so switching views lands where you were looking.
+  const changeView = (v: View) => {
+    if (v === "week" && view !== "week") {
+      const t = new Date();
+      setWeekStart(monday(cursor.getMonth() === t.getMonth() && cursor.getFullYear() === t.getFullYear() ? t : cursor));
+    }
+    if (v !== "week" && view === "week") setCursor(new Date(weekStart.getFullYear(), weekStart.getMonth(), 1));
+    setView(v);
+  };
+  const toggleType = (k: string) => setTypes((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+
+  const today = new Date();
+  const evButton = (it: Item, label?: React.ReactNode) => (
+    <button key={it.id} type="button" className={`ev ${itemCls(it)}${highlightedId === it.id ? " hl" : ""}`}
+      title={it.kind === "task" ? `${it.overdue ? "Overdue task" : "Task due"}: ${it.title} (opens on the Tasks page)` : `${typeOf(it.eventType)?.label || "Event"}: ${it.title}`}
+      aria-label={`${it.kind === "task" ? "Task" : typeOf(it.eventType)?.label || "Event"}: ${it.title}${it.hasTime ? `, ${ftime(it.at)}` : ""}`}
+      onClick={(e) => { e.stopPropagation(); setMoreDay(null); openItem(it); }}>
+      {label ?? it.title}
+    </button>
+  );
+
+  let title = "";
+  let body: React.ReactNode;
+  if (view === "week") {
+    const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(weekStart); d.setDate(d.getDate() + i); return d; });
+    title = `${fdate(days[0], { day: "numeric", month: "short" })} to ${fdate(days[6])}`;
+    const hours = Array.from({ length: 10 }, (_, i) => 9 + i);
+    body = (
+      <div className="pp-week-wrap">
+        <div className="week" role="grid" aria-label="Week view">
+          <div className="whd" />
+          {days.map((d) => <div key={d.toISOString()} className={`whd${sameDay(d, today) ? " today" : ""}`}>{fdate(d, { weekday: "short" })}<b>{d.getDate()}</b></div>)}
+          {hours.map((h) => [
+            <div key={`t${h}`} className="tcell">{h}:00</div>,
+            ...days.map((d) => {
+              // Untimed items and those outside 9–18 sit in the nearest row.
+              const here = items.filter((it) => sameDay(it.at, d) && Math.min(Math.max(it.hasTime ? it.at.getHours() : 9, 9), 18) === h);
+              return (
+                <div key={`${h}-${d.getDate()}`} className={`hcell${canCreate ? " addable" : ""}`}
+                  onClick={(e) => { if (canCreate && e.target === e.currentTarget) { const x = new Date(d); openModal(x); setField("time", `${p2(h)}:00`); } }}>
+                  {here.map((it, k) => (
+                    <button key={it.id} type="button" className={`wev ${itemCls(it)}`}
+                      style={{ top: 3 + (it.hasTime && it.at.getHours() >= 9 && it.at.getHours() < 19 ? (it.at.getMinutes() / 60) * 48 : 0), ...(here.length > 1 ? { left: `${3 + (k * 96) / here.length}%`, right: "auto", width: `${96 / here.length}%` } : {}) }}
+                      onClick={() => openItem(it)} aria-label={`${it.title}${it.hasTime ? `, ${ftime(it.at)}` : ""}`}>
+                      {it.hasTime && <><b className="mono">{ftime(it.at)}</b><br /></>}{it.title}
+                    </button>
+                  ))}
+                </div>
+              );
+            }),
+          ])}
+        </div>
+      </div>
+    );
+  } else if (view === "agenda") {
+    title = fdate(cursor, { month: "long", year: "numeric" });
+    const inM = items.filter((it) => it.at.getMonth() === cursor.getMonth() && it.at.getFullYear() === cursor.getFullYear());
+    const groups: Record<string, Item[]> = {};
+    inM.forEach((it) => { (groups[ymd(it.at)] = groups[ymd(it.at)] || []).push(it); });
+    body = inM.length ? (
+      <div className="panel">
+        {Object.entries(groups).map(([k, list]) => {
+          const d = parseYmd(k);
+          return (
+            <div className="pp-agenda-day" key={k}>
+              <div className={`stamp${sameDay(d, today) ? " today" : ""}`} aria-label={longDate(d)}><span>{fdate(d, { weekday: "short" })}</span><b>{d.getDate()}</b></div>
+              <ul>
+                {list.map((it) => (
+                  <li key={it.id}>
+                    <span className="t">{it.hasTime ? ftime(it.at) : "All day"}</span>
+                    <span className="ellipsis">
+                      <button type="button" className="link court-linkbtn" onClick={() => openItem(it)}>{it.title}</button>
+                      {it.caseNumber && <span className="faint small mono"> {it.caseNumber}</span>}
+                    </span>
+                    {it.kind === "task"
+                      ? <Chip tone={it.overdue ? "bad" : "tape"}>{it.overdue ? "Overdue task" : "Task"}</Chip>
+                      : <Chip tone={typeOf(it.eventType)?.tone || ""}>{typeOf(it.eventType)?.label || it.eventType}</Chip>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    ) : <div className="panel"><EmptyState icon="calendar" title="Nothing scheduled this month" text="Change the filters or add an event." /></div>;
+  } else {
+    title = fdate(cursor, { month: "long", year: "numeric" });
+    const start = new Date(cursor); start.setDate(1 - ((cursor.getDay() + 6) % 7));
+    const cells = Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+    body = (
+      <div className="cal">
+        <div className="cal-head">{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d}>{d}</div>)}</div>
+        <div className="cal-grid">
+          {cells.map((d) => {
+            const list = items.filter((it) => sameDay(it.at, d));
+            const wk = d.getDay() === 0 || d.getDay() === 6;
+            const isToday = sameDay(d, today);
+            return (
+              <div key={d.toISOString()} className={`cal-day${canCreate ? " pp-cal-day" : ""}${d.getMonth() !== cursor.getMonth() ? " out" : ""}${isToday ? " today" : ""}${wk ? " weekend" : ""}`}
+                title={canCreate ? `Add an event on ${fdate(d)}` : undefined}
+                onClick={(e) => { const t = e.target as HTMLElement; if (canCreate && (t === e.currentTarget || t.classList.contains("d"))) openModal(d); }}>
+                <span className="d" aria-current={isToday ? "date" : undefined}>{d.getDate()}</span>
+                {list.slice(0, 3).map((it) => evButton(it))}
+                {list.length > 3 && <button type="button" className="pp-more" onClick={(e) => { e.stopPropagation(); setMoreDay(d); }}>+{list.length - 3} more</button>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  const caseOptions = cases.map((c) => ({ value: c.id, label: `${c.caseNumber || "N/A"} — ${c.clientName || "Unknown"}` }));
+  const ev = open?.raw;
+  const hd = ev?.hearingDetail || {};
+  const openType = typeOf(open?.eventType);
 
   return (
-    <div className="calendar-container">
-      <div className="flex flex-wrap align-items-center gap-2">
-        {hasPermission("EVENT_CREATE") && <Button icon="pi pi-plus" label="Add Event" onClick={openModal} />}
-        <Button icon="pi pi-chevron-left" label="Prev" className="p-button-outlined" onClick={goToPrev} />
-        <Button icon="pi pi-chevron-right" iconPos="right" label="Next" className="p-button-outlined" onClick={goToNext} />
-        <span className="calendar-period">{periodLabel}</span>
-        <SelectButton value={currentView} options={VIEW_OPTIONS} onChange={(e) => e.value && setCurrentView(e.value)} />
+    <div className="court">
+      <PageHead title="Calendar" sub="Hearings, client meetings, payment dues and filings. Click an empty part of a day to add an event."
+        actions={canCreate && <button type="button" className="btn primary" onClick={() => openModal()}><Icon name="plus" size="sm" />Add event</button>} />
+
+      <div className="pp-cal-tool">
+        <button type="button" className="btn icon" onClick={() => step(-1)} aria-label="Previous"><Icon name="chevronLeft" size="sm" /></button>
+        <button type="button" className="btn" onClick={goToday}>Today</button>
+        <button type="button" className="btn icon" onClick={() => step(1)} aria-label="Next"><Icon name="chevron" size="sm" /></button>
+        <h2 aria-live="polite">{title}</h2>
+        <Segmented<View> label="View" value={view} onChange={changeView}
+          options={[{ value: "month", label: "Month" }, { value: "week", label: "Week" }, { value: "agenda", label: "Agenda" }]} />
+        <span className="grow" />
+        <div className="row wrap" role="group" aria-label="Event types">
+          {FILTER_KEYS.filter((k) => k !== "TASK" || canSeeTasks).map((k) => (
+            <FilterChip key={k} on={types.has(k)} onClick={() => toggleType(k)}>{FILTER_LABEL[k]}</FilterChip>
+          ))}
+        </div>
       </div>
 
-      <BigCalendar
-        localizer={localizer}
-        events={[...events, ...tasks]}
-        onSelectEvent={onSelectEvent}
-        tooltipAccessor={(item: any) => item.kind === "task"
-          ? `${item.overdue ? "Overdue task" : "Task due"}: ${item.plainTitle} (click to open)` : item.title}
-        startAccessor="start"
-        endAccessor="end"
-        style={{ height: 600 }}
-        eventPropGetter={eventStyleGetter}
-        date={currentDate}
-        view={currentView}
-        onNavigate={setCurrentDate}
-        onView={setCurrentView}
-        views={[Views.DAY, Views.WEEK, Views.MONTH]}
-      />
+      {body}
 
-      <Dialog visible={showModal} onHide={closeModal} header="Add New Event" modal style={{ width: "36rem" }} breakpoints={{ "640px": "95vw" }}>
-        {formError && <div className="modal-error">{formError}</div>}
-        <form onSubmit={handleAddEvent} className="flex flex-column gap-3">
-          <InputText name="title" placeholder="Event Title" value={newEvent.title} onChange={handleChange} required />
-          <Dropdown value={newEvent.eventType} options={EVENT_TYPES} placeholder="Select Type"
-            onChange={(e) => setField("eventType", e.value)} />
-          <div className="grid">
-            <div className="col-12 md:col-6">
-              <Calendar className="w-full" placeholder="Date" value={fromISODate(newEvent.date)} dateFormat="dd/mm/yy" showIcon appendTo={document.body}
-                onChange={(e) => setField("date", toISODate(e.value as Date))} />
+      <div className="legend court-legend">
+        <span><i style={{ background: "var(--ink)" }} />Hearing</span>
+        <span><i style={{ background: "var(--info)" }} />Client meeting</span>
+        <span><i style={{ background: "var(--warn)" }} />Payment due</span>
+        <span><i style={{ background: "var(--ok)" }} />Document filing</span>
+        {canSeeTasks && <span><i className="court-legend-task" />Task deadline</span>}
+        <span><i style={{ background: "var(--tape)" }} />Today</span>
+      </div>
+
+      {/* "+n more" in a month cell */}
+      <Modal open={!!moreDay} onClose={() => setMoreDay(null)} size="narrow" title={moreDay ? longDate(moreDay) : ""}>
+        <div className="stack court-more">
+          {moreDay && items.filter((it) => sameDay(it.at, moreDay)).map((it) =>
+            evButton(it, <>{it.hasTime && <span className="mono">{ftime(it.at)}</span>} {it.title}</>))}
+        </div>
+      </Modal>
+
+      {/* Event details */}
+      <Drawer open={!!open} onClose={() => { setOpen(null); setResched(null); }} title={open?.title || ""}
+        sub={open && <span className="small muted">{openType?.label || open.eventType}, {longDate(open.at)}{open.hasTime ? `, ${ftime(open.at)}` : ""}</span>}
+        footer={open && <>
+          {hasPermission("EVENT_DELETE") && <button type="button" className="btn danger" onClick={() => deleteEvent(open)}><Icon name="trash" size="sm" />Delete</button>}
+          <span className="grow" />
+          {canCreate && <button type="button" className="btn primary"
+            onClick={() => setResched({ date: ymd(open.at), time: open.hasTime ? ftime(open.at) : "" })}><Icon name="calendar" size="sm" />Reschedule</button>}
+        </>}>
+        {open && (
+          <>
+            <div className="row wrap court-gap-b">
+              <Chip tone={openType?.tone || ""}>{openType?.label || open.eventType}</Chip>
+              {startOfDay(open.at) < startOfDay(today) ? <Chip>Past</Chip> : sameDay(open.at, today) ? <Chip tone="tape">Today</Chip> : null}
             </div>
-            <div className="col-12 md:col-6">
-              <Calendar className="w-full" placeholder="Time" value={fromHHMM(newEvent.time)} timeOnly hourFormat="24" appendTo={document.body}
-                onChange={(e) => setField("time", toHHMM(e.value as Date))} />
-            </div>
+            <dl className="kv">
+              <dt>Case</dt>
+              <dd>{ev?.caseEntity ? <><Link className="link mono" to={`/dashboard/cases/${ev.caseEntity.id}`}>{ev.caseEntity.caseNumber || `Case ${ev.caseEntity.id}`}</Link>{ev.caseEntity.caseTitle && <div className="faint xs">{ev.caseEntity.caseTitle}</div>}</> : "—"}</dd>
+              <dt>Time</dt><dd>{open.hasTime ? ftime(open.at) : "Not set"}</dd>
+              {open.eventType === "HEARING" && <>
+                <dt>Court</dt><dd>{hd.court || "—"}</dd>
+                <dt>Hall</dt><dd>{hd.benchHall || "—"}</dd>
+                <dt>Judge</dt><dd>{hd.judge || "—"}</dd>
+                <dt>Purpose</dt><dd>{hd.purpose || "—"}</dd>
+                {hd.nextDate && <><dt>Next date</dt><dd>{fdate(parseYmd(hd.nextDate))}</dd></>}
+                {hd.outcome && <><dt>Outcome</dt><dd>{hd.outcome}</dd></>}
+              </>}
+              <dt>Notes</dt><dd>{ev?.description || "—"}</dd>
+            </dl>
+          </>
+        )}
+      </Drawer>
+
+      <Modal open={!!resched} onClose={() => setResched(null)} size="narrow" title="Reschedule" sub={open?.title}
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setResched(null)}>Cancel</button>
+          <button type="button" className="btn primary" onClick={saveResched} disabled={!resched?.date}>Move event</button>
+        </>}>
+        {resched && (
+          <div className="form-grid">
+            <TextField label="New date" type="date" required value={resched.date} onChange={(e) => setResched({ ...resched, date: e.target.value })} />
+            <TextField label="Time" type="time" value={resched.time} onChange={(e) => setResched({ ...resched, time: e.target.value })} />
           </div>
+        )}
+      </Modal>
 
-          <label className="event-label">Select Case: *</label>
-          <Dropdown value={newEvent.caseId || null} options={caseOptions} filter showClear
-            placeholder="Search by Case or Client Name..." onChange={(e) => setField("caseId", e.value ?? "")} />
+      <Modal open={showModal} onClose={closeModal} title="Add event" sub="Every event belongs to a case."
+        footer={<>
+          <button type="button" className="btn ghost" onClick={closeModal}>Cancel</button>
+          <button type="submit" form="event-form" className={`btn primary${saving ? " loading" : ""}`} disabled={saving}>{saving ? "Saving…" : "Save event"}</button>
+        </>}>
+        {formError && <div className="callout bad court-gap-b" role="alert"><Icon name="warn" size="sm" /><div>{formError}</div></div>}
+        <form id="event-form" onSubmit={handleAddEvent} className="form-grid" noValidate>
+          <TextField full label="Title" name="title" required placeholder="e.g. Final arguments" value={newEvent.title} onChange={handleChange} />
+          <SelectField label="Type" required value={newEvent.eventType} placeholder="Select type"
+            options={EVENT_TYPES.map((t) => ({ value: t.value, label: t.label }))} onChange={(e) => setField("eventType", e.target.value)} />
+          <SelectField label="Case" required value={newEvent.caseId} placeholder="Select the case"
+            options={caseOptions} onChange={(e) => setField("caseId", e.target.value)} />
+          <TextField label="Date" type="date" required value={newEvent.date} onChange={(e) => setField("date", e.target.value)} />
+          <TextField label="Time" type="time" value={newEvent.time} onChange={(e) => setField("time", e.target.value)} />
 
-          {newEvent.eventType === "HEARING" && (
-            <div className="flex flex-column gap-3">
-              <Dropdown value={newEvent.purpose} placeholder="Purpose / stage…" showClear
-                options={PURPOSE_OPTIONS.map((p) => ({ value: p, label: p }))} onChange={(e) => setField("purpose", e.value || "")} />
-              <InputText name="court" placeholder="Court" value={newEvent.court} onChange={handleChange} />
-              <InputText name="benchHall" placeholder="Bench / Hall no." value={newEvent.benchHall} onChange={handleChange} />
-              <InputText name="judge" placeholder="Judge / Coram" value={newEvent.judge} onChange={handleChange} />
-              <label className="event-label">Next hearing date</label>
-              <Calendar value={fromISODate(newEvent.nextDate)} dateFormat="dd/mm/yy" showIcon showButtonBar appendTo={document.body}
-                onChange={(e) => setField("nextDate", toISODate(e.value as Date))} />
-              <InputTextarea name="outcome" placeholder="Outcome / order (after the hearing)" value={newEvent.outcome} onChange={handleChange} rows={2} />
-            </div>
-          )}
+          {newEvent.eventType === "HEARING" && <>
+            <SelectField label="Purpose / stage" value={newEvent.purpose} placeholder="Not set"
+              options={PURPOSE_OPTIONS} onChange={(e) => setField("purpose", e.target.value)} />
+            <TextField label="Court" name="court" value={newEvent.court} onChange={handleChange} />
+            <TextField label="Bench / hall no." name="benchHall" value={newEvent.benchHall} onChange={handleChange} />
+            <TextField label="Judge / coram" name="judge" value={newEvent.judge} onChange={handleChange} />
+            <TextField label="Next hearing date" type="date" value={newEvent.nextDate} onChange={(e) => setField("nextDate", e.target.value)} />
+            <TextArea full label="Outcome / order" hint="After the hearing" name="outcome" rows={2} value={newEvent.outcome} onChange={handleChange} />
+          </>}
 
-          <InputTextarea name="description" placeholder="Description" value={newEvent.description} onChange={handleChange} rows={3} />
-
-          <div className="flex justify-content-end gap-2">
-            <Button type="button" label="Cancel" className="p-button-text" onClick={closeModal} />
-            <Button type="submit" label={saving ? "Saving..." : "Save Event"} disabled={saving} loading={saving} />
-          </div>
+          <TextArea full label="Description" name="description" rows={3} value={newEvent.description} onChange={handleChange} />
         </form>
-      </Dialog>
+      </Modal>
     </div>
   );
 }

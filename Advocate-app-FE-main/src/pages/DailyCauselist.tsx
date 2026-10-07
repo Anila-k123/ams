@@ -1,16 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { Calendar } from "primereact/calendar";
-import { Button } from "primereact/button";
-import { ProgressSpinner } from "primereact/progressspinner";
 import { useToast } from "../contexts/ToastContext";
 import api from "../api/client";
-import "../assets/styles/DisplayBoard.css";
+import { Icon, Chip, PageHead, EmptyState, Skel } from "../ui/kit";
+import "../ui/pages/court.css";
 
 const p2 = (n: number) => String(n).padStart(2, "0");
 const toISO = (d: Date) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 // Kept as the original (UTC-based) "today" so the default date/max are unchanged.
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const parse = (s: string) => new Date(`${s}T00:00:00`);
+const longDate = (s: string) => parse(s).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+const shortDate = (s: string) => parse(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+const shift = (s: string, n: number) => { const d = parse(s); d.setDate(d.getDate() + n); return toISO(d); };
 
 // This practice's matters that sit in a court's cause list for a given day —
 // the item number each is listed at. A dedicated page (separate from the Court
@@ -21,6 +23,8 @@ export default function DailyCauselist() {
   const [listings, setListings] = useState<any[]>([]);
   const [covered, setCovered] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Set when the cause list could not be read (503 = the court data service is down).
+  const [loadError, setLoadError] = useState<"down" | "failed" | null>(null);
   const [alertBusy, setAlertBusy] = useState<string | null>(null);
 
   // Manually forward one listing to the client. Reuses the case hearing-alert
@@ -46,13 +50,15 @@ export default function DailyCauselist() {
 
   const fetchListings = useCallback(async (on: string) => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await api.get("/api/causelist/my-listings", { params: { date: on } });
       setListings(res.data?.listings || []);
       setCovered(res.data?.coveredCourts || []);
-    } catch {
+    } catch (err: any) {
       setListings([]);
       setCovered([]);
+      setLoadError(err?.response?.status === 503 ? "down" : "failed");
     } finally {
       setLoading(false);
     }
@@ -69,58 +75,74 @@ export default function DailyCauselist() {
   const isToday = date === todayISO();
 
   return (
-    <div className="board-container">
-      <div className="flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
-        <p className="board-sub">Your matters listed in {isToday ? "today's" : "the day's"} cause lists.</p>
-        <label className="dc-date">
-          <span>Date</span>
-          <Calendar value={new Date(`${date}T00:00:00`)} maxDate={new Date(`${todayISO()}T00:00:00`)} dateFormat="dd/mm/yy" showIcon
-            onChange={(e) => setDate(e.value ? toISO(e.value as Date) : todayISO())} />
-        </label>
+    <div className="court">
+      <PageHead title="Daily Cause List" sub={`Your matters in the cause lists for ${longDate(date)}.`} />
+
+      <div className="toolbar">
+        <button type="button" className="btn icon" aria-label="Previous day" onClick={() => setDate(shift(date, -1))}><Icon name="chevronLeft" size="sm" /></button>
+        <label className="sr-only" htmlFor="cl-date">Cause list date</label>
+        <input id="cl-date" type="date" className="input court-date" value={date} max={todayISO()}
+          onChange={(e) => setDate(e.target.value || todayISO())} />
+        <button type="button" className="btn icon" aria-label="Next day" disabled={date >= todayISO()} onClick={() => setDate(shift(date, 1))}><Icon name="chevron" size="sm" /></button>
+        {!isToday && <button type="button" className="btn ghost" onClick={() => setDate(todayISO())}>Today</button>}
+        <span className="grow" />
+        {!loading && !loadError && <span className="faint small">{listings.length} matter{listings.length === 1 ? "" : "s"}</span>}
       </div>
 
       {loading ? (
-        <div className="listed-today listed-today-empty">
-          <ProgressSpinner style={{ width: 20, height: 20 }} strokeWidth="6" /> <span>Loading cause list…</span>
+        <div className="panel"><div className="panel-body stack"><Skel h={18} w="40%" /><Skel h={44} /><Skel h={44} /><Skel h={44} /></div></div>
+      ) : loadError ? (
+        <div className={`callout ${loadError === "down" ? "warn" : "bad"}`} role="alert">
+          <Icon name="warn" size="sm" />
+          <div className="grow">
+            {loadError === "down"
+              ? <><b>The court data service is not reachable.</b><div className="small">Cause lists can't be read right now. Your cases and calendar are unaffected; try again in a few minutes.</div></>
+              : <b>Couldn't load the cause list for this date.</b>}
+          </div>
+          <button type="button" className="btn sm" onClick={() => fetchListings(date)}><Icon name="refresh" size="sm" />Retry</button>
         </div>
       ) : !listings.length ? (
-        <div className="listed-today listed-today-empty">
-          <i className="pi pi-list" />
-          <span>
-            Nothing of yours is listed {isToday ? "today" : "on this date"}
-            {covered.length
-              ? ` in ${covered.length === 1 ? "the court" : "the courts"} we hold a cause list for.`
-              : " — no cause list has been collected for this date yet."}
-          </span>
+        <div className="panel">
+          <EmptyState icon="list" title={`Nothing of yours is listed on ${shortDate(date)}`}
+            text={covered.length
+              ? `Checked ${covered.length === 1 ? "the court" : `the ${covered.length} courts`} we hold a cause list for. Try another date, or check the display board for live court status.`
+              : "No cause list has been collected for this date yet."} />
         </div>
       ) : (
-        <div className="flex flex-column gap-3">
-          {Object.entries(byCourt).map(([courtLabel, rows]) => (
-            <div className="listed-today" key={courtLabel}>
-              <h3><i className="pi pi-list" /> {courtLabel} ({rows.length})</h3>
-              <div className="flex flex-column gap-2">
-                {rows.map((l: any) => {
-                  const key = `${l.caseId}-${l.courtNumber}-${l.itemNumber}`;
-                  return (
-                    <div className="flex align-items-center gap-2" key={`${l.caseId}-${l.court}-${l.courtNumber}-${l.itemNumber}`}>
-                      <Link className="listed-today-row flex-1" to={`/dashboard/cases/${l.caseId}`} title="Open this case">
-                        <span className="lt-court">Court {l.courtNumber || "—"}</span>
-                        <span className="lt-room">Item {l.itemNumber}</span>
-                        <span className="lt-case" style={{ gridColumn: "3 / -1" }}>{l.caseString || l.caseNumber}</span>
-                      </Link>
-                      <Button type="button" className="p-button-outlined p-button-sm" icon="pi pi-send"
-                        label={alertBusy === key ? "Sending…" : "Send Alert to Client"}
-                        disabled={!l.clientId || alertBusy === key}
-                        tooltip={l.clientId ? "Email this listing to the client" : "No client linked to this case"}
-                        tooltipOptions={{ showOnDisabled: true }}
-                        onClick={() => alertClient(l)} />
-                    </div>
-                  );
-                })}
-              </div>
+        Object.entries(byCourt).map(([courtLabel, rows]) => (
+          <section className="panel court-gap-b" key={courtLabel}>
+            <div className="panel-head"><h3 className="serif court-court-h">{courtLabel} <span className="faint">({rows.length})</span></h3></div>
+            <div className="table-wrap court-flush">
+              <table className="t">
+                <thead><tr><th scope="col">Item</th><th scope="col">Case</th><th scope="col" className="hide-sm">Court hall</th><th scope="col" className="actions"><span className="sr-only">Actions</span></th></tr></thead>
+                <tbody>
+                  {rows.map((l: any) => {
+                    const key = `${l.caseId}-${l.courtNumber}-${l.itemNumber}`;
+                    return (
+                      <tr key={`${l.caseId}-${l.court}-${l.courtNumber}-${l.itemNumber}`}>
+                        <td><div className="pp-cl-item">{l.itemNumber}</div></td>
+                        <td>
+                          <Link className="mono link" to={`/dashboard/cases/${l.caseId}`} title="Open this case">{l.caseString || l.caseNumber}</Link>
+                          {l.caseString && l.caseNumber && l.caseString !== l.caseNumber && <div className="cell-sub mono">{l.caseNumber}</div>}
+                        </td>
+                        <td className="hide-sm"><Chip plain>Court {l.courtNumber || "—"}</Chip></td>
+                        <td className="actions">
+                          <button type="button" className={`btn sm${alertBusy === key ? " loading" : ""}`}
+                            disabled={!l.clientId || alertBusy === key}
+                            title={l.clientId ? "Email this listing to the client" : "No client linked to this case"}
+                            onClick={() => alertClient(l)}>
+                            <Icon name="send" size="sm" />{alertBusy === key ? "Sending…" : "Send alert to client"}
+                          </button>
+                          {!l.clientId && <span className="sr-only">No client is linked to this case</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          ))}
-        </div>
+          </section>
+        ))
       )}
     </div>
   );

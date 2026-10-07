@@ -1,33 +1,37 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DRAFTING } from './routes'
 import { useNavigate } from 'react-router-dom'
-import { Button } from 'primereact/button'
-import { DataTable } from 'primereact/datatable'
-import { Column } from 'primereact/column'
-import { Tag } from 'primereact/tag'
-import { InputText } from 'primereact/inputtext'
-import { Toast } from 'primereact/toast'
-import { ConfirmDialog, confirmDialog } from 'primereact/confirmdialog'
+import { useToast } from '../../contexts/ToastContext'
+import { Button, PageHead } from '../../ui/kit'
+import { SearchInput } from '../../ui/forms'
+import { DataTable, type Column } from '../../ui/DataTable'
+import { confirm } from '../../ui/overlays'
+import Icon from '../../ui/Icon'
 import { draftingApi, type DraftSession } from './api/drafting'
 import NewDraftDialog from './components/NewDraftDialog'
 
-// Maps a session status to the PrimeReact Tag colour used to display it.
-const STATUS_SEVERITY: Record<string, 'success' | 'info' | 'warning' | 'danger'> = {
-  ready: 'success',
-  generating: 'info',
-  pending: 'warning',
-  failed: 'danger',
+// Session status as a Red Tape chip tone.
+const STATUS_TONE: Record<string, string> = {
+  ready: 'ok',
+  generating: 'warn',
+  pending: 'warn',
+  failed: 'bad',
 }
+
+const fmtDateTime = (v?: string | null) => v
+  ? new Date(v).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+  : '—'
 
 /** The "Drafts" page: lists every draft session with a button to start a new one.
  *  Rows open into their DraftPage once generation has finished. */
 export default function Drafts() {
   const navigate = useNavigate()
+  const toast = useToast()
   const [sessions, setSessions] = useState<DraftSession[]>([])  // all draft sessions
   const [loading, setLoading] = useState(true)                  // true until the initial fetch resolves
   const [query, setQuery] = useState('')                        // free-text filter (id / status)
+  const [status, setStatus] = useState('')                      // status filter
   const [showBegin, setShowBegin] = useState(false)             // "How would you like to begin?" chooser
-  const toast = useRef<Toast>(null)
 
   const load = () => draftingApi.getSessions().then(setSessions)
 
@@ -38,21 +42,21 @@ export default function Drafts() {
 
   // Confirm, then delete the draft session (its blocks cascade) and reload.
   const confirmDelete = (row: DraftSession) => {
-    confirmDialog({
-      message: `Delete draft #${row.id}? This removes the draft and all its clauses. This can't be undone.`,
-      header: 'Delete draft',
-      icon: 'pi pi-exclamation-triangle',
-      acceptClassName: 'p-button-danger',
+    confirm({
+      title: `Delete draft #${row.id}?`,
+      message: 'This removes the draft and all its clauses. Documents saved to the case are kept. This cannot be undone.',
+      confirmLabel: 'Delete draft',
+      danger: true,
       accept: async () => {
         try {
           await draftingApi.deleteSession(row.id)
           // Drop the draft's persisted chat transcript so a reused id can't inherit it.
           localStorage.removeItem(`pp_chat_${row.id}`)
           localStorage.removeItem(`pp_chat_model_${row.id}`)
-          toast.current?.show({ severity: 'success', summary: 'Deleted', detail: `Draft #${row.id} removed.`, life: 3000 })
+          toast.success(`Draft #${row.id} deleted`)
           load()
         } catch {
-          toast.current?.show({ severity: 'error', summary: 'Could not delete', detail: 'Delete failed — please try again.', life: 5000 })
+          toast.error('Could not delete the draft. Please try again.')
         }
       },
     })
@@ -60,91 +64,95 @@ export default function Drafts() {
 
   // Rows matching the query on id, status, template name, or document names.
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return sessions
+    const q = query.trim().toLowerCase().replace(/^#/, '')
     return sessions.filter(s =>
+      (!status || s.status === status) && (!q ||
       String(s.id).includes(q) ||
       s.status.toLowerCase().includes(q) ||
       (s.template_name || '').toLowerCase().includes(q) ||
-      (s.sample_names || []).some(n => n.toLowerCase().includes(q)),
+      (s.sample_names || []).some(n => n.toLowerCase().includes(q))),
     )
-  }, [sessions, query])
+  }, [sessions, query, status])
 
-  // Column renderer: status as a colour-coded Tag.
-  const statusTemplate = (row: DraftSession) => (
-    <Tag value={row.status.charAt(0).toUpperCase() + row.status.slice(1)} severity={STATUS_SEVERITY[row.status]} />
-  )
-
-  // Column renderer: "verified / total cited" — how many blocks have a verified citation.
-  const blocksTemplate = (row: DraftSession) => {
-    const total = row.blocks?.length ?? 0
-    const verified = row.blocks?.filter(b => b.verified).length ?? 0
-    return total ? (
-      <span className="text-sm">
-        <span style={{ color: 'var(--pp-verified)', fontWeight: 600 }}>{verified}</span>
-        <span style={{ color: 'var(--pp-slate-400)' }}> / {total} cited</span>
-      </span>
-    ) : <span className="text-sm text-color-secondary">—</span>
-  }
-
-  // Column renderer: "Open" + delete, per row. Open is enabled once ready.
-  const actionsTemplate = (row: DraftSession) => (
-    <div className="flex align-items-center justify-content-end gap-1">
-      <Button
-        icon="pi pi-arrow-right"
-        label="Open"
-        size="small"
-        text
-        disabled={row.status !== 'ready'}
-        onClick={() => navigate(DRAFTING.draft(row.id))}
-      />
-      <Button
-        icon="pi pi-trash"
-        size="small"
-        text
-        severity="danger"
-        aria-label="Delete draft"
-        tooltip="Delete"
-        tooltipOptions={{ position: 'top' }}
-        onClick={() => confirmDelete(row)}
-      />
-    </div>
-  )
+  const columns: Column<DraftSession>[] = [
+    { key: 'id', label: 'Draft #', sort: true, width: 90, render: r => <span className="mono">#{r.id}</span> },
+    { key: 'template_name', label: 'Template', sort: r => r.template_name || '', render: r => r.template_name || <span className="faint">No template</span> },
+    { key: 'docs', label: 'Reference docs', hideSm: true, render: r => r.sample_names?.length ? <span className="pp-clamp small">{r.sample_names.join(', ')}</span> : <span className="faint">—</span> },
+    { key: 'created_at', label: 'Created', sort: true, hideSm: true, render: r => <span className="nowrap">{fmtDateTime(r.created_at)}</span> },
+    {
+      key: 'cited', label: 'Citations', hideSm: true, render: r => {
+        // "verified / total cited": how many blocks have a verified citation.
+        const total = r.blocks?.length ?? 0
+        const verified = r.blocks?.filter(b => b.verified).length ?? 0
+        if (r.status !== 'ready' || !total) return <span className="faint">—</span>
+        return (
+          <div className="row nowrap">
+            <span className="small">{verified} of {total} verified</span>
+            <span className="bar-track cite-bar" aria-hidden="true"><i style={{ width: `${verified / total * 100}%`, background: `var(${verified === total ? '--ok' : '--warn'})` }} /></span>
+          </div>
+        )
+      },
+    },
+    {
+      key: 'status', label: 'Status', sort: true, render: r => (
+        <span className={`chip ${STATUS_TONE[r.status] ?? ''}${r.status === 'generating' ? ' plain' : ''}`}>
+          {r.status === 'generating' && <span className="pp-spin" aria-hidden="true" />}
+          {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+        </span>
+      ),
+    },
+    {
+      key: 'act', label: <span className="sr-only">Actions</span>, align: 'right', render: r => (
+        <div className="row" style={{ justifyContent: 'flex-end', gap: 4 }} onClick={e => e.stopPropagation()}>
+          {r.status === 'ready' && <button type="button" className="btn sm" onClick={() => navigate(DRAFTING.draft(r.id))}>Open</button>}
+          <button type="button" className="btn ghost sm icon" aria-label={`Delete draft ${r.id}`} title="Delete"
+            onClick={() => confirmDelete(r)}><Icon name="trash" size="sm" /></button>
+        </div>
+      ),
+    },
+  ]
 
   return (
     <div>
-      <Toast ref={toast} />
-      <ConfirmDialog />
-      <div className="pp-page-head flex justify-content-end">
-        <Button label="New Draft" icon="pi pi-plus" onClick={() => setShowBegin(true)} />
-      </div>
+      <PageHead title="Drafts"
+        sub="Drafts generated from your case documents and templates. Every citation links back to its source."
+        actions={<>
+          <Button icon="template" onClick={() => navigate(DRAFTING.templates)}>Templates</Button>
+          <Button variant="primary" icon="plus" onClick={() => setShowBegin(true)}>New draft</Button>
+        </>} />
 
       <NewDraftDialog visible={showBegin} onHide={() => setShowBegin(false)} />
 
-      <div className="pp-card">
-        <div className="flex align-items-center justify-content-end mb-3">
-          <span className="p-input-icon-left">
-            <i className="pi pi-search" />
-            <InputText value={query} onChange={e => setQuery(e.target.value)} placeholder="Search drafts…" />
-          </span>
-        </div>
-        <DataTable
-          value={filtered}
-          loading={loading}
-          emptyMessage="No drafts yet — click New Draft to begin."
-          paginator
-          rows={10}
-          stripedRows
-        >
-          <Column field="id" header="ID" style={{ width: '5rem' }} body={(r: DraftSession) => `#${r.id}`} />
-          <Column header="Template" body={(r: DraftSession) => r.template_name || '—'} />
-          <Column header="Documents" body={(r: DraftSession) => r.sample_names?.join(', ') || '—'} />
-          <Column header="Created" body={(r: DraftSession) => r.created_at ? new Date(r.created_at).toLocaleString() : '—'} />
-          <Column header="Citations" body={blocksTemplate} />
-          <Column header="Status" body={statusTemplate} />
-          <Column header="" body={actionsTemplate} style={{ width: '11rem' }} />
-        </DataTable>
+      <div className="toolbar">
+        <SearchInput value={query} onChange={setQuery} placeholder="Search drafts by template or document" />
+        <label className="sr-only" htmlFor="dr-status">Status</label>
+        <select id="dr-status" className="input" style={{ width: 'auto' }} value={status} onChange={e => setStatus(e.target.value)}>
+          <option value="">All statuses</option>
+          <option value="ready">Ready</option>
+          <option value="generating">Generating</option>
+          <option value="pending">Pending</option>
+          <option value="failed">Failed</option>
+        </select>
       </div>
+
+      <DataTable
+        rows={filtered}
+        columns={columns}
+        rowKey={r => r.id}
+        loading={loading}
+        pageSize={10}
+        initialSort={{ key: 'id', dir: 'desc' }}
+        caption="Drafts"
+        onRow={r => {
+          if (r.status === 'ready') navigate(DRAFTING.draft(r.id))
+          else toast.info(r.status === 'failed' ? `Draft #${r.id} failed.` : `Draft #${r.id} is still generating.`)
+        }}
+        empty={{
+          icon: 'pen', title: query || status ? 'No drafts match' : 'No drafts yet',
+          text: 'Start from a case’s documents or type the facts directly.',
+          action: <Button variant="primary" size="sm" onClick={() => setShowBegin(true)}>New draft</Button>,
+        }}
+      />
     </div>
   )
 }

@@ -1,35 +1,28 @@
-import { Tag } from 'primereact/tag';
-import { Button } from 'primereact/button';
 import { useNavigate } from 'react-router-dom';
+import { ASSISTANT_NAME } from '../constants/assistant';
 import { formatCurrency } from '../utils/formatCurrency';
+import Icon from '../ui/Icon';
+import { StatusChip } from '../ui/kit';
 
-function statusSeverity(status: string): any {
-  const s = status.toLowerCase();
-  if (['paid', 'completed', 'closed', 'active', 'won'].includes(s)) return 'success';
-  if (['pending', 'open', 'scheduled', 'partial'].includes(s)) return 'warning';
-  if (['overdue', 'cancelled', 'lost', 'failed'].includes(s)) return 'danger';
-  return 'info';
-}
-
+// Records returned with an answer (cases, clients, invoices ...), one row each.
 function AssistantResults({ results }: { results: any[] }) {
   if (!results || results.length === 0) return null;
   return (
-    <div className="assistant-results">
+    <div className="lisa-results">
       {results.map((item, i) => (
-        <div key={item.id || i} className="assistant-result-item">
-          {item.caseNumber && <span className="ar-case">{item.caseNumber}</span>}
-          {item.title && <span className="ar-title">{item.title}</span>}
-          {item.name && <span className="ar-name">{item.name}</span>}
-          {item.invoiceNumber && <span className="ar-inv">{item.invoiceNumber}</span>}
-          {item.fileName && <span className="ar-file">{item.fileName}</span>}
-          {item.clientName && <span className="ar-client">{item.clientName}</span>}
-          {item.amount != null && <span className="ar-amount">{formatCurrency(item.amount)}</span>}
-          {item.status && <Tag className="ar-status" value={item.status} severity={statusSeverity(String(item.status))} />}
-          {item.date && <span className="ar-date">{item.date}</span>}
-          {item.time && <span className="ar-time">{item.time}</span>}
-          {item.phone && <span className="ar-phone">{item.phone}</span>}
-          {item.email && <span className="ar-email">{item.email}</span>}
-          {item.category && <span className="ar-cat">{item.category}</span>}
+        <div key={item.id || i} className="lisa-result">
+          {item.caseNumber && <span className="mono">{item.caseNumber}</span>}
+          {item.invoiceNumber && <span className="mono">{item.invoiceNumber}</span>}
+          {(item.title || item.name || item.fileName) && <b>{item.title || item.name || item.fileName}</b>}
+          {item.title && item.name && <span>{item.name}</span>}
+          {item.clientName && <span>{item.clientName}</span>}
+          {item.amount != null && <span className="num">{formatCurrency(item.amount)}</span>}
+          {item.date && <span>{item.date}</span>}
+          {item.time && <span className="mono">{item.time}</span>}
+          {item.phone && <span>{item.phone}</span>}
+          {item.email && <span>{item.email}</span>}
+          {item.category && <span>{item.category}</span>}
+          {item.status && <StatusChip status={String(item.status)} />}
         </div>
       ))}
     </div>
@@ -63,7 +56,7 @@ function formatAssistantText(text: string) {
     const bullet = line.match(/^[*-]\s+(.*)$/);
     if (heading) {
       flushList();
-      html.push(`<div class="assistant-msg-heading">${bold(heading[1])}</div>`);
+      html.push(`<div class="h">${bold(heading[1])}</div>`);
     } else if (bullet) {
       list.push(bullet[1]);
     } else if (line === '') {
@@ -84,16 +77,17 @@ export default function AssistantMessage({ message }: { message: any }) {
   const response = message.response;
 
   return (
-    <div className={`assistant-msg ${isUser ? 'user' : 'bot'}`}>
-      {!isUser && <div className="assistant-msg-avatar"><i className="pi pi-sparkles" /></div>}
-      <div className="assistant-msg-content">
-        <div className="assistant-msg-text" dangerouslySetInnerHTML={{ __html: formatAssistantText(message.text || '') }} />
+    <div className={`lisa-msg ${isUser ? 'me' : 'ai'}`}>
+      {!isUser && <span className="lisa-seal sm" aria-hidden="true" title={ASSISTANT_NAME}>{ASSISTANT_NAME.charAt(0)}</span>}
+      <div className="lisa-bubble">
+        <div className="lisa-text" dangerouslySetInnerHTML={{ __html: formatAssistantText(message.text || '') }} />
         {response && response.results && response.results.length > 0 && <AssistantResults results={response.results} />}
         {!isUser && message.links?.length > 0 && (
-          <div className="assistant-msg-links">
+          <div className="lisa-links">
             {message.links.map((l: any) => (
-              <Button key={l.route} size="small" outlined icon="pi pi-arrow-right" iconPos="right"
-                label={l.label} onClick={() => navigate(l.route)} />
+              <button key={l.route} type="button" className="btn sm" onClick={() => navigate(l.route)}>
+                {l.label}<Icon name="chevron" size="sm" />
+              </button>
             ))}
           </div>
         )}

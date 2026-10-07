@@ -1,15 +1,9 @@
 import { useEffect, useState } from 'react'
 import { DRAFTING } from './routes'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Steps } from 'primereact/steps'
-import { Dropdown } from 'primereact/dropdown'
-import { InputTextarea } from 'primereact/inputtextarea'
-import { Button } from 'primereact/button'
-import { FileUpload } from 'primereact/fileupload'
-import { Message } from 'primereact/message'
-import { Tag } from 'primereact/tag'
-import { Checkbox } from 'primereact/checkbox'
-import { ProgressSpinner } from 'primereact/progressspinner'
+import { Button, PageHead, Spinner } from '../../ui/kit'
+import { Field } from '../../ui/forms'
+import Icon from '../../ui/Icon'
 import { draftingApi, type Template, type Sample } from './api/drafting'
 import { fieldOptions, resolveFormFields } from './constants/legal'
 import { amsApi, amsCaseLabel, type AmsCase, type AmsLink } from './api/ams'
@@ -17,14 +11,11 @@ import AmsCasePicker from './components/AmsCasePicker'
 import SlotFieldInput from './components/SlotFieldInput'
 import AddDocumentsDialog from './components/AddDocumentsDialog'
 import NewDraftScratch from './NewDraftScratch'
-import NewDraftDialog from './components/NewDraftDialog'
+import { BeginChoices } from './components/NewDraftDialog'
+import FilePick from './components/FilePick'
+import WizSteps from './components/WizSteps'
 
-const STEPS = [
-  { label: 'Documents' },
-  { label: 'Template' },
-  { label: 'Facts & Prompt' },
-  { label: 'Review' },
-]
+const STEPS = ['Documents', 'Template', 'Facts and instructions', 'Review']
 
 /** New Draft wizard: pick reference document(s) → optionally follow a template →
  *  enter facts/prompt + model → review & generate. Documents are required; the
@@ -38,7 +29,26 @@ export default function NewDraft() {
   const begin = params.get('begin')
   if (begin === 'scratch') return <NewDraftScratch />
   if (begin === 'reference') return <NewDraftReference navigate={navigate} />
-  return <NewDraftDialog visible onHide={() => navigate(DRAFTING.drafts)} />
+  return <BeginPage />
+}
+
+/** No starting point chosen yet: the prototype's inline chooser. Choosing keeps any
+ *  caseId/taskId the entry point passed and adds ?begin=. */
+function BeginPage() {
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const choose = (c: 'reference' | 'scratch') => {
+    const q = new URLSearchParams(params)
+    q.set('begin', c)
+    navigate(`${DRAFTING.newDraft}?${q.toString()}`)
+  }
+  return (
+    <div>
+      <PageHead title="New draft" sub="PactPro drafts from your documents and cites the source for every fact it uses."
+        actions={<Button variant="ghost" onClick={() => navigate(DRAFTING.drafts)}>Cancel</Button>} />
+      <div style={{ maxWidth: 860 }}><BeginChoices choice={null} onChoose={choose} /></div>
+    </div>
+  )
 }
 
 function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
@@ -196,219 +206,181 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
     // No template (Mode 2) → the free-text prompt is the primary input, so require it.
     (!selectedTemplate && !prompt.trim())
 
-  const statusSeverity = (s: string) =>
-    s === 'ready' ? 'success' : s === 'failed' ? 'danger' : 'warning'
+  const statusTone = (s: string) =>
+    s === 'ready' ? 'ok' : s === 'failed' ? 'bad' : 'warn'
+
+  const back = (to: number) => () => { setError(''); setStep(to) }
+  // Back to the chooser, keeping any caseId/taskId.
+  const changeStart = () => {
+    const q = new URLSearchParams(params)
+    q.delete('begin')
+    const qs = q.toString()
+    navigate(qs ? `${DRAFTING.newDraft}?${qs}` : DRAFTING.newDraft)
+  }
 
   return (
-    <div style={{ maxWidth: 820, margin: '0 auto' }}>
-      <div className="pp-card">
-        <Steps model={STEPS} activeIndex={step} className="mb-5" />
-        {error && <Message severity="error" text={error} className="mb-3 w-full" />}
-        {amsLinking && (
-          <Message severity="info" className="mb-3 w-full" icon="pi pi-spin pi-spinner" text="Loading the PactPro case…" />
-        )}
-        {amsError && <Message severity="warn" text={amsError} className="mb-3 w-full" />}
-        {amsLink && (
-          <Message severity="info" className="mb-3 w-full" content={
-            <div className="flex align-items-center gap-3 w-full">
-              <i className="pi pi-link" />
-              <div className="flex-1">
-                <div className="font-medium">Linked to PactPro case {amsCaseLabel(amsLink.case)}</div>
-                {amsLink.task && <div className="text-sm">Task: {amsLink.task.title}</div>}
-              </div>
-              <Button label="Unlink" size="small" text severity="secondary" onClick={unlinkAms} />
-            </div>
-          } />
-        )}
-
-        {/* Step 0 — Documents */}
-        {step === 0 && (
-          <div className="flex flex-column gap-3">
-            {!amsLink && !amsLinking && (
-              <div className="flex flex-column gap-2 mb-2">
-                <label className="font-medium">Link a PactPro case <span className="text-color-secondary font-normal">(optional)</span></label>
-                <AmsCasePicker onPick={(c: AmsCase) => linkAmsCase(c.id)} />
-              </div>
-            )}
-            <div className="flex align-items-center justify-content-between">
-              <label className="font-medium">Reference documents</label>
-              <Button label="Add Documents" icon="pi pi-plus" size="small" onClick={() => setShowAddDocs(true)} />
-            </div>
-
-            {selectedDocs.length === 0 && (
-              <div className="text-color-secondary text-sm p-3 text-center"
-                style={{ border: '1px dashed var(--surface-300, #e5e7eb)', borderRadius: 8 }}>
-                No documents yet — click <strong>Add Documents</strong> to select or upload one or more.
-              </div>
-            )}
-
-            {selectedDocs.map(d => (
-              <div key={d.id} className="flex align-items-center gap-3 p-2"
-                style={{ border: '1px solid var(--surface-300, #e5e7eb)', borderRadius: 8 }}>
-                <i className="pi pi-file text-color-secondary" />
-                <div className="flex-1" style={{ minWidth: 0 }}>
-                  <div className="font-medium" style={{ wordBreak: 'break-word' }}>{d.name}</div>
+    <div>
+      <PageHead title="New draft" sub="Draft from reference documents. Facts are pulled from them and cited." />
+      <WizSteps steps={STEPS} active={step} />
+      <div className="panel" style={{ maxWidth: 860 }}>
+        <div className="panel-body dr-wz-body">
+          <h2 className="dr-wz-title">{STEPS[step]}</h2>
+          <div className="stack" style={{ gap: 10, marginBottom: 12 }}>
+            {error && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{error}</div></div>}
+            {amsLinking && <div className="callout info"><span className="pp-spin" aria-hidden="true" /><div>Loading the PactPro case…</div></div>}
+            {amsError && <div className="callout warn"><Icon name="warn" size="sm" /><div>{amsError}</div></div>}
+            {amsLink && (
+              <div className="callout info">
+                <Icon name="link" size="sm" />
+                <div className="grow">
+                  <div style={{ fontWeight: 500 }}>Linked to case <span className="mono">{amsCaseLabel(amsLink.case)}</span></div>
+                  {amsLink.task && <div className="small">Task: {amsLink.task.title}</div>}
                 </div>
-                <Tag value={d.status}
-                  severity={statusSeverity(d.status)}
-                  icon={d.status === 'processing' || d.status === 'pending' ? 'pi pi-spin pi-spinner' : undefined} />
-                <Button icon="pi pi-times" text rounded severity="secondary" onClick={() => removeDoc(d.id)} tooltip="Remove" tooltipOptions={{ position: "top" }} />
-              </div>
-            ))}
-
-            {anyFailed && <Message severity="warn" className="w-full" text="A document failed processing — remove it or re-upload before continuing." />}
-
-            <div className="flex justify-content-end mt-2">
-              <Button label="Next" icon="pi pi-arrow-right" iconPos="right"
-                disabled={selectedDocs.length === 0} onClick={() => setStep(1)} />
-            </div>
-          </div>
-        )}
-
-        {/* Step 1 — Template (optional) */}
-        {step === 1 && (
-          <div className="flex flex-column gap-3">
-            <div>
-              <Tag value="Step 2 — Optional" severity="warning" style={{ fontSize: '0.7rem' }} />
-              <h2 className="mt-2 mb-1" style={{ fontSize: '1.2rem' }}>Follow a template?</h2>
-              <p className="text-color-secondary m-0 text-sm">
-                If you have a previously drafted document whose structure and format you'd like the draft
-                to follow, add it here. Otherwise, skip this step and we'll rewrite your documents' own clauses.
-              </p>
-            </div>
-
-            <label className="font-medium mt-2">Choose from your templates</label>
-            <Dropdown value={selectedTemplate} options={templates} optionLabel="name" showClear
-              placeholder="Select a template (optional)" onChange={e => setSelectedTemplate(e.value)} className="w-full" />
-            <div className="text-color-secondary text-sm text-center">— or upload a new one —</div>
-            <FileUpload mode="basic" accept=".pdf,.docx" maxFileSize={10000000} disabled={uploadingTpl}
-              customUpload uploadHandler={handleTemplateUpload} auto chooseLabel="Upload template (PDF/DOCX)" />
-            {uploadingTpl && (
-              <div className="flex align-items-center gap-2 text-color-secondary">
-                <ProgressSpinner style={{ width: 22, height: 22 }} strokeWidth="5" />
-                <span className="text-sm">Processing template…</span>
+                <button type="button" className="btn ghost sm" onClick={unlinkAms}>Unlink</button>
               </div>
             )}
-            {selectedTemplate && !uploadingTpl && (
-              <Message severity="success" text={`Template: ${selectedTemplate.name} · ${selectedTemplate.body_json.length} clause sections`} />
-            )}
-
-            <div className="flex gap-2 justify-content-between mt-3">
-              <Button label="Back" icon="pi pi-arrow-left" severity="secondary" onClick={() => setStep(0)} />
-              <div className="flex gap-2">
-                <Button label="Skip — no template" severity="secondary" outlined
-                  onClick={() => { setSelectedTemplate(null); setStep(2) }} />
-                <Button label="Continue" icon="pi pi-arrow-right" iconPos="right" onClick={() => setStep(2)} />
-              </div>
-            </div>
           </div>
-        )}
 
-        {/* Step 2 — Facts & Prompt */}
-        {step === 2 && (
-          <div className="flex flex-column gap-3">
-            {slotFields.map(field => (
-              <SlotFieldInput key={field.key} field={field} value={facts[field.key] ?? ''}
-                badge={fromAms(field.key) ? 'from case details' : undefined}
-                onChange={v => setFacts(prev => ({ ...prev, [field.key]: v }))} />
-            ))}
-
-            <div className="flex flex-column gap-1">
-              <label className="font-medium flex align-items-center gap-1">
-                <span>Prompt / case facts
-                  {!selectedTemplate && <span style={{ color: '#dc2626' }} className="ml-1">*</span>}
-                </span>
-                <i className="pi pi-question-circle" style={{ fontSize: '0.8rem', color: 'var(--pp-slate-400)', cursor: 'help' }}
-                  title="Describe the parties, purpose, and any specifics the draft should reflect. E.g. Mutual NDA between Acme Pvt Ltd and Globex Pvt Ltd for a SaaS evaluation; 2-year term; governed by Maharashtra law." />
-              </label>
-              <InputTextarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} autoResize />
-            </div>
-
-
-            <div className="flex align-items-center gap-3 p-3"
-              style={{ border: '1px solid var(--surface-300, #e5e7eb)', borderRadius: 8 }}>
-              <Checkbox inputId="applyBns" checked={applyBnsCodes} onChange={e => setApplyBnsCodes(!!e.checked)} />
-              <label htmlFor="applyBns" className="cursor-pointer" style={{ userSelect: 'none' }}>
-                Apply new BNS/BNSS codes
-                <div className="text-color-secondary text-sm font-normal mt-1">
-                  Automatically replace IPC / CrPC / Evidence Act references with the updated BNS, BNSS and BSA sections (effective July 2024).
-                </div>
-              </label>
-            </div>
-
-            <div className="flex gap-2 justify-content-between mt-3">
-              <Button label="Back" icon="pi pi-arrow-left" severity="secondary" onClick={() => setStep(1)} />
-              <Button label="Review" icon="pi pi-arrow-right" iconPos="right" disabled={requiredMissing} onClick={() => setStep(3)} />
-            </div>
-          </div>
-        )}
-
-        {/* Step 3 — Review */}
-        {step === 3 && (
-          <div className="flex flex-column gap-3">
-            <div className="grid">
-              <div className="col-12">
-                <span className="pp-stat-label">Documents</span>
-                <div className="font-medium">{selectedDocs.map(d => d.name).join(', ')}</div>
-              </div>
-              <div className="col-6">
-                <span className="pp-stat-label">Template</span>
-                <div className="font-medium">{selectedTemplate ? selectedTemplate.name : 'None — rewrite the documents'}</div>
-              </div>
-              {amsLink && (
-                <div className="col-12">
-                  <span className="pp-stat-label">PactPro case</span>
-                  <div className="font-medium">
-                    {amsCaseLabel(amsLink.case)}{amsLink.task && ` · Task: ${amsLink.task.title}`}
-                  </div>
+          {/* Step 0 — Documents */}
+          {step === 0 && (
+            <div className="stack" style={{ gap: 12 }}>
+              {!amsLink && !amsLinking && (
+                <div className="field">
+                  <span className="label">Link a case <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></span>
+                  <AmsCasePicker onPick={(c: AmsCase) => linkAmsCase(c.id)} label="Link a case" />
                 </div>
               )}
-              <div className="col-12">
-                <span className="pp-stat-label">BNS/BNSS codes</span>
-                <div className="font-medium">{applyBnsCodes ? 'Yes — replace IPC/CrPC/Evidence Act references' : 'No'}</div>
+              <div className="row between">
+                <span className="label">Reference documents</span>
+                <Button size="sm" icon="plus" onClick={() => setShowAddDocs(true)}>Add documents</Button>
               </div>
-            </div>
-            <hr style={{ border: 'none', borderTop: '1px solid var(--pp-border)', width: '100%', margin: '0.5rem 0' }} />
-            {slotFields.length > 0 && (
-              <>
-                <span className="pp-stat-label">Case facts</span>
-                <div className="flex flex-wrap gap-2">
-                  {slotFields.map(f => (
-                    <Tag key={f.key} value={`${f.label}: ${facts[f.key] || '—'}`}
-                      style={{ background: 'var(--pp-slate-100)', color: 'var(--pp-slate-700)' }} />
+
+              {selectedDocs.length === 0 && (
+                <div className="dr-dashed faint small">
+                  No documents yet. Choose <strong>Add documents</strong> to select or upload one or more.
+                </div>
+              )}
+
+              {selectedDocs.length > 0 && (
+                <div className="panel" style={{ padding: '4px 0' }}>
+                  {selectedDocs.map(d => (
+                    <div key={d.id} className="list-item">
+                      <Icon name="file" size="sm" />
+                      <span className="grow small" style={{ wordBreak: 'break-word', fontWeight: 500 }}>{d.name}</span>
+                      <span className={`chip ${statusTone(d.status)}`}>
+                        {(d.status === 'processing' || d.status === 'pending') && <span className="pp-spin" aria-hidden="true" />}
+                        {d.status.charAt(0).toUpperCase() + d.status.slice(1)}
+                      </span>
+                      <button type="button" className="btn ghost sm icon" aria-label={`Remove ${d.name}`} title="Remove"
+                        onClick={() => removeDoc(d.id)}><Icon name="x" size="sm" /></button>
+                    </div>
                   ))}
                 </div>
-              </>
-            )}
-            {prompt.trim() && (
-              <>
-                <span className="pp-stat-label">Prompt</span>
-                <div className="pp-source-quote" style={{ fontFamily: 'inherit' }}>{prompt}</div>
-              </>
-            )}
-            {!allReady && (
-              <Message
-                severity={anyFailed ? 'error' : 'warn'}
-                className="w-full"
-                icon={anyFailed ? undefined : 'pi pi-spin pi-spinner'}
-                text={anyFailed
-                  ? 'A document failed processing — fix it before generating.'
-                  : 'Documents are still being processed — Generate unlocks once they are ready.'}
-              />
-            )}
-            <div className="flex gap-2 justify-content-between mt-3">
-              <Button label="Back" icon="pi pi-arrow-left" severity="secondary" onClick={() => setStep(2)} />
-              <Button
-                label={allReady ? 'Generate Draft' : 'Waiting for documents…'}
-                icon={allReady ? 'pi pi-bolt' : 'pi pi-spin pi-spinner'}
-                iconPos="right"
-                loading={submitting}
-                disabled={!allReady}
-                onClick={handleSubmit}
-              />
+              )}
+
+              {anyFailed && <div className="callout warn"><Icon name="warn" size="sm" /><div>A document failed processing. Remove it or re-upload before continuing.</div></div>}
             </div>
+          )}
+
+          {/* Step 1 — Template (optional) */}
+          {step === 1 && (
+            <div className="stack" style={{ gap: 12 }}>
+              <p className="muted small">
+                Optional. If you have a previously drafted document whose structure and format the draft should
+                follow, choose it here. Otherwise skip this step and PactPro rewrites your documents' own clauses.
+              </p>
+              <div className="stack" role="radiogroup" aria-label="Template" style={{ gap: 8 }}>
+                {[null, ...templates].map(t => (
+                  <label key={t?.id ?? 'none'} className="panel row dr-radio">
+                    <input type="radio" name="nd-tpl" checked={(selectedTemplate?.id ?? null) === (t?.id ?? null)}
+                      onChange={() => setSelectedTemplate(t)} />
+                    <span className="grow">
+                      <b className="small">{t ? t.name : 'No template'}</b>
+                      <span className="faint xs" style={{ display: 'block' }}>
+                        {t ? [t.document_type, t.language?.toUpperCase()].filter(Boolean).join(', ') : 'PactPro picks a structure from the documents'}
+                      </span>
+                    </span>
+                    {t && <span className="faint xs">{t.body_json.length} sections</span>}
+                  </label>
+                ))}
+              </div>
+              <FilePick label={uploadingTpl ? 'Processing template…' : 'Or upload a new template'} onUpload={handleTemplateUpload} disabled={uploadingTpl} />
+              {uploadingTpl && <Spinner label="Processing template" />}
+              {selectedTemplate && !uploadingTpl && (
+                <div className="callout ok"><Icon name="ok" size="sm" /><div>Template: {selectedTemplate.name} · {selectedTemplate.body_json.length} clause sections</div></div>
+              )}
+            </div>
+          )}
+
+          {/* Step 2 — Facts & Prompt */}
+          {step === 2 && (
+            <div className="form-grid">
+              {slotFields.map(field => (
+                <SlotFieldInput key={field.key} field={field} value={facts[field.key] ?? ''}
+                  badge={fromAms(field.key) ? 'from case details' : undefined}
+                  onChange={v => setFacts(prev => ({ ...prev, [field.key]: v }))} />
+              ))}
+
+              <Field full required={!selectedTemplate}
+                label="Instructions for the draft"
+                hint="Describe the parties, purpose and any specifics the draft should reflect. For example: mutual NDA between Acme Pvt Ltd and Globex Pvt Ltd for a SaaS evaluation; 2-year term; governed by Maharashtra law.">
+                {(id, d) => <textarea id={id} aria-describedby={d} className="input" rows={5} value={prompt} onChange={e => setPrompt(e.target.value)} />}
+              </Field>
+
+              <label className="check full dr-check-card">
+                <input type="checkbox" checked={applyBnsCodes} onChange={e => setApplyBnsCodes(e.target.checked)} />
+                <span>
+                  Use BNS/BNSS section numbers
+                  <span className="faint small" style={{ display: 'block', marginTop: 2 }}>
+                    Replace IPC / CrPC / Evidence Act references with the updated BNS, BNSS and BSA sections (effective July 2024).
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* Step 3 — Review */}
+          {step === 3 && (
+            <div className="stack" style={{ gap: 12 }}>
+              <div className="panel tinted"><div className="panel-body">
+                <dl className="kv">
+                  {amsLink && <><dt>Case</dt><dd><span className="mono">{amsCaseLabel(amsLink.case)}</span>{amsLink.task && ` · Task: ${amsLink.task.title}`}</dd></>}
+                  <dt>Reference documents</dt><dd>{selectedDocs.map(d => <div key={d.id}>{d.name}</div>)}</dd>
+                  <dt>Template</dt><dd>{selectedTemplate ? selectedTemplate.name : 'No template (rewrite the documents)'}</dd>
+                  {slotFields.map(f => <FactRow key={f.key} label={f.label} value={facts[f.key]} />)}
+                  <dt>Instructions</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{prompt.trim() || 'None'}</dd>
+                  <dt>Section numbers</dt><dd>{applyBnsCodes ? 'BNS/BNSS' : 'As in the documents'}</dd>
+                </dl>
+              </div></div>
+              {!allReady && (
+                <div className={`callout ${anyFailed ? 'bad' : 'warn'}`}>
+                  {anyFailed ? <Icon name="warn" size="sm" /> : <span className="pp-spin" aria-hidden="true" />}
+                  <div>{anyFailed
+                    ? 'A document failed processing. Fix it before generating.'
+                    : 'Documents are still being processed. Generate unlocks once they are ready.'}</div>
+                </div>
+              )}
+              <p className="faint small">Drafting takes about a minute. The draft opens when it is ready.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="row between dr-wz-foot">
+          {step === 0
+            ? <button type="button" className="btn ghost" onClick={changeStart}>Change starting point</button>
+            : <button type="button" className="btn ghost" onClick={back(step - 1)}>Back</button>}
+          <div className="row" style={{ gap: 6 }}>
+            {step === 1 && <button type="button" className="btn" onClick={() => { setSelectedTemplate(null); setStep(2) }}>Skip, no template</button>}
+            {step === 0 && <Button variant="primary" disabled={selectedDocs.length === 0} onClick={() => setStep(1)}>Continue</Button>}
+            {step === 1 && <Button variant="primary" disabled={uploadingTpl} onClick={() => setStep(2)}>Continue</Button>}
+            {step === 2 && <Button variant="primary" disabled={requiredMissing} onClick={() => setStep(3)}>Review</Button>}
+            {step === 3 && (
+              <Button variant="primary" icon={allReady ? 'sparkle' : undefined} loading={submitting} disabled={!allReady || submitting} onClick={handleSubmit}>
+                {allReady ? 'Generate draft' : 'Waiting for documents…'}
+              </Button>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       <AddDocumentsDialog
@@ -419,4 +391,8 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
       />
     </div>
   )
+}
+
+function FactRow({ label, value }: { label: string; value?: string }) {
+  return <><dt>{label}</dt><dd>{value?.trim() || <span className="faint">—</span>}</dd></>
 }

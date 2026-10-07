@@ -11,14 +11,10 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(
-    () => (localStorage.getItem('theme') === 'light' ? 'light' : 'dark'));
+    () => (localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'));
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    document.body.classList.toggle('dark-mode', theme === 'dark');
-    // PrimeReact's matching theme (public/themes, linked in index.html).
-    const link = document.getElementById('prime-theme');
-    if (link) link.setAttribute('href', `/themes/lara-${theme === 'dark' ? 'dark' : 'light'}-blue/theme.css`);
     localStorage.setItem('theme', theme);
   }, [theme]);
 

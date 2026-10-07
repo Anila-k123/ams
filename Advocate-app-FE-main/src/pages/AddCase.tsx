@@ -1,37 +1,39 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Dropdown } from "primereact/dropdown";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { RadioButton } from "primereact/radiobutton";
-import { Button } from "primereact/button";
-import { TabMenu } from "primereact/tabmenu";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
 import api from "../api/client";
 import { useToast } from "../contexts/ToastContext";
 import CourtRecordView from "../components/CourtRecordView";
-import "../assets/styles/AddCase.css";
+import { Button, PageHead, Panel, Skel, Icon, StatusChip } from "../ui/kit";
+import type { IconName } from "../ui/Icon";
+import { TextField, TextArea, SelectField, Segmented, Tabs } from "../ui/forms";
+import { DataTable } from "../ui/DataTable";
+import "../ui/pages/cases.css";
 
-// A react-select-shaped wrapper over PrimeReact's Dropdown, so the (many) cascade
+// A react-select-shaped wrapper over a native select, so the (many) cascade
 // selectors below keep their option-object value / onChange(option) contract.
-function Select({ options, value, onChange, placeholder, isLoading, isDisabled, isClearable, isSearchable = true }: any) {
+// While options load the control is disabled and says so.
+function Select({ label, options, value, onChange, placeholder, isLoading, isDisabled, full }: any) {
   const opts: any[] = options || [];
   return (
-    <Dropdown
-      className="w-full"
-      options={opts}
-      optionLabel="label"
-      optionValue="value"
-      value={value ? value.value : null}
-      onChange={(e) => onChange(e.value == null ? null : (opts.find((o) => o.value === e.value) || null))}
-      placeholder={placeholder}
-      loading={!!isLoading}
-      disabled={!!isDisabled}
-      showClear={!!isClearable}
-      filter={isSearchable && opts.length > 8}
-      emptyMessage="No options"
+    <SelectField
+      label={label}
+      full={full}
+      options={opts.map((o) => ({ value: String(o.value), label: o.label }))}
+      value={value ? String(value.value) : ""}
+      placeholder={isLoading ? "Loading…" : (placeholder || "Select")}
+      disabled={!!isDisabled || !!isLoading}
+      onChange={(e) => onChange(e.target.value === "" ? null : (opts.find((o) => String(o.value) === e.target.value) || null))}
     />
+  );
+}
+
+// A labelled single choice (was a radio group): a segmented control.
+function Choice({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: [string, string][] }) {
+  return (
+    <div className="field cs-choice">
+      <span className="label">{label}</span>
+      <Segmented label={label} value={value} onChange={onChange} options={options.map(([v, l]) => ({ value: v, label: l }))} />
+    </div>
   );
 }
 
@@ -453,11 +455,6 @@ export default function AddCase() {
     list.push({ id: "__manual__", name: "Offline / Manual Entry", kind: "manual" });
     return list;
   }, [courts]);
-
-  const forumOptions = useMemo(
-    () => forums.map((f) => ({ value: f.id, label: f.name, forum: f })),
-    [forums]
-  );
 
   // CNR validity — shared by the three online CNR search inputs (all use cnrInput).
   const cnrTrimmed = cnrInput.trim();
@@ -1086,14 +1083,7 @@ export default function AddCase() {
   })();
 
   const statusField = () => (
-    <div className="ac-field">
-      <label>Status</label>
-      <div className="ac-status">
-        {["Pending", "Disposed", "Both"].map((s) => (
-          <label key={s}><RadioButton name="ecStatus" checked={ecStatus === s} onChange={() => setEcStatus(s)} /> {s}</label>
-        ))}
-      </div>
-    </div>
+    <Choice label="Status" value={ecStatus} onChange={setEcStatus} options={[["Pending", "Pending"], ["Disposed", "Disposed"], ["Both", "Both"]]} />
   );
 
   // The 16-digit rule is Madras HC's CNR format; eCourts / manual cases use other formats.
@@ -1220,631 +1210,431 @@ export default function AddCase() {
   };
 
   const clientOptions = clients.map((c) => ({ value: c.id, label: `${c.name} — ${c.email}` }));
+  const clientValue = clientOptions.find((o) => o.value === Number(newCase.clientId)) || null;
+  const setClient = (sel: any) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }));
 
-  // ---- render the editable case form (shared by manual + review) ----
-  const renderCaseForm = () => (
-    <form className="ac-form" onSubmit={handleSave}>
-      <div className="ac-form-grid">
-        {isManual && (
-          <div className="ac-field ac-field-full">
-            <label>Matter type</label>
-            <Dropdown value={newCase.matterType} options={MATTER_TYPES} className="w-full"
-              onChange={(e) => { setNewCase((p) => ({ ...p, matterType: e.value })); setCaseNumberError(""); }} />
-          </div>
-        )}
-        <div className="ac-field">
-          <label>Case Number{requires16 ? " (16 digits)" : ""}{!numberRequired ? " (optional)" : ""}</label>
-          <InputText name="caseNumber" value={newCase.caseNumber} onChange={onField} required={numberRequired}
-                 className={caseNumberError ? "ac-input-error" : ""}
-                 placeholder={requires16 ? "16-digit CNR" : numberRequired ? "e.g. O.S. No. 412/2025, OA 31/2026"
-                   : `Leave blank: assigned as ${newCase.matterType === "pre_filing" ? "PRE" : "MAT"}/${new Date().getFullYear()}/…`} />
-          {caseNumberError && <span className="ac-field-error">{caseNumberError}</span>}
-          {!caseNumberError && caseNumberCnrHint && <span className="ac-field-warning">{caseNumberCnrHint}</span>}
-        </div>
-        <div className="ac-field">
-          <label>Case Title</label>
-          <InputText name="caseTitle" value={newCase.caseTitle} onChange={onField} required placeholder="Petitioner vs Respondent" />
-        </div>
-        <div className="ac-field">
-          <label>Case Type</label>
-          <InputText name="caseType" value={newCase.caseType} onChange={onField} required placeholder="e.g. WP" />
-        </div>
-        <div className="ac-field">
-          <label>Court Level</label>
-          <Dropdown value={newCase.courtLevel || null} options={COURT_LEVELS} placeholder="Select Court Level" className="w-full"
-            onChange={(e) => setNewCase((p) => ({ ...p, courtLevel: e.value || "" }))} />
-        </div>
-        <div className="ac-field">
-          <label>Status</label>
-          <Dropdown value={newCase.status || null} options={CASE_STATUSES} placeholder="Select Status" className="w-full"
-            onChange={(e) => setNewCase((p) => ({ ...p, status: e.value || "" }))} />
-        </div>
-        <div className="ac-field">
-          <label>Agreed fee (₹)</label>
-          <InputText type="number" name="amount" value={newCase.amount} onChange={onField} placeholder="0" min={0} />
-          <small className="ac-field-hint">What the client is to pay; "pending from client" is worked out from it.</small>
-        </div>
-        <div className="ac-field">
-          <label>Client</label>
-          <Select
-            options={clientOptions}
-            value={clientOptions.find((o) => o.value === Number(newCase.clientId)) || null}
-            onChange={(sel) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }))}
-            isClearable placeholder="Select Client"
-          />
-        </div>
-        {isManual && (<>
-          <div className="ac-field">
-            <label>Our client is the</label>
-            <Dropdown value={newCase.ourSide || null} options={SIDE_OPTIONS} placeholder="Select side" className="w-full" showClear
-              onChange={(e) => setNewCase((p) => ({ ...p, ourSide: e.value || "" }))} />
-          </div>
-          <div className="ac-field">
-            <label>Opposite party</label>
-            <InputText name="opponentName" value={newCase.opponentName} onChange={onField} placeholder="Other side" />
-          </div>
-          <div className="ac-field">
-            <label>Opposite party's counsel</label>
-            <InputText name="opponentCounsel" value={newCase.opponentCounsel} onChange={onField} placeholder="Optional" />
-          </div>
-          {isLitigation && (<>
-            <div className="ac-field">
-              <label>Court / tribunal / forum</label>
-              <InputText name="courtName" value={newCase.courtName} onChange={onField} placeholder="e.g. DRT-II Chennai, City Civil Court" />
-            </div>
-            <div className="ac-field">
-              <label>Court hall / bench</label>
-              <InputText name="courtHall" value={newCase.courtHall} onChange={onField} placeholder="e.g. Court 28" />
-            </div>
-            <div className="ac-field">
-              <label>Judge / presiding officer</label>
-              <InputText name="judge" value={newCase.judge} onChange={onField} placeholder="Optional" />
-            </div>
-            <div className="ac-field">
-              <label>Filing date</label>
-              <InputText type="date" name="filingDate" value={newCase.filingDate} onChange={onField} />
-            </div>
-            <div className="ac-field">
-              <label>Case year</label>
-              <InputText type="number" name="caseYear" value={newCase.caseYear} onChange={onField} placeholder="e.g. 2025" />
-            </div>
-            <div className="ac-field">
-              <label>CNR (optional)</label>
-              <InputText name="cnr" value={newCase.cnr} onChange={onField} maxLength={16} placeholder="16 characters, if known" />
-              <small className="ac-field-hint">With a CNR, the case can be linked to its court record later.</small>
-            </div>
-            <div className="ac-field">
-              <label>Next hearing date</label>
-              <InputText type="date" name="nextHearingDate" value={newCase.nextHearingDate} onChange={onField} />
-            </div>
-            <div className="ac-field">
-              <label>Next hearing purpose</label>
-              <InputText name="nextHearingPurpose" value={newCase.nextHearingPurpose} onChange={onField} placeholder="e.g. Counter, Arguments" />
-            </div>
-          </>)}
-          {newCase.matterType !== "non_litigation" && (
-            <div className="ac-field ac-field-full">
-              <label>Acts / sections</label>
-              <InputText name="actsSections" value={newCase.actsSections} onChange={onField} placeholder="e.g. CPC Order VII; SARFAESI Act s.17" />
-            </div>
-          )}
-        </>)}
-        <div className="ac-field ac-field-full">
-          <label>Description</label>
-          <InputTextarea name="description" value={newCase.description} onChange={onField} rows={4} autoResize placeholder="Description" />
-        </div>
+  // Small field helpers so the long search forms stay readable.
+  const tf = (label: string, value: string, set: (v: string) => void, extra: any = {}) => (
+    <TextField label={label} value={value} onChange={(e) => set(e.target.value)} {...extra} />
+  );
+  const yearField = (label: string, value: string, set: (v: string) => void) =>
+    tf(label, value, set, { type: "number", placeholder: "e.g. 2024", min: 1900, max: 2100 });
+  const cnrField = (placeholder: string) => (
+    <TextField label="CNR number" full value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16}
+      className="mono" style={{ textTransform: "uppercase" }} placeholder={placeholder}
+      hint={cnrWarn ? undefined : "16 characters, printed on every order sheet."}
+      error={cnrWarn ? CNR_WARNING : undefined} />
+  );
+  const searchError_ = searchError && (
+    <div className="callout bad" role="alert" style={{ marginTop: "var(--s4)" }}><Icon name="warn" size="sm" /><div>{searchError}</div></div>
+  );
+  const searchBtn = (onClick: () => void, enabled: boolean) => (
+    <>
+      {searching && <p className="faint small" style={{ marginTop: "var(--s3)" }}>Contacting the court website… this can take up to 30 seconds.</p>}
+      <div className="row" style={{ marginTop: "var(--s4)" }}>
+        <span className="grow" />
+        <Button variant="primary" icon="search" loading={searching} onClick={onClick} disabled={searching || !enabled}>
+          {searching ? "Searching…" : "Search court records"}
+        </Button>
       </div>
-      {saveError && <p className="ac-error">{saveError}</p>}
-      <div className="ac-actions">
-        <Button type="submit" icon="pi pi-save" label={saving ? "Saving…" : "Save Case to Workspace"} loading={saving} disabled={saving} />
+    </>
+  );
+  const changeCourt = <Button variant="ghost" size="sm" onClick={() => setStep("select")}>Change court</Button>;
+
+  // ---- render the editable case form (manual entry) ----
+  const renderCaseForm = () => (
+    <form className="form-grid" onSubmit={handleSave}>
+      <div className="fieldset-title">Case</div>
+      {isManual && (
+        <SelectField label="Matter type" full value={newCase.matterType} options={MATTER_TYPES}
+          onChange={(e) => { setNewCase((p) => ({ ...p, matterType: e.target.value })); setCaseNumberError(""); }} />
+      )}
+      <TextField label={`Case number${requires16 ? " (16 digits)" : ""}${!numberRequired ? " (optional)" : ""}`}
+        name="caseNumber" value={newCase.caseNumber} onChange={onField} required={numberRequired} className="mono"
+        error={caseNumberError || undefined} hint={!caseNumberError && caseNumberCnrHint ? caseNumberCnrHint : undefined}
+        placeholder={requires16 ? "16-digit CNR" : numberRequired ? "e.g. O.S. No. 412/2025, OA 31/2026"
+          : `Leave blank: assigned as ${newCase.matterType === "pre_filing" ? "PRE" : "MAT"}/${new Date().getFullYear()}/…`} />
+      <TextField label="Case type" name="caseType" value={newCase.caseType} onChange={onField} required placeholder="e.g. WP" />
+      <TextField label="Title" full name="caseTitle" value={newCase.caseTitle} onChange={onField} required placeholder="Petitioner vs Respondent"
+        hint='Write the parties as "Petitioner vs Respondent".' />
+      <Select label="Court level" options={COURT_LEVELS} value={COURT_LEVELS.find((o) => o.value === newCase.courtLevel) || null}
+        placeholder="Select court level" onChange={(o: any) => setNewCase((p) => ({ ...p, courtLevel: o ? o.value : "" }))} />
+      <Select label="Status" options={CASE_STATUSES} value={CASE_STATUSES.find((o) => o.value === newCase.status) || null}
+        placeholder="Select status" onChange={(o: any) => setNewCase((p) => ({ ...p, status: o ? o.value : "" }))} />
+      {isManual && isLitigation && (<>
+        <div className="fieldset-title">Court</div>
+        <TextField label="Court / tribunal / forum" name="courtName" value={newCase.courtName} onChange={onField} placeholder="e.g. DRT-II Chennai, City Civil Court" />
+        <TextField label="Court hall / bench" name="courtHall" value={newCase.courtHall} onChange={onField} placeholder="e.g. Court 28" />
+        <TextField label="Judge / presiding officer" name="judge" value={newCase.judge} onChange={onField} placeholder="Optional" />
+        <TextField label="Filing date" type="date" name="filingDate" value={newCase.filingDate} onChange={onField} />
+        <TextField label="Case year" type="number" name="caseYear" value={newCase.caseYear} onChange={onField} placeholder="e.g. 2025" />
+        <TextField label="CNR (optional)" name="cnr" value={newCase.cnr} onChange={onField} maxLength={16} className="mono"
+          placeholder="16 characters, if known" hint="With a CNR, the case can be linked to its court record later." />
+        <TextField label="Next hearing date" type="date" name="nextHearingDate" value={newCase.nextHearingDate} onChange={onField} />
+        <TextField label="Next hearing purpose" name="nextHearingPurpose" value={newCase.nextHearingPurpose} onChange={onField} placeholder="e.g. Counter, Arguments" />
+      </>)}
+      <div className="fieldset-title">People and fees</div>
+      <Select label="Client" options={clientOptions} value={clientValue} onChange={setClient} placeholder="Select client" />
+      <TextField label="Agreed fee (₹)" type="number" name="amount" value={newCase.amount} onChange={onField} placeholder="0" min={0}
+        hint={'What the client is to pay; "pending from client" is worked out from it.'} />
+      {isManual && (<>
+        <Select label="Our client is the" options={SIDE_OPTIONS} value={SIDE_OPTIONS.find((o) => o.value === newCase.ourSide) || null}
+          placeholder="Select side" onChange={(o: any) => setNewCase((p) => ({ ...p, ourSide: o ? o.value : "" }))} />
+        <TextField label="Opposite party" name="opponentName" value={newCase.opponentName} onChange={onField} placeholder="Other side" />
+        <TextField label="Opposite party's counsel" name="opponentCounsel" value={newCase.opponentCounsel} onChange={onField} placeholder="Optional" />
+        {newCase.matterType !== "non_litigation" && (
+          <TextField label="Acts / sections" name="actsSections" value={newCase.actsSections} onChange={onField} placeholder="e.g. CPC Order VII; SARFAESI Act s.17" />
+        )}
+      </>)}
+      <TextArea label="Description" full name="description" value={newCase.description} onChange={onField} rows={4}
+        placeholder="Relief sought, background, anything the team should know" />
+      {saveError && <div className="callout bad full" role="alert"><Icon name="warn" size="sm" /><div>{saveError}</div></div>}
+      <div className="row full">
+        <span className="grow" />
+        <Button variant="ghost" onClick={() => navigate("/dashboard/cases")}>Cancel</Button>
+        <Button variant="primary" type="submit" loading={saving} disabled={saving}>{saving ? "Saving…" : "Save case"}</Button>
       </div>
     </form>
   );
 
-  return (
-    <div className="ac-page">
-      <div className="ac-topbar">
-        <Button text icon="pi pi-chevron-left" label="Back to Workspace" className="ac-link" onClick={() => navigate("/dashboard/cases")} />
-        <h2>Add Case to Workspace</h2>
+  // The import path walks Court > Search > Results > Review, like the prototype.
+  const stepNo = step === "select" ? 1 : step === "search" || step === "cnr" ? 2 : step === "results" ? 3 : 4;
+  const steps = (
+    <ol className="cs-steps" aria-label="Import steps">
+      {["Court", "Search", "Results", "Review"].map((s, i) => (
+        <li key={s} aria-current={stepNo === i + 1 ? "step" : undefined} className={stepNo > i + 1 ? "done" : undefined}>
+          <b>{stepNo > i + 1 ? <Icon name="check" size="sm" /> : i + 1}</b>{s}
+        </li>
+      ))}
+    </ol>
+  );
+  const forumIcon = (f: any): IconName => (f.kind === "cnr" ? "search" : f.id === "sci" ? "scale" : "gavel");
+  const forumSub = (f: any) => (f.kind === "cnr" ? "District and High Courts, no court selection needed"
+    : f.id === "ecourts_dc" ? "eCourts: state, district and court complex"
+    : f.id === "ecourts_hc" ? "eCourts: every High Court and bench"
+    : f.id === "sci" ? "New Delhi" : "Court records lookup");
+
+  // The client picker and save button shown beside a fetched record.
+  const saveRail = (
+    <Panel title="Add to your workspace">
+      <div className="stack" style={{ gap: "var(--s3)" }}>
+        <Select label="Client" options={clientOptions} value={clientValue} onChange={setClient} placeholder="Select a client" />
+        {caseNumberError && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{caseNumberError}</div></div>}
+        {saveError && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{saveError}</div></div>}
+        <div className="callout info"><Icon name="info" size="sm" /><div>Parties and upcoming hearings from the court record are saved with the case.</div></div>
+        <Button variant="primary" loading={saving} onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save case to workspace"}</Button>
       </div>
+    </Panel>
+  );
+
+  const ecFields = (isHc: boolean) => {
+    const ready = isHc ? hcReady : cascadeReady;
+    return (
+      <>
+        {ecMode === "case_number" && (
+          <div className="form-grid">
+            <Select label="Case type" options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!ready}
+              isLoading={cascadeBusy === "case-types"} placeholder="Select case type" />
+            {tf("Case number", lkNumber, setLkNumber, { placeholder: "Case number" })}
+            {yearField("Case year", lkYear, setLkYear)}
+          </div>
+        )}
+        {ecMode === "party_name" && (
+          <div className="form-grid">
+            {tf("Petitioner / respondent", pName, setPName, { placeholder: "Party name (min 3 letters)" })}
+            {yearField("Registration year", ecYear, setEcYear)}
+            {statusField()}
+          </div>
+        )}
+        {ecMode === "filing_number" && (
+          <div className="form-grid">
+            {tf("Filing number", filingNo, setFilingNo, { placeholder: "Filing number" })}
+            {yearField("Filing year", ecYear, setEcYear)}
+          </div>
+        )}
+        {ecMode === "advocate" && (
+          <div className="form-grid">
+            <Choice label="Search by" value={advSubMode} onChange={setAdvSubMode}
+              options={[["1", "Advocate name"], ["2", "Bar code"], ["3", "Date case list"]]} />
+            <span />
+            {advSubMode === "1" && (<>
+              {tf("Advocate name", advName, setAdvName, { placeholder: "Advocate name (min 3 letters)" })}
+              {statusField()}
+            </>)}
+            {/* High Courts take a single bar-registration string. */}
+            {isHc && advSubMode !== "1" && (<>
+              {tf("Bar registration no.", barCode, setBarCode, { placeholder: "Bar registration no." })}
+              {advSubMode === "2" && statusField()}
+              {advSubMode === "3" && tf("Case list date", caselistDate, setCaselistDate, { placeholder: "dd-mm-yyyy" })}
+            </>)}
+            {!isHc && advSubMode !== "1" && (<>
+              {tf("State code", barState, setBarState, { placeholder: "e.g. KL" })}
+              {tf("Bar code number", barCode, setBarCode, { placeholder: "Bar registration no." })}
+              {tf("Bar year", barYear, setBarYear, { type: "number", placeholder: "e.g. 1998" })}
+              {advSubMode === "2" ? statusField() : tf("Cause list date", caselistDate, setCaselistDate, { placeholder: "dd-mm-yyyy" })}
+            </>)}
+          </div>
+        )}
+        {ecMode === "fir_number" && (
+          <div className="form-grid">
+            <Select label="Police station" options={mapToOptions(policeStations)} value={mapToOptions(policeStations).find((o) => o.value === firPolice) || null}
+              onChange={(o: any) => setFirPolice(o ? o.value : "")} isDisabled={!ready} isLoading={cascadeBusy === "police"} placeholder="Select police station" />
+            {tf("FIR number", firNo, setFirNo, { placeholder: "FIR number" })}
+            {yearField("Year", ecYear, setEcYear)}
+            {statusField()}
+          </div>
+        )}
+        {ecMode === "act" && (
+          <div className="form-grid">
+            <div className="row full" style={{ alignItems: "flex-end" }}>
+              {tf("Search act", actSearch, setActSearch, { placeholder: "Type 3 or more letters, then Find", fieldClass: "grow" })}
+              <Button onClick={() => loadActTypes(actSearch)} disabled={!ready || actSearch.trim().length < 3}>Find</Button>
+            </div>
+            <Select label="Act" options={mapToOptions(actTypes)} value={mapToOptions(actTypes).find((o) => o.value === actCode) || null}
+              onChange={(o: any) => setActCode(o ? o.value : "")} isLoading={cascadeBusy === "acts"} placeholder="Select act" />
+            {tf("Under section", actSection, setActSection, { placeholder: "Section (optional)" })}
+            {statusField()}
+          </div>
+        )}
+        {ecMode === "case_type" && (
+          <div className="form-grid">
+            <Select label="Case type" options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!ready}
+              isLoading={cascadeBusy === "case-types"} placeholder="Select case type" />
+            {yearField("Registration year", ecYear, setEcYear)}
+            {statusField()}
+          </div>
+        )}
+        {ecMode === "cnr" && <div className="form-grid">{cnrField("16-character CNR, e.g. KLML170000832024")}</div>}
+      </>
+    );
+  };
+
+  const ecTabs = (
+    <div style={{ margin: "var(--s4) 0" }}>
+      <Tabs label="Search by" value={ecMode} onChange={onEcTab} tabs={EC_TABS.map(([k, l]) => ({ value: k, label: l }))} />
+    </div>
+  );
+
+  return (
+    <div className="cs-root">
+      <PageHead
+        title="Add case"
+        sub="Import the case from court records to fill in parties and hearings automatically, or enter it by hand."
+        actions={<>
+          <Segmented label="How to add" value={step === "manual" ? "manual" : "import"}
+            onChange={(v) => { if (v === "manual") chooseForum({ id: "__manual__", kind: "manual" }); else { setStep("select"); setSaveError(""); } }}
+            options={[{ value: "import", label: "Import from court records", icon: "download" }, { value: "manual", label: "Enter manually", icon: "edit" }]} />
+        </>}
+      />
+      <div style={{ marginTop: "calc(-1 * var(--s3))", marginBottom: "var(--s4)" }}>
+        <Button variant="ghost" size="sm" icon="chevronLeft" onClick={() => navigate("/dashboard/cases")}>Back to cases</Button>
+      </div>
+
+      {step !== "manual" && steps}
 
       {/* STEP 1 — choose forum / source */}
       {step === "select" && (
-       <>
-        {courtsError && (
-          <div className="ac-banner">
-            <span>{courtsError}</span>
-          </div>
-        )}
-        <div className="ac-select-grid">
-          <div className="ac-panel">
-            <div className="ac-panel-head">Quick Select</div>
-            <div className="ac-panel-body">
-              <ul className="ac-forum-list">
-                {forums.map((f) => (
-                  <li key={f.id}>
-                    <button className="ac-forum-item" onClick={() => chooseForum(f)}>
-                      <i className={f.kind === "manual" ? "pi pi-pencil" : f.kind === "cnr" ? "pi pi-search" : "pi pi-building-columns"} />
-                      <span>{f.name}</span>
-                    </button>
-                  </li>
-                ))}
-                {forums.length === 0 && <li className="ac-empty">No courts available.</li>}
-              </ul>
-            </div>
-          </div>
-
-          <div className="ac-panel">
-            <div className="ac-panel-head">Available Courts</div>
-            <div className="ac-panel-body">
-              {courtsLoading && <p className="ac-hint">Loading courts…</p>}
-              <div className="ac-field">
-                <label>Select a court</label>
-                <Select
-                  options={forumOptions}
-                  value={null}
-                  onChange={(opt) => opt && chooseForum(opt.forum)}
-                  isLoading={courtsLoading}
-                  placeholder={courtsLoading ? "Loading courts…" : "Select a court to proceed…"}
-                 
-                  isSearchable
-                />
+        <Panel title="1. Choose the court">
+          <div className="stack" style={{ gap: "var(--s4)" }}>
+            {courtsError && (
+              <div className="callout warn" role="alert"><Icon name="warn" size="sm" />
+                <div>{courtsError} <button type="button" className="link" onClick={() => chooseForum({ id: "__manual__", kind: "manual" })}>Enter manually</button></div>
               </div>
-            </div>
+            )}
+            {courtsLoading ? (
+              <div className="cs-pick">{[0, 1, 2, 3].map((i) => <Skel key={i} h={72} />)}</div>
+            ) : (
+              <div className="cs-pick">
+                {forums.filter((f) => f.kind !== "manual").map((f) => (
+                  <button type="button" key={f.id} aria-pressed={selectedCourt?.id === f.id} onClick={() => chooseForum(f)}>
+                    <Icon name={forumIcon(f)} />
+                    <span><b>{f.name}</b><div className="cs-sub">{forumSub(f)}</div></span>
+                  </button>
+                ))}
+                {!courtsError && forums.filter((f) => f.kind !== "manual").length === 0 && <p className="faint small">No courts available.</p>}
+              </div>
+            )}
           </div>
-        </div>
-       </>
+        </Panel>
       )}
 
-      {/* STEP 2 — search the court record */}
-      {/* Madras HC — flat lookup */}
+      {/* STEP 2 — search: Madras HC flat lookup */}
       {step === "search" && selectedCourt && !["ecourts_dc", "ecourts_hc", "sci"].includes(selectedCourt.id) && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
+        <Panel title={`2. Search ${selectedCourt.name}`} actions={changeCourt}>
+          <div className="form-grid">
+            <Select label="Case type" options={caseTypeOptions} value={lkType} onChange={setLkType} isLoading={typesLoading} placeholder="Select case type" />
+            {tf("Case number", lkNumber, setLkNumber, { placeholder: "Case number" })}
+            {yearField("Case year", lkYear, setLkYear)}
           </div>
-          <div className="ac-search-form">
-            <div className="ac-field">
-              <label>Case Type</label>
-              <Select
-                options={caseTypeOptions} value={lkType} onChange={setLkType}
-                isLoading={typesLoading} placeholder={typesLoading ? "Loading types…" : "Select case type"}
-               
-              />
-            </div>
-            <div className="ac-field">
-              <label>Case Number</label>
-              <InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" />
-            </div>
-            <div className="ac-field">
-              <label>Case Year</label>
-              <InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} min="1900" max="2100" placeholder="e.g. 2024" />
-            </div>
-          </div>
-          {searchError && <p className="ac-error">{searchError}</p>}
-          <div className="ac-actions">
-            <Button icon="pi pi-search" label={searching ? "Searching case…" : "Search For Case"} loading={searching} onClick={runSearch} disabled={searching || !lkType || !lkNumber.trim() || !lkYear} />
-          </div>
-        </div>
+          {searchError_}
+          {searchBtn(runSearch, !!(lkType && lkNumber.trim() && lkYear))}
+        </Panel>
       )}
 
       {/* Supreme Court of India — search-type tabs */}
       {step === "search" && selectedCourt && selectedCourt.id === "sci" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
+        <Panel title={`2. Search ${selectedCourt.name}`} actions={changeCourt}>
+          <div style={{ marginBottom: "var(--s4)" }}>
+            <Tabs label="Search by" value={sciMode} onChange={onSciTab} tabs={SCI_TABS.map(([k, l]) => ({ value: k, label: l }))} />
           </div>
-
-          <TabMenu className="ac-tabs" model={SCI_TABS.map(([, label]) => ({ label }))} activeIndex={SCI_TABS.findIndex(([k]) => k === sciMode)} onTabChange={(e) => onSciTab(SCI_TABS[e.index][0])} />
-
           {sciMode === "case_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Case Type</label>
-                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isLoading={typesLoading}
-                  placeholder={typesLoading ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
-              <div className="ac-field"><label>Case Year</label><InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
+            <div className="form-grid">
+              <Select label="Case type" options={caseTypeOptions} value={lkType} onChange={setLkType} isLoading={typesLoading} placeholder="Select case type" />
+              {tf("Case number", lkNumber, setLkNumber, { placeholder: "Case number" })}
+              {yearField("Case year", lkYear, setLkYear)}
             </div>
           )}
           {sciMode === "diary_no" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Diary Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Diary number" /></div>
-              <div className="ac-field"><label>Year</label><InputText type="number" value={sciYear} onChange={(e) => setSciYear(e.target.value)} placeholder="e.g. 2024" /></div>
+            <div className="form-grid">
+              {tf("Diary number", lkNumber, setLkNumber, { placeholder: "Diary number" })}
+              {yearField("Year", sciYear, setSciYear)}
             </div>
           )}
-          {sciMode === "cnr" && (
-            <div className="ac-search-form">
-              <div className="ac-field ac-field-full"><label>CNR Number</label>
-                <InputText value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-char CNR" />
-                {cnrWarn && <p className="ac-warning">{CNR_WARNING}</p>}</div>
-            </div>
-          )}
+          {sciMode === "cnr" && <div className="form-grid">{cnrField("16-character CNR")}</div>}
           {sciMode === "aor_code" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>AOR Code</label><InputText value={sciAorCode} onChange={(e) => setSciAorCode(e.target.value)} placeholder="Advocate-on-Record code" /></div>
-              <div className="ac-field"><label>Year</label><InputText type="number" value={sciYear} onChange={(e) => setSciYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              <div className="ac-field"><label>Party Type</label>
-                <div className="ac-status">
-                  {[["any", "Any"], ["P", "Petitioner"], ["R", "Respondent"]].map(([v, l]) => (
-                    <label key={v}><RadioButton name="sciAorPartyType" checked={sciAorPartyType === v} onChange={() => setSciAorPartyType(v)} /> {l}</label>
-                  ))}
-                </div></div>
-              <div className="ac-field"><label>Status</label>
-                <div className="ac-status">
-                  {[["P", "Pending"], ["D", "Disposed"]].map(([v, l]) => (
-                    <label key={v}><RadioButton name="sciAorStatus" checked={sciAorStatus === v} onChange={() => setSciAorStatus(v)} /> {l}</label>
-                  ))}
-                </div></div>
+            <div className="form-grid">
+              {tf("AOR code", sciAorCode, setSciAorCode, { placeholder: "Advocate-on-Record code" })}
+              {yearField("Year", sciYear, setSciYear)}
+              <Choice label="Party type" value={sciAorPartyType} onChange={setSciAorPartyType} options={[["any", "Any"], ["P", "Petitioner"], ["R", "Respondent"]]} />
+              <Choice label="Status" value={sciAorStatus} onChange={setSciAorStatus} options={[["P", "Pending"], ["D", "Disposed"]]} />
             </div>
           )}
           {sciMode === "party_name" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Party Name</label><InputText value={sciPartyName} onChange={(e) => setSciPartyName(e.target.value)} placeholder="Party name (min 3 chars)" /></div>
-              <div className="ac-field"><label>Year (optional)</label><InputText type="number" value={sciYear} onChange={(e) => setSciYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              <div className="ac-field"><label>Party Type</label>
-                <div className="ac-status">
-                  {[["any", "Any"], ["P", "Petitioner"], ["R", "Respondent"]].map(([v, l]) => (
-                    <label key={v}><RadioButton name="sciPartyType" checked={sciPartyType === v} onChange={() => setSciPartyType(v)} /> {l}</label>
-                  ))}
-                </div></div>
-              <div className="ac-field"><label>Status (optional)</label>
-                <div className="ac-status">
-                  {[["", "Any"], ["P", "Pending"], ["D", "Disposed"]].map(([v, l]) => (
-                    <label key={v || "sci-any"}><RadioButton name="sciPartyStatus" checked={sciPartyStatus === v} onChange={() => setSciPartyStatus(v)} /> {l}</label>
-                  ))}
-                </div></div>
+            <div className="form-grid">
+              {tf("Party name", sciPartyName, setSciPartyName, { placeholder: "Party name (min 3 letters)" })}
+              {yearField("Year (optional)", sciYear, setSciYear)}
+              <Choice label="Party type" value={sciPartyType} onChange={setSciPartyType} options={[["any", "Any"], ["P", "Petitioner"], ["R", "Respondent"]]} />
+              <Choice label="Status (optional)" value={sciPartyStatus} onChange={setSciPartyStatus} options={[["", "Any"], ["P", "Pending"], ["D", "Disposed"]]} />
             </div>
           )}
-          <div className="ac-actions">
-            <Button icon="pi pi-search" label={searching ? "Searching case…" : "Search For Case"} loading={searching} onClick={onSciSearch} disabled={searching || !sciSearchEnabled} />
-          </div>
-
-          {searchError && <p className="ac-error">{searchError}</p>}
-        </div>
+          {searchError_}
+          {searchBtn(onSciSearch, sciSearchEnabled)}
+        </Panel>
       )}
 
       {/* eCourts District Courts — stateful cascade */}
       {step === "search" && selectedCourt && selectedCourt.id === "ecourts_dc" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
-          </div>
-          {/* Cascade selectors — every mode except CNR needs the court location */}
+        <Panel title={`2. Search ${selectedCourt.name}`} actions={changeCourt}>
           {ecMode !== "cnr" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>State</label>
-                <Select options={mapToOptions(ecStates)} value={mapToOptions(ecStates).find((o) => o.value === ecStateCode) || null}
-                  onChange={onSelectState} isLoading={cascadeBusy === "states"} placeholder="Select state" /></div>
-              <div className="ac-field"><label>District</label>
-                <Select options={mapToOptions(ecDistricts)} value={mapToOptions(ecDistricts).find((o) => o.value === ecDistCode) || null}
-                  onChange={onSelectDistrict} isDisabled={!ecStateCode} isLoading={cascadeBusy === "districts"} placeholder="Select district" /></div>
-              <div className="ac-field"><label>Court Complex</label>
-                <Select options={mapToOptions(ecComplexes)} value={mapToOptions(ecComplexes).find((o) => o.value === ecComplexVal) || null}
-                  onChange={onSelectComplex} isDisabled={!ecDistCode} isLoading={cascadeBusy === "complexes"} placeholder="Select court complex" /></div>
+            <div className="form-grid">
+              <Select label="State" options={mapToOptions(ecStates)} value={mapToOptions(ecStates).find((o) => o.value === ecStateCode) || null}
+                onChange={onSelectState} isLoading={cascadeBusy === "states"} placeholder="Select state" />
+              <Select label="District" options={mapToOptions(ecDistricts)} value={mapToOptions(ecDistricts).find((o) => o.value === ecDistCode) || null}
+                onChange={onSelectDistrict} isDisabled={!ecStateCode} isLoading={cascadeBusy === "districts"} placeholder={ecStateCode ? "Select district" : "Select a state first"} />
+              <Select label="Court complex" options={mapToOptions(ecComplexes)} value={mapToOptions(ecComplexes).find((o) => o.value === ecComplexVal) || null}
+                onChange={onSelectComplex} isDisabled={!ecDistCode} isLoading={cascadeBusy === "complexes"} placeholder={ecDistCode ? "Select court complex" : "Select a district first"} />
               {needsEst && (
-                <div className="ac-field"><label>Establishment</label>
-                  <Select options={mapToOptions(ecEstabs)} value={mapToOptions(ecEstabs).find((o) => o.value === ecEstCode) || null}
-                    onChange={onSelectEst} isLoading={cascadeBusy === "establishments"} placeholder="Select establishment" /></div>
+                <Select label="Establishment" options={mapToOptions(ecEstabs)} value={mapToOptions(ecEstabs).find((o) => o.value === ecEstCode) || null}
+                  onChange={onSelectEst} isLoading={cascadeBusy === "establishments"} placeholder="Select establishment" />
               )}
             </div>
           )}
-
-          {/* Search-type tabs */}
-          <TabMenu className="ac-tabs" model={EC_TABS.map(([, label]) => ({ label }))} activeIndex={EC_TABS.findIndex(([k]) => k === ecMode)} onTabChange={(e) => onEcTab(EC_TABS[e.index][0])} />
-
-          {/* Per-mode fields */}
-          {ecMode === "cnr" && (
-            <div className="ac-search-form"><div className="ac-field ac-field-full"><label>CNR Number</label>
-              <InputText value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16} placeholder="16-digit CNR, e.g. KLML170000832024" />
-              {cnrWarn && <p className="ac-warning">{CNR_WARNING}</p>}</div></div>
-          )}
-          {ecMode === "case_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Case Type</label>
-                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!cascadeReady} isLoading={cascadeBusy === "case-types"}
-                  placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
-              <div className="ac-field"><label>Case Year</label><InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
-            </div>
-          )}
-          {ecMode === "party_name" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Petitioner / Respondent</label><InputText value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Party name (min 3 chars)" /></div>
-              <div className="ac-field"><label>Registration Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              {statusField()}
-            </div>
-          )}
-          {ecMode === "filing_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Filing Number</label><InputText value={filingNo} onChange={(e) => setFilingNo(e.target.value)} placeholder="Filing number" /></div>
-              <div className="ac-field"><label>Filing Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-            </div>
-          )}
-          {ecMode === "advocate" && (
-            <>
-              <div className="ac-status" style={{ marginBottom: 12 }}>
-                {[["1", "Advocate Name"], ["2", "Bar Code"], ["3", "Date Case List"]].map(([v, l]) => (
-                  <label key={v}><RadioButton name="advSubMode" checked={advSubMode === v} onChange={() => setAdvSubMode(v)} /> {l}</label>
-                ))}
-              </div>
-              <div className="ac-search-form">
-                {advSubMode === "1" && (
-                  <>
-                    <div className="ac-field"><label>Advocate Name</label><InputText value={advName} onChange={(e) => setAdvName(e.target.value)} placeholder="Advocate name (min 3 chars)" /></div>
-                    {statusField()}
-                  </>
-                )}
-                {advSubMode === "2" && (
-                  <>
-                    <div className="ac-field"><label>State Code</label><InputText value={barState} onChange={(e) => setBarState(e.target.value)} placeholder="e.g. KL" /></div>
-                    <div className="ac-field"><label>Bar Code Number</label><InputText value={barCode} onChange={(e) => setBarCode(e.target.value)} placeholder="Bar registration no." /></div>
-                    <div className="ac-field"><label>Bar Year</label><InputText type="number" value={barYear} onChange={(e) => setBarYear(e.target.value)} placeholder="e.g. 1998" /></div>
-                    {statusField()}
-                  </>
-                )}
-                {advSubMode === "3" && (
-                  <>
-                    <div className="ac-field"><label>State Code</label><InputText value={barState} onChange={(e) => setBarState(e.target.value)} placeholder="e.g. KL" /></div>
-                    <div className="ac-field"><label>Bar Code Number</label><InputText value={barCode} onChange={(e) => setBarCode(e.target.value)} placeholder="Bar registration no." /></div>
-                    <div className="ac-field"><label>Bar Year</label><InputText type="number" value={barYear} onChange={(e) => setBarYear(e.target.value)} placeholder="e.g. 1998" /></div>
-                    <div className="ac-field"><label>Cause List Date</label><InputText value={caselistDate} onChange={(e) => setCaselistDate(e.target.value)} placeholder="dd-mm-yyyy" /></div>
-                  </>
-                )}
-              </div>
-            </>
-          )}
-          {ecMode === "fir_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Police Station</label>
-                <Select options={mapToOptions(policeStations)} value={mapToOptions(policeStations).find((o) => o.value === firPolice) || null}
-                  onChange={(o) => setFirPolice(o ? o.value : "")} isDisabled={!cascadeReady} isLoading={cascadeBusy === "police"} placeholder="Select police station" /></div>
-              <div className="ac-field"><label>FIR Number</label><InputText value={firNo} onChange={(e) => setFirNo(e.target.value)} placeholder="FIR number" /></div>
-              <div className="ac-field"><label>Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              {statusField()}
-            </div>
-          )}
-          {ecMode === "act" && (
-            <div className="ac-search-form">
-              <div className="ac-field ac-field-full"><label>Search Act</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <InputText value={actSearch} onChange={(e) => setActSearch(e.target.value)} placeholder="Type ≥3 characters, then Find" />
-                  <Button type="button" label="Find" onClick={() => loadActTypes(actSearch)} disabled={!cascadeReady || actSearch.trim().length < 3} />
-                </div></div>
-              <div className="ac-field"><label>Act Type</label>
-                <Select options={mapToOptions(actTypes)} value={mapToOptions(actTypes).find((o) => o.value === actCode) || null}
-                  onChange={(o) => setActCode(o ? o.value : "")} isLoading={cascadeBusy === "acts"} placeholder="Select act" /></div>
-              <div className="ac-field"><label>Under Section</label><InputText value={actSection} onChange={(e) => setActSection(e.target.value)} placeholder="Section (optional)" /></div>
-              {statusField()}
-            </div>
-          )}
-          {ecMode === "case_type" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Case Type</label>
-                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!cascadeReady} isLoading={cascadeBusy === "case-types"}
-                  placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Registration Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              {statusField()}
-            </div>
-          )}
-
-          <div className="ac-actions">
-            <Button icon="pi pi-search" label={searching ? "Searching case…" : "Search For Case"} loading={searching} onClick={onEcSearch} disabled={searching || !ecSearchEnabled} />
-          </div>
-
-          {searchError && <p className="ac-error">{searchError}</p>}
-        </div>
+          {ecTabs}
+          {ecFields(false)}
+          {searchError_}
+          {searchBtn(onEcSearch, ecSearchEnabled)}
+        </Panel>
       )}
 
       {/* eCourts High Courts — High Court -> bench -> case type cascade */}
       {step === "search" && selectedCourt && selectedCourt.id === "ecourts_hc" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>Selected: <strong>{selectedCourt.name}</strong></span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Change court" tooltipOptions={{ position: "top" }} aria-label="Change court" />
+        <Panel title={`2. Search ${selectedCourt.name}`} actions={changeCourt}>
+          <div className="form-grid">
+            <Select label="High Court" options={mapToOptions(hcCourts)} value={mapToOptions(hcCourts).find((o) => o.value === hcStateCode) || null}
+              onChange={onSelectHcCourt} isLoading={cascadeBusy === "hc-courts"} placeholder="Select High Court" />
+            <Select label="Bench" options={mapToOptions(hcBenchList)} value={mapToOptions(hcBenchList).find((o) => o.value === hcBenchCode) || null}
+              onChange={(opt: any) => onSelectHcBench(opt)} isDisabled={!hcStateCode} isLoading={cascadeBusy === "hc-benches"} placeholder={hcStateCode ? "Select bench" : "Select a High Court first"} />
           </div>
-          {/* Bench selectors — every HC search mode needs the High Court + bench */}
-          <div className="ac-search-form">
-            <div className="ac-field"><label>High Court</label>
-              <Select options={mapToOptions(hcCourts)} value={mapToOptions(hcCourts).find((o) => o.value === hcStateCode) || null}
-                onChange={onSelectHcCourt} isLoading={cascadeBusy === "hc-courts"} placeholder="Select High Court" /></div>
-            <div className="ac-field"><label>Bench</label>
-              <Select options={mapToOptions(hcBenchList)} value={mapToOptions(hcBenchList).find((o) => o.value === hcBenchCode) || null}
-                onChange={(opt) => onSelectHcBench(opt)} isDisabled={!hcStateCode} isLoading={cascadeBusy === "hc-benches"} placeholder="Select bench" /></div>
-          </div>
+          {ecTabs}
+          {ecFields(true)}
+          {searchError_}
+          {searchBtn(onEcSearch, ecSearchEnabled)}
+        </Panel>
+      )}
 
-          {/* Search-type tabs */}
-          <TabMenu className="ac-tabs" model={EC_TABS.map(([, label]) => ({ label }))} activeIndex={EC_TABS.findIndex(([k]) => k === ecMode)} onTabChange={(e) => onEcTab(EC_TABS[e.index][0])} />
-
-          {/* Per-mode fields */}
-          {ecMode === "case_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Case Type</label>
-                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!hcReady} isLoading={cascadeBusy === "case-types"}
-                  placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Case Number</label><InputText value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} placeholder="Case number" /></div>
-              <div className="ac-field"><label>Case Year</label><InputText type="number" value={lkYear} onChange={(e) => setLkYear(e.target.value)} placeholder="e.g. 2024" /></div>
-            </div>
-          )}
-          {ecMode === "party_name" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Petitioner / Respondent</label><InputText value={pName} onChange={(e) => setPName(e.target.value)} placeholder="Party name (min 3 chars)" /></div>
-              <div className="ac-field"><label>Registration Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              {statusField()}
-            </div>
-          )}
-          {ecMode === "filing_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Filing Number</label><InputText value={filingNo} onChange={(e) => setFilingNo(e.target.value)} placeholder="Filing number" /></div>
-              <div className="ac-field"><label>Filing Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-            </div>
-          )}
-          {ecMode === "advocate" && (
-            <>
-              <div className="ac-status" style={{ marginBottom: 12 }}>
-                {[["1", "Advocate Name"], ["2", "Bar Code"], ["3", "Date Case List"]].map(([v, l]) => (
-                  <label key={v}><RadioButton name="advSubModeHc" checked={advSubMode === v} onChange={() => setAdvSubMode(v)} /> {l}</label>
-                ))}
-              </div>
-              <div className="ac-search-form">
-                {advSubMode === "1" && (
-                  <>
-                    <div className="ac-field"><label>Advocate Name</label><InputText value={advName} onChange={(e) => setAdvName(e.target.value)} placeholder="Advocate name (min 3 chars)" /></div>
-                    {statusField()}
-                  </>
-                )}
-                {advSubMode !== "1" && (
-                  <>
-                    <div className="ac-field"><label>Bar Registration No.</label><InputText value={barCode} onChange={(e) => setBarCode(e.target.value)} placeholder="Bar registration no." /></div>
-                    {advSubMode === "2" && statusField()}
-                    {advSubMode === "3" && (
-                      <div className="ac-field"><label>Case List Date</label><InputText value={caselistDate} onChange={(e) => setCaselistDate(e.target.value)} placeholder="dd-mm-yyyy" /></div>
-                    )}
-                  </>
-                )}
-              </div>
-            </>
-          )}
-          {ecMode === "fir_number" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Police Station</label>
-                <Select options={mapToOptions(policeStations)} value={mapToOptions(policeStations).find((o) => o.value === firPolice) || null}
-                  onChange={(o) => setFirPolice(o ? o.value : "")} isDisabled={!hcReady} isLoading={cascadeBusy === "police"} placeholder="Select police station" /></div>
-              <div className="ac-field"><label>FIR Number</label><InputText value={firNo} onChange={(e) => setFirNo(e.target.value)} placeholder="FIR number" /></div>
-              <div className="ac-field"><label>Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              {statusField()}
-            </div>
-          )}
-          {ecMode === "act" && (
-            <div className="ac-search-form">
-              <div className="ac-field ac-field-full"><label>Search Act</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <InputText value={actSearch} onChange={(e) => setActSearch(e.target.value)} placeholder="Type ≥3 characters, then Find" />
-                  <Button type="button" label="Find" onClick={() => loadActTypes(actSearch)} disabled={!hcReady || actSearch.trim().length < 3} />
-                </div></div>
-              <div className="ac-field"><label>Act Type</label>
-                <Select options={mapToOptions(actTypes)} value={mapToOptions(actTypes).find((o) => o.value === actCode) || null}
-                  onChange={(o) => setActCode(o ? o.value : "")} isLoading={cascadeBusy === "acts"} placeholder="Select act" /></div>
-              <div className="ac-field"><label>Under Section</label><InputText value={actSection} onChange={(e) => setActSection(e.target.value)} placeholder="Section (optional)" /></div>
-              {statusField()}
-            </div>
-          )}
-          {ecMode === "case_type" && (
-            <div className="ac-search-form">
-              <div className="ac-field"><label>Case Type</label>
-                <Select options={caseTypeOptions} value={lkType} onChange={setLkType} isDisabled={!hcReady} isLoading={cascadeBusy === "case-types"}
-                  placeholder={cascadeBusy === "case-types" ? "Loading types…" : "Select case type"} /></div>
-              <div className="ac-field"><label>Registration Year</label><InputText type="number" value={ecYear} onChange={(e) => setEcYear(e.target.value)} placeholder="e.g. 2024" /></div>
-              {statusField()}
-            </div>
-          )}
-
-          <div className="ac-actions">
-            <Button icon="pi pi-search" label={searching ? "Searching case…" : "Search For Case"} loading={searching} onClick={onEcSearch} disabled={searching || !ecSearchEnabled} />
-          </div>
-
-          {searchError && <p className="ac-error">{searchError}</p>}
-        </div>
+      {/* Standalone CNR lookup: the backend tries District Courts and High
+          Courts concurrently, so there's one box whichever portal has the case. */}
+      {step === "cnr" && (
+        <Panel title="2. Search by CNR number" actions={changeCourt}>
+          <div className="form-grid">{cnrField("16-character CNR, e.g. KLML170000832024")}</div>
+          {searchError_}
+          {searchBtn(runSearchCnr, cnrValid)}
+        </Panel>
       )}
 
       {/* Results list (list-returning modes) — pick one to fetch its full detail */}
       {step === "results" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>{resultRows.length} matching case{resultRows.length === 1 ? "" : "s"} — pick one to import</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("search")} tooltip="Back to search" tooltipOptions={{ position: "top" }} aria-label="Back to search" />
-          </div>
-          <div className="ac-rtable-wrap">
-            <DataTable value={resultRows.map((row, i) => ({ ...row, __i: i }))} dataKey="__i" size="small" stripedRows>
-              <Column header="#" body={(row: any) => row.sr_no || row.__i + 1} />
-              <Column header="Case Number" field="case_number" />
-              <Column header="Parties" field="parties" />
-              <Column header="" body={(row: any) => (
-                <Button type="button" size="small" label={picking === row.__i ? "Fetching…" : "Select"}
-                  loading={picking === row.__i} onClick={() => pickResult(resultRows[row.__i], row.__i)} disabled={picking !== -1} />
-              )} />
-            </DataTable>
-          </div>
-          {searchError && <p className="ac-error">{searchError}</p>}
-        </div>
+        <Panel flush title="3. Matching court records" sub={`${resultRows.length} found`}
+          actions={<Button variant="ghost" size="sm" onClick={() => setStep("search")}>Edit search</Button>}>
+          <DataTable
+            flush
+            rows={resultRows.map((row: any, i: number) => ({ ...row, __i: i }))}
+            rowKey={(r: any) => r.__i}
+            pageSize={25}
+            caption="Matching court records"
+            columns={[
+              { key: "n", label: "#", hideSm: true, render: (r: any) => r.sr_no || r.__i + 1 },
+              { key: "case_number", label: "Case", render: (r: any) => (
+                <><div className="mono small">{r.case_number}</div><div className="cs-sub">{r.parties}</div></>
+              ) },
+              ...(selectedCourt?.id === "sci" ? [{ key: "st", label: "Status", hideSm: true, render: (r: any) => <StatusChip status={r._sci?.status} /> }] : []),
+              { key: "pick", label: <span className="sr-only">Select</span>, align: "right" as const, render: (r: any) => (
+                <Button size="sm" loading={picking === r.__i} disabled={picking !== -1}
+                  onClick={() => pickResult(resultRows[r.__i], r.__i)}>{picking === r.__i ? "Fetching…" : "Select"}</Button>
+              ) },
+            ]}
+          />
+          {searchError_ && <div style={{ padding: "0 var(--s5) var(--s4)" }}>{searchError_}</div>}
+          <p className="faint xs" style={{ padding: "var(--s3) var(--s5)" }}>Not listed? Try the CNR, or enter the case manually.</p>
+        </Panel>
       )}
 
-      {/* STEP 3 — review the fetched record + save */}
+      {/* STEP 4 — review the fetched record + save */}
       {step === "review" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>{fetchedRecord ? <>Fetched from <strong>{selectedCourt?.name}</strong> — review and save</>
-                                  : <>From <strong>{selectedCourt?.name}</strong> — review and save</>}</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep(resultRows.length ? "results" : "search")} tooltip="Back" tooltipOptions={{ position: "top" }} aria-label="Back" />
-          </div>
-
-          {fetchedRecord ? (
-            <>
-              <div className="ac-record">
-                <div className="ac-record-head">Case details from the court</div>
-                <CourtRecordView record={fetchedRecord} courtComplex={ecComplexVal} courtId={selectedCourt?.id} />
+        <div className="split">
+          <Panel title="4. Review the court record" sub={selectedCourt?.name}
+            actions={<Button variant="ghost" size="sm" onClick={() => setStep(resultRows.length ? "results" : "search")}>Back</Button>}>
+            <div className="stack" style={{ gap: "var(--s4)" }}>
+              <div>
+                {newCase.caseNumber && <div className="mono small faint">{newCase.caseNumber}</div>}
+                {newCase.caseTitle && <h2 style={{ fontSize: "var(--t-xl)", marginTop: 4 }}>{newCase.caseTitle}</h2>}
               </div>
-
-              <div className="ac-savebar">
-                <div className="ac-field">
-                  <label>Assign to client</label>
-                  <Select
-                    options={clientOptions}
-                    value={clientOptions.find((o) => o.value === Number(newCase.clientId)) || null}
-                    onChange={(sel) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }))}
-                    isClearable placeholder="Select client"
-                  />
-                </div>
-                {caseNumberError && <p className="ac-error">{caseNumberError}</p>}
-                {saveError && <p className="ac-error">{saveError}</p>}
-                <div className="ac-actions">
-                  <Button type="button" icon="pi pi-save" label={saving ? "Saving…" : "Save Case to Workspace"} loading={saving} onClick={handleSave} disabled={saving} />
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              {sciDetail && (
-                <div className="ac-record">
-                  <div className="ac-record-head">
-                    Case details from the Supreme Court
-                    {sciDetail.diaryNo ? ` — Diary No. ${sciDetail.diaryNo}` : ""}
-                  </div>
-                  {sciDetail.parties && <p className="ac-sci-parties">{sciDetail.parties}</p>}
-                  <dl className="ac-kv">
+              {fetchedRecord && <CourtRecordView record={fetchedRecord} courtComplex={ecComplexVal} courtId={selectedCourt?.id} />}
+              {!fetchedRecord && sciDetail && (
+                <>
+                  {sciDetail.diaryNo && <div className="small faint">Diary No. {sciDetail.diaryNo}</div>}
+                  {sciDetail.parties && <p className="cr-prayer">{sciDetail.parties}</p>}
+                  <dl className="cr-kv">
                     {Object.entries(sciDetail.fields || {}).map(([k, v]: any) => (
-                      <div className="ac-kv-row" key={k}><dt>{k}</dt><dd style={{ whiteSpace: "pre-line" }}>{v}</dd></div>
+                      <div className="cr-kv-row" key={k}><dt>{k}</dt><dd>{v}</dd></div>
                     ))}
                   </dl>
-
                   {(sciDetail.sections || []).length > 0 && (
-                    <div className="ac-sci-sections">
-                      {sciDetail.sections.map((sec) => {
+                    <div>
+                      {sciDetail.sections.map((sec: any) => {
                         const isOpen = sciSectionsOpen.has(sec.tabName);
                         return (
-                          <div key={sec.tabName} className={`ac-sci-section ${isOpen ? "open" : ""}`}>
-                            <button type="button" className="ac-sci-section-toggle" onClick={() => toggleSciSection(sec)}>
-                              <span>{sec.label}</span>
-                              <i className="pi pi-chevron-down ac-sci-section-chevron" />
+                          <div key={sec.tabName} className={`cs-sci-sec${isOpen ? " open" : ""}`}>
+                            <button type="button" aria-expanded={isOpen} onClick={() => toggleSciSection(sec)}>
+                              <span>{sec.label}</span><Icon name="chevronDown" size="sm" />
                             </button>
                             {isOpen && (
-                              <div className="ac-sci-section-body">
-                                {sciSectionLoading === sec.tabName && <p className="ac-record-note">Loading…</p>}
-                                {sec.loaded && sec.empty && <p className="ac-record-note">No records.</p>}
+                              <div className="body">
+                                {sciSectionLoading === sec.tabName && <p className="cr-note">Loading…</p>}
+                                {sec.loaded && sec.empty && <p className="cr-note">No records.</p>}
                                 {sec.loaded && !sec.empty && sec.columns?.length > 0 && (
-                                  <div className="ac-rtable-wrap">
-                                    <DataTable value={(sec.rows || []).map((row: any, ri: number) => ({ __i: ri, __r: row }))} dataKey="__i" size="small" stripedRows>
-                                      {sec.columns.map((c: any, ci: number) => (
-                                        <Column key={ci} header={c} body={(r: any) => (Array.isArray(r.__r) ? r.__r[ci] : "")} />
-                                      ))}
-                                    </DataTable>
-                                  </div>
+                                  <DataTable
+                                    rows={(sec.rows || []).map((row: any, ri: number) => ({ __i: ri, __r: row }))}
+                                    rowKey={(r: any) => r.__i}
+                                    pageSize={0}
+                                    columns={sec.columns.map((c: any, ci: number) => ({
+                                      key: `c${ci}`, label: c, render: (r: any) => (Array.isArray(r.__r) ? r.__r[ci] : ""),
+                                    }))}
+                                  />
                                 )}
                                 {sec.loaded && !sec.empty && !(sec.columns?.length > 0) && sec.links?.length > 0 && (
-                                  <ul className="ac-sci-links">
-                                    {sec.links.map((l, li) => (
+                                  <ul className="cr-links">
+                                    {sec.links.map((l: any, li: number) => (
                                       <li key={li}><a href={l.href} target="_blank" rel="noreferrer">{l.text}</a></li>
                                     ))}
                                   </ul>
@@ -1856,65 +1646,16 @@ export default function AddCase() {
                       })}
                     </div>
                   )}
-                </div>
+                </>
               )}
-
-              <div className="ac-savebar">
-                <div className="ac-field">
-                  <label>Assign to client</label>
-                  <Select
-                    options={clientOptions}
-                    value={clientOptions.find((o) => o.value === Number(newCase.clientId)) || null}
-                    onChange={(sel) => setNewCase((p) => ({ ...p, clientId: sel ? sel.value : "" }))}
-                    isClearable placeholder="Select client"
-                  />
-                </div>
-                {caseNumberError && <p className="ac-error">{caseNumberError}</p>}
-                {saveError && <p className="ac-error">{saveError}</p>}
-                <div className="ac-actions">
-                  <Button type="button" icon="pi pi-save" label={saving ? "Saving…" : "Save Case to Workspace"} loading={saving} onClick={handleSave} disabled={saving} />
-                </div>
-              </div>
-            </>
-          )}
+            </div>
+          </Panel>
+          {saveRail}
         </div>
       )}
 
       {/* Manual entry */}
-      {step === "manual" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>Manual entry</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Back" tooltipOptions={{ position: "top" }} aria-label="Back" />
-          </div>
-          {renderCaseForm()}
-        </div>
-      )}
-
-      {/* Standalone CNR lookup (no court selection needed) */}
-      {/* Unified CNR lookup - the backend tries District Courts and High
-          Courts concurrently, so there's just the one box regardless of which
-          portal actually has the case. */}
-      {step === "cnr" && (
-        <div className="ac-card">
-          <div className="ac-selected">
-            <span>Search by CNR Number</span>
-            <Button icon="pi pi-times" rounded text severity="secondary" onClick={() => setStep("select")} tooltip="Back" tooltipOptions={{ position: "top" }} aria-label="Back" />
-          </div>
-          <div className="ac-search-form">
-            <div className="ac-field ac-field-full">
-              <label>CNR Number</label>
-              <InputText value={cnrInput} onChange={(e) => setCnrInput(e.target.value)} maxLength={16}
-                placeholder="16-char CNR, e.g. KLML170000832024" />
-              {cnrWarn && <p className="ac-warning">{CNR_WARNING}</p>}
-            </div>
-          </div>
-          <div className="ac-actions">
-            <Button icon="pi pi-search" label={searching ? "Searching case…" : "Search For Case"} loading={searching} onClick={runSearchCnr} disabled={searching || !cnrValid} />
-          </div>
-          {searchError && <p className="ac-error">{searchError}</p>}
-        </div>
-      )}
+      {step === "manual" && <Panel>{renderCaseForm()}</Panel>}
     </div>
   );
 }

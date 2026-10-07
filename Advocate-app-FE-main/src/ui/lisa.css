@@ -1,0 +1,87 @@
+/* Lisa, the AI assistant, in Red Tape.
+   Launcher: an ink tab with the red-tape mark, bottom right.
+   Panel: a docked drawer on the right, like the prototype's detail drawers. */
+
+/* ---------- Launcher ---------- */
+.lisa-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 80;
+  display: inline-flex; align-items: center; gap: 10px;
+  height: 46px; padding: 0 18px 0 8px; border-radius: var(--r-pill);
+  border: 1px solid #2E333D; background: var(--side-bg); color: #F1F2F4;
+  font: 500 var(--t-sm)/1 var(--f-body); box-shadow: var(--e-3);
+  transition: transform var(--d-fast), box-shadow var(--d-fast), background var(--d-fast);
+}
+.lisa-fab:hover { background: #262A33; transform: translateY(-1px); }
+.lisa-fab:active { transform: none; }
+.lisa-fab kbd { background: #2a2e37; border-color: #3a3f4a; color: var(--side-ink-2); margin-left: 2px; }
+.lisa-seal {
+  width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  background: var(--tape); color: #fff; font: 600 14px/1 var(--f-display);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .18);
+}
+.lisa-seal.sm { width: 26px; height: 26px; font-size: 12px; }
+.lisa-seal.lg { width: 44px; height: 44px; font-size: 19px; }
+@media (max-width: 768px) {
+  .lisa-fab { right: 14px; bottom: 14px; padding: 0 8px; }
+  .lisa-fab .lbl, .lisa-fab kbd { display: none; }
+}
+
+/* ---------- Panel ---------- */
+.lisa {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 95;
+  width: min(440px, 100vw); display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink);
+  border-left: 1px solid var(--line); box-shadow: var(--e-3);
+  animation: drawerIn var(--d-slow) var(--ease);
+}
+.lisa.max { width: min(50vw, 100vw); min-width: min(440px, 100vw); }
+.lisa-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; }
+.lisa-resize:hover, .lisa-resize:active { background: linear-gradient(90deg, transparent 3px, var(--tape) 3px, var(--tape) 5px, transparent 5px); }
+@media (max-width: 768px) { .lisa, .lisa.max { width: 100vw !important; min-width: 0; } .lisa-resize { display: none; } }
+
+.lisa-head { display: flex; align-items: center; gap: 12px; padding: 14px 12px 14px 18px; border-bottom: 1px solid var(--line); }
+.lisa-head h2 { font: 500 var(--t-xl)/1.1 var(--f-display); letter-spacing: -.01em; }
+.lisa-head .sub { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: var(--t-xs); color: var(--ink-3); }
+.lisa-head .sub i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.lisa-head .acts { margin-left: auto; display: flex; gap: 2px; }
+.lisa-head .icon-btn[disabled] { opacity: .4; pointer-events: none; }
+
+.lisa-confirm { margin: 12px 16px 0; }
+.lisa-confirm .row { margin-top: 8px; justify-content: flex-end; }
+
+.lisa-body { flex: 1; overflow-y: auto; padding: 18px 16px 8px; display: flex; flex-direction: column; gap: 14px; scroll-behavior: smooth; }
+.lisa-msg { display: flex; gap: 10px; align-items: flex-start; max-width: 100%; }
+.lisa-msg.me { justify-content: flex-end; }
+.lisa-bubble { min-width: 0; max-width: 88%; padding: 10px 13px; border-radius: var(--r-md); font-size: var(--t-sm); line-height: 1.6; overflow-wrap: anywhere; }
+.lisa-msg.me .lisa-bubble { background: var(--ink); color: var(--ink-inverse); border-bottom-right-radius: var(--r-xs); }
+.lisa-msg.ai .lisa-bubble { background: var(--surface-2); border: 1px solid var(--line); border-top-left-radius: var(--r-xs); }
+.lisa-text ul { margin: 4px 0; padding-left: 18px; }
+.lisa-text li { margin: 2px 0; }
+.lisa-text strong { font-weight: 600; }
+.lisa-text .h { font: 600 var(--t-sm)/1.4 var(--f-body); margin: 6px 0 2px; }
+.lisa-text .h:first-child { margin-top: 0; }
+.lisa-results { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.lisa-result { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 10px; border-top: 1px solid var(--line); font-size: var(--t-xs); color: var(--ink-2); }
+.lisa-result:first-child { border-top: 0; }
+.lisa-result b { color: var(--ink); font-weight: 500; font-size: var(--t-sm); }
+.lisa-result .mono { color: var(--ink); }
+.lisa-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.lisa-thinking { display: inline-flex; gap: 4px; padding: 4px 2px; }
+.lisa-thinking i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: lisaDot 1.2s ease-in-out infinite; }
+.lisa-thinking i:nth-child(2) { animation-delay: .15s; }
+.lisa-thinking i:nth-child(3) { animation-delay: .3s; }
+@keyframes lisaDot { 0%, 80%, 100% { opacity: .25; transform: none; } 40% { opacity: 1; transform: translateY(-2px); } }
+
+.lisa-foot { position: relative; border-top: 1px solid var(--line); padding: 10px 14px 14px; background: var(--surface); }
+.lisa-quick { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 10px; align-items: center; }
+.lisa-quick::-webkit-scrollbar { display: none; }
+.lisa-quick .lbl { font-size: var(--t-xs); color: var(--ink-3); flex: none; }
+.lisa-quick .pp-pill { flex: none; }
+.lisa-quick .pp-pill[disabled] { opacity: .45; pointer-events: none; }
+.lisa-form { display: flex; gap: 8px; align-items: flex-end; }
+.lisa-form .input { height: 40px; }
+.lisa-form .btn { height: 40px; width: 40px; padding: 0; }
+.lisa-note { margin-top: 8px; font-size: 11px; color: var(--ink-3); }
+.lisa-suggest { position: absolute; left: 14px; right: 14px; bottom: calc(100% - 4px); padding: 6px; }
+.lisa-suggest button { display: block; width: 100%; padding: 8px 10px; border: 0; background: none; border-radius: var(--r-sm); text-align: left; font-size: var(--t-sm); color: var(--ink); }
+.lisa-suggest button:hover { background: var(--surface-3); }

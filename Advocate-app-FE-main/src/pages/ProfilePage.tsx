@@ -1,24 +1,18 @@
+// Settings: your profile, the office's details and branding (practice owner
+// only), notifications, password and preferences. Sections sit on a left rail;
+// ?tab=<id> opens one directly.
 import { useState, useEffect, useRef } from "react";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { InputNumber } from "primereact/inputnumber";
-import { Password } from "primereact/password";
-import { Dropdown } from "primereact/dropdown";
-import { Calendar } from "primereact/calendar";
-import { InputSwitch } from "primereact/inputswitch";
-import { RadioButton } from "primereact/radiobutton";
-import { Card } from "primereact/card";
-import { ProgressSpinner } from "primereact/progressspinner";
+import { useSearchParams } from "react-router-dom";
 import api from "../api/client";
 import { useTheme } from "../contexts/ThemeContext";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../context/AuthContext";
-import "../assets/styles/SettingsPage.css";
-import "../assets/styles/ProfilePage.css";
 import FieldError from "../components/FieldError";
 import { formatErrors, gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+import { PageHead, Button, Avatar, Icon, Skel, type IconName } from "../ui/kit";
+import { Field, TextField, TextArea, SelectField, Switch } from "../ui/forms";
+import "../ui/pages/firm.css";
 
 // Checked as you leave a field, and again on the server (core/validators.py).
 const GEN_FORMATS = { phone: "phone" } as const;
@@ -26,16 +20,17 @@ const OFF_FORMATS = { officePhone: "phone", officeEmail: "email", pinCode: "pinc
 
 const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d@#$%^&*!?_+=-]{8,32}$/;
 
-const TABS = [
-  { id: "general", label: "General", icon: "pi pi-user" },
-  { id: "office", label: "Office", icon: "pi pi-building" },
-  { id: "branding", label: "Branding", icon: "pi pi-image" },
-  { id: "security", label: "Security", icon: "pi pi-lock" },
-  { id: "preferences", label: "Preferences", icon: "pi pi-sliders-h" },
+const TABS: { id: string; label: string; icon: IconName }[] = [
+  { id: "general", label: "Profile", icon: "user" },
+  { id: "office", label: "Office", icon: "home" },
+  { id: "branding", label: "Branding", icon: "image" },
+  { id: "notifications", label: "Notifications", icon: "bell" },
+  { id: "security", label: "Security", icon: "lock" },
+  { id: "preferences", label: "Preferences", icon: "cog" },
 ];
 
 const opts = (pairs: [string, string][]) => pairs.map(([value, label]) => ({ value, label }));
-const GENDERS = opts([["", "Select"], ["male", "Male"], ["female", "Female"], ["other", "Other"]]);
+const GENDERS = opts([["male", "Male"], ["female", "Female"], ["other", "Other"]]);
 const LANGUAGES = opts([["en", "English"], ["hi", "Hindi"], ["gu", "Gujarati"], ["mr", "Marathi"]]);
 const TIMEZONES = opts([
   ["Asia/Kolkata", "Asia/Kolkata (IST)"], ["Asia/Dubai", "Asia/Dubai (GST)"],
@@ -48,17 +43,13 @@ const DASH_FILTERS = opts([
   ["this_quarter", "This Quarter"], ["this_year", "This Year"],
 ]);
 
-// The API speaks "YYYY-MM-DD" strings; Calendar speaks Date.
-const toDate = (s: string) => {
-  if (!s) return null;
-  const [y, m, d] = s.slice(0, 10).split("-").map(Number);
-  return y ? new Date(y, m - 1, d) : null;
-};
-const fromDate = (d: any) => {
-  if (!(d instanceof Date)) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
+const PWD_CHECKS = [
+  { key: "length", label: "8–32 characters" },
+  { key: "lowercase", label: "One lowercase letter" },
+  { key: "uppercase", label: "One uppercase letter" },
+  { key: "digit", label: "One digit" },
+  { key: "special", label: "One symbol (@ # $ % ^ & * ! ? _ + -)" },
+];
 
 export default function ProfilePage() {
   const { setTheme: applyTheme } = useTheme() as any;
@@ -66,11 +57,14 @@ export default function ProfilePage() {
   const toast = useToast() as any;
   const { updateProfile } = useAuth();
 
-  const [activeTab, setActiveTab] = useState("general");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab") || "general";
+  const setActiveTab = (id: string) => setSearchParams(id === "general" ? {} : { tab: id }, { replace: true });
   // Office details and branding feed the firm's invoices and letterheads, which
   // use the practice owner's profile - so only the owner is shown those tabs.
   const [isPracticeOwner, setIsPracticeOwner] = useState(false);
   const visibleTabs = TABS.filter((t) => isPracticeOwner || (t.id !== "office" && t.id !== "branding"));
+  const activeTab = visibleTabs.some((t) => t.id === requestedTab) ? requestedTab : "general";
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -320,250 +314,273 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div className="settings-container flex justify-content-center p-6">
-        <ProgressSpinner style={{ width: 40, height: 40 }} />
+      <div>
+        <PageHead title="Settings" sub="Your profile, the firm's details and how AMS behaves for you." />
+        <div className="split left-rail">
+          <div className="panel" style={{ padding: 12 }}><Skel h={200} /></div>
+          <div className="panel" style={{ padding: 20 }}><div className="stack"><Skel h={22} w="30%" /><Skel h={40} /><Skel h={40} /><Skel h={40} /></div></div>
+        </div>
       </div>
     );
   }
 
-  const col = (label: string, input: any, id?: string, wide = false) => (
-    <div className={`${wide ? "col-12" : "col-12 md:col-6"} flex flex-column gap-1`}>
-      <label htmlFor={id}>{label}</label>
-      {input}
+  // The API speaks "YYYY-MM-DD"; a date input does too (slice drops any time part).
+  const genText = (name: string, label: string, extra: Record<string, any> = {}) => (
+    <Field label={label}>
+      {(id) => (
+        <>
+          <input id={id} className="input" value={general[name] ?? ""} onChange={(e) => setGen(name, e.target.value)}
+            onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} aria-invalid={!!errFor("general", name) || undefined} {...extra} />
+          <FieldError error={errFor("general", name)} />
+        </>
+      )}
+    </Field>
+  );
+  const offText = (name: string, label: string, extra: Record<string, any> = {}) => (
+    <Field label={label} full={extra.full}>
+      {(id) => (
+        <>
+          <input id={id} className={`input${extra.mono ? " mono" : ""}`} type={extra.type || "text"} placeholder={extra.placeholder}
+            value={office[name] ?? ""} onChange={(e) => setOff(name, e.target.value)}
+            onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} aria-invalid={!!errFor("office", name) || undefined} />
+          <FieldError error={errFor("office", name)}
+            warning={name === "gstNumber" ? gstinStateMismatch(office.gstNumber, office.state) : undefined} />
+        </>
+      )}
+    </Field>
+  );
+  const prefSelect = (name: string, label: string, options: any[]) => (
+    <SelectField label={label} value={preferences[name]} options={options} onChange={(e) => setPref(name, e.target.value)} />
+  );
+  const saveRow = (label: string, onClick: () => void, extra: { disabled?: boolean; icon?: IconName } = {}) => (
+    <div className="row full" style={{ justifyContent: "flex-end", marginTop: 4 }}>
+      <Button variant="primary" icon={extra.icon} loading={saving} disabled={saving || extra.disabled} onClick={onClick}>{label}</Button>
     </div>
   );
-  const genText = (name: string, label: string, placeholder?: string) =>
-    col(label, <>
-      <InputText id={`pf-${name}`} value={general[name] ?? ""} placeholder={placeholder} onChange={(e) => setGen(name, e.target.value)}
-        onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} className={errFor("general", name) ? "p-invalid" : undefined} />
-      <FieldError error={errFor("general", name)} />
-    </>, `pf-${name}`);
-  const offText = (name: string, label: string, placeholder?: string, type = "text") =>
-    col(label, <>
-      <InputText id={`pf-${name}`} type={type} value={office[name] ?? ""} placeholder={placeholder} onChange={(e) => setOff(name, e.target.value)}
-        onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} className={errFor("office", name) ? "p-invalid" : undefined} />
-      <FieldError error={errFor("office", name)}
-        warning={name === "gstNumber" ? gstinStateMismatch(office.gstNumber, office.state) : undefined} />
-    </>, `pf-${name}`);
-  const genDate = (name: string, label: string) =>
-    col(label, <Calendar inputId={`pf-${name}`} value={toDate(general[name])} onChange={(e) => setGen(name, fromDate(e.value))} dateFormat="dd/mm/yy" showIcon showButtonBar />, `pf-${name}`);
-  const prefSelect = (name: string, label: string, options: any[]) =>
-    col(label, <Dropdown inputId={`pf-${name}`} value={preferences[name]} options={options} onChange={(e) => setPref(name, e.value)} />, `pf-${name}`);
-  const pwd = (name: string, label: string, placeholder: string) =>
-    col(label, <Password inputId={`pf-${name}`} value={security[name]} feedback={false} toggleMask placeholder={placeholder} onChange={(e) => setSec(name, e.target.value)} className="w-full" inputClassName="w-full" />, `pf-${name}`, true);
+  const head = (title: string, sub?: string) => (
+    <div className="panel-head"><div><h3>{title}</h3>{sub && <div className="sub">{sub}</div>}</div></div>
+  );
 
   function renderGeneral() {
     return (
-      <div>
-        <h3 className="mt-0">General Profile</h3>
-        <div className="flex align-items-center gap-3 mb-3">
-          <div className="profile-avatar-wrapper">
-            {branding.profilePhotoUrl ? (
-              <img src={branding.profilePhotoUrl} alt="Profile" className="profile-avatar-img" />
-            ) : (
-              <div className="profile-avatar-placeholder">{general.fullName?.charAt(0)?.toUpperCase() || "A"}</div>
-            )}
-            <Button
-              type="button" icon="pi pi-camera" rounded size="small" className="profile-photo-upload-btn"
-              onClick={() => triggerUpload("photo")} disabled={uploading.photo} aria-label="Upload photo"
-            />
-          </div>
-          <div className="flex flex-column">
-            <strong>{general.fullName || "Your Name"}</strong>
-            <span className="settings-muted text-sm">Click the camera icon to update your profile photo</span>
-          </div>
-        </div>
-
-        <div className="grid">
-          {genText("fullName", "Full Name")}
-          {genText("phone", "Phone Number")}
-          {genDate("dateOfBirth", "Date of Birth")}
-          {col("Gender", <Dropdown inputId="pf-gender" value={general.gender} options={GENDERS} onChange={(e) => setGen("gender", e.value)} />, "pf-gender")}
-          {col("Bar Council Number", <InputText id="pf-bar" value={general.barCouncilId ?? ""} disabled />, "pf-bar")}
-          {genDate("enrollmentDate", "Enrollment Date")}
-          {col("Experience (Years)", <InputNumber inputId="pf-exp" min={0} useGrouping={false} value={general.experience} onValueChange={(e) => setGen("experience", e.value ?? 0)} />, "pf-exp")}
-          {genText("practiceAreas", "Practice Areas", "e.g. Criminal, Civil, Corporate")}
-          {col("Address", <InputTextarea id="pf-address" rows={2} value={general.address} onChange={(e) => setGen("address", e.target.value)} />, "pf-address", true)}
-          {col("Bio", <InputTextarea id="pf-bio" rows={3} value={general.bio} placeholder="Brief professional bio..." onChange={(e) => setGen("bio", e.target.value)} />, "pf-bio", true)}
-        </div>
-
-        <div className="grid">
-          {[
-            ["browserNotificationsEnabled", "Browser Notifications"],
-            ["emailNotificationsEnabled", "Email Notifications"],
-            ["whatsappEnabled", "WhatsApp Notifications"],
-          ].map(([name, label]) => (
-            <div key={name} className="col-12 md:col-4 flex flex-column gap-2">
-              <label htmlFor={`pf-${name}`}>{label}</label>
-              <InputSwitch inputId={`pf-${name}`} checked={!!notifications[name]} onChange={(e) => handleNotificationChange(name, !!e.value)} />
+      <section className="panel">
+        {head("Profile", "Shown to colleagues and on documents you sign.")}
+        <div className="panel-body">
+          <div className="row" style={{ gap: 16, marginBottom: 20 }}>
+            <Avatar name={general.fullName} src={branding.profilePhotoUrl || undefined} size="lg" />
+            <div className="stack" style={{ gap: 6 }}>
+              <Button size="sm" icon="upload" loading={uploading.photo} disabled={uploading.photo} onClick={() => triggerUpload("photo")}>Upload photo</Button>
+              <span className="faint xs">Square JPG or PNG, at least 200 px.</span>
             </div>
-          ))}
+          </div>
+          <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); handleSaveGeneral(); }}>
+            {genText("fullName", "Full name")}
+            {genText("phone", "Phone", { type: "tel" })}
+            <TextField label="Date of birth" type="date" value={(general.dateOfBirth || "").slice(0, 10)} onChange={(e) => setGen("dateOfBirth", e.target.value)} />
+            <SelectField label="Gender" value={general.gender} placeholder="Select" options={GENDERS} onChange={(e) => setGen("gender", e.target.value)} />
+            <TextField label="Bar Council no." className="mono" value={general.barCouncilId ?? ""} disabled hint="Ask a Super Admin to change this." />
+            <TextField label="Enrolment date" type="date" value={(general.enrollmentDate || "").slice(0, 10)} onChange={(e) => setGen("enrollmentDate", e.target.value)} />
+            <TextField label="Experience (years)" type="number" min={0} value={general.experience} onChange={(e) => setGen("experience", Number(e.target.value) || 0)} />
+            {genText("practiceAreas", "Practice areas", { placeholder: "e.g. Criminal, Civil, Corporate" })}
+            <TextArea label="Address" full rows={2} value={general.address} onChange={(e) => setGen("address", e.target.value)} />
+            <TextArea label="Short bio" full rows={3} value={general.bio} placeholder="Brief professional bio" onChange={(e) => setGen("bio", e.target.value)} />
+            {saveRow("Save profile", handleSaveGeneral)}
+          </form>
         </div>
-
-        <Button className="mt-3" icon="pi pi-save" label={saving ? "Saving..." : "Save Profile"} onClick={handleSaveGeneral} disabled={saving} />
-      </div>
+      </section>
     );
   }
 
   function renderOffice() {
     return (
-      <div>
-        <h3 className="mt-0">Office Information</h3>
-        <div className="grid">
-          {offText("officeName", "Office Name", "Your Law Firm / Office")}
-          {offText("officePhone", "Office Phone")}
-          {offText("officeEmail", "Office Email", undefined, "email")}
-          {offText("website", "Website", "https://")}
-          {col("Office Address", <InputTextarea id="pf-officeAddress" rows={2} value={office.officeAddress} onChange={(e) => setOff("officeAddress", e.target.value)} />, "pf-officeAddress", true)}
-          {offText("city", "City")}
-          {offText("state", "State")}
-          {offText("country", "Country")}
-          {offText("pinCode", "PIN Code", "6 digits")}
-          {offText("gstNumber", "GST Number (Optional)", "15 characters, e.g. 33ABCDE1234F1Z7")}
-          {offText("panNumber", "PAN Number (Optional)", "10 characters, e.g. ABCDE1234F")}
+      <section className="panel">
+        {head("Office", "Printed on invoices, letters and the client portal.")}
+        <div className="panel-body">
+          <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); handleSaveOffice(); }}>
+            {offText("officeName", "Office name", { placeholder: "Your law firm / office", full: true })}
+            {offText("officePhone", "Phone", { type: "tel" })}
+            {offText("officeEmail", "Email", { type: "email" })}
+            {offText("website", "Website", { placeholder: "https://" })}
+            <TextArea label="Address" full rows={2} value={office.officeAddress} onChange={(e) => setOff("officeAddress", e.target.value)} />
+            {offText("city", "City")}
+            {offText("state", "State")}
+            {offText("country", "Country")}
+            {offText("pinCode", "PIN code", { placeholder: "6 digits" })}
+            {offText("gstNumber", "GSTIN (optional)", { placeholder: "e.g. 33ABCDE1234F1Z7", mono: true })}
+            {offText("panNumber", "PAN (optional)", { placeholder: "e.g. ABCDE1234F", mono: true })}
+            {saveRow("Save office details", handleSaveOffice)}
+          </form>
         </div>
-        <Button className="mt-3" icon="pi pi-save" label={saving ? "Saving..." : "Save Office Info"} onClick={handleSaveOffice} disabled={saving} />
-      </div>
+      </section>
     );
   }
 
   function renderBranding() {
     const brandItems = [
-      { key: "logo", label: "Office Logo", url: branding.officeLogoUrl, uploading: uploading.logo },
-      { key: "signature", label: "Advocate Signature", url: branding.signatureUrl, uploading: uploading.signature },
-      { key: "seal", label: "Office Seal (Optional)", url: branding.officeSealUrl, uploading: uploading.seal },
+      { key: "logo", label: "Office logo", hint: "PNG with a transparent background", url: branding.officeLogoUrl, uploading: uploading.logo },
+      { key: "signature", label: "Advocate signature", hint: "Scan on white, 600 x 200 px", url: branding.signatureUrl, uploading: uploading.signature },
+      { key: "seal", label: "Office seal (optional)", hint: "Round office seal", url: branding.officeSealUrl, uploading: uploading.seal },
     ];
-    const colorRow = (field: string, label: string) =>
-      col(label, (
-        <div className="flex align-items-center gap-2">
-          <input type="color" value={branding[field]} onChange={(e) => setColor(field, e.target.value)} className="profile-color-picker" />
-          <InputText value={branding[field]} onChange={(e) => setColor(field, e.target.value)} className="w-8rem" />
-        </div>
-      ));
-
+    const swatch = (field: string, label: string) => (
+      <label className="pp-swatch">
+        <input type="color" value={branding[field]} onChange={(e) => setColor(field, e.target.value)} aria-label={`${label} colour`} />
+        <span className="small">{label}<br />
+          <input className="input mono xs fm-hex" value={branding[field]} onChange={(e) => setColor(field, e.target.value)} aria-label={`${label} colour code`} />
+        </span>
+      </label>
+    );
     return (
-      <div>
-        <h3 className="mt-0">Branding Assets</h3>
-        <p className="settings-muted">Upload logos, signature, and seal used in emails, PDFs, invoices, and reports.</p>
-        <div className="grid">
-          {brandItems.map((item) => (
-            <div key={item.key} className="col-12 md:col-4">
-              <div className="branding-card" onClick={() => triggerUpload(item.key)}>
-                <div className="branding-preview">
-                  {item.url ? (
-                    <img src={item.url} alt={item.label} className="branding-preview-img" />
-                  ) : (
-                    <div className="flex flex-column align-items-center gap-2 settings-muted">
-                      <i className="pi pi-upload text-2xl" />
-                      <span>Click to upload</span>
-                    </div>
-                  )}
+      <section className="panel">
+        {head("Branding", "Used in emails, PDFs, invoices and reports.")}
+        <div className="panel-body stack" style={{ gap: 20 }}>
+          <div className="pp-tiles">
+            {brandItems.map((item) => (
+              <div key={item.key} className="pp-tile">
+                <div className="pv">
+                  {item.url
+                    ? <img src={item.url} alt={item.label} className="fm-tile-img" />
+                    : <span><Icon name="image" size="lg" /><br />Nothing uploaded</span>}
                 </div>
-                <span className="font-semibold">{item.label}</span>
-                {item.uploading && <div className="settings-muted text-sm">Uploading...</div>}
+                <div className="bd">
+                  <b className="small">{item.label}</b>
+                  <span className="faint xs">{item.hint}</span>
+                  <Button size="sm" icon="upload" loading={item.uploading} disabled={item.uploading} onClick={() => triggerUpload(item.key)}
+                    aria-label={`Upload ${item.label.toLowerCase()}`}>Upload</Button>
+                </div>
               </div>
+            ))}
+          </div>
+          <div>
+            <div className="label" style={{ marginBottom: 10 }}>Brand colours</div>
+            <div className="row wrap" style={{ gap: 24 }}>
+              {swatch("primaryBrandColor", "Primary")}
+              {swatch("secondaryBrandColor", "Secondary")}
             </div>
-          ))}
+          </div>
+          {saveRow("Save branding", saveBrandColors)}
         </div>
+      </section>
+    );
+  }
 
-        <h3 className="mt-4">Brand Colors</h3>
-        <div className="grid">
-          {colorRow("primaryBrandColor", "Primary Color")}
-          {colorRow("secondaryBrandColor", "Secondary Color")}
+  function renderNotifications() {
+    const items: [string, string, string][] = [
+      ["browserNotificationsEnabled", "Browser notifications", "Hearing alerts and review requests while AMS is open."],
+      ["emailNotificationsEnabled", "Email", "Hearing digests and anything needing your review."],
+      ["whatsappEnabled", "WhatsApp", "Messages on WhatsApp, when the firm's channel is connected."],
+    ];
+    return (
+      <section className="panel">
+        {head("Notifications", "How AMS reaches you. Changes save as you switch them.")}
+        <div className="panel-body flush">
+          <div className="list">
+            {items.map(([name, label, desc]) => (
+              <div key={name} className="list-item">
+                <div className="grow"><b className="small">{label}</b><div className="faint xs">{desc}</div></div>
+                <Switch checked={!!notifications[name]} onChange={(e) => handleNotificationChange(name, e.target.checked)}
+                  label={<span className="sr-only">{label}</span>} />
+              </div>
+            ))}
+          </div>
         </div>
-        <Button className="mt-3" icon="pi pi-save" label={saving ? "Saving..." : "Save Branding"} onClick={saveBrandColors} disabled={saving} />
-      </div>
+      </section>
     );
   }
 
   function renderSecurity() {
-    const pwdChecks = [
-      { key: "length", label: "8-32 characters" },
-      { key: "lowercase", label: "One lowercase letter" },
-      { key: "uppercase", label: "One uppercase letter" },
-      { key: "digit", label: "One digit" },
-      { key: "special", label: "One special character (@ # $ % ^ & * ! ? _ + -)" },
-    ];
+    const mismatch = !!security.confirmNewPassword && security.confirmNewPassword !== security.newPassword;
     return (
-      <div>
-        <h3 className="mt-0">Change Password</h3>
-        <p className="settings-muted">Use at least 8 characters with a mix of letters, numbers, and symbols.</p>
-        <div className="grid" style={{ maxWidth: 500 }}>
-          {pwd("currentPassword", "Current Password", "Enter current password")}
-          {pwd("newPassword", "New Password", "Enter new password")}
-          {pwd("confirmNewPassword", "Confirm New Password", "Confirm new password")}
-        </div>
-        {security.newPassword && (
-          <div className="flex flex-column gap-1 mt-2">
-            {pwdChecks.map((check) => (
-              <div key={check.key} className={`pwd-check-item ${!pwdErrors[check.key] && security.newPassword.length > 0 ? "valid" : ""}`}>
-                <i className="pi pi-check" /> <span>{check.label}</span>
+      <section className="panel">
+        {head("Change password", "Use 8 to 32 characters with a mix of letters, numbers and symbols.")}
+        <div className="panel-body">
+          <form className="stack" noValidate style={{ maxWidth: 440 }} onSubmit={(e) => { e.preventDefault(); handleSaveSecurity(); }}>
+            <TextField label="Current password" type="password" autoComplete="current-password" value={security.currentPassword}
+              onChange={(e) => setSec("currentPassword", e.target.value)} />
+            <TextField label="New password" type="password" autoComplete="new-password" value={security.newPassword}
+              onChange={(e) => setSec("newPassword", e.target.value)} />
+            {security.newPassword && (
+              <div className="pw-rules" aria-live="polite">
+                {PWD_CHECKS.map((c) => {
+                  const ok = !pwdErrors[c.key];
+                  return <span key={c.key} className={ok ? "ok" : undefined}><Icon name={ok ? "ok" : "minus"} size="sm" /> {c.label}</span>;
+                })}
               </div>
-            ))}
-          </div>
-        )}
-        <Button
-          className="mt-3" icon="pi pi-lock" label={saving ? "Updating..." : "Update Password"}
-          onClick={handleSaveSecurity} disabled={saving || !security.currentPassword || !security.newPassword}
-        />
-      </div>
+            )}
+            <TextField label="Confirm new password" type="password" autoComplete="new-password" value={security.confirmNewPassword}
+              onChange={(e) => setSec("confirmNewPassword", e.target.value)} error={mismatch ? "Passwords do not match." : null} />
+            <div>
+              <Button type="submit" variant="primary" icon="lock" loading={saving}
+                disabled={saving || !security.currentPassword || !security.newPassword}>Change password</Button>
+            </div>
+          </form>
+        </div>
+      </section>
     );
   }
 
   function renderPreferences() {
+    const themes: [string, string, string, string][] = [
+      ["light", "Light", "#F2F3F0", "#FFFFFF"],
+      ["dark", "Dark", "#13161C", "#1A1E25"],
+    ];
     return (
-      <div>
-        <h3 className="mt-0">Preferences</h3>
-        <h4 className="settings-muted mb-2">Theme</h4>
-        <div className="flex gap-3 flex-wrap mb-3">
-          {[["light", "pi pi-sun", "Light Theme"], ["dark", "pi pi-moon", "Dark Theme"]].map(([v, icon, label]) => (
-            <label key={v} className={`settings-theme-card ${preferences.theme === v ? "active" : ""}`}>
-              <RadioButton name="theme" value={v} checked={preferences.theme === v} onChange={(e) => setPref("theme", e.value)} />
-              <i className={icon} /> {label}
-            </label>
-          ))}
+      <section className="panel">
+        {head("Preferences")}
+        <div className="panel-body">
+          <form className="stack" noValidate style={{ gap: 20 }} onSubmit={(e) => { e.preventDefault(); handleSavePreferences(); }}>
+            <fieldset className="fm-fieldset">
+              <legend className="label" style={{ marginBottom: 10 }}>Theme</legend>
+              <div className="pp-radio-cards fm-two">
+                {themes.map(([v, label, a, b]) => (
+                  <label key={v}>
+                    {/* Theme previews show the actual palette, so these two colours are literal on purpose. */}
+                    <span className="sw" aria-hidden="true"><span style={{ flex: 1, background: a }} /><span style={{ flex: 1, background: b }} /></span>
+                    <span className="row"><input type="radio" name="theme" value={v} checked={preferences.theme === v}
+                      onChange={() => { setPref("theme", v); applyTheme(v); }} />{label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="faint xs" style={{ marginTop: 6 }}>Applies straight away on this device; save to keep it on your account.</div>
+            </fieldset>
+            <div className="form-grid">
+              {prefSelect("language", "Language", LANGUAGES)}
+              {prefSelect("timeZone", "Time zone", TIMEZONES)}
+              {prefSelect("currency", "Currency", CURRENCIES)}
+              {prefSelect("dateFormat", "Date format", DATE_FORMATS)}
+              <TextField label="Sign out after inactivity (minutes)" type="number" min={5} max={480} value={preferences.autoLogoutDuration}
+                hint="Between 5 and 480 minutes." onChange={(e) => setPref("autoLogoutDuration", e.target.value === "" ? 30 : Number(e.target.value))} />
+              {prefSelect("defaultDashboardFilter", "Default dashboard period", DASH_FILTERS)}
+            </div>
+            {saveRow("Save preferences", handleSavePreferences)}
+          </form>
         </div>
-        <div className="grid">
-          {prefSelect("language", "Language", LANGUAGES)}
-          {prefSelect("timeZone", "Time Zone", TIMEZONES)}
-          {prefSelect("currency", "Currency", CURRENCIES)}
-          {prefSelect("dateFormat", "Date Format", DATE_FORMATS)}
-          {col("Auto Logout (minutes)", <InputNumber inputId="pf-autologout" min={5} max={480} useGrouping={false} value={preferences.autoLogoutDuration} onValueChange={(e) => setPref("autoLogoutDuration", e.value ?? 30)} />, "pf-autologout")}
-          {prefSelect("defaultDashboardFilter", "Default Dashboard Filter", DASH_FILTERS)}
-        </div>
-        <Button className="mt-3" icon="pi pi-save" label={saving ? "Saving..." : "Save Preferences"} onClick={handleSavePreferences} disabled={saving} />
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="settings-container">
-      <p className="settings-muted mt-0">Manage your identity, office, branding, security, and preferences.</p>
-      <div className="grid">
-        <aside className="col-12 md:col-3">
-          <Card className="settings-tabs">
-            <div className="flex flex-column gap-1">
-              {visibleTabs.map((tab) => (
-                <Button
-                  key={tab.id} type="button" icon={tab.icon} label={tab.label}
-                  text={activeTab !== tab.id} className="justify-content-start"
-                  onClick={() => setActiveTab(tab.id)}
-                />
-              ))}
-            </div>
-          </Card>
-        </aside>
-        <main className="col-12 md:col-9">
-          <Card>
-            {activeTab === "general" && renderGeneral()}
-            {activeTab === "office" && isPracticeOwner && renderOffice()}
-            {activeTab === "branding" && isPracticeOwner && renderBranding()}
-            {activeTab === "security" && renderSecurity()}
-            {activeTab === "preferences" && renderPreferences()}
-          </Card>
-        </main>
+    <div>
+      <PageHead title="Settings" sub="Your profile, the firm's details and how AMS behaves for you." />
+      <div className="split left-rail">
+        <div className="panel rail">
+          <div className="pp-vtabs" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+            {visibleTabs.map((tab) => (
+              <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}>
+                <Icon name={tab.icon} size="sm" />{tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div role="tabpanel" style={{ minWidth: 0 }}>
+          {activeTab === "general" && renderGeneral()}
+          {activeTab === "office" && isPracticeOwner && renderOffice()}
+          {activeTab === "branding" && isPracticeOwner && renderBranding()}
+          {activeTab === "notifications" && renderNotifications()}
+          {activeTab === "security" && renderSecurity()}
+          {activeTab === "preferences" && renderPreferences()}
+        </div>
       </div>
-      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFileUpload} />
+      <input ref={fileInputRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-hidden="true" onChange={handleFileUpload} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { DraftBlock } from '../api/drafting'
+import Icon from '../../../ui/Icon'
 
 /**
  * Status chip for a draft block. Shows a green "Cited" badge (with match %
@@ -10,15 +11,15 @@ export default function BlockBadge({ block }: { block: DraftBlock }) {
     // Convert the 0..1 cosine similarity to a whole-number percentage for display.
     const pct = block.similarity_score != null ? Math.round(block.similarity_score * 100) : null
     return (
-      <span className="pp-chip verified">
-        <i className="pi pi-check-circle" />
+      <span className="chip ok">
+        <Icon name="ok" size="sm" />
         {pct != null ? `Cited · ${pct}% match` : 'Cited from sample'}
       </span>
     )
   }
   return (
-    <span className="pp-chip review">
-      <i className="pi pi-exclamation-triangle" />
+    <span className="chip warn">
+      <Icon name="warn" size="sm" />
       Needs review
     </span>
   )

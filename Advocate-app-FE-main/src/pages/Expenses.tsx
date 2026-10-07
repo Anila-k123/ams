@@ -1,18 +1,8 @@
+// Expenses: court fees, travel and out-of-pocket costs per case, set against
+// what the client has paid. Per-case detail opens in a drawer; today's and the
+// month's reports open in a modal and can be printed or downloaded.
 import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { Dropdown } from "primereact/dropdown";
-import { Dialog } from "primereact/dialog";
-import { Skeleton } from "primereact/skeleton";
-import { Tag } from "primereact/tag";
-import { Message } from "primereact/message";
-import { IconField } from "primereact/iconfield";
-import { InputIcon } from "primereact/inputicon";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useLoading } from "../contexts/LoadingContext";
@@ -21,14 +11,42 @@ import { usePermission } from "../contexts/PermissionContext";
 import ReportService from "../services/ReportService";
 import { formatCurrency } from "../utils/formatCurrency";
 import { PAYMENT_MODES } from "../constants/payments";
-import "../assets/styles/Expenses.css";
 import { usePageModal } from "../utils/pageModal";
+import { Button, Icon, PageHead, StatusChip } from "../ui/kit";
+import { SearchInput, SelectField, TextArea, TextField } from "../ui/forms";
+import { Modal, Drawer, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/finance.css";
 
-const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"].map((c) => ({ label: c, value: c }));
-const STATUS_SEVERITY: Record<string, any> = { pending: "warning", active: "success", closed: "secondary" };
+const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"];
 
 const today = () => new Date().toISOString().split("T")[0];
-const dateOnly = (d: any) => d?.split?.("T")[0] ?? d;
+// en-IN date (7 Oct 2026); plain ISO dates read as local dates.
+const fdate = (v?: string | null) => {
+  if (!v) return "—";
+  const s = String(v);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(s.slice(0, 10)) ? new Date(`${s.slice(0, 10)}T00:00:00`) : new Date(s);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// A small read-only table for the drawer and report modals.
+function MiniTable({ head, rows, empty, total }: { head: { label: string; amt?: boolean }[]; rows: React.ReactNode[][]; empty: string; total?: React.ReactNode }) {
+  if (!rows.length) return <p className="faint small">{empty}</p>;
+  return (
+    <div className="table-wrap">
+      <table className="t">
+        <thead><tr>{head.map((h) => <th key={h.label} scope="col" className={h.amt ? "amt" : undefined}>{h.label}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={head[j]?.amt ? "amt mono" : undefined}>{c}</td>)}</tr>)}
+          {total !== undefined && (
+            <tr><td colSpan={head.length - 1}><b>Total</b></td><td className="amt mono"><b>{total}</b></td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 function Expenses() {
   const [cases, setCases] = useState<any[]>([]);
@@ -48,10 +66,11 @@ function Expenses() {
   const [monthlyReport, setMonthlyReport] = useState<any>(null);
 
   const [errorMessage, setErrorMessage] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
+  const [formError, setFormError] = useState("");
   const [editExpenseId, setEditExpenseId] = useState<any>(null);
 
   const [searchText, setSearchText] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [highlightedId, setHighlightedId] = useState<any>(null);
   const [pageLoading, setPageLoading] = useState(true);
   const location = useLocation();
@@ -111,25 +130,24 @@ function Expenses() {
   }, [location.state]);
 
   useEffect(() => {
-    // apply search filter when cases or searchText change
-    if (!searchText) {
-      setFilteredCases(cases);
-      return;
-    }
+    // apply search + status filter when cases, searchText or status change
     const key = searchText.toLowerCase();
     setFilteredCases(
       cases.filter((c) => {
+        if (statusFilter && String(c.status || "").toLowerCase() !== statusFilter) return false;
+        if (!key) return true;
         const caseTitle = (c.caseTitle || "").toLowerCase();
         const clientName = (c.clientName || c.client?.name || "").toLowerCase();
-        return caseTitle.includes(key) || clientName.includes(key);
+        const caseNumber = (c.caseNumber || "").toLowerCase();
+        return caseTitle.includes(key) || clientName.includes(key) || caseNumber.includes(key);
       })
     );
-  }, [cases, searchText]);
+  }, [cases, searchText, statusFilter]);
 
   // Scroll the highlighted row (from global search) into view.
   useEffect(() => {
     if (highlightedId == null) return;
-    requestAnimationFrame(() => document.querySelector(".cases-table-wrapper .highlight-row")
+    requestAnimationFrame(() => document.querySelector(".fin-expenses tr.hl")
       ?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }, [filteredCases, highlightedId]);
 
@@ -141,7 +159,6 @@ function Expenses() {
       const order: Record<string, number> = { Pending: 1, Active: 2, Closed: 3 };
       const sorted = (res.data || []).sort((a: any, b: any) => (order[a.status] || 99) - (order[b.status] || 99));
       setCases(sorted);
-      setFilteredCases(sorted);
     } catch (err) {
       console.error("Error fetching cases:", err);
       setErrorMessage("Failed to fetch cases.");
@@ -185,6 +202,7 @@ function Expenses() {
     // Lisa it isn't, and without a pick the expense was saved on no case.
     setPickCase(!caseId);
     setEditExpenseId(null);
+    setFormError("");
     setShowAddModal(true);
   };
 
@@ -194,14 +212,13 @@ function Expenses() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage("");
-    setSuccessMessage("");
+    setFormError("");
     if (!newExpense.title || !newExpense.amount) {
-      setErrorMessage("Title and amount are required.");
+      setFormError("Title and amount are required.");
       return;
     }
     if (pickCase && !newExpense.caseId) {
-      setErrorMessage("Choose the case this expense belongs to.");
+      setFormError("Choose the case this expense belongs to.");
       return;
     }
 
@@ -217,11 +234,9 @@ function Expenses() {
     try {
       if (editExpenseId) {
         await withLoading(api.put(`/api/expenses/update/${editExpenseId}`, expenseToSend), "Updating Expense...");
-        setSuccessMessage("Expense updated.");
         success("Expense updated.");
       } else {
         await withLoading(api.post("/api/expenses/create", expenseToSend), "Saving Expense...");
-        setSuccessMessage("Expense created.");
         success("Expense created.");
       }
       setShowAddModal(false);
@@ -232,7 +247,7 @@ function Expenses() {
       console.error("Error saving expense:", err);
       const errData = err.response?.data;
       const msg = typeof errData === "string" ? errData : (errData?.message || "Failed to save expense.");
-      setErrorMessage(msg);
+      setFormError(msg);
       error(msg);
     }
   };
@@ -251,6 +266,7 @@ function Expenses() {
       caseId: expense.caseEntity?.id || "",
       expenseType: expense.expenseType || "CLIENT_CASE",
     });
+    setFormError("");
     setShowAddModal(true);
   };
 
@@ -266,11 +282,11 @@ function Expenses() {
   };
 
   const handleDeleteExpense = (id: any, caseId: any) => {
-    confirmDialog({
+    confirm({
+      title: "Delete expense?",
       message: "Are you sure you want to delete this expense?",
-      header: "Delete expense",
-      icon: "pi pi-exclamation-triangle",
-      acceptClassName: "p-button-danger",
+      confirmLabel: "Delete",
+      danger: true,
       accept: () => doDeleteExpense(id, caseId),
     });
   };
@@ -287,6 +303,7 @@ function Expenses() {
       invoiceId: null,
     });
     setOpenInvoices([]);
+    setFormError("");
     setShowPaymentModal(true);
     if (hasPermission("INVOICE_VIEW")) {
       api.get("/api/invoices/my-invoices")
@@ -312,10 +329,9 @@ function Expenses() {
 
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage("");
-    setSuccessMessage("");
+    setFormError("");
     if (!newPayment.amount) {
-      setErrorMessage("Amount is required for payment.");
+      setFormError("Amount is required for payment.");
       return;
     }
     try {
@@ -328,7 +344,6 @@ function Expenses() {
         }),
         "Saving Payment..."
       );
-      setSuccessMessage("Payment recorded successfully!");
       success("Payment recorded.");
       setShowPaymentModal(false);
       // refresh
@@ -337,7 +352,7 @@ function Expenses() {
     } catch (err: any) {
       console.error("Error saving payment:", err);
       const msg = err.response?.data?.error || "Failed to record payment.";
-      setErrorMessage(msg);
+      setFormError(msg);
       error(msg);
     }
   };
@@ -437,241 +452,232 @@ function Expenses() {
     return { totalExpenses, balance };
   };
 
-  const outAmount = (x: any) => <span className="amount-out">{formatCurrency(-x.amount)}</span>;
-  const inAmount = (x: any) => <span className="amount-in">{formatCurrency(x.amount)}</span>;
-
-  const reportButtons = (printLabel: string, downloadLabel: string) => (
-    <div className="flex justify-content-end gap-2 mt-3 no-print">
-      {hasPermission("REPORT_EXPORT") && <Button outlined icon="pi pi-print" label={printLabel} onClick={handlePrint} />}
-      {hasPermission("REPORT_EXPORT") && <Button icon="pi pi-download" label={downloadLabel} onClick={handleDownloadPDF} />}
-    </div>
+  const canExport = hasPermission("REPORT_EXPORT");
+  const reportFoot = (close: () => void) => (
+    <>
+      <button type="button" className="btn ghost" onClick={close}>Close</button>
+      {canExport && <Button icon="print" onClick={handlePrint}>Print</Button>}
+      {canExport && <Button variant="primary" icon="download" onClick={handleDownloadPDF}>Download PDF</Button>}
+    </>
   );
 
-  const dialogProps = { modal: true, style: { width: "min(1000px, 96vw)" } };
+  const money = (n: any) => formatCurrency(n);
+  const expenseHead = [{ label: "Date" }, { label: "Title" }, { label: "Category" }, { label: "Amount", amt: true }];
+  const paymentHead = [{ label: "Date" }, { label: "Mode" }, { label: "Reference" }, { label: "Amount", amt: true }];
+  const expenseRows = (list: any[]) => (list || []).map((x) => [<span className="nowrap">{fdate(x.paymentDate)}</span>, x.title || "—", x.category || "—", money(x.amount)]);
+  const paymentRows = (list: any[]) => (list || []).map((p) => [<span className="nowrap">{fdate(p.paymentDate)}</span>, p.paymentMode || "—", <span className="mono xs">{p.referenceNumber || "—"}</span>, money(p.amount)]);
 
-  // Render
+  const columns: Column<any>[] = [
+    { key: "caseTitle", label: "Case", sort: (c) => c.caseTitle || "", render: (c) => (
+      <div><div className="cell-title">{c.caseTitle || "—"}</div>{c.caseNumber && <div className="cell-sub mono">{c.caseNumber}</div>}</div>
+    ) },
+    { key: "client", label: "Client", hideSm: true, sort: (c) => c.clientName || c.client?.name || "", render: (c) => c.clientName || c.client?.name || "N/A" },
+    { key: "status", label: "Status", hideSm: true, render: (c) => <StatusChip status={c.status || "N/A"} /> },
+    { key: "exp", label: "Expenses", align: "right", sort: (c) => Number(caseTotals(c).totalExpenses) || 0,
+      render: (c) => <span className="mono">{money(caseTotals(c).totalExpenses)}</span> },
+    { key: "bal", label: "Balance", align: "right", sort: (c) => Number(caseTotals(c).balance) || 0, render: (c) => {
+      const b = Number(caseTotals(c).balance) || 0;
+      return <span className={`mono ${b < 0 ? "fin-bad" : "fin-ok"}`}>{money(b)}</span>;
+    } },
+    { key: "a", label: <span className="sr-only">Actions</span>, className: "actions", render: (c) => (
+      <div className="row fin-actions">
+        <Button size="sm" variant="ghost" onClick={() => fetchExpensesAndPayments(c.id)}>View</Button>
+        {hasPermission("EXPENSE_CREATE") && (
+          <Button size="sm" variant="ghost" icon="plus" onClick={() => handleAddExpense(c.id)} aria-label={`Add expense to ${c.caseTitle || "case"}`}>Expense</Button>
+        )}
+        {hasPermission("PAYMENT_CREATE") && (
+          <Button size="sm" variant="ghost" icon="rupee" onClick={() => handleAddPayment(c.id)} aria-label={`Record payment on ${c.caseTitle || "case"}`}>Payment</Button>
+        )}
+      </div>
+    ) },
+  ];
+
+  const viewCase = cases.find((c) => c.id === selectedCase);
+  const totGiven = sumAmounts(payments);
+  const totSpent = sumAmounts(expenses);
+  const canReport = hasPermission("REPORT_VIEW") && hasPermission("PAYMENT_VIEW");
+
   return (
-    <div className="expenses-container">
-      <ConfirmDialog />
+    <div className="fin-page">
+      <PageHead title="Expenses" sub="Court fees, travel and out-of-pocket costs per matter, against fees received."
+        actions={<>
+          {canReport && <Button icon="file" onClick={fetchTodayReport}>Today’s report</Button>}
+          {canReport && <Button icon="chart" onClick={fetchMonthlyReport}>Monthly report</Button>}
+          {hasPermission("EXPENSE_CREATE") && <Button variant="primary" icon="plus" onClick={() => handleAddExpense(null)}>Add expense</Button>}
+        </>} />
 
-      {errorMessage && <Message severity="error" text={errorMessage} className="w-full justify-content-start mb-2" />}
-      {successMessage && <Message severity="success" text={successMessage} className="w-full justify-content-start mb-2" />}
+      {errorMessage && (
+        <div className="callout bad fin-block" role="alert"><Icon name="warn" size="sm" /><div className="grow">{errorMessage}</div>
+          <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => setErrorMessage("")}><Icon name="x" size="sm" /></button></div>
+      )}
 
-      <div className="flex flex-wrap gap-2 align-items-center justify-content-between mb-3">
-        <IconField iconPosition="left" className="flex-1" style={{ minWidth: 220, maxWidth: 480 }}>
-          <InputIcon className="pi pi-search" />
-          <InputText className="w-full" placeholder="Search cases or clients..." value={searchText}
-            onChange={(e) => setSearchText(e.target.value)} />
-        </IconField>
-        {hasPermission("REPORT_VIEW") && hasPermission("PAYMENT_VIEW") && (
-          <div className="flex gap-2">
-            <Button outlined icon="pi pi-calendar" label="Today’s Report" onClick={fetchTodayReport} />
-            <Button outlined icon="pi pi-chart-bar" label="Monthly Report" onClick={fetchMonthlyReport} />
-          </div>
-        )}
+      <div className="toolbar">
+        <SearchInput value={searchText} onChange={setSearchText} placeholder="Search case or client" />
+        <label className="sr-only" htmlFor="exp-status">Case status</label>
+        <select id="exp-status" className="input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="active">Active</option>
+          <option value="closed">Closed</option>
+        </select>
       </div>
 
-      <div className="cases-table-wrapper">
-        {pageLoading ? (
-          <div className="flex flex-column gap-2 p-2">
-            {Array.from({ length: 10 }).map((_, i) => <Skeleton key={i} height="2rem" />)}
-          </div>
-        ) : (
-          <DataTable value={filteredCases} dataKey="id" size="small" scrollable emptyMessage="No cases found."
-            rowClassName={(c: any) => (highlightedId === c.id ? "highlight-row" : "")}>
-            <Column header="Case Title" field="caseTitle" />
-            <Column header="Client" body={(c) => c.clientName || c.client?.name || "N/A"} />
-            <Column header="Status" body={(c) => (
-              <Tag value={c.status || "N/A"} severity={STATUS_SEVERITY[String(c.status || "").toLowerCase()] || "info"} rounded />
-            )} />
-            <Column header="Total Expense" body={(c) => formatCurrency(caseTotals(c).totalExpenses)} />
-            <Column header="Balance" body={(c) => formatCurrency(caseTotals(c).balance)} />
-            <Column header="Actions" body={(c) => (
-              <div className="flex gap-1 white-space-nowrap">
-                <Button size="small" text icon="pi pi-search" label="View" onClick={() => fetchExpensesAndPayments(c.id)} />
-                {hasPermission("EXPENSE_CREATE") && (
-                  <Button size="small" text icon="pi pi-plus" label="Add" onClick={() => handleAddExpense(c.id)} />
-                )}
-                {hasPermission("PAYMENT_CREATE") && (
-                  <Button size="small" text icon="pi pi-wallet" label="Payment" onClick={() => handleAddPayment(c.id)} />
-                )}
-              </div>
-            )} />
-          </DataTable>
-        )}
+      <div className="fin-expenses">
+        <DataTable rows={filteredCases} rowKey={(c) => c.id} columns={columns} loading={pageLoading} caption="Expenses by case"
+          onRow={(c) => fetchExpensesAndPayments(c.id)}
+          rowClass={(c) => (highlightedId === c.id ? "hl" : undefined)}
+          empty={{ icon: "wallet", title: "No cases found", text: searchText ? "Try a different search." : "Expenses are recorded against your cases." }} />
       </div>
 
-      {/* ------------------ ADD EXPENSE MODAL (small) ------------------ */}
-      <Dialog visible={showAddModal} onHide={() => setShowAddModal(false)} header={editExpenseId ? "Edit Expense" : "Add Expense"}
-        modal style={{ width: "min(460px, 95vw)" }}>
-        <form onSubmit={handleSubmit} className="expense-form">
+      {/* ------------------ ADD / EDIT EXPENSE ------------------ */}
+      <Modal open={showAddModal} onClose={() => setShowAddModal(false)} size="narrow" title={editExpenseId ? "Edit expense" : "Add expense"}
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setShowAddModal(false)}>Cancel</button>
+          <Button type="submit" form="exp-form" variant="primary">{editExpenseId ? "Update" : "Save expense"}</Button>
+        </>}>
+        <form id="exp-form" onSubmit={handleSubmit} className="stack">
+          {formError && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{formError}</div></div>}
           {pickCase && !editExpenseId && (
-            <Dropdown value={newExpense.caseId || null} filter showClear placeholder="Select case"
+            <SelectField label="Case" required value={newExpense.caseId || ""} placeholder="Select case"
               options={cases.map((c: any) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle || ""}` }))}
-              onChange={(e) => setNewExpense({ ...newExpense, caseId: e.value ?? "" })} />
+              onChange={(e) => setNewExpense({ ...newExpense, caseId: e.target.value ? Number(e.target.value) : "" })} />
           )}
-          <InputText name="title" placeholder="Title" value={newExpense.title} onChange={handleChange} required />
-          <InputText name="amount" type="number" placeholder="Amount" value={newExpense.amount} onChange={handleChange} required />
-          <Dropdown value={newExpense.category} options={CATEGORIES} placeholder="Select Category" required
-            onChange={(e) => setNewExpense({ ...newExpense, category: e.value })} />
-          <InputText name="paymentDate" type="date" value={newExpense.paymentDate} onChange={handleChange} />
-          <InputTextarea name="description" placeholder="Description" value={newExpense.description} onChange={handleChange} rows={3} />
-          <div className="flex justify-content-end">
-            <Button type="submit" icon="pi pi-save" label={editExpenseId ? "Update" : "Save"} />
+          <TextField label="Title" name="title" required value={newExpense.title} onChange={handleChange} />
+          <div className="form-grid">
+            <TextField label="Amount (₹)" name="amount" type="number" required className="mono" value={newExpense.amount} onChange={handleChange} />
+            <TextField label="Date" name="paymentDate" type="date" value={newExpense.paymentDate} onChange={handleChange} />
           </div>
+          <SelectField label="Category" required value={newExpense.category} options={CATEGORIES} placeholder="Select category"
+            onChange={(e) => setNewExpense({ ...newExpense, category: e.target.value })} />
+          <TextArea label="Description" name="description" rows={3} value={newExpense.description} onChange={handleChange} />
         </form>
-      </Dialog>
+      </Modal>
 
-      {/* ------------------ ADD PAYMENT MODAL (small) ------------------ */}
-      <Dialog visible={showPaymentModal} onHide={() => setShowPaymentModal(false)} header="Add Client Payment"
-        modal style={{ width: "min(460px, 95vw)" }}>
-        <form onSubmit={handlePaymentSubmit} className="expense-form">
+      {/* ------------------ ADD PAYMENT ------------------ */}
+      <Modal open={showPaymentModal} onClose={() => setShowPaymentModal(false)} size="narrow" title="Record client payment"
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setShowPaymentModal(false)}>Cancel</button>
+          <Button type="submit" form="pay-form" variant="primary" icon="rupee">Save payment</Button>
+        </>}>
+        <form id="pay-form" onSubmit={handlePaymentSubmit} className="stack">
+          {formError && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{formError}</div></div>}
           {openInvoices.length > 0 && (
-            <Dropdown value={newPayment.invoiceId} showClear placeholder="Against invoice (optional)"
-              options={openInvoices.map((inv) => ({
-                value: inv.id,
-                label: `${inv.invoiceNumber} · due ${formatCurrency(inv.balance)}`,
-              }))}
-              onChange={(e) => selectPaymentInvoice(e.value)} />
+            <SelectField label="Against invoice" hint="Optional. Picking one fills in its balance." value={newPayment.invoiceId ?? ""} placeholder="No invoice (advance)"
+              options={openInvoices.map((inv) => ({ value: inv.id, label: `${inv.invoiceNumber} · due ${formatCurrency(inv.balance)}` }))}
+              onChange={(e) => selectPaymentInvoice(e.target.value ? Number(e.target.value) : null)} />
           )}
-          <InputText name="amount" type="number" placeholder="Amount" value={newPayment.amount} onChange={handlePaymentChange} required />
-          <Dropdown value={newPayment.paymentMode} options={PAYMENT_MODES} placeholder="Payment Mode"
-            onChange={(e) => setNewPayment({ ...newPayment, paymentMode: e.value })} />
-          <InputText name="referenceNumber" placeholder="Reference / Transaction No." value={newPayment.referenceNumber} onChange={handlePaymentChange} />
-          <InputText name="paymentDate" type="date" value={newPayment.paymentDate} onChange={handlePaymentChange} />
-          <InputTextarea name="description" placeholder="Description" value={newPayment.description} onChange={handlePaymentChange} rows={3} />
-          <div className="flex justify-content-end">
-            <Button type="submit" icon="pi pi-save" label="Save" />
+          <div className="form-grid">
+            <TextField label="Amount (₹)" name="amount" type="number" required className="mono" value={newPayment.amount} onChange={handlePaymentChange} />
+            <TextField label="Date" name="paymentDate" type="date" value={newPayment.paymentDate} onChange={handlePaymentChange} />
+            <SelectField label="Mode" value={newPayment.paymentMode} options={PAYMENT_MODES} placeholder="Payment mode"
+              onChange={(e) => setNewPayment({ ...newPayment, paymentMode: e.target.value })} />
+            <TextField label="Reference" name="referenceNumber" placeholder="Transaction / cheque no." value={newPayment.referenceNumber} onChange={handlePaymentChange} />
           </div>
+          <TextArea label="Description" name="description" rows={3} value={newPayment.description} onChange={handlePaymentChange} />
         </form>
-      </Dialog>
+      </Modal>
 
-      {/* ------------------ VIEW CASE MODAL (big) ------------------ */}
-      <Dialog visible={showExpenseModal} onHide={() => setShowExpenseModal(false)} header="Case Financial Overview" {...dialogProps}>
-        <div className="grid">
-          <div className="col-12 md:col-6">
-            <h4 className="exp-section-title"><i className="pi pi-arrow-up-right" /> Expenses</h4>
-            <DataTable value={expenses} dataKey="id" size="small" emptyMessage="No expenses yet.">
-              <Column header="Title" field="title" />
-              <Column header="Amount" body={outAmount} />
-              <Column header="Category" field="category" />
-              <Column header="Date" body={(x) => dateOnly(x.paymentDate)} />
-              <Column header="Actions" body={(exp) => (
-                <div className="flex gap-1">
-                  {hasPermission("EXPENSE_EDIT") && (
-                    <Button size="small" text label="Edit" onClick={() => handleEdit(exp)} />
-                  )}
-                  {hasPermission("EXPENSE_DELETE") && (
-                    <Button size="small" text severity="danger" label="Delete" onClick={() => handleDeleteExpense(exp.id, selectedCase)} />
-                  )}
-                </div>
-              )} />
-            </DataTable>
-          </div>
-
-          <div className="col-12 md:col-6">
-            <h4 className="exp-section-title"><i className="pi pi-arrow-down-left" /> Payments Received</h4>
-            <DataTable value={payments} size="small" emptyMessage="No payments yet.">
-              <Column header="Mode" field="paymentMode" />
-              <Column header="Amount" body={inAmount} />
-              <Column header="Ref No." field="referenceNumber" />
-              <Column header="Invoice" body={(p) => p.invoiceNumber || "—"} />
-              <Column header="Date" body={(p) => dateOnly(p.paymentDate)} />
-            </DataTable>
-          </div>
+      {/* ------------------ CASE FINANCIAL OVERVIEW ------------------ */}
+      <Drawer open={showExpenseModal} onClose={() => setShowExpenseModal(false)} wide title="Case financial overview"
+        sub={viewCase && <><span className="mono">{viewCase.caseNumber}</span><span className="muted">{viewCase.clientName || viewCase.client?.name || ""}</span></>}
+        footer={<>
+          {canExport && <Button variant="ghost" icon="print" onClick={handlePrint}>Print</Button>}
+          {canExport && <Button variant="ghost" icon="download" onClick={handleDownloadPDF}>Download PDF</Button>}
+          <span className="grow" />
+          {hasPermission("EXPENSE_CREATE") && <Button icon="wallet" onClick={() => handleAddExpense(selectedCase)}>Add expense</Button>}
+          {hasPermission("PAYMENT_CREATE") && <Button variant="primary" icon="rupee" onClick={() => handleAddPayment(selectedCase)}>Record payment</Button>}
+        </>}>
+        <div className="figures fin-block">
+          <div className="figure"><div className="lbl">Received</div><div className="val fin-val-sm">{money(totGiven)}</div></div>
+          <div className="figure"><div className="lbl">Expenses</div><div className="val fin-val-sm">{money(totSpent)}</div></div>
+          <div className="figure"><div className="lbl">Balance</div><div className={`val fin-val-sm${totGiven - totSpent < 0 ? " fin-bad" : ""}`}>{money(totGiven - totSpent)}</div></div>
         </div>
+        <h4 className="fin-h4">Expenses</h4>
+        {expenses.length ? (
+          <div className="table-wrap">
+            <table className="t">
+              <thead><tr><th scope="col">Date</th><th scope="col">Title</th><th scope="col" className="hide-sm">Category</th><th scope="col" className="amt">Amount</th>
+                {(hasPermission("EXPENSE_EDIT") || hasPermission("EXPENSE_DELETE")) && <th scope="col"><span className="sr-only">Actions</span></th>}</tr></thead>
+              <tbody>
+                {expenses.map((x) => (
+                  <tr key={x.id}>
+                    <td className="nowrap">{fdate(x.paymentDate)}</td><td>{x.title}</td><td className="hide-sm">{x.category || "—"}</td>
+                    <td className="amt mono">{money(x.amount)}</td>
+                    {(hasPermission("EXPENSE_EDIT") || hasPermission("EXPENSE_DELETE")) && (
+                      <td className="actions">
+                        {hasPermission("EXPENSE_EDIT") && <Button size="sm" variant="ghost" iconOnly icon="edit" aria-label={`Edit ${x.title}`} title="Edit" onClick={() => handleEdit(x)} />}
+                        {hasPermission("EXPENSE_DELETE") && <Button size="sm" variant="ghost" iconOnly icon="trash" aria-label={`Delete ${x.title}`} title="Delete" onClick={() => handleDeleteExpense(x.id, selectedCase)} />}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <p className="faint small">No expenses yet.</p>}
+        <h4 className="fin-h4 fin-block-top">Payments received</h4>
+        <MiniTable head={[...paymentHead.slice(0, 3), { label: "Invoice" }, paymentHead[3]]}
+          rows={payments.map((p) => [<span className="nowrap">{fdate(p.paymentDate)}</span>, p.paymentMode || "—", <span className="mono xs">{p.referenceNumber || "—"}</span>,
+            <span className="mono xs">{p.invoiceNumber || "—"}</span>, money(p.amount)])}
+          empty="No payments yet." />
+      </Drawer>
 
-        <div className="grid mt-2">
-          <div className="col-12 md:col-4"><div className="summary-box">
-            <span className="summary-lbl">Total Given</span>
-            <strong className="summary-val text-green">{formatCurrency(sumAmounts(payments))}</strong>
-          </div></div>
-          <div className="col-12 md:col-4"><div className="summary-box">
-            <span className="summary-lbl">Total Spent</span>
-            <strong className="summary-val text-red">{formatCurrency(sumAmounts(expenses))}</strong>
-          </div></div>
-          <div className="col-12 md:col-4"><div className="summary-box">
-            <span className="summary-lbl">Balance</span>
-            <strong className={`summary-val ${sumAmounts(payments) - sumAmounts(expenses) >= 0 ? "text-green" : "text-red"}`}>
-              {formatCurrency(sumAmounts(payments) - sumAmounts(expenses))}
-            </strong>
-          </div></div>
-        </div>
-
-        {reportButtons("Print View", "Download View")}
-      </Dialog>
-
-      {/* ------------------ TODAY REPORT (big) ------------------ */}
-      <Dialog visible={showTodayModal && !!todaySummary} onHide={() => setShowTodayModal(false)}
-        header={`Today’s Financial Summary — ${todaySummary?.date || ""}`} {...dialogProps}>
+      {/* ------------------ TODAY REPORT ------------------ */}
+      <Modal open={showTodayModal && !!todaySummary} onClose={() => setShowTodayModal(false)} size="wide"
+        title={`Today’s report, ${fdate(todaySummary?.date)}`} footer={reportFoot(() => setShowTodayModal(false))}>
         {todaySummary && (
           <>
-            <div className="grid">
-              <div className="col-12 md:col-6">
-                <h4 className="exp-section-title"><i className="pi pi-arrow-up-right" /> Expenses</h4>
-                <p><b>Total:</b> {formatCurrency(todaySummary.totalExpenses)}</p>
-                <DataTable value={todaySummary.expenses} size="small" emptyMessage="No expenses today.">
-                  <Column header="Title" field="title" />
-                  <Column header="Amount" body={outAmount} />
-                  <Column header="Category" field="category" />
-                  <Column header="Date" body={(x) => dateOnly(x.paymentDate)} />
-                </DataTable>
-              </div>
-              <div className="col-12 md:col-6">
-                <h4 className="exp-section-title"><i className="pi pi-arrow-down-left" /> Payments</h4>
-                <p><b>Total:</b> {formatCurrency(todaySummary.totalPayments)}</p>
-                <DataTable value={todaySummary.payments} size="small" emptyMessage="No payments today.">
-                  <Column header="Mode" field="paymentMode" />
-                  <Column header="Amount" body={inAmount} />
-                  <Column header="Ref No" field="referenceNumber" />
-                  <Column header="Date" body={(p) => dateOnly(p.paymentDate)} />
-                </DataTable>
-              </div>
+            <div className="figures fin-block">
+              <div className="figure"><div className="lbl">Spent</div><div className="val fin-val-sm">{money(todaySummary.totalExpenses)}</div></div>
+              <div className="figure"><div className="lbl">Received</div><div className="val fin-val-sm">{money(todaySummary.totalPayments)}</div></div>
             </div>
-            {reportButtons("Print", "Download")}
+            <div className="cols g-2 fin-cols">
+              <div><h4 className="fin-h4">Expenses</h4>
+                <MiniTable head={expenseHead} rows={expenseRows(todaySummary.expenses)} empty="No expenses today." /></div>
+              <div><h4 className="fin-h4">Payments</h4>
+                <MiniTable head={paymentHead} rows={paymentRows(todaySummary.payments)} empty="No payments today." /></div>
+            </div>
           </>
         )}
-      </Dialog>
+      </Modal>
 
-      {/* ------------------ MONTHLY REPORT (big) ------------------ */}
-      <Dialog visible={showMonthlyModal && !!monthlyReport} onHide={() => setShowMonthlyModal(false)}
-        header={monthlyReport ? `Monthly Report — ${monthlyReport.expenses.month}/${monthlyReport.expenses.year}` : "Monthly Report"} {...dialogProps}>
-        {monthlyReport && (
-          <>
-            <div className="grid">
-              <div className="col-12 md:col-6">
-                <h4 className="exp-section-title"><i className="pi pi-arrow-up-right" /> Expenses — {formatCurrency(monthlyReport.expenses.totalExpenses)}</h4>
-                <DataTable value={monthlyReport.expenses.list} size="small" emptyMessage="No expenses this month.">
-                  <Column header="Title" field="title" />
-                  <Column header="Amount" body={outAmount} />
-                  <Column header="Category" field="category" />
-                </DataTable>
-
-                <h4 className="exp-section-title mt-3">Category Breakdown</h4>
-                <ul className="exp-breakdown">
-                  {Object.entries(monthlyReport.expenses.categoryBreakdown || {}).length > 0 ? (
-                    Object.entries(monthlyReport.expenses.categoryBreakdown).map(([cat, amt], idx) => (
-                      <li key={cat || `cat-${idx}`}>{cat}: {formatCurrency(amt)}</li>
-                    ))
-                  ) : (
-                    <li>No breakdown available.</li>
-                  )}
-                </ul>
+      {/* ------------------ MONTHLY REPORT ------------------ */}
+      <Modal open={showMonthlyModal && !!monthlyReport} onClose={() => setShowMonthlyModal(false)} size="wide"
+        title={monthlyReport ? `Monthly report, ${MONTHS[monthlyReport.expenses.month - 1]} ${monthlyReport.expenses.year}` : "Monthly report"}
+        footer={reportFoot(() => setShowMonthlyModal(false))}>
+        {monthlyReport && (() => {
+          const cats = Object.entries(monthlyReport.expenses.categoryBreakdown || {}) as [string, number][];
+          const max = Math.max(1, ...cats.map(([, a]) => Number(a) || 0));
+          return (
+            <>
+              <div className="figures fin-block">
+                <div className="figure"><div className="lbl">Spent</div><div className="val fin-val-sm">{money(monthlyReport.expenses.totalExpenses)}</div>
+                  <div className="meta">{monthlyReport.expenses.list.length} entries</div></div>
+                <div className="figure"><div className="lbl">Received</div><div className="val fin-val-sm">{money(monthlyReport.payments.totalAmount)}</div>
+                  <div className="meta">{monthlyReport.payments.list.length} payments</div></div>
               </div>
-
-              <div className="col-12 md:col-6">
-                <h4 className="exp-section-title"><i className="pi pi-arrow-down-left" /> Payments — {formatCurrency(monthlyReport.payments.totalAmount)}</h4>
-                <DataTable value={monthlyReport.payments.list} size="small" emptyMessage="No payments this month.">
-                  <Column header="Mode" field="paymentMode" />
-                  <Column header="Amount" body={inAmount} />
-                  <Column header="Ref No" field="referenceNumber" />
-                </DataTable>
+              <h4 className="fin-h4">By category</h4>
+              {cats.length ? cats.map(([cat, amt], idx) => (
+                <div className="bar-row" key={cat || `cat-${idx}`}>
+                  <span className="ellipsis">{cat || "Uncategorized"}</span>
+                  <span className="bar-track"><i style={{ width: `${(Number(amt) / max) * 100}%`, background: "var(--ink)" }} /></span>
+                  <span className="mono right">{money(amt)}</span>
+                </div>
+              )) : <p className="faint small">No breakdown available.</p>}
+              <div className="cols g-2 fin-cols fin-block-top">
+                <div><h4 className="fin-h4">Expenses</h4>
+                  <MiniTable head={[{ label: "Title" }, { label: "Category" }, { label: "Amount", amt: true }]}
+                    rows={monthlyReport.expenses.list.map((x: any) => [x.title || "—", x.category || "—", money(x.amount)])}
+                    empty="No expenses this month." total={money(monthlyReport.expenses.totalExpenses)} /></div>
+                <div><h4 className="fin-h4">Payments</h4>
+                  <MiniTable head={[{ label: "Mode" }, { label: "Reference" }, { label: "Amount", amt: true }]}
+                    rows={monthlyReport.payments.list.map((p: any) => [p.paymentMode || "—", <span className="mono xs">{p.referenceNumber || "—"}</span>, money(p.amount)])}
+                    empty="No payments this month." total={money(monthlyReport.payments.totalAmount)} /></div>
               </div>
-            </div>
-            {reportButtons("Print", "Download")}
-          </>
-        )}
-      </Dialog>
+            </>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }

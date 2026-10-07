@@ -1,17 +1,20 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { ASSISTANT_NAME } from '../constants/assistant';
-import { Button } from 'primereact/button';
 import { useAssistant } from '../contexts/AssistantContext';
+import Icon from '../ui/Icon';
 import AssistantMessage from './AssistantMessage';
 import AssistantInput from './AssistantInput';
+import '../ui/lisa.css';
 
 // Remembered across reloads so the panel opens at the width you chose.
 const WIDTH_KEY = 'advocate-assistant-width';
-const MIN_WIDTH = 360;
+const MIN_WIDTH = 380;
 
 export default function AssistantPanel() {
   const { isOpen, setIsOpen, messages, isProcessing, clearHistory, exportHistory } = useAssistant() as any;
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const fabRef = useRef<HTMLButtonElement>(null);
   // Maximize takes half the window.
   const [isMaximized, setIsMaximized] = useState(false);
   // The left edge can be dragged; the width is remembered per browser.
@@ -21,7 +24,7 @@ export default function AssistantPanel() {
   });
   const draggingRef = useRef(false);
 
-  const startDrag = useCallback((e: any) => {
+  const startDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
     const onMove = (ev: MouseEvent) => {
@@ -56,78 +59,95 @@ export default function AssistantPanel() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isProcessing]);
 
-  // Opened by the "chatbot-toggle-open" window event (sidebar link).
+  // Ctrl+J opens and closes Lisa from anywhere; Escape closes the open panel.
   useEffect(() => {
-    const handler = () => setIsOpen(true);
-    window.addEventListener('chatbot-toggle-open', handler);
-    return () => window.removeEventListener('chatbot-toggle-open', handler);
-  }, [setIsOpen]);
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); setIsOpen((v: boolean) => !v); }
+      if (e.key === 'Escape' && isOpen && panelRef.current?.contains(document.activeElement)) { setIsOpen(false); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, setIsOpen]);
+
+  // Focus moves into the panel on open and back to the launcher on close.
+  const wasOpen = useRef(isOpen);
+  useEffect(() => {
+    if (isOpen && !wasOpen.current) panelRef.current?.querySelector<HTMLInputElement>('.lisa-form input')?.focus();
+    if (!isOpen && wasOpen.current) fabRef.current?.focus();
+    wasOpen.current = isOpen;
+  }, [isOpen]);
 
   if (!isOpen) {
     return (
-      <Button rounded className="assistant-fab" icon="pi pi-comments" aria-label={`Ask ${ASSISTANT_NAME}`}
-        tooltip={`Ask ${ASSISTANT_NAME}`} tooltipOptions={{ position: 'top' }} onClick={() => setIsOpen(true)} />
+      <button ref={fabRef} type="button" className="lisa-fab" onClick={() => setIsOpen(true)}
+        aria-label={`Ask ${ASSISTANT_NAME}, the AI assistant`} title={`Ask ${ASSISTANT_NAME}`}>
+        <span className="lisa-seal" aria-hidden="true">{ASSISTANT_NAME.charAt(0)}</span>
+        <span className="lbl">Ask {ASSISTANT_NAME}</span>
+      </button>
     );
   }
 
+  const toggleMax = () => {
+    // Drop any dragged width, or the inline style overrides the maximized size.
+    setWidth(null);
+    localStorage.removeItem(WIDTH_KEY);
+    setIsMaximized((v) => !v);
+  };
+
   return (
-    <div className={`assistant-panel ${isMaximized ? 'maximized' : ''}`} style={width ? { width: `${width}px` } : undefined}>
-      <div className="assistant-resize-handle" onMouseDown={startDrag} title="Drag to resize" role="separator" aria-orientation="vertical" />
-      <div className="assistant-header">
-        <div className="assistant-header-left">
-          <span className="assistant-header-icon"><i className="pi pi-sparkles" /></span>
-          <div>
-            <h3>{ASSISTANT_NAME} <span className="assistant-subtitle">· AI legal assistant</span></h3>
-            <span className="assistant-status"><span className="status-dot" /> Online</span>
-          </div>
+    <aside ref={panelRef} className={`lisa ${isMaximized ? 'max' : ''}`} style={width ? { width: `${width}px` } : undefined}
+      role="complementary" aria-label={`${ASSISTANT_NAME}, AI assistant`}>
+      <div className="lisa-resize" onMouseDown={startDrag} title="Drag to resize" role="separator" aria-orientation="vertical" />
+      <div className="lisa-head">
+        <span className="lisa-seal lg" aria-hidden="true">{ASSISTANT_NAME.charAt(0)}</span>
+        <div>
+          <h2>{ASSISTANT_NAME}</h2>
+          <div className="sub"><i aria-hidden="true" />AI legal assistant · Online</div>
         </div>
-        <div className="assistant-header-actions flex gap-1">
-          <Button text rounded size="small" className="header-icon-btn"
-            icon={isMaximized ? 'pi pi-window-minimize' : 'pi pi-window-maximize'}
-            tooltip={isMaximized ? 'Restore size' : 'Maximize to half the window'} tooltipOptions={{ position: 'bottom' }}
-            onClick={() => {
-              // Drop any dragged width, or the inline style overrides the maximized class.
-              setWidth(null);
-              localStorage.removeItem(WIDTH_KEY);
-              setIsMaximized((v) => !v);
-            }} />
-          <Button text rounded size="small" className="header-icon-btn" icon="pi pi-download" tooltip="Export History"
-            tooltipOptions={{ position: 'bottom' }} onClick={exportHistory} />
-          <Button text rounded size="small" className="header-icon-btn" icon="pi pi-trash" disabled={!hasHistory}
-            tooltip={hasHistory ? 'Clear History' : 'Nothing to clear'} tooltipOptions={{ position: 'bottom', showOnDisabled: true }}
-            onClick={() => setConfirmClear((v) => !v)} />
-          <Button text rounded size="small" className="header-icon-btn close-btn" icon="pi pi-times" aria-label="Close"
-            onClick={() => setIsOpen(false)} />
+        <div className="acts">
+          <button type="button" className="icon-btn hide-sm" onClick={toggleMax}
+            aria-label={isMaximized ? 'Restore size' : 'Expand to half the window'} title={isMaximized ? 'Restore size' : 'Expand to half the window'}>
+            <Icon name={isMaximized ? 'minus' : 'sidebar'} />
+          </button>
+          <button type="button" className="icon-btn" onClick={exportHistory} aria-label="Export conversation" title="Export conversation">
+            <Icon name="download" />
+          </button>
+          <button type="button" className="icon-btn" onClick={() => setConfirmClear((v) => !v)} disabled={!hasHistory}
+            aria-label="Clear conversation" title={hasHistory ? 'Clear conversation' : 'Nothing to clear'}>
+            <Icon name="trash" />
+          </button>
+          <button type="button" className="icon-btn" onClick={() => setIsOpen(false)} aria-label="Close" title="Close">
+            <Icon name="x" />
+          </button>
         </div>
       </div>
 
       {confirmClear && (
-        <div className="assistant-confirm-clear" role="alertdialog" aria-label="Confirm clear history">
-          <span>Clear this conversation? This can’t be undone.</span>
-          <div className="assistant-confirm-actions flex gap-2">
-            <Button type="button" size="small" text label="Export first" onClick={() => { exportHistory(); setConfirmClear(false); }} />
-            <Button type="button" size="small" text label="Cancel" onClick={() => setConfirmClear(false)} />
-            <Button type="button" size="small" severity="danger" label="Clear" onClick={() => { clearHistory(); setConfirmClear(false); }} />
+        <div className="callout warn lisa-confirm" role="alertdialog" aria-label="Confirm clear conversation">
+          <Icon name="warn" size="sm" />
+          <div className="grow">
+            Clear this conversation? This can’t be undone.
+            <div className="row">
+              <button type="button" className="btn sm ghost" onClick={() => { exportHistory(); setConfirmClear(false); }}>Export first</button>
+              <button type="button" className="btn sm" onClick={() => setConfirmClear(false)}>Cancel</button>
+              <button type="button" className="btn sm danger solid" onClick={() => { clearHistory(); setConfirmClear(false); }}>Clear</button>
+            </div>
           </div>
         </div>
       )}
 
-      <div className="assistant-body">
+      <div className="lisa-body" aria-live="polite">
         {messages.map((msg: any) => <AssistantMessage key={msg.id} message={msg} />)}
         {isProcessing && (
-          <div className="assistant-msg bot">
-            <div className="assistant-msg-avatar"><i className="pi pi-sparkles" /></div>
-            <div className="assistant-msg-content">
-              <div className="assistant-thinking">
-                <span className="dot-pulse" /><span className="dot-pulse" /><span className="dot-pulse" />
-              </div>
-            </div>
+          <div className="lisa-msg ai">
+            <span className="lisa-seal sm" aria-hidden="true">{ASSISTANT_NAME.charAt(0)}</span>
+            <div className="lisa-bubble"><span className="lisa-thinking" aria-label={`${ASSISTANT_NAME} is thinking`}><i /><i /><i /></span></div>
           </div>
         )}
         <div ref={chatEndRef} />
       </div>
 
       <AssistantInput />
-    </div>
+    </aside>
   );
 }

@@ -2,13 +2,16 @@ import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NodeViewWrapper, NodeViewContent, type NodeViewProps } from '@tiptap/react'
 import type { Citation } from '../editor/clause'
+import Icon from '../../../ui/Icon'
+import DIcon from './DIcon'
 import { useRiskMap, type RiskInfo } from '../context/RiskContext'
 
+// Severity colours come from Red Tape tokens so both themes work.
 const RISK_COLOR: Record<string, string> = {
-  critical: '#ef4444',
-  major:    '#f97316',
-  minor:    '#eab308',
-  info:     '#3b82f6',
+  critical: 'var(--bad)',
+  major:    'var(--tape)',
+  minor:    'var(--warn)',
+  info:     'var(--info)',
 }
 const RISK_LABEL: Record<string, string> = {
   critical: 'Critical', major: 'Major', minor: 'Minor', info: 'Note',
@@ -81,7 +84,7 @@ export default function ClauseNodeView({ node, updateAttributes, extension }: No
           onClick={showRisk}
           aria-label={`${risk.count} playbook ${risk.count === 1 ? 'finding' : 'findings'} on this clause`}
         >
-          <i className="pi pi-shield" />
+          <Icon name="shield" size="sm" />
           {risk.count > 1 && <span className="pp-risk-count">{risk.count}</span>}
         </button>
       )}
@@ -115,7 +118,7 @@ export default function ClauseNodeView({ node, updateAttributes, extension }: No
 
       {cite && pop && createPortal(
         <div className="pp-cite-pop" style={{ left: pop.x, top: pop.y, transform: pop.above ? 'translateY(calc(-100% - 8px))' : 'none' }} onMouseEnter={show} onMouseLeave={hide}>
-          <div className="pp-cite-pop-head"><i className="pi pi-file" /> {cite.doc || 'Source document'}</div>
+          <div className="pp-cite-pop-head"><Icon name="file" size="sm" /> {cite.doc || 'Source document'}</div>
           {cite.page != null && <span className="pp-cite-pop-tag">Clause {cite.page}</span>}
           <div className="pp-cite-pop-text">{cite.text}</div>
           {cite.url && <div className="pp-cite-pop-hint">Click [{cite.n}] to open the document</div>}
@@ -127,13 +130,13 @@ export default function ClauseNodeView({ node, updateAttributes, extension }: No
         <div className="pp-risk-pop" style={{ left: riskPop.x, top: riskPop.y, transform: riskPop.above ? 'translateY(calc(-100% - 8px))' : 'none' }}
           onMouseEnter={showRisk} onMouseLeave={hideRisk}>
           <div className="pp-risk-pop-head">
-            <i className="pi pi-shield" /> Playbook {risk.count === 1 ? 'finding' : `findings · ${risk.count}`}
+            <Icon name="shield" size="sm" /> Playbook {risk.count === 1 ? 'finding' : `findings · ${risk.count}`}
           </div>
           {risk.findings.map(f => (
             <div key={f.id} className="pp-risk-pop-item">
               <span className="pp-risk-pop-sev" style={{ background: RISK_COLOR[f.severity] }}>{RISK_LABEL[f.severity]}</span>
               {f.issue && <div className="pp-risk-pop-issue">{f.issue}</div>}
-              {f.suggestion && <div className="pp-risk-pop-fix"><i className="pi pi-lightbulb mr-1" />{f.suggestion}</div>}
+              {f.suggestion && <div className="pp-risk-pop-fix"><DIcon name="bulb" /> {f.suggestion}</div>}
             </div>
           ))}
         </div>,

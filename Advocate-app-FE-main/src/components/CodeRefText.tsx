@@ -2,7 +2,8 @@ import { useState, useEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
 import api from "../api/client";
 import { topZIndex } from "../utils/topZIndex";
-import "../assets/styles/CodeRefText.css";
+import Icon from "../ui/Icon";
+import "../ui/pages/clients.css";
 
 /**
  * Renders text where old legal-code references (e.g. "Section 302 IPC", "u/s 65 Evidence
@@ -43,7 +44,9 @@ function buildNodes(text: string, onClick: any, renderPlain: (t: string) => any)
     const act = canonAct(m[2] || m[3]);
     if (m.index > last) plain(text.slice(last, m.index), `p${last}`);
     nodes.push(
-      <span key={m.index} className="cr-ref" onClick={(e) => onClick(act, section, e)}>{full}</span>
+      <span key={m.index} className="cr-ref" role="button" tabIndex={0} title={`Show the new-code equivalent of ${act} ${section}`}
+        onClick={(e) => onClick(act, section, e)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(act, section, e); } }}>{full}</span>
     );
     last = m.index + full.length;
   }
@@ -94,17 +97,17 @@ function CodeRefPopover({ pop, onClose }: { pop: any; onClose: () => void }) {
   return createPortal(
     <>
       <div className="cr-pop-backdrop" style={{ zIndex: z }} onClick={onClose} />
-      <div className="cr-pop" style={{ left, top, zIndex: z + 1 }} onClick={(e) => e.stopPropagation()}>
-        <button className="cr-pop-close" onClick={onClose}><i className="pi pi-times" style={{ fontSize: 12 }} /></button>
-        {pop.loading && <div className="cr-pop-muted">Looking up {pop.act} §{pop.section}…</div>}
+      <div className="cr-pop" role="dialog" aria-label="Code conversion" style={{ left, top, zIndex: z + 1 }} onClick={(e) => e.stopPropagation()}>
+        <button type="button" className="icon-btn pop-close" onClick={onClose} aria-label="Close"><Icon name="x" size="sm" /></button>
+        {pop.loading && <div className="pop-muted">Looking up {pop.act} §{pop.section}…</div>}
         {!pop.loading && (!d || !d.found) && (
-          <div className="cr-pop-muted">No BNS/BNSS/BSA mapping found for {pop.act} §{pop.section}.</div>
+          <div className="pop-muted">No BNS/BNSS/BSA mapping found for {pop.act} §{pop.section}.</div>
         )}
         {!pop.loading && d && d.found && (
           <>
             <div className="cr-pop-map">
               <span className="cr-pop-old">{d.oldAct} §{d.oldSection}</span>
-              <i className="pi pi-arrow-right" />
+              <Icon name="chevron" size="sm" />
               <span className={`cr-pop-new ${d.repealed ? "repealed" : ""}`}>
                 {d.repealed ? "Repealed" : `${d.newAct} §${d.newSection}`}
               </span>

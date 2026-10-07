@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { Button } from 'primereact/button'
-import { Dropdown } from 'primereact/dropdown'
-import { Tag } from 'primereact/tag'
-import { Message } from 'primereact/message'
-import { ProgressSpinner } from 'primereact/progressspinner'
+import { Button, Spinner, EmptyState } from '../../ui/kit'
+import Icon from '../../ui/Icon'
+import '../../ui/pages/drafting.css'
 import * as mammoth from 'mammoth'
 import { draftingApi, TRANSLATE_LANGUAGES, type Sample } from './api/drafting'
 
@@ -44,26 +42,17 @@ function DocPanel({ fileUrl, name }: { fileUrl?: string | null; name?: string })
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [fileUrl, isPdf, isDocx])
 
-  if (!fileUrl) return <Message severity="warn" className="w-full" text="No file available." />
-  if (loading) return <div className="flex flex-column align-items-center p-6 gap-3"><ProgressSpinner style={{ width: 40, height: 40 }} /><span className="text-color-secondary" style={{ fontSize: '0.85rem' }}>Loading document…</span></div>
-  if (error) return <Message severity="error" className="w-full" text={error} />
-  if (isPdf && pdfUrl) return <iframe title={name ?? 'document'} src={pdfUrl} style={{ width: '100%', height: '100%', border: 'none' }} />
-  if (isDocx) return <div className="pp-docx-preview" style={{ fontSize: '0.85rem' }} dangerouslySetInnerHTML={{ __html: html }} />
-  return <Message severity="warn" className="w-full" text="In-app preview isn't supported for this file type." />
+  if (!fileUrl) return <div className="callout warn" style={{ margin: 16 }}><Icon name="warn" size="sm" /><div>No file available.</div></div>
+  if (loading) return <div className="row" style={{ justifyContent: 'center', padding: 48 }}><Spinner label="Loading document" /></div>
+  if (error) return <div className="callout bad" style={{ margin: 16 }}><Icon name="warn" size="sm" /><div>{error}</div></div>
+  if (isPdf && pdfUrl) return <iframe title={name ?? 'document'} src={pdfUrl} style={{ width: '100%', height: '100%', minHeight: '70vh', border: 'none' }} />
+  if (isDocx) return <div className="paper-sheet pp-docx-preview" dangerouslySetInnerHTML={{ __html: html }} />
+  return <div className="callout warn" style={{ margin: 16 }}><Icon name="warn" size="sm" /><div>In-app preview isn't supported for this file type.</div></div>
 }
 
 // ── document-view renderer for the translation ────────────────────────────────
-// Mimics a printed legal document: a centred white "page" with serif type, bold
-// centred headings, and justified body paragraphs with real spacing between them.
-const pageBackdrop: CSSProperties = { background: '#e9edf2', padding: '1.25rem 0.75rem', minHeight: '100%' }
-const pageSheet: CSSProperties = {
-  background: '#fff', maxWidth: 720, margin: '0 auto', padding: '3.25rem 3rem',
-  boxShadow: '0 1px 6px rgba(0,0,0,0.14)', fontFamily: '"Times New Roman", Georgia, serif',
-  color: '#1a1a1a', fontSize: '1.02rem', lineHeight: 1.7,
-}
-const docHeading: CSSProperties = { fontWeight: 700, textAlign: 'center', fontSize: '1.08rem', margin: '0 0 0.6rem', letterSpacing: '0.01em' }
-const docPara: CSSProperties = { textAlign: 'justify', margin: '0 0 0.75rem', hyphens: 'auto' }
-
+// The translation is set on a Red Tape paper sheet (Newsreader, justified body,
+// centred bold headings), like a printed legal document.
 // Split a clause body into display paragraphs (numbered sub-clauses stay separate).
 const toParas = (text: string) => text.split(/\n+/).map(s => s.trim()).filter(Boolean)
 
@@ -77,25 +66,18 @@ const richHtml = (s: string) => escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong
 
 function TranslatedDocument({ blocks, text }: { blocks?: { heading?: string; body?: string }[]; text?: string }) {
   return (
-    <div style={pageBackdrop}>
-      <div style={pageSheet}>
-        {blocks?.length
-          ? blocks.map((blk, i) => (
-              <div key={i} style={{ marginBottom: blk.heading && !blk.body ? '0.2rem' : '1rem' }}>
-                {blk.heading && <p style={docHeading}>{richNodes(blk.heading)}</p>}
-                {blk.body && toParas(blk.body).map((p, j) => <p key={j} style={docPara}>{richNodes(p)}</p>)}
-              </div>
-            ))
-          : toParas(text ?? '').map((p, j) => <p key={j} style={docPara}>{richNodes(p)}</p>)}
-      </div>
-    </div>
+    <article className="paper-sheet dr-tr-sheet" aria-label="Translation">
+      {blocks?.length
+        ? blocks.map((blk, i) => (
+            <div key={i} style={{ marginBottom: blk.heading && !blk.body ? 4 : 16 }}>
+              {blk.heading && <p className="dr-tr-h">{richNodes(blk.heading)}</p>}
+              {blk.body && toParas(blk.body).map((p, j) => <p key={j} className="dr-tr-p">{richNodes(p)}</p>)}
+            </div>
+          ))
+        : toParas(text ?? '').map((p, j) => <p key={j} className="dr-tr-p">{richNodes(p)}</p>)}
+    </article>
   )
 }
-
-const paneStyle: CSSProperties = { flex: 1, minWidth: 0, background: '#fff', border: '1px solid var(--surface-300, #e5e7eb)', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden' }
-const paneHead: CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--surface-300, #e5e7eb)', flexWrap: 'wrap' }
-const paneTitle: CSSProperties = { color: 'var(--primary-color)', fontWeight: 600, fontSize: '0.95rem' }
-const shell: CSSProperties = { height: '100vh', display: 'flex', flexDirection: 'column', padding: '0.9rem 1rem', boxSizing: 'border-box', background: '#f1f5f9' }
 
 /**
  * Standalone full-screen translation view (no app sidebar): the original document
@@ -186,79 +168,66 @@ export default function DocumentTranslate() {
     win.document.open(); win.document.write(html); win.document.close()
   }
 
-  if (loading) return <div style={{ ...shell, alignItems: 'center', justifyContent: 'center' }}><ProgressSpinner style={{ width: 44, height: 44 }} /></div>
-  if (!sample) return <div style={shell}><Message severity="error" className="w-full" text={error || 'Document not found.'} /></div>
+  if (loading) return <div className="dr-fs dr-center"><Spinner label="Loading document" /></div>
+  if (!sample) return (
+    <div className="dr-fs dr-center">
+      <EmptyState icon="file" title="Document not found" text={error || 'It may have been deleted.'}
+        action={<button type="button" className="btn" onClick={() => navigate(DRAFTING.samples)}>Back to documents</button>} />
+    </div>
+  )
 
   const ready = sample.translation_status === 'ready'
+  const hasText = !!(sample.translation_json?.length || sample.translation)
 
   return (
-    <div style={shell}>
-      {/* Top bar */}
-      <div className="flex align-items-center gap-2 mb-2" style={{ flex: '0 0 auto' }}>
-        <Button icon="pi pi-arrow-left" text rounded onClick={() => navigate(DRAFTING.samples)} tooltip="Back to Documents" tooltipOptions={{ position: "top" }} />
-        <span className="font-semibold" style={{ fontSize: '1.1rem', wordBreak: 'break-word' }}>{sample.name}</span>
+    <div className="dr-fs">
+      <div className="ed-top">
+        <button type="button" className="btn ghost sm" onClick={() => navigate(DRAFTING.samples)}><Icon name="chevronLeft" size="sm" />Documents</button>
+        <div className="grow" style={{ minWidth: 200 }}>
+          <h1 className="serif" style={{ wordBreak: 'break-word' }}>{sample.name}</h1>
+          <div className="faint xs">Translation</div>
+        </div>
+        {hasPermission('DRAFT_EXPORT') && (
+          <Button size="sm" icon="download" disabled={!hasText} onClick={downloadPdf}>Download PDF</Button>
+        )}
       </div>
 
-      {/* Split: document (left) · translation (right) */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 14 }}>
-        {/* Left — original document */}
-        <div style={paneStyle}>
-          <div style={paneHead}>
-            <span style={paneTitle}><i className="pi pi-file mr-2" />Original Document</span>
-          </div>
-          <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}><DocPanel fileUrl={sample.file} name={sample.name} /></div>
+      <div className="row wrap toolbar" style={{ gap: 8, alignItems: 'flex-end' }}>
+        <div className="field" style={{ margin: 0 }}>
+          <label htmlFor="tr-target">Translate to</label>
+          <select id="tr-target" className="input" value={target} onChange={e => setTarget(e.target.value)} disabled={translating}>
+            {TRANSLATE_LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+          </select>
         </div>
+        <Button variant="primary" icon="translate" onClick={() => runTranslate()} loading={translating} disabled={sample.status !== 'ready' || translating}>
+          {ready ? 'Re-translate' : 'Translate'}
+        </Button>
+        {!translating && ready && hasText && (
+          <span className="chip info">{`${langLabel(sample.translation_source)} → ${langLabel(sample.translation_target)}`}</span>
+        )}
+      </div>
+      {sample.status !== 'ready' && (
+        <div className="callout warn" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>The document is still being processed. Translation unlocks when it is ready.</div></div>
+      )}
+      {error && <div className="callout warn" role="alert" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
 
-        {/* Right — translation */}
-        <div style={paneStyle}>
-          <div style={paneHead}>
-            <span style={paneTitle}><i className="pi pi-language mr-2" />Translation</span>
-            {hasPermission('DRAFT_EXPORT') && (
-              <Button label="Download PDF" icon="pi pi-file-pdf" size="small" outlined
-                disabled={!(sample.translation_json?.length || sample.translation)} onClick={downloadPdf} />
+      <div className="pp-two dr-tr-two">
+        <section className="panel dr-tr-pane" aria-label="Original document">
+          <div className="panel-head"><h2 className="small"><Icon name="file" size="sm" /> Original document</h2></div>
+          <div className="dr-tr-body"><DocPanel fileUrl={sample.file} name={sample.name} /></div>
+        </section>
+        <section className="panel dr-tr-pane" aria-label="Translation">
+          <div className="panel-head"><h2 className="small"><Icon name="translate" size="sm" /> Translation</h2></div>
+          <div className="dr-tr-body">
+            {translating && <div className="row" style={{ justifyContent: 'center', padding: 48 }}><Spinner label="Translating" /></div>}
+            {!translating && ready && hasText && (
+              <TranslatedDocument blocks={sample.translation_json} text={sample.translation} />
+            )}
+            {!translating && !ready && !error && sample.status === 'ready' && (
+              <p className="faint small" style={{ padding: 16 }}>Pick a target language and choose <strong>Translate</strong>.</p>
             )}
           </div>
-
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            {/* Controls (padded) */}
-            <div style={{ padding: '0.9rem', flex: '0 0 auto' }}>
-              <div className="flex align-items-end gap-2">
-                <div className="flex flex-column gap-1">
-                  <label className="font-medium" style={{ fontSize: '0.78rem' }}>Translate to</label>
-                  <Dropdown value={target} options={TRANSLATE_LANGUAGES} optionLabel="label" optionValue="value"
-                    onChange={e => setTarget(e.value)} disabled={translating} style={{ fontSize: '0.82rem' }} />
-                </div>
-                <Button label={ready ? 'Re-translate' : 'Translate'} icon="pi pi-language" size="small"
-                  onClick={() => runTranslate()} loading={translating} disabled={sample.status !== 'ready'} />
-                {!translating && ready && (sample.translation_json?.length || sample.translation) && (
-                  <Tag className="ml-1" value={`${langLabel(sample.translation_source)} → ${langLabel(sample.translation_target)}`} style={{ fontSize: '0.72rem' }} />
-                )}
-              </div>
-              {sample.status !== 'ready' && (
-                <Message severity="warn" className="w-full mt-3" text="Document is still being processed — translation unlocks when it's ready." />
-              )}
-              {error && <Message severity="warn" className="w-full mt-3" text={error} />}
-            </div>
-
-            {/* Document view (fills remaining height, scrolls) */}
-            <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-              {translating && (
-                <div className="flex flex-column align-items-center gap-3 p-5">
-                  <ProgressSpinner style={{ width: 40, height: 40 }} />
-                  <span className="text-color-secondary" style={{ fontSize: '0.85rem' }}>Translating…</span>
-                </div>
-              )}
-              {!translating && ready && (sample.translation_json?.length || sample.translation) && (
-                <TranslatedDocument blocks={sample.translation_json} text={sample.translation} />
-              )}
-              {!translating && !ready && !error && sample.status === 'ready' && (
-                <span className="text-color-secondary" style={{ fontSize: '0.85rem', display: 'block', padding: '0.9rem' }}>
-                  Pick a target language and click <strong>Translate</strong>.
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
+        </section>
       </div>
     </div>
   )

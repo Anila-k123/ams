@@ -1,29 +1,18 @@
 import { useEffect, useState } from 'react'
 import { DRAFTING } from './routes'
-import { useNavigate } from 'react-router-dom'
-import { Steps } from 'primereact/steps'
-import { Dropdown } from 'primereact/dropdown'
-import { InputText } from 'primereact/inputtext'
-import { InputTextarea } from 'primereact/inputtextarea'
-import { Button } from 'primereact/button'
-import { FileUpload } from 'primereact/fileupload'
-import { Message } from 'primereact/message'
-import { Tag } from 'primereact/tag'
-import { ProgressSpinner } from 'primereact/progressspinner'
-import { Checkbox } from 'primereact/checkbox'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Button, PageHead, Spinner } from '../../ui/kit'
+import { Field, TextField } from '../../ui/forms'
+import Icon from '../../ui/Icon'
+import FilePick from './components/FilePick'
+import WizSteps from './components/WizSteps'
 import { draftingApi, type Template } from './api/drafting'
 import { amsApi, type AmsCase, type AmsLink } from './api/ams'
 import CaseField from './components/CaseField'
 import { resolveFormFields, ENTITY_TYPES } from './constants/legal'
 import SlotFieldInput from './components/SlotFieldInput'
 
-const STEPS = [{ label: 'Setup' }, { label: 'Key Terms' }, { label: 'Review' }]
-
-/** A small "?" icon that shows its hint on hover (used beside field labels). */
-const HelpIcon = ({ text }: { text: string }) => (
-  <i className="pi pi-question-circle" title={text}
-    style={{ fontSize: '0.8rem', color: 'var(--pp-slate-400)', cursor: 'help' }} />
-)
+const STEPS = ['Setup', 'Key terms', 'Review']
 
 /** Mode 3 — "from scratch" wizard. The user optionally picks an AMS case (its
  *  client and parties become suggestions and prefill) and a document type, enters key terms and a model; the draft is assembled from the
@@ -32,6 +21,7 @@ const HelpIcon = ({ text }: { text: string }) => (
  *  from-scratch, not template-driven. */
 export default function NewDraftScratch() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const [step, setStep] = useState(0)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -128,7 +118,7 @@ export default function NewDraftScratch() {
       setTemplates(refreshed)
       setSelectedTemplate(refreshed.find(t => t.id === tpl.id) ?? tpl)
     } catch {
-      setError('Could not process that template — use a clause-structured PDF or DOCX.')
+      setError('Could not process that template. Use a clause-structured PDF or DOCX.')
     } finally {
       setUploadingTpl(false)
     }
@@ -167,225 +157,170 @@ export default function NewDraftScratch() {
     }
   }
 
+  // Back to the chooser, keeping any caseId/taskId.
+  const changeStart = () => {
+    const q = new URLSearchParams(params)
+    q.delete('begin')
+    const qs = q.toString()
+    navigate(qs ? `${DRAFTING.newDraft}?${qs}` : DRAFTING.newDraft)
+  }
+
   return (
-    <div style={{ maxWidth: 820, margin: '0 auto' }}>
-      <div className="pp-card">
-        <Steps model={STEPS} activeIndex={step} className="mb-5" />
-        {error && <Message severity="error" text={error} className="mb-3 w-full" />}
+    <div>
+      <PageHead title="New draft" sub="Type the facts directly. The draft is assembled from your firm's clause library." />
+      <WizSteps steps={STEPS} active={step} />
+      <div className="panel" style={{ maxWidth: 860 }}>
+        <div className="panel-body dr-wz-body">
+          <h2 className="dr-wz-title">{STEPS[step]}</h2>
+          {error && <div className="callout bad" role="alert" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
 
-        {/* Step 0 — Setup */}
-        {step === 0 && (
-          <div className="flex flex-column gap-4">
-            <CaseField value={amsCase} onChange={pickCase} disabled={linking} />
+          {/* Step 0 — Setup */}
+          {step === 0 && (
+            <div className="stack" style={{ gap: 16 }}>
+              <CaseField value={amsCase} onChange={pickCase} disabled={linking} />
+              {linking && <Spinner label="Linking the case" />}
 
-            <div className="flex flex-column gap-2">
-              <label className="font-medium">Agreement type</label>
-              <small className="text-color-secondary">What kind of agreement you want to draft.</small>
-              <Dropdown value={docType} options={docTypes} placeholder="Select an agreement type"
-                onChange={e => { setDocType(e.value); setSelectedTemplate(null) }} className="w-full" />
-              {docTypes.length === 0 && (
-                <Message severity="warn" className="w-full"
-                  text="No agreement types available yet — set an agreement type on a template first." />
-              )}
-            </div>
-
-            {/* Optional: follow a specific template of this type (else the default is used). */}
-            {docType && (
-              <div className="flex flex-column gap-2">
-                <label className="font-medium">
-                  Follow a specific template? <span className="text-color-secondary font-normal">(optional)</span>
-                </label>
-                {selectedTemplate ? (
-                  // A template is chosen (picked or uploaded) — show it clearly with a way to change.
-                  <div className="flex align-items-center gap-2 flex-wrap">
-                    <Tag icon="pi pi-check" severity="success" value={selectedTemplate.name} />
-                    <Button label="Change" icon="pi pi-times" size="small" text
-                      onClick={() => setSelectedTemplate(null)} />
-                  </div>
-                ) : uploadingTpl ? (
-                  <div className="flex align-items-center gap-2 text-color-secondary">
-                    <ProgressSpinner style={{ width: 22, height: 22 }} strokeWidth="5" />
-                    <span className="text-sm">Processing template…</span>
-                  </div>
-                ) : (
-                  <>
-                    <Dropdown value={selectedTemplate} options={templatesOfType} optionLabel="name" dataKey="id" showClear
-                      placeholder="Use the default for this type"
-                      onChange={e => setSelectedTemplate(e.value)} className="w-full" />
-                    <div className="text-color-secondary text-sm text-center">— or upload a new one —</div>
-                    <FileUpload mode="basic" accept=".pdf,.docx" maxFileSize={10000000}
-                      customUpload uploadHandler={handleTemplateUpload} auto chooseLabel="Upload template (PDF/DOCX)"
-                      className="w-full" />
-                  </>
+              <Field label="Agreement type" hint="What kind of agreement you want to draft.">
+                {(id, d) => (
+                  <select id={id} aria-describedby={d} className="input" value={docType ?? ''}
+                    onChange={e => { setDocType(e.target.value || null); setSelectedTemplate(null) }}>
+                    <option value="">Select an agreement type</option>
+                    {docTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 )}
-              </div>
-            )}
-
-
-            <div className="flex justify-content-end pt-2">
-              <Button label="Next" icon="pi pi-arrow-right" iconPos="right"
-                disabled={!resolvedTemplate || linking} onClick={() => setStep(1)} />
-            </div>
-          </div>
-        )}
-
-        {/* Step 1 — Key Terms */}
-        {step === 1 && (
-          <div className="flex flex-column gap-4">
-            <div className="flex flex-column gap-2">
-              <label className="font-medium flex align-items-center gap-1">
-                <span>Document title</span>
-                <HelpIcon text="The title this specific document should carry. E.g. NDA — Acme Pvt Ltd" />
-              </label>
-              <InputText value={title} onChange={e => setTitle(e.target.value)} className="w-full" />
-            </div>
-
-            <div className="flex flex-column gap-2">
-              <label className="font-medium flex align-items-center gap-1">
-                <span>Parties</span>
-                <HelpIcon text="Pick the client or a member, or type a name; add each party's entity type and role." />
-              </label>
-              {parties.map((p, i) => (
-                <div key={i} className="pp-party">
-                  <div className="flex align-items-center justify-content-between mb-2">
-                    <span className="text-sm font-semibold text-color-secondary">Party {i + 1}</span>
-                    <Button icon="pi pi-times" text rounded severity="secondary" type="button"
-                      tooltip="Remove" tooltipOptions={{ position: 'top' }}
-                      disabled={parties.length <= 1} onClick={() => removeParty(i)} />
-                  </div>
-                  <div className="grid formgrid">
-                    <div className="field col-12 md:col-6 mb-2">
-                      <Dropdown editable value={p.name} options={partyOptions}
-                        onChange={e => setParty(i, 'name', e.value)}
-                        placeholder="Party name" className="w-full" />
-                    </div>
-                    <div className="field col-12 md:col-6 mb-2">
-                      <Dropdown value={p.entity || null} options={ENTITY_TYPES} showClear
-                        onChange={e => setParty(i, 'entity', e.value ?? '')}
-                        placeholder="Entity type" className="w-full" />
-                    </div>
-                    <div className="field col-12 md:col-6 mb-2">
-                      <InputText value={p.role} onChange={e => setParty(i, 'role', e.target.value)}
-                        placeholder="Role (e.g. Disclosing Party)" className="w-full" />
-                    </div>
-                    <div className="field col-12 md:col-6 mb-0">
-                      <InputText value={p.address} onChange={e => setParty(i, 'address', e.target.value)}
-                        placeholder="Address (optional)" className="w-full" />
-                    </div>
-                    <div className="field col-12 md:col-6 mb-0">
-                      <InputText value={p.representative} onChange={e => setParty(i, 'representative', e.target.value)}
-                        placeholder="Represented by (optional)" className="w-full" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <div>
-                <Button label="Add party" icon="pi pi-plus" size="small" text type="button" onClick={addParty} />
-              </div>
-            </div>
-
-            <div className="flex flex-column gap-2">
-              <label className="font-medium flex align-items-center gap-1">
-                <span>Purpose <span style={{ color: '#dc2626' }}>*</span></span>
-                <HelpIcon text="What is this document meant to achieve? E.g. Appoint Mr. Ravi as Managing Director for a five-year term; or lease commercial office premises for three years with a security deposit." />
-              </label>
-              <InputTextarea value={purpose} onChange={e => setPurpose(e.target.value)} rows={3} autoResize className="w-full" />
-            </div>
-
-            {slotFields.map(field => (
-              <SlotFieldInput key={field.key} field={field} value={facts[field.key] ?? ''}
-                onChange={v => setFacts(prev => ({ ...prev, [field.key]: v }))} />
-            ))}
-
-            <div className="flex flex-column gap-2">
-              <label className="font-medium flex align-items-center gap-1">
-                <span>Extra instructions <span className="text-color-secondary font-normal">(optional)</span></span>
-                <HelpIcon text="Any specific clauses or requirements — e.g. add an arbitration clause, exclude limitation of liability, mention DPDP compliance." />
-              </label>
-              <InputTextarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} autoResize className="w-full" />
-            </div>
-
-            <div className="flex align-items-center gap-3 p-3"
-              style={{ border: '1px solid var(--surface-300, #e5e7eb)', borderRadius: 8 }}>
-              <Checkbox inputId="applyBnsScratch" checked={applyBnsCodes} onChange={e => setApplyBnsCodes(!!e.checked)} />
-              <label htmlFor="applyBnsScratch" className="cursor-pointer" style={{ userSelect: 'none' }}>
-                Apply new BNS/BNSS codes
-                <div className="text-color-secondary text-sm font-normal mt-1">
-                  Automatically replace IPC / CrPC / Evidence Act references with the updated BNS, BNSS and BSA sections (effective July 2024).
-                </div>
-              </label>
-            </div>
-
-            <div className="flex gap-2 justify-content-between mt-3">
-              <Button label="Back" icon="pi pi-arrow-left" severity="secondary" onClick={() => setStep(0)} />
-              <Button label="Review" icon="pi pi-arrow-right" iconPos="right" disabled={requiredMissing} onClick={() => setStep(2)} />
-            </div>
-          </div>
-        )}
-
-        {/* Step 2 — Review */}
-        {step === 2 && (
-          <div className="flex flex-column gap-3">
-            <div className="grid">
-              {title.trim() && (
-                <div className="col-12"><span className="pp-stat-label">Document title</span><div className="font-medium">{title}</div></div>
+              </Field>
+              {docTypes.length === 0 && (
+                <div className="callout warn"><Icon name="warn" size="sm" /><div>No agreement types available yet. Set an agreement type on a template first.</div></div>
               )}
-              <div className="col-6"><span className="pp-stat-label">Agreement type</span><div className="font-medium">{docType}</div></div>
-              <div className="col-6"><span className="pp-stat-label">PactPro case</span><div className="font-medium">{amsCase ? `${amsCase.caseNumber}${amsCase.clientName ? ` — ${amsCase.clientName}` : ''}` : '—'}</div></div>
-              <div className="col-6">
-                <span className="pp-stat-label">Template</span>
-                <div className="font-medium">
-                  {resolvedTemplate?.name ?? '—'}
-                  {resolvedTemplate && !selectedTemplate && <span className="text-color-secondary font-normal"> (default for type)</span>}
+
+              {/* Optional: follow a specific template of this type (else the default is used). */}
+              {docType && (
+                <div className="stack" style={{ gap: 8 }}>
+                  <span className="label">Follow a specific template? <span className="faint" style={{ fontWeight: 400 }}>(optional)</span></span>
+                  {selectedTemplate ? (
+                    // A template is chosen (picked or uploaded): show it clearly with a way to change.
+                    <div className="row wrap" style={{ gap: 8 }}>
+                      <span className="chip ok"><Icon name="check" size="sm" />{selectedTemplate.name}</span>
+                      <button type="button" className="btn ghost sm" onClick={() => setSelectedTemplate(null)}><Icon name="x" size="sm" />Change</button>
+                    </div>
+                  ) : uploadingTpl ? (
+                    <Spinner label="Processing template" />
+                  ) : (
+                    <>
+                      <label className="sr-only" htmlFor="ns-tpl">Template</label>
+                      <select id="ns-tpl" className="input" value=""
+                        onChange={e => setSelectedTemplate(templatesOfType.find(t => String(t.id) === e.target.value) ?? null)}>
+                        <option value="">Use the default for this type</option>
+                        {templatesOfType.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                      <FilePick label="Or upload a new template" onUpload={handleTemplateUpload} />
+                    </>
+                  )}
                 </div>
-              </div>
-              <div className="col-12">
-                <span className="pp-stat-label">BNS/BNSS codes</span>
-                <div className="font-medium">{applyBnsCodes ? 'Yes — replace IPC/CrPC/Evidence Act references' : 'No'}</div>
-              </div>
+              )}
             </div>
-            <hr style={{ border: 'none', borderTop: '1px solid var(--pp-border)', width: '100%', margin: '0.5rem 0' }} />
-            {partyList.length > 0 && (
-              <>
-                <span className="pp-stat-label">Parties</span>
-                <div className="flex flex-column gap-1">
-                  {partyList.map((p, i) => (
-                    <div key={i} className="text-sm" style={{ color: 'var(--pp-slate-700)' }}>• {p}</div>
+          )}
+
+          {/* Step 1 — Key Terms */}
+          {step === 1 && (
+            <div className="stack" style={{ gap: 16 }}>
+              <TextField label="Document title" value={title} onChange={e => setTitle(e.target.value)}
+                hint="The title this document should carry. For example: NDA, Acme Pvt Ltd." />
+
+              <div className="stack" style={{ gap: 10 }}>
+                <span className="label">Parties</span>
+                <datalist id="ns-party-names">{partyOptions.map(n => <option key={n} value={n} />)}</datalist>
+                {parties.map((p, i) => (
+                  <div key={i} className="panel tinted"><div className="panel-body" style={{ padding: '14px 16px' }}>
+                    <div className="row between" style={{ marginBottom: 10 }}>
+                      <b className="small">Party {i + 1}</b>
+                      <button type="button" className="btn ghost sm" disabled={parties.length <= 1}
+                        aria-label={`Remove party ${i + 1}`} onClick={() => removeParty(i)}><Icon name="trash" size="sm" />Remove</button>
+                    </div>
+                    <div className="form-grid">
+                      <TextField label="Name" value={p.name} list="ns-party-names" onChange={e => setParty(i, 'name', e.target.value)} />
+                      <Field label="Entity type">
+                        {id => (
+                          <select id={id} className="input" value={p.entity} onChange={e => setParty(i, 'entity', e.target.value)}>
+                            <option value="">Select</option>
+                            {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        )}
+                      </Field>
+                      <TextField label="Role" value={p.role} onChange={e => setParty(i, 'role', e.target.value)} placeholder="Disclosing Party" />
+                      <TextField label="Represented by (optional)" value={p.representative} onChange={e => setParty(i, 'representative', e.target.value)} />
+                      <TextField full label="Address (optional)" value={p.address} onChange={e => setParty(i, 'address', e.target.value)} />
+                    </div>
+                  </div></div>
+                ))}
+                <div><button type="button" className="btn ghost sm" onClick={addParty}><Icon name="plus" size="sm" />Add party</button></div>
+              </div>
+
+              <Field label="Purpose" required
+                hint="What is this document meant to achieve? For example: appoint Mr. Ravi as Managing Director for a five-year term.">
+                {(id, d) => <textarea id={id} aria-describedby={d} className="input" rows={3} value={purpose} onChange={e => setPurpose(e.target.value)} />}
+              </Field>
+
+              {slotFields.length > 0 && (
+                <div className="form-grid">
+                  {slotFields.map(field => (
+                    <SlotFieldInput key={field.key} field={field} value={facts[field.key] ?? ''}
+                      onChange={v => setFacts(prev => ({ ...prev, [field.key]: v }))} />
                   ))}
                 </div>
-              </>
-            )}
-            {purpose.trim() && (
-              <>
-                <span className="pp-stat-label">Purpose</span>
-                <div className="pp-source-quote" style={{ fontFamily: 'inherit' }}>{purpose}</div>
-              </>
-            )}
-            {slotFields.length > 0 && (
-              <>
-                <span className="pp-stat-label">Key terms</span>
-                <div className="flex flex-wrap gap-2">
-                  {slotFields.map(f => (
-                    <Tag key={f.key} value={`${f.label}: ${facts[f.key] || '—'}`}
-                      style={{ background: 'var(--pp-slate-100)', color: 'var(--pp-slate-700)' }} />
-                  ))}
-                </div>
-              </>
-            )}
-            {prompt.trim() && (
-              <>
-                <span className="pp-stat-label">Extra instructions</span>
-                <div className="pp-source-quote" style={{ fontFamily: 'inherit' }}>{prompt}</div>
-              </>
-            )}
-            <div className="flex gap-2 justify-content-between mt-3">
-              <Button label="Back" icon="pi pi-arrow-left" severity="secondary" onClick={() => setStep(1)} />
-              <Button label="Generate Draft" icon="pi pi-bolt" iconPos="right"
-                loading={submitting} onClick={handleSubmit} />
+              )}
+
+              <Field label="Extra instructions (optional)"
+                hint="Any specific clauses or requirements, such as an arbitration clause or DPDP compliance.">
+                {(id, d) => <textarea id={id} aria-describedby={d} className="input" rows={4} value={prompt} onChange={e => setPrompt(e.target.value)} />}
+              </Field>
+
+              <label className="check dr-check-card">
+                <input type="checkbox" checked={applyBnsCodes} onChange={e => setApplyBnsCodes(e.target.checked)} />
+                <span>
+                  Use BNS/BNSS section numbers
+                  <span className="faint small" style={{ display: 'block', marginTop: 2 }}>
+                    Replace IPC / CrPC / Evidence Act references with the updated BNS, BNSS and BSA sections (effective July 2024).
+                  </span>
+                </span>
+              </label>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Step 2 — Review */}
+          {step === 2 && (
+            <div className="panel tinted"><div className="panel-body">
+              <dl className="kv">
+                {title.trim() && <><dt>Document title</dt><dd>{title}</dd></>}
+                <dt>Case</dt><dd>{amsCase ? <><span className="mono">{amsCase.caseNumber}</span>{amsCase.clientName ? `, ${amsCase.clientName}` : ''}</> : '—'}</dd>
+                <dt>Agreement type</dt><dd>{docType}</dd>
+                <dt>Template</dt><dd>{resolvedTemplate?.name ?? '—'}{resolvedTemplate && !selectedTemplate && <span className="faint"> (default for type)</span>}</dd>
+                {partyList.map((pl, i) => <PartyRow key={i} n={i + 1} text={pl} />)}
+                <dt>Purpose</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{purpose}</dd>
+                {slotFields.map(f => <KvRow key={f.key} k={f.label} v={facts[f.key]} />)}
+                <dt>Extra instructions</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{prompt.trim() || 'None'}</dd>
+                <dt>Section numbers</dt><dd>{applyBnsCodes ? 'BNS/BNSS' : 'As drafted'}</dd>
+              </dl>
+            </div></div>
+          )}
+        </div>
+
+        <div className="row between dr-wz-foot">
+          {step === 0
+            ? <button type="button" className="btn ghost" onClick={changeStart}>Change starting point</button>
+            : <button type="button" className="btn ghost" onClick={() => setStep(step - 1)}>Back</button>}
+          {step === 0 && <Button variant="primary" disabled={!resolvedTemplate || linking} onClick={() => setStep(1)}>Continue</Button>}
+          {step === 1 && <Button variant="primary" disabled={requiredMissing} onClick={() => setStep(2)}>Review</Button>}
+          {step === 2 && <Button variant="primary" icon="sparkle" loading={submitting} disabled={submitting} onClick={handleSubmit}>Generate draft</Button>}
+        </div>
       </div>
     </div>
   )
+}
+
+function PartyRow({ n, text }: { n: number; text: string }) {
+  return <><dt>Party {n}</dt><dd>{text}</dd></>
+}
+function KvRow({ k, v }: { k: string; v?: string }) {
+  return <><dt>{k}</dt><dd>{v?.trim() || <span className="faint">—</span>}</dd></>
 }

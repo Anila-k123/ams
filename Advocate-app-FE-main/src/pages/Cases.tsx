@@ -1,16 +1,7 @@
+// Cases: the practice's matters. Figures double as quick filters, the toolbar
+// searches and filters server-side, and each row opens the case workspace.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { Dropdown } from "primereact/dropdown";
-import { Dialog } from "primereact/dialog";
-import { Paginator } from "primereact/paginator";
-import { Skeleton } from "primereact/skeleton";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { Tag } from "primereact/tag";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useLoading } from "../contexts/LoadingContext";
@@ -18,8 +9,12 @@ import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import usePagination from "../hooks/usePagination";
-import "../assets/styles/Cases.css";
 import { usePageModal } from "../utils/pageModal";
+import { Button, Chip, StatusChip, EmptyState, Spinner, PageHead, PopMenu, Icon, type MenuItem } from "../ui/kit";
+import { TextField, TextArea, SelectField, SearchInput, Segmented, FilterChip } from "../ui/forms";
+import { Modal, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/cases.css";
 
 const SORT_OPTIONS = [
   { value: "createdAt:desc", label: "Newest first" },
@@ -28,10 +23,9 @@ const SORT_OPTIONS = [
   { value: "caseTitle:asc", label: "Title (A→Z)" },
   { value: "status:asc", label: "Status" },
 ];
-const STATUS_OPTIONS = ["Active", "Pending", "Closed"].map((v) => ({ value: v, label: v }));
-const COURT_OPTIONS = ["District", "High Court", "Supreme Court"].map((v) => ({ value: v, label: v }));
-
-const STATUS_SEVERITY: Record<string, any> = { active: "success", pending: "warning", closed: "secondary" };
+const STATUSES = ["Active", "Pending", "Closed"];
+const COURTS = ["District", "High Court", "Supreme Court"];
+const PAGE_SIZES = [10, 20, 50, 100];
 
 function formatHearing(dateStr: any) {
   if (!dateStr) return null;
@@ -39,46 +33,15 @@ function formatHearing(dateStr: any) {
   if (Number.isNaN(d.getTime())) return dateStr;
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
-
-// First party name from a court "Petitioner/Respondent Details" blob (text before the first comma).
-function firstParty(blob: any) {
-  if (!blob) return "";
-  return String(blob).split(",")[0].trim();
-}
-
-// Map an official court case record into the Add Case form fields.
-function mapCourtRecordToCase(record: any, searchedType: any) {
-  const f = (record && record.fields) || {};
-  const pet = firstParty(f["Petitioner Details"]);
-  const res = firstParty(f["Respondent Details"]);
-  const title = pet && res ? `${pet} vs ${res}` : (f["Registration No"] || "");
-
-  const stage = (f["Stage"] || "").toLowerCase();
-  let status = "Active";
-  if (/dispos|dismiss|withdraw|closed|allowed|rejected/.test(stage)) status = "Closed";
-  else if (/pending/.test(stage)) status = "Pending";
-
-  const desc: string[] = [];
-  if (f["Registration No"]) desc.push(`Reg No: ${f["Registration No"]}`);
-  if (f["Subject"]) desc.push(`Subject: ${f["Subject"]}`);
-  if (f["Nature of Writ"]) desc.push(`Nature: ${f["Nature of Writ"]}`);
-  if (f["Stage"]) desc.push(`Stage: ${f["Stage"]}`);
-
-  return {
-    caseNumber: (f["CNR"] || "").trim(),
-    caseType: searchedType || "",
-    caseTitle: title,
-    courtLevel: "High Court",
-    status,
-    description: desc.join("\n"),
-  };
-}
+const isToday = (dateStr: any) => {
+  const d = new Date(dateStr);
+  return !Number.isNaN(d.getTime()) && d.toDateString() === new Date().toDateString();
+};
 
 const EMPTY_CASE = { caseNumber: "", caseTitle: "", caseType: "", courtLevel: "", status: "", amount: "", description: "", clientId: "" };
 
 function Cases() {
   const [cases, setCases] = useState<any[]>([]);
-  const [totalPages, setTotalPages] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
   const [clients, setClients] = useState<any[]>([]);
   const location = useLocation();
@@ -91,6 +54,8 @@ function Cases() {
   const [showArchived, setShowArchived] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [highlightedId, setHighlightedId] = useState<any>(null);
+  const [view, setView] = useState<"table" | "board">("table");
+  const [menu, setMenu] = useState<{ el: HTMLElement; row: any } | null>(null);
 
   // Filters + sort
   const [filterStatus, setFilterStatus] = useState("");
@@ -117,79 +82,6 @@ function Cases() {
   const [caseDocsLoading, setCaseDocsLoading] = useState(false);
   const [uploadDocFile, setUploadDocFile] = useState<any>(null);
 
-  // ---------------- COURT LOOKUP (prefill Add Case from the official record) ----------------
-  const [lkCourts, setLkCourts] = useState<any[]>([]);
-  const [lkCourtId, setLkCourtId] = useState("");
-  const [lkTypes, setLkTypes] = useState<any>({});
-  const [lkType, setLkType] = useState<any>(null);
-  const [lkNumber, setLkNumber] = useState("");
-  const [lkYear, setLkYear] = useState("");
-  const [lkLoading, setLkLoading] = useState(false);
-  const [lkTypesLoading, setLkTypesLoading] = useState(false);
-  const [lkError, setLkError] = useState("");
-  const [lkInfo, setLkInfo] = useState("");
-  const [caseMode, setCaseMode] = useState<any>(null);   // null | 'manual' | 'import'
-  const [lkFetched, setLkFetched] = useState(false);
-
-  // Load the court list the first time the Add-Case modal opens.
-  useEffect(() => {
-    if (!showModal || editCaseId || lkCourts.length) return;
-    (async () => {
-      try {
-        const res = await api.get("/api/courtsearch/courts");
-        setLkCourts(res.data || []);
-        if (res.data && res.data.length) setLkCourtId(res.data[0].court_id);
-      } catch { /* lookup is optional; leave the panel empty on failure */ }
-    })();
-  }, [showModal, editCaseId, lkCourts.length]);
-
-  // Load case types whenever the lookup court changes.
-  useEffect(() => {
-    if (!lkCourtId) return;
-    setLkType(null);
-    setLkTypes({});
-    setLkTypesLoading(true);
-    (async () => {
-      try {
-        const res = await api.get(`/api/courtsearch/courts/${lkCourtId}/case-types`);
-        setLkTypes(res.data || {});
-      } catch { /* ignore */ }
-      finally { setLkTypesLoading(false); }
-    })();
-  }, [lkCourtId]);
-
-  // Reset lookup inputs and the add-mode each time the modal closes.
-  useEffect(() => {
-    if (!showModal) {
-      setLkError(""); setLkInfo(""); setLkNumber(""); setLkYear(""); setLkType(null);
-      setCaseMode(null); setLkFetched(false);
-    }
-  }, [showModal]);
-
-  const handleCourtFetch = async () => {
-    if (!lkCourtId || !lkType || !lkNumber.trim() || !lkYear) return;
-    setLkLoading(true); setLkError(""); setLkInfo("");
-    try {
-      const res = await api.post("/api/courtsearch/search", {
-        court_id: lkCourtId,
-        case_type: lkType.value,
-        case_number: lkNumber.trim(),
-        case_year: Number(lkYear),
-      });
-      const mapped = mapCourtRecordToCase(res.data, lkType.value);
-      setNewCase((prev: any) => ({ ...prev, ...mapped }));
-      setCaseNumberError(mapped.caseNumber.length !== 16 ? "Case Number must be exactly 16 digits." : "");
-      const reg = res.data?.fields?.["Registration No"];
-      setLkInfo(`Prefilled from court record${reg ? ` — ${reg}` : ""}. Review the fields and choose a client.`);
-      setLkFetched(true);
-      success && success("Case details fetched from the court.");
-    } catch (err: any) {
-      setLkError(err?.response?.data?.error || "Lookup failed. Please try again.");
-    } finally {
-      setLkLoading(false);
-    }
-  };
-
   // ---------------- FETCH CASES ----------------
   const fetchCases = useCallback(async () => {
     setPageLoading(true);
@@ -202,7 +94,6 @@ function Cases() {
       if (filterCourt) params.courtLevel = filterCourt;
       const response = await api.get("/api/cases", { params });
       setCases(response.data.content || []);
-      setTotalPages(response.data.totalPages || 0);
       setTotalElements(response.data.totalElements || 0);
       setErrorMessage("");
     } catch (err: any) {
@@ -307,11 +198,10 @@ function Cases() {
   };
   const handleChange = (e: any) => setField(e.target.name, e.target.value);
 
-  // ---------------- CREATE/UPDATE CASE ----------------
+  // ---------------- UPDATE CASE ----------------
   const handleSubmit = async (e: any) => {
     e.preventDefault();
     if (!token) { setErrorMessage("Please login first."); return; }
-    // Dropdowns carry no native `required`, so check them here.
     if (!newCase.courtLevel || !newCase.status) { setErrorMessage("Please select the court level and status."); return; }
     if (!newCase.clientId) { setErrorMessage("Please choose a client for this case."); return; }
     if (newCase.caseNumber.length !== 16) {
@@ -365,6 +255,8 @@ function Cases() {
       description: caseData.description || "",
       clientId: caseData.clientId ? String(caseData.clientId) : "",
     });
+    setErrorMessage("");
+    setCaseNumberError("");
     setEditCaseId(caseData.id);
     setShowModal(true);
   };
@@ -451,312 +343,270 @@ function Cases() {
   // Scroll the row a global search pointed at into view once it renders.
   useEffect(() => {
     if (!highlightedId || pageLoading) return;
-    const el = document.querySelector(".cases-table .highlight-row");
+    const el = document.querySelector(".cs-list tr.hl, .cs-list .card-mini.hl");
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [highlightedId, cases, pageLoading]);
+  }, [highlightedId, cases, pageLoading, view]);
 
-  const STAT_CARDS = stats ? [
-    { key: "total", label: "Total Cases", value: stats.totalCases, icon: "pi pi-briefcase", accent: "var(--primary)" },
-    { key: "active", label: "Active", value: stats.activeCases, icon: "pi pi-check-circle", accent: "var(--success)" },
-    { key: "pending", label: "Pending", value: stats.pendingCases, icon: "pi pi-clock", accent: "var(--warning)" },
-    { key: "hearings", label: "Upcoming Hearings", value: stats.upcomingHearings, icon: "pi pi-calendar", accent: "#A855F7" },
-    { key: "dues", label: "Outstanding Dues", value: formatCurrency(stats.outstandingDues), icon: "pi pi-indian-rupee", accent: "var(--danger)" },
-  ] : [];
+  const menuItems = (c: any): MenuItem[] => {
+    const items: MenuItem[] = [
+      { label: "Open case", icon: "external", onClick: () => goToCase(c.id) },
+      { label: "Documents", icon: "folder", onClick: () => openCaseDocs(c) },
+    ];
+    if (showArchived) {
+      if (hasPermission("CASE_EDIT")) items.push("-", { label: "Restore", icon: "restore", onClick: () => handleRestore(c.id) });
+    } else {
+      if (hasPermission("CASE_EDIT")) items.push({ label: "Edit details", icon: "edit", onClick: () => handleEdit(c) });
+      if (hasPermission("CASE_DELETE")) items.push("-", {
+        label: "Archive", icon: "archive", danger: true,
+        onClick: () => confirm({
+          title: "Archive this case?",
+          message: `${c.caseNumber || "This case"} moves to the archive. You can restore it later.`,
+          confirmLabel: "Archive", danger: true, accept: () => handleDelete(c.id),
+        }),
+      });
+    }
+    return items;
+  };
 
-  const clientOptions = clients.map((c) => ({ value: c.id, label: `${c.name} — ${c.email}` }));
-  const lkTypeOptions = Object.keys(lkTypes).sort().map((k) => ({ value: k, label: k }));
-
-  const actionsBody = (c: any) => (
-    <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-      <Button icon="pi pi-external-link" rounded text size="small" onClick={() => goToCase(c.id)} tooltip="Open workspace" tooltipOptions={{ position: "top" }} />
-      {showArchived ? (
-        hasPermission("CASE_EDIT") && (
-          <Button icon="pi pi-replay" rounded text severity="success" size="small" onClick={() => handleRestore(c.id)} tooltip="Restore" tooltipOptions={{ position: "top" }} />
-        )
-      ) : (
-        <>
-          {hasPermission("CASE_EDIT") && (
-            <Button icon="pi pi-pencil" rounded text size="small" onClick={() => handleEdit(c)} tooltip="Edit" tooltipOptions={{ position: "top" }} />
-          )}
-          {hasPermission("CASE_DELETE") && (
-            <Button icon="pi pi-trash" rounded text severity="danger" size="small" onClick={() => handleDelete(c.id)} tooltip="Archive" tooltipOptions={{ position: "top" }} />
-          )}
-        </>
-      )}
-    </div>
+  const actionBtn = (c: any) => (
+    <Button variant="ghost" size="sm" iconOnly icon="more" aria-label={`Actions for ${c.caseNumber || c.caseTitle || "case"}`} aria-haspopup="menu"
+      onClick={(e) => setMenu({ el: e.currentTarget, row: c })} />
   );
 
-  return (
-    <div className="cases-container">
-      {errorMessage && <p className="error-message">{errorMessage}</p>}
+  const hearingCell = (c: any) => {
+    const hearing = nextHearings[c.id];
+    if (!hearing) return <span className="faint">Not listed</span>;
+    return (
+      <>
+        <span className={isToday(hearing.date) ? "cs-today" : undefined}>{formatHearing(hearing.date)}</span>
+        {hearing.title && <div className="cs-sub ellipsis" style={{ maxWidth: "24ch" }} title={hearing.title}>{hearing.title}</div>}
+      </>
+    );
+  };
 
-      {/* Dashboard cards */}
-      {!showArchived && stats && (
-        <div className="cases-stats">
-          {STAT_CARDS.map((card) => (
-            <div className="case-stat-card" key={card.key}>
-              <div className="case-stat-icon" style={{ color: card.accent, background: `color-mix(in srgb, ${card.accent} 12%, transparent)` }}>
-                <i className={card.icon} />
-              </div>
-              <div className="case-stat-body">
-                <span className="case-stat-value">{card.value}</span>
-                <span className="case-stat-label">{card.label}</span>
-              </div>
+  const tagsCell = (c: any) => {
+    const tags = tagsByCase[c.id] || [];
+    if (!tags.length) return <span className="faint">—</span>;
+    return (
+      <div className="cs-tags">
+        {tags.slice(0, 3).map((t: any) => <Chip key={t.id} plain>{t.label}</Chip>)}
+        {tags.length > 3 && <span className="faint xs">+{tags.length - 3}</span>}
+      </div>
+    );
+  };
+
+  const columns: Column<any>[] = [
+    { key: "caseNumber", label: "Case", render: (c) => (
+      <>
+        <a className="mono small link" href={`/dashboard/cases/${c.id}`} onClick={(e) => { e.preventDefault(); goToCase(c.id); }}>{c.caseNumber || "—"}</a>
+        <div className="cs-sub ellipsis cs-title" title={c.caseTitle}>{c.caseTitle}</div>
+      </>
+    ) },
+    { key: "caseType", label: "Type", hideSm: true, render: (c) => <span className="small">{c.caseType || "—"}</span> },
+    { key: "next", label: "Next hearing", render: hearingCell },
+    { key: "client", label: "Client", hideSm: true, render: (c) => <span className="small">{c.clientName || "N/A"}</span> },
+    { key: "tags", label: "Tags", hideSm: true, render: tagsCell },
+    ...(hasPermission("INVOICE_VIEW") ? [{ key: "amount", label: "Agreed fee", align: "right" as const, hideSm: true, render: (c: any) => formatCurrency(c.amount) }] : []),
+    { key: "status", label: "Status", render: (c) => <StatusChip status={c.status} /> },
+    { key: "act", label: <span className="sr-only">Actions</span>, align: "right", render: actionBtn },
+  ];
+
+  const setFig = (v: string) => { setFilterStatus(filterStatus === v ? "" : v); };
+  const openCount = stats ? (Number(stats.activeCases || 0) + Number(stats.pendingCases || 0)) : null;
+  const emptyState = searchKeyword || filterStatus || filterCourt
+    ? { icon: "search" as const, title: "No cases match", text: "Try a different search or clear the filters." }
+    : showArchived
+      ? { icon: "archive" as const, title: "No archived cases" }
+      : {
+          icon: "case" as const, title: "No cases yet", text: "Add your first case by importing it from court records.",
+          action: hasPermission("CASE_CREATE") ? <Button variant="primary" size="sm" onClick={() => navigate("/dashboard/cases/new")}>Add case</Button> : undefined,
+        };
+
+  return (
+    <div className="cs-root">
+      <PageHead
+        title="Cases"
+        sub={stats ? `${openCount} open matters, ${stats.upcomingHearings ?? 0} upcoming hearings.` : "Every matter the practice is handling."}
+        actions={hasPermission("CASE_CREATE") && <Button variant="primary" icon="plus" onClick={() => navigate("/dashboard/cases/new")}>Add case</Button>}
+      />
+
+      {errorMessage && !showModal && <div className="callout bad" role="alert" style={{ marginBottom: "var(--s4)" }}><Icon name="warn" size="sm" /><div>{errorMessage}</div></div>}
+
+      {stats && !showArchived && (
+        <div className="figures" style={{ marginBottom: "var(--s5)" }} role="group" aria-label="Quick filters">
+          <button type="button" className="figure" aria-pressed={!filterStatus} onClick={() => setFilterStatus("")}>
+            <div className="lbl">All cases</div><div className="val">{stats.totalCases ?? 0}</div><div className="meta">Not archived</div>
+          </button>
+          <button type="button" className="figure" aria-pressed={filterStatus === "Active"} onClick={() => setFig("Active")}>
+            <div className="lbl">Active</div><div className="val">{stats.activeCases ?? 0}</div><div className="meta">Being heard</div>
+          </button>
+          <button type="button" className="figure" aria-pressed={filterStatus === "Pending"} onClick={() => setFig("Pending")}>
+            <div className="lbl">Pending</div><div className="val">{stats.pendingCases ?? 0}</div><div className="meta">Admission or reserved</div>
+          </button>
+          <div className="figure">
+            <div className="lbl">Upcoming hearings</div><div className="val">{stats.upcomingHearings ?? 0}</div><div className="meta">Listed ahead</div>
+          </div>
+          {stats.outstandingDues != null && (
+            <div className="figure">
+              <div className="lbl">Outstanding fees</div><div className="val">{formatCurrency(stats.outstandingDues)}</div><div className="meta">Agreed fee less paid</div>
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {/* Top Actions */}
-      <div className="flex flex-wrap align-items-center gap-2 mb-3">
-        {hasPermission("CASE_CREATE") && (
-          <Button label="Add New Case" icon="pi pi-plus" onClick={() => navigate("/dashboard/cases/new")} />
-        )}
-        <span className="p-input-icon-left flex-1" style={{ minWidth: 220 }}>
-          <i className="pi pi-search" />
-          <InputText
-            className="w-full"
-            placeholder="Search by case number, client name, or email"
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-          />
-        </span>
-        <Button
-          outlined
-          icon={showArchived ? "pi pi-arrow-left" : "pi pi-inbox"}
-          label={showArchived ? "Back to Active" : "View Archived"}
-          onClick={() => setShowArchived(!showArchived)}
-        />
-      </div>
-
-      {/* Filter bar */}
-      <div className="flex flex-wrap align-items-center gap-2 mb-3">
-        <Dropdown placeholder="All Statuses" value={filterStatus} options={[{ value: "", label: "All Statuses" }, ...STATUS_OPTIONS]}
-          onChange={(e) => setFilterStatus(e.value)} />
-        <Dropdown placeholder="All Courts" value={filterCourt} options={[{ value: "", label: "All Courts" }, ...COURT_OPTIONS]}
-          onChange={(e) => setFilterCourt(e.value)} />
-        <Dropdown value={sort} options={SORT_OPTIONS} onChange={(e) => setSort(e.value)} />
+      <div className="toolbar">
+        <SearchInput value={searchKeyword} onChange={setSearchKeyword} placeholder="Search case no., title, client or email" />
+        <select className="input" aria-label="Status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+          <option value="">All statuses</option>
+          {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select className="input" aria-label="Court level" value={filterCourt} onChange={(e) => setFilterCourt(e.target.value)}>
+          <option value="">All courts</option>
+          {COURTS.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select className="input" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value)}>
+          {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
         {(filterStatus || filterCourt) && (
-          <Button text label="Clear filters" onClick={() => { setFilterStatus(""); setFilterCourt(""); }} />
+          <Button variant="ghost" size="sm" onClick={() => { setFilterStatus(""); setFilterCourt(""); }}>Clear filters</Button>
         )}
       </div>
 
-      {/* Add / Edit modal */}
-      <Dialog
-        header={editCaseId ? "Edit Case" : "Add New Case"}
-        visible={showModal}
-        onHide={() => setShowModal(false)}
-        style={{ width: "560px" }}
-        breakpoints={{ "640px": "95vw" }}
-        dismissableMask
-      >
-        {/* Step 1 — choose how to add a new case */}
-        {!editCaseId && !caseMode && (
-          <div className="flex flex-column gap-2">
-            <button type="button" className="case-mode-card" onClick={() => setCaseMode("manual")}>
-              <i className="pi pi-pencil case-mode-icon" />
-              <span className="case-mode-title">Add Manually</span>
-              <span className="case-mode-desc">Type in the case details yourself.</span>
-            </button>
-            <button type="button" className="case-mode-card" onClick={() => setCaseMode("import")}>
-              <i className="pi pi-building-columns case-mode-icon" />
-              <span className="case-mode-title">Import from Court Records</span>
-              <span className="case-mode-desc">Fetch the official record and prefill the form.</span>
-            </button>
-            <Button type="button" label="Cancel" text severity="secondary" onClick={() => setShowModal(false)} />
-          </div>
-        )}
+      <div className="row wrap between" style={{ marginBottom: "var(--s3)" }}>
+        <Segmented<"table" | "board"> label="View" value={view} onChange={setView}
+          options={[{ value: "table", label: "Table", icon: "rows" }, { value: "board", label: "Board", icon: "kanban" }]} />
+        <div className="row wrap">
+          <select className="input" aria-label="Cases per page" value={size} style={{ width: "auto" }}
+            onChange={(e) => { setSize(Number(e.target.value)); setPage(0); }}>
+            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n} per page</option>)}
+          </select>
+          <FilterChip on={showArchived} onClick={() => setShowArchived(!showArchived)}><Icon name="archive" size="sm" />Show archived</FilterChip>
+        </div>
+      </div>
 
-        {/* Step 2 — the chosen flow */}
-        {(editCaseId || caseMode) && (
+      <div className="cs-list">
+        {view === "table" ? (
+          <DataTable
+            rows={cases}
+            columns={columns}
+            rowKey={(c) => c.id}
+            loading={pageLoading}
+            onRow={(c) => goToCase(c.id)}
+            rowClass={(c) => [highlightedId === c.id ? "hl" : "", showArchived || c.status === "Closed" ? "muted" : ""].join(" ").trim() || undefined}
+            page={page} total={totalElements} pageSize={size} onPage={setPage}
+            empty={emptyState}
+            caption="Cases"
+          />
+        ) : (
           <>
-            {!editCaseId && (
-              <Button type="button" text size="small" icon="pi pi-arrow-left" label="Back" className="mb-2"
-                onClick={() => { setCaseMode(null); setLkFetched(false); setLkError(""); setLkInfo(""); }} />
-            )}
-
-            {caseMode === "import" && !editCaseId && (
-              <div className="court-import">
-                <div className="court-import-head">Find the case on the court record</div>
-                <div className="grid">
-                  <div className="col-12 md:col-6">
-                    <Dropdown className="w-full"
-                      options={lkCourts.map((c) => ({ value: c.court_id, label: c.name }))}
-                      value={lkCourtId || null}
-                      onChange={(e) => setLkCourtId(e.value || "")}
-                      placeholder="Court" />
-                  </div>
-                  <div className="col-12 md:col-6">
-                    <Dropdown className="w-full" filter
-                      options={lkTypeOptions}
-                      value={lkType ? lkType.value : null}
-                      onChange={(e) => setLkType(e.value ? { value: e.value, label: e.value } : null)}
-                      placeholder={lkTypesLoading ? "Loading types…" : "Case type"}
-                      loading={lkTypesLoading} />
-                  </div>
-                  <div className="col-6 md:col-4">
-                    <InputText className="w-full" placeholder="Case number" value={lkNumber} onChange={(e) => setLkNumber(e.target.value)} />
-                  </div>
-                  <div className="col-6 md:col-4">
-                    <InputText className="w-full" type="number" placeholder="Year" value={lkYear} min="1900" max="2100"
-                      onChange={(e) => setLkYear(e.target.value)} />
-                  </div>
-                  <div className="col-12 md:col-4">
-                    <Button type="button" className="w-full" label={lkLoading ? "Fetching…" : "Fetch"} loading={lkLoading}
-                      onClick={handleCourtFetch}
-                      disabled={lkLoading || !lkCourtId || !lkType || !lkNumber.trim() || !lkYear} />
-                  </div>
+            <div className="board cs-board">
+              {STATUSES.map((lane) => {
+                const list = cases.filter((c) => (c.status || "") === lane);
+                return (
+                  <section className="lane" aria-label={lane} key={lane}>
+                    <h4><span>{lane}</span><span className="badge-n">{list.length}</span></h4>
+                    {list.map((c) => {
+                      const h = nextHearings[c.id];
+                      return (
+                        <div key={c.id} className={`card-mini${highlightedId === c.id ? " hl" : ""}`} role="link" tabIndex={0}
+                          onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) goToCase(c.id); }}
+                          onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) goToCase(c.id); }}>
+                          <div className="row between"><span className="mono xs">{c.caseNumber}</span>{actionBtn(c)}</div>
+                          <div className="small" style={{ fontWeight: 500, margin: "2px 0 6px" }}>{c.caseTitle}</div>
+                          <div className="row between xs">
+                            <span className="faint">{c.clientName || ""}</span>
+                            <span className={h && isToday(h.date) ? "cs-today" : "faint"}>{h ? formatHearing(h.date) : "Not listed"}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!list.length && <p className="faint small" style={{ padding: "8px 4px" }}>{pageLoading ? "Loading…" : "No cases here."}</p>}
+                  </section>
+                );
+              })}
+            </div>
+            {totalElements > size && (
+              <div className="row between small faint" style={{ marginTop: "var(--s3)" }}>
+                <span>Page {page + 1} of {Math.ceil(totalElements / size)}</span>
+                <div className="row">
+                  <Button size="sm" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>
+                  <Button size="sm" disabled={(page + 1) * size >= totalElements} onClick={() => setPage(page + 1)}>Next</Button>
                 </div>
-                {lkLoading && <p className="court-import-note">Contacting the court website… this can take up to 30 seconds.</p>}
-                {lkError && <p className="field-error">{lkError}</p>}
-                {lkInfo && <p className="court-import-ok">{lkInfo}</p>}
               </div>
-            )}
-
-            {(editCaseId || caseMode === "manual" || (caseMode === "import" && lkFetched)) && (
-              <form className="flex flex-column gap-2" onSubmit={handleSubmit}>
-                <InputText
-                  name="caseNumber" placeholder="Case Number (16 digits)"
-                  value={newCase.caseNumber} onChange={handleChange} required
-                  invalid={!!caseNumberError}
-                />
-                {caseNumberError && <p className="field-error">{caseNumberError}</p>}
-
-                <InputText name="caseTitle" placeholder="Case Title" value={newCase.caseTitle} onChange={handleChange} required />
-                <InputText name="caseType" placeholder="Case Type" value={newCase.caseType} onChange={handleChange} required />
-
-                <Dropdown value={newCase.courtLevel || null} options={COURT_OPTIONS} placeholder="Select Court Level"
-                  onChange={(e) => setField("courtLevel", e.value || "")} />
-                <Dropdown value={newCase.status || null} options={STATUS_OPTIONS} placeholder="Select Status"
-                  onChange={(e) => setField("status", e.value || "")} />
-
-                {hasPermission("INVOICE_VIEW") && (
-                  <InputText type="number" name="amount" placeholder="Agreed fee (₹)" value={newCase.amount} onChange={handleChange} min={0} />
-                )}
-
-                <Dropdown
-                  options={clientOptions}
-                  value={clients.find((c) => c.id === Number(newCase.clientId)) ? Number(newCase.clientId) : null}
-                  onChange={(e) => setNewCase({ ...newCase, clientId: e.value ?? "" })}
-                  showClear filter placeholder="Select Client"
-                />
-
-                <InputTextarea name="description" placeholder="Description" value={newCase.description} onChange={handleChange} rows={3} autoResize />
-
-                <div className="flex gap-2">
-                  <Button type="submit" label={editCaseId ? "Update Case" : "Save Case"} />
-                  <Button type="button" label="Cancel" severity="secondary" outlined onClick={() => setShowModal(false)} />
-                </div>
-              </form>
-            )}
-
-            {caseMode === "import" && !editCaseId && !lkFetched && !lkLoading && (
-              <p className="court-import-hint">Fetch a case above to prefill and review the details before saving.</p>
             )}
           </>
         )}
-      </Dialog>
-
-      {/* Cases Table */}
-      <div className="cases-table">
-        {pageLoading ? (
-          <div className="flex flex-column gap-2 p-3">
-            {Array.from({ length: Math.min(size, 10) }).map((_, i) => <Skeleton key={i} height="2rem" />)}
-          </div>
-        ) : (
-          <DataTable
-            value={cases}
-            dataKey="id"
-            size="small"
-            stripedRows
-            emptyMessage="No cases found."
-            rowClassName={(c: any) => `clickable-row ${highlightedId === c.id ? "highlight-row" : ""}`}
-            onRowClick={(e: any) => goToCase(e.data.id)}
-          >
-            <Column header="Case No" body={(c) => <span className="case-no-cell" title={c.caseNumber}>{c.caseNumber}</span>} />
-            <Column header="Title" body={(c) => <span title={c.caseTitle}>{c.caseTitle}</span>} />
-            <Column header="Type" body={(c) => <span title={c.caseType}>{c.caseType}</span>} />
-            <Column header="Status" body={(c) => c.status ? <Tag value={c.status} severity={STATUS_SEVERITY[(c.status || "").toLowerCase()] || "info"} /> : null} />
-            <Column header="Next Hearing" body={(c) => {
-              const hearing = nextHearings[c.id];
-              return hearing ? (
-                <span className="hearing-badge" title={hearing.title}>
-                  <i className="pi pi-calendar" style={{ fontSize: 11 }} /> {formatHearing(hearing.date)}
-                </span>
-              ) : <span className="muted-dash">—</span>;
-            }} />
-            <Column header="Tags" body={(c) => {
-              const tags = tagsByCase[c.id] || [];
-              return (
-                <div className="tags-cell">
-                  {tags.length ? tags.slice(0, 3).map((t: any) => (
-                    <span key={t.id} className="case-tag-chip" style={t.color ? { borderColor: t.color, color: t.color } : undefined}>
-                      {t.label}
-                    </span>
-                  )) : <span className="muted-dash">—</span>}
-                  {tags.length > 3 && <span className="case-tag-more">+{tags.length - 3}</span>}
-                </div>
-              );
-            }} />
-            <Column header="Client" body={(c) => <span title={c.clientName || "N/A"}>{c.clientName || "N/A"}</span>} />
-            {hasPermission("INVOICE_VIEW") && <Column header="Agreed fee" body={(c) => formatCurrency(c.amount)} />}
-            <Column header="Actions" body={actionsBody} />
-          </DataTable>
-        )}
-        {totalPages > 0 && (
-          <Paginator
-            first={page * size}
-            rows={size}
-            totalRecords={totalElements}
-            rowsPerPageOptions={[10, 20, 50, 100]}
-            onPageChange={(e) => {
-              if (e.rows !== size) { setSize(e.rows); setPage(0); }
-              else setPage(e.page);
-            }}
-          />
-        )}
       </div>
+
+      {menu && <PopMenu anchor={menu.el} items={menuItems(menu.row)} onClose={() => setMenu(null)} align="right" width={200} />}
+
+      {/* Edit modal */}
+      <Modal
+        open={showModal}
+        onClose={() => setShowModal(false)}
+        title={editCaseId ? "Edit case" : "Add case"}
+        sub={newCase.caseNumber ? <span className="mono">{newCase.caseNumber}</span> : undefined}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowModal(false)}>Cancel</Button>
+          <Button variant="primary" type="submit" form="cs-edit-form">{editCaseId ? "Update case" : "Save case"}</Button>
+        </>}
+      >
+        <form id="cs-edit-form" className="form-grid" onSubmit={handleSubmit} noValidate={false}>
+          {errorMessage && <div className="callout bad full" role="alert"><Icon name="warn" size="sm" /><div>{errorMessage}</div></div>}
+          <TextField label="Case number" name="caseNumber" value={newCase.caseNumber} onChange={handleChange} required
+            className="mono" hint="16 digits" error={caseNumberError || undefined} />
+          <TextField label="Case type" name="caseType" value={newCase.caseType} onChange={handleChange} required />
+          <TextField label="Title" name="caseTitle" value={newCase.caseTitle} onChange={handleChange} required full placeholder="Petitioner vs Respondent" />
+          <SelectField label="Court level" required value={newCase.courtLevel} placeholder="Select court level" options={COURTS}
+            onChange={(e) => setField("courtLevel", e.target.value)} />
+          <SelectField label="Status" required value={newCase.status} placeholder="Select status" options={STATUSES}
+            onChange={(e) => setField("status", e.target.value)} />
+          <SelectField label="Client" required value={clients.find((c) => c.id === Number(newCase.clientId)) ? String(newCase.clientId) : ""}
+            placeholder="Select client" options={clients.map((c) => ({ value: String(c.id), label: `${c.name} — ${c.email}` }))}
+            onChange={(e) => setNewCase({ ...newCase, clientId: e.target.value })} />
+          {hasPermission("INVOICE_VIEW") && (
+            <TextField label="Agreed fee (₹)" type="number" name="amount" value={newCase.amount} onChange={handleChange} min={0} />
+          )}
+          <TextArea label="Description" name="description" value={newCase.description} onChange={handleChange} rows={3} full />
+        </form>
+      </Modal>
 
       {/* Case Documents Modal */}
-      <Dialog
-        header={docCase ? `Documents — ${docCase.caseNumber}` : "Documents"}
-        visible={showCaseDocs && !!docCase}
-        onHide={() => setShowCaseDocs(false)}
-        style={{ width: "600px" }}
-        breakpoints={{ "640px": "95vw" }}
-        dismissableMask
+      <Modal
+        open={showCaseDocs && !!docCase}
+        onClose={() => setShowCaseDocs(false)}
+        title="Documents"
+        sub={docCase ? <span className="mono">{docCase.caseNumber}</span> : undefined}
       >
         {caseDocsLoading ? (
-          <div className="flex justify-content-center p-3"><ProgressSpinner style={{ width: 40, height: 40 }} /></div>
+          <Spinner />
         ) : (
-          <>
+          <div className="stack">
             {caseDocs.length === 0 ? (
-              <p className="no-data">No documents linked to this case.</p>
+              <EmptyState icon="folder" title="No documents linked to this case" />
             ) : (
-              <div className="flex flex-column gap-2">
+              <ul className="list" style={{ margin: 0, padding: 0, listStyle: "none" }}>
                 {caseDocs.map((d) => (
-                  <div key={d.id} className="case-doc-item">
-                    <i className="pi pi-folder" style={{ fontSize: 20 }} />
-                    <span className="case-doc-name">{d.documentName}</span>
-                    <span className="case-doc-meta">{d.category || "Other"}</span>
-                    <span className="case-doc-meta">{d.version > 1 ? `v${d.version}` : "v1"}</span>
-                    <div className="flex gap-1 ml-auto">
-                      <Button icon="pi pi-eye" rounded text size="small" onClick={() => handleDocPreview(d.id)} tooltip="Preview" tooltipOptions={{ position: "top" }} />
-                      <Button icon="pi pi-download" rounded text size="small" onClick={() => handleDocDownload(d.id, d.originalName || d.documentName)} tooltip="Download" tooltipOptions={{ position: "top" }} />
-                    </div>
-                  </div>
+                  <li key={d.id} className="row" style={{ padding: "8px 0", borderBottom: "1px solid var(--line)" }}>
+                    <Icon name="file" size="sm" />
+                    <span className="grow ellipsis small">{d.documentName}</span>
+                    <Chip plain>{d.category || "Other"}</Chip>
+                    <span className="faint xs">{d.version > 1 ? `v${d.version}` : "v1"}</span>
+                    <Button variant="ghost" size="sm" iconOnly icon="eye" aria-label={`Preview ${d.documentName}`} onClick={() => handleDocPreview(d.id)} />
+                    <Button variant="ghost" size="sm" iconOnly icon="download" aria-label={`Download ${d.documentName}`} onClick={() => handleDocDownload(d.id, d.originalName || d.documentName)} />
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
             {hasPermission("DOCUMENT_UPLOAD") && (
-              <div className="flex align-items-center gap-2 mt-3">
-                <input type="file" onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)} />
-                <Button icon="pi pi-upload" label="Upload" onClick={uploadCaseDoc} disabled={!uploadDocFile} />
+              <div className="row wrap">
+                <input type="file" aria-label="Choose a document to upload" onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)} />
+                <Button icon="upload" onClick={uploadCaseDoc} disabled={!uploadDocFile}>Upload</Button>
               </div>
             )}
-          </>
+          </div>
         )}
-      </Dialog>
+      </Modal>
     </div>
   );
 }

@@ -1,27 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
+import { useToast } from '../../contexts/ToastContext'
 import { useNavigate } from 'react-router-dom'
-import { Button } from 'primereact/button'
-import { Tag } from 'primereact/tag'
-import { Skeleton } from 'primereact/skeleton'
-import { Dialog } from 'primereact/dialog'
-import { InputText } from 'primereact/inputtext'
-import { FileUpload } from 'primereact/fileupload'
-import { Message } from 'primereact/message'
-import { Toast } from 'primereact/toast'
-import { ProgressSpinner } from 'primereact/progressspinner'
-import { ConfirmDialog, confirmDialog } from 'primereact/confirmdialog'
 import { AxiosError } from 'axios'
+import { Button, EmptyState, PageHead, Skel, Spinner } from '../../ui/kit'
+import { SearchInput, TextField } from '../../ui/forms'
+import { Modal, confirm } from '../../ui/overlays'
+import Icon from '../../ui/Icon'
 import DocumentViewer from './components/DocumentViewer'
+import FilePick from './components/FilePick'
 import { draftingApi, type Template } from './api/drafting'
 
-/** Templates page: a card grid of uploaded clause skeletons. Supports uploading a new
+/** Firm Templates: a card grid of uploaded clause skeletons. Supports uploading a new
  *  template (which the backend splits into clauses and names via the LLM, shown behind a
- *  processing spinner), viewing a template's extracted clauses or its source document,
- *  and deleting. */
+ *  processing status), viewing a template's source document, and deleting. */
 export default function Templates() {
   const navigate = useNavigate()
+  const toast = useToast()
   const { hasPermission } = usePermission() as any
   const [templates, setTemplates] = useState<Template[]>([])  // the card grid contents
   const [loading, setLoading] = useState(true)                // true until the initial fetch resolves (shows skeletons)
@@ -29,10 +25,9 @@ export default function Templates() {
   const [name, setName] = useState('')                        // upload form: template name field
   const [docType, setDocType] = useState('')                  // upload form: optional document-type field
   const [error, setError] = useState('')                      // upload form: parse-failure message
-  const [busy, setBusy] = useState(false)                     // true while the upload+extraction request runs (swaps dialog to spinner)
+  const [busy, setBusy] = useState(false)                     // true while the upload request runs
   const [viewing, setViewing] = useState<Template | null>(null)    // template whose source document is shown in DocumentViewer
   const [query, setQuery] = useState('')                      // search-box filter (name / type)
-  const toast = useRef<Toast>(null)
 
   const load = () => draftingApi.getTemplates().then(setTemplates)
 
@@ -67,7 +62,7 @@ export default function Templates() {
       await draftingApi.uploadTemplate(fd)
       setShowUpload(false)
       setName(''); setDocType('')
-      toast.current?.show({ severity: 'info', summary: 'Template uploaded', detail: 'Processing — status will update shortly.', life: 4000 })
+      toast.info('Template uploaded. Finding its fields; the status will update shortly.')
       load()
     } catch {
       setError('Could not upload that template. Use a PDF or DOCX file.')
@@ -76,146 +71,109 @@ export default function Templates() {
     }
   }
 
-  const view = (t: Template) => setViewing(t)
-
   // Ask for confirmation, then delete and reload. Surfaces the backend's detail message on failure.
   const confirmDelete = (t: Template) => {
-    confirmDialog({
-      message: `Delete template "${t.name}"? This cannot be undone.`,
-      header: 'Delete template',
-      icon: 'pi pi-exclamation-triangle',
-      acceptClassName: 'p-button-danger',
+    confirm({
+      title: 'Delete this template?',
+      message: `${t.name} will be removed. Drafts already made from it are kept. This cannot be undone.`,
+      confirmLabel: 'Delete template',
+      danger: true,
       accept: async () => {
         try {
           await draftingApi.deleteTemplate(t.id)
-          toast.current?.show({ severity: 'success', summary: 'Deleted', detail: `"${t.name}" removed.`, life: 3000 })
+          toast.success(`${t.name} deleted`)
           load()
         } catch (err) {
           const ax = err as AxiosError<{ detail?: string }>
-          toast.current?.show({
-            severity: 'error', summary: 'Could not delete',
-            detail: ax.response?.data?.detail ?? 'Delete failed.', life: 5000,
-          })
+          toast.error(ax.response?.data?.detail ?? 'Delete failed.')
         }
       },
     })
   }
 
+  const canManage = hasPermission('DRAFT_MANAGE')
+
   return (
     <div>
-      <Toast ref={toast} />
-      <ConfirmDialog />
       <DocumentViewer visible={!!viewing} onHide={() => setViewing(null)} fileUrl={viewing?.file} name={viewing?.name} />
 
-      <div className="pp-page-head flex align-items-center justify-content-between gap-2 flex-wrap">
-        <span className="p-input-icon-left">
-          <i className="pi pi-search" />
-          <InputText value={query} onChange={e => setQuery(e.target.value)} placeholder="Search templates" />
-        </span>
-        {hasPermission('DRAFT_MANAGE') && (
-          <Button label="Upload Template" icon="pi pi-upload" onClick={() => { setError(''); setShowUpload(true) }} />
-        )}
+      <PageHead title="Firm Templates"
+        sub="Your firm's own formats. Upload a PDF or Word file and PactPro finds the fields to fill."
+        actions={canManage && (
+          <Button variant="primary" icon="upload" onClick={() => { setError(''); setShowUpload(true) }}>Upload template</Button>
+        )} />
+
+      <div className="toolbar">
+        <SearchInput value={query} onChange={setQuery} placeholder="Search templates" />
       </div>
 
-      <div className="grid">
-        {loading && [1, 2].map(i => (
-          <div key={i} className="col-12 md:col-6"><div className="pp-card"><Skeleton height="8rem" /></div></div>
+      <div className="doc-grid dr-card-grid">
+        {loading && [1, 2, 3].map(i => (
+          <div key={i} className="panel"><div className="panel-body stack" style={{ gap: 10 }}><Skel w={90} /><Skel h={22} /><Skel w="60%" /></div></div>
         ))}
 
         {!loading && filtered.map(t => {
           const processing = t.status === 'processing'
           const failed = t.status === 'failed'
           return (
-          <div key={t.id} className="col-12 md:col-6">
-            <div className="pp-card h-full flex flex-column">
-              <div className="flex align-items-start justify-content-end mb-2">
-                <div className="flex gap-2">
-                  {processing && <Tag value="Processing" severity="warning" icon="pi pi-spin pi-spinner" />}
-                  {failed && <Tag value="Failed" severity="danger" />}
-                  {t.document_type && <Tag value={t.document_type.toUpperCase()} />}
-                  <Tag value={t.language.toUpperCase()} severity="info" />
+            <div key={t.id} className="panel">
+              <div className="panel-body dr-tile-body">
+                <div className="row between">
+                  {processing ? <span className="chip warn plain"><span className="pp-spin" aria-hidden="true" />Processing</span>
+                    : failed ? <span className="chip bad">Failed</span>
+                    : <span className="chip ok">Ready</span>}
+                  <span className="faint xs">{t.language.toUpperCase()}</span>
                 </div>
-              </div>
-              <h3 className="mb-1 mt-2">{t.name}</h3>
-              {processing ? (
-                <p className="text-color-secondary text-sm mt-0 mb-3 flex-1">
-                  Processing — this will be ready shortly.
-                </p>
-              ) : failed ? (
-                <p className="text-color-secondary text-sm mt-0 mb-3 flex-1">
-                  Couldn’t process this file. Delete it and upload a PDF or DOCX.
-                </p>
-              ) : (
-                <div className="flex-1" />
-              )}
-              <div className="flex align-items-center justify-content-between mt-auto">
-                <Button label="Use template" icon="pi pi-arrow-right" iconPos="right" size="small"
-                  disabled={processing || failed} onClick={() => navigate(DRAFTING.newDraft)} />
-                <div className="flex gap-1">
-                  {t.file && (
-                    <Button icon="pi pi-eye" rounded text severity="secondary" tooltip="View document"
-                      tooltipOptions={{ position: 'top' }} onClick={() => view(t)} />
-                  )}
-                  {hasPermission('DRAFT_MANAGE') && (
-                    <Button icon="pi pi-trash" rounded text severity="danger" tooltip="Delete"
-                      tooltipOptions={{ position: 'top' }} onClick={() => confirmDelete(t)} />
+                <h3 className="serif dr-tile-title">{t.name}</h3>
+                {t.document_type && <div className="faint xs">{t.document_type.toUpperCase()}</div>}
+                {processing && <p className="faint small">Finding the fields. This will be ready shortly.</p>}
+                {failed && (
+                  <div className="callout bad"><Icon name="warn" size="sm" /><div>Couldn’t process this file. Delete it and upload a PDF or DOCX.</div></div>
+                )}
+                <span className="grow" />
+                <div className="row wrap" style={{ gap: 6 }}>
+                  <Button variant="primary" size="sm" disabled={processing || failed} onClick={() => navigate(DRAFTING.newDraft)}>Use template</Button>
+                  {t.file && <Button size="sm" icon="eye" onClick={() => setViewing(t)}>View</Button>}
+                  <span className="grow" />
+                  {canManage && (
+                    <button type="button" className="btn ghost sm icon" aria-label={`Delete ${t.name}`} title="Delete"
+                      onClick={() => confirmDelete(t)}><Icon name="trash" size="sm" /></button>
                   )}
                 </div>
               </div>
             </div>
-          </div>
           )
         })}
 
-        {!loading && templates.length === 0 && (
-          <div className="col-12">
-            <div className="pp-card text-center text-color-secondary">
-              No templates yet — click <strong>Upload Template</strong> to add your own (PDF or DOCX).
-            </div>
-          </div>
-        )}
-
-        {!loading && templates.length > 0 && filtered.length === 0 && (
-          <div className="col-12">
-            <div className="pp-card text-center text-color-secondary">No templates match “{query}”.</div>
+        {!loading && filtered.length === 0 && (
+          <div className="panel" style={{ gridColumn: '1 / -1' }}>
+            <EmptyState icon="template"
+              title={templates.length ? 'No templates match' : 'No templates yet'}
+              text={templates.length ? `Nothing matches “${query}”. Try another word.` : 'Upload your firm’s own format (PDF or DOCX) to draft from it.'}
+              action={!templates.length && canManage ? <Button variant="primary" size="sm" icon="upload" onClick={() => setShowUpload(true)}>Upload template</Button> : undefined} />
           </div>
         )}
       </div>
 
-      <Dialog
-        header={busy ? 'Uploading…' : 'Upload Template'}
-        visible={showUpload}
-        style={{ width: 460 }}
-        closable={!busy}
-        onHide={() => { if (!busy) setShowUpload(false) }}
+      <Modal
+        title={busy ? 'Uploading…' : 'Upload template'}
+        sub="PDF or Word, up to 10 MB."
+        open={showUpload}
+        dismissable={!busy}
+        onClose={() => { if (!busy) setShowUpload(false) }}
+        footer={<button type="button" className="btn ghost" disabled={busy} onClick={() => setShowUpload(false)}>Cancel</button>}
       >
         {busy ? (
-          <div className="flex flex-column align-items-center justify-content-center gap-3 py-5">
-            <ProgressSpinner style={{ width: 46, height: 46 }} strokeWidth="4" />
-            <div className="font-medium">Uploading…</div>
-          </div>
+          <div className="row" style={{ justifyContent: 'center', padding: 32 }}><Spinner label="Uploading" /></div>
         ) : (
-          <div className="flex flex-column gap-3">
-            {error && <Message severity="error" text={error} className="w-full" />}
-            <div className="flex flex-column gap-2">
-              <label className="font-medium text-sm">Template name</label>
-              <InputText value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Mutual NDA (firm standard)" />
-            </div>
-            <div className="flex flex-column gap-2">
-              <label className="font-medium text-sm">Agreement type <span className="text-color-secondary">(optional)</span></label>
-              <InputText value={docType} onChange={e => setDocType(e.target.value)} placeholder="e.g. NDA, SHA, MSA" />
-            </div>
-            <div className="flex flex-column gap-2">
-              <label className="font-medium text-sm">Template file (PDF or DOCX)</label>
-              <FileUpload mode="basic" accept=".pdf,.docx" maxFileSize={10000000}
-                customUpload uploadHandler={handleUpload} auto chooseLabel="Choose & upload" disabled={busy} />
-            </div>
-            <p className="text-sm text-color-secondary m-0">
-              The file is processed to define what the draft will contain.
-            </p>
+          <div className="stack" style={{ gap: 14 }}>
+            {error && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{error}</div></div>}
+            <TextField label="Template name" value={name} onChange={e => setName(e.target.value)} placeholder="Mutual NDA (firm standard)" hint="Leave blank to use the file name." />
+            <TextField label="Agreement type (optional)" value={docType} onChange={e => setDocType(e.target.value)} placeholder="NDA, SHA, MSA" />
+            <FilePick label="Choose the template file" onUpload={handleUpload} disabled={busy} />
           </div>
         )}
-      </Dialog>
+      </Modal>
     </div>
   )
 }

@@ -1,0 +1,42 @@
+/* Firm Administration + Settings (Team Members, Roles, Audit Log, Backup, Settings).
+   Only Red Tape tokens, so light and dark both work. */
+
+/* FieldError's message (shared component; prime-skin styled it until now). */
+.field .field-error, .field .field-warning { display: block; font-size: var(--t-xs); line-height: 1.35; margin-top: 2px; }
+.field .field-error { color: var(--bad); }
+.field .field-warning { color: var(--warn); }
+
+/* Toolbar selects size to their content instead of stretching. */
+.fm-sel { width: auto; max-width: 100%; }
+.fm-search { gap: 6px; flex: 1 1 260px; min-width: 0; }
+.fm-search .input-icon { flex: 1; min-width: 0; }
+
+/* Drawer / modal sub-headings. */
+.fm-h4 { margin-bottom: 8px; font-size: var(--t-sm); font-weight: 600; color: var(--ink); }
+.fm-pre { white-space: pre-wrap; word-break: break-all; font-size: var(--t-xs); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 12px; margin: 0; }
+.fm-before { color: var(--bad); text-decoration: line-through; }
+.fm-after { color: var(--ok); }
+.fm-err { color: var(--bad); }
+
+/* Roles matrix: the module column is a plain row header, not a sticky one. */
+.pp-matrix .fm-mod { position: static; background: none; border-bottom: 1px solid var(--line); text-align: left; }
+.fm-mod-name { color: var(--ink); font-weight: 600; }
+.fm-perm-code { display: block; }
+
+/* Backup */
+.fm-val { font-size: var(--t-xl) !important; }
+.fm-sec { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink-3); }
+.fm-sec.ok > svg { color: var(--ok); }
+.fm-sec.bad > svg { color: var(--bad); }
+.fm-indet { position: relative; }
+.fm-indet i { position: absolute; width: 35% !important; animation: fm-indet 1.2s var(--ease) infinite; }
+@keyframes fm-indet { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .fm-indet i { animation: none; width: 100% !important; opacity: .4; } }
+.pp-type-cards button:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Settings */
+.fm-tile-img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.fm-hex { width: 96px; height: 26px; padding: 2px 6px; margin-top: 2px; }
+.fm-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.pp-radio-cards.fm-two { grid-template-columns: repeat(2, minmax(0, 220px)); }
+@media (max-width: 560px) { .pp-radio-cards.fm-two { grid-template-columns: 1fr 1fr; } }

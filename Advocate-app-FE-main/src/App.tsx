@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ProgressSpinner } from 'primereact/progressspinner';
+import { Spinner } from './ui/kit';
 import ErrorBoundary from './components/ErrorBoundary';
 import { isTokenExpired, logoutAndRedirect } from './utils/auth';
 import { useAuth } from './context/AuthContext';
@@ -49,8 +49,8 @@ function NotForClient({ children }: { children: ReactNode }) {
 
 function PageFallback() {
   return (
-    <div className="page-loading flex align-items-center justify-content-center" style={{ minHeight: '100vh' }}>
-      <ProgressSpinner style={{ width: 40, height: 40 }} strokeWidth="4" />
+    <div className="row" style={{ minHeight: '100vh', justifyContent: 'center' }}>
+      <Spinner />
     </div>
   );
 }

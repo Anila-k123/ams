@@ -1,21 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+// Documents: every file across the practice's matters. Grid of tiles or a list,
+// filtered by category, case, status and type; preview, versions, AI summary and
+// sharing with the client in the portal.
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { DRAFTING } from "./Drafting/routes";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { Dropdown } from "primereact/dropdown";
-import { Dialog } from "primereact/dialog";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Paginator } from "primereact/paginator";
-import { Skeleton } from "primereact/skeleton";
-import { ProgressBar } from "primereact/progressbar";
-import { Tag } from "primereact/tag";
-import { SelectButton } from "primereact/selectbutton";
-import "../assets/styles/DocumentsPanel.css";
 import documentService from "../services/DocumentService";
-import DocumentCard, { CategoryChip, DocumentActions, categoryColor, formatBytes, getFileIcon } from "../components/DocumentCard";
+import DocumentCard, { DocumentActions, formatBytes, getFileIcon, shortDate } from "../components/DocumentCard";
 import FilePreviewModal from "../components/FilePreviewModal";
 import DocumentSummaryModal from "../components/DocumentSummaryModal";
 import DocumentVersionsModal from "../components/DocumentVersionsModal";
@@ -24,6 +14,11 @@ import { usePermission } from "../contexts/PermissionContext";
 import { useToast } from "../contexts/ToastContext";
 import api from "../api/client";
 import { usePageModal } from "../utils/pageModal";
+import { Button, Chip, EmptyState, Icon, PageHead, Skel } from "../ui/kit";
+import { FilterChip, SearchInput, Segmented, SelectField, TextArea, TextField } from "../ui/forms";
+import { Modal, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/clients.css";
 
 const CATEGORIES = [
   "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
@@ -39,12 +34,6 @@ const FILE_TYPE_OPTIONS = [
   { value: "application/zip", label: "ZIP" },
 ];
 
-const STATUS_OPTIONS = [
-  { value: "", label: "All Status" },
-  { value: "ACTIVE", label: "Active" },
-  { value: "ARCHIVED", label: "Archived" },
-];
-
 const PAGE_SIZE = 20;
 const emptyUploadOptions = { category: "", caseId: "", clientId: "", documentName: "", description: "" };
 
@@ -52,15 +41,19 @@ export default function DocumentsPanel() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [cases, setCases] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState("grid");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchText, setSearchText] = useState("");
   const [highlightedId, setHighlightedId] = useState<any>(null);
   const location = useLocation();
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
   const [selectedFileType, setSelectedFileType] = useState("");
+  // Filtering by case reads that case's files (the list endpoint has no case filter).
+  const [selectedCase, setSelectedCase] = useState("");
+  const [sharedOnly, setSharedOnly] = useState(false);
   const [page, setPage] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
+  const [stats, setStats] = useState<any>(null);
   const [previewDoc, setPreviewDoc] = useState<any>(null);
   const [summaryDoc, setSummaryDoc] = useState<any>(null);
   const [versionsDoc, setVersionsDoc] = useState<any>(null);
@@ -71,7 +64,6 @@ export default function DocumentsPanel() {
   const [uploadResults, setUploadResults] = useState<any[]>([]);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [dragOver, setDragOver] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<any>(null);
   const [editDoc, setEditDoc] = useState<any>(null);
   const [error, setError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +87,18 @@ export default function DocumentsPanel() {
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
     try {
+      if (selectedCase) {
+        const all: any[] = (await (documentService as any).getDocumentsByCase(selectedCase)) || [];
+        const kw = searchText.trim().toLowerCase();
+        const rows = all.filter((d) =>
+          (!kw || `${d.documentName} ${d.originalName || ""} ${d.category || ""} ${d.description || ""}`.toLowerCase().includes(kw))
+          && (!selectedCategory || d.category === selectedCategory)
+          && (!selectedStatus || (d.status || "ACTIVE") === selectedStatus)
+          && (!selectedFileType || String(d.fileType || "").startsWith(selectedFileType)));
+        setTotalElements(rows.length);
+        setDocuments(rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE));
+        return;
+      }
       const data = await (documentService as any).fetchDocuments({
         page, size: PAGE_SIZE, keyword: searchText || undefined,
         category: selectedCategory || undefined,
@@ -112,7 +116,7 @@ export default function DocumentsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [page, searchText, selectedCategory, selectedStatus, selectedFileType]);
+  }, [page, searchText, selectedCategory, selectedStatus, selectedFileType, selectedCase]);
 
   const fetchCases = useCallback(async () => {
     try {
@@ -123,6 +127,10 @@ export default function DocumentsPanel() {
     }
   }, []);
 
+  const fetchStats = useCallback(() => {
+    (documentService as any).getStats().then(setStats).catch(() => { /* the line just hides */ });
+  }, []);
+
   useEffect(() => {
     if (searchedFromGlobalNav.current) {
       searchedFromGlobalNav.current = false;
@@ -131,9 +139,9 @@ export default function DocumentsPanel() {
     fetchDocuments();
   }, [fetchDocuments]);
 
-  useEffect(() => { fetchCases(); }, [fetchCases]);
+  useEffect(() => { fetchCases(); fetchStats(); }, [fetchCases, fetchStats]);
 
-  // AI Assistant: search + modal listeners
+  // AI Assistant: search
   useEffect(() => {
     const handleSearch = (e: any) => {
       if (e.detail?.query) setSearchText(e.detail.query);
@@ -144,12 +152,14 @@ export default function DocumentsPanel() {
     };
   }, []);
 
-  // Quick Actions / Lisa: open the upload dialog.
-  usePageModal(["create-document", "upload-document"], () => {
+  const openUpload = () => {
     setShowUploadModal(true);
     setUploadResults([]);
     setUploadProgress({ current: 0, total: 0 });
-  });
+  };
+
+  // Quick Actions / Lisa: open the upload dialog.
+  usePageModal(["create-document", "upload-document"], openUpload);
 
   // Global Search navigation — read incoming state
   useEffect(() => {
@@ -161,27 +171,30 @@ export default function DocumentsPanel() {
     }
   }, [location.state]);
 
+  // Scroll the highlighted document (from global search) into view.
+  useEffect(() => {
+    if (highlightedId == null) return;
+    requestAnimationFrame(() => document.querySelector(".dc-body .highlight-row")
+      ?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }, [documents, highlightedId]);
+
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => setPage(0), 400);
     return () => clearTimeout(timer);
-  }, [searchText, selectedCategory, selectedStatus, selectedFileType]);
+  }, [searchText, selectedCategory, selectedStatus, selectedFileType, selectedCase]);
 
   const clearFilters = () => {
     setSearchText("");
     setSelectedCategory("");
     setSelectedStatus("");
     setSelectedFileType("");
+    setSelectedCase("");
+    setSharedOnly(false);
     setPage(0);
   };
 
-  const hasFilters = searchText || selectedCategory || selectedStatus || selectedFileType;
-
-  const handleUploadClick = () => {
-    setShowUploadModal(true);
-    setUploadResults([]);
-    setUploadProgress({ current: 0, total: 0 });
-  };
+  const hasFilters = !!(searchText || selectedCategory || selectedStatus || selectedFileType || selectedCase || sharedOnly);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -225,6 +238,7 @@ export default function DocumentsPanel() {
         setUploadFiles([]);
         setUploadOptions(emptyUploadOptions);
         fetchDocuments();
+        fetchStats();
       }, 1500);
     }
     setUploading(false);
@@ -247,17 +261,22 @@ export default function DocumentsPanel() {
     }
   };
 
-  const confirmDelete = async () => {
-    if (!deleteConfirm) return;
-    try {
-      await withLoading((documentService as any).deleteDocument(deleteConfirm.id), "Deleting Document...");
-      setDeleteConfirm(null);
-      fetchDocuments();
-    } catch (err) {
-      console.error("Delete error:", err);
-      setError("Failed to delete document");
-    }
-  };
+  const askDelete = (doc: any) => confirm({
+    title: "Delete this document?",
+    message: <><b>{doc.documentName}</b> and its version history will be permanently removed. This can&apos;t be undone.</>,
+    confirmLabel: "Delete document",
+    danger: true,
+    accept: async () => {
+      try {
+        await withLoading((documentService as any).deleteDocument(doc.id), "Deleting Document...");
+        fetchDocuments();
+        fetchStats();
+      } catch (err) {
+        console.error("Delete error:", err);
+        setError("Failed to delete document");
+      }
+    },
+  });
 
   const saveEdit = async () => {
     if (!editDoc) return;
@@ -283,178 +302,194 @@ export default function DocumentsPanel() {
     onSummary: setSummaryDoc,
     onVersions: setVersionsDoc,
     onDownload: handleDownload,
-    onDelete: hasPermission("DOCUMENT_DELETE") ? setDeleteConfirm : undefined,
+    onDelete: hasPermission("DOCUMENT_DELETE") ? askDelete : undefined,
     onEdit: hasPermission("DOCUMENT_EDIT") ? setEditDoc : undefined,
     onShareToggle: hasPermission("DOCUMENT_EDIT") ? handleShareToggle : undefined,
     // Opens Draft Documents, where the file is prepared for drafting.
     onUseInDraft: hasPermission("DRAFT_VIEW") ? () => navigate(DRAFTING.samples) : undefined,
   };
 
-  if (loading && documents.length === 0) {
-    return (
-      <div className="documents-container">
-        <div className="doc-grid">
-          {[1, 2, 3, 4, 5, 6].map((i) => <Skeleton key={i} height="220px" borderRadius="12px" />)}
-        </div>
-      </div>
-    );
-  }
+  // "Shared with client" narrows the page already loaded (the API has no such filter).
+  const shown = useMemo(() => (sharedOnly ? documents.filter((d) => d.clientVisible) : documents), [documents, sharedOnly]);
 
   const categoryOptions = CATEGORIES.map((c) => ({ value: c, label: c }));
   const caseOptions = cases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }));
+  const pages = Math.max(1, Math.ceil(totalElements / PAGE_SIZE));
+
+  const columns: Column<any>[] = [
+    { key: "documentName", label: "Name", render: (d) => (
+      <div className="row" style={{ gap: 8, minWidth: 0 }}>
+        <Icon name={getFileIcon(d)} size="sm" />
+        <span className="cell-title ellipsis" style={{ maxWidth: 280 }} title={d.documentName}>{d.documentName}</span>
+      </div>
+    ) },
+    { key: "category", label: "Category", hideSm: true, render: (d) => d.category || "Other" },
+    { key: "case", label: "Case", render: (d) => d.caseEntity?.caseNumber ? <span className="mono small">{d.caseEntity.caseNumber}</span> : <span className="faint">None</span> },
+    { key: "client", label: "Client", hideSm: true, render: (d) => d.client?.name || <span className="faint">None</span> },
+    { key: "fileSize", label: "Size", align: "right", hideSm: true, render: (d) => <span className="mono xs">{formatBytes(d.fileSize)}</span> },
+    { key: "uploadDate", label: "Uploaded", hideSm: true, render: (d) => shortDate(d.uploadDate) },
+    { key: "version", label: "Version", hideSm: true, render: (d) => (
+      <button type="button" className="btn ghost sm mono" onClick={(e) => { e.stopPropagation(); setVersionsDoc(d); }} title="Version history">v{d.version || 1}</button>
+    ) },
+    { key: "shared", label: "Shared", render: (d) => d.clientVisible ? <Chip tone="ok">Shared</Chip> : <span className="faint small">Private</span> },
+    { key: "status", label: "Status", hideSm: true, render: (d) => (d.status || "ACTIVE") === "ACTIVE" ? <Chip tone="ok">Active</Chip> : <Chip>Archived</Chip> },
+    { key: "a", label: <span className="sr-only">Actions</span>, align: "right", render: (d) => (
+      <div className="row" style={{ gap: 4, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
+        <Button size="sm" variant="ghost" icon="sparkle" onClick={() => setSummaryDoc(d)}>Summary</Button>
+        <DocumentActions doc={d} {...handlers} />
+      </div>
+    ) },
+  ];
+
+  const total = stats?.totalDocuments ?? totalElements;
 
   return (
-    <div className="documents-container">
-      <div className="flex align-items-center justify-content-between gap-2 flex-wrap">
-        <p className="doc-subtle">{totalElements} file{totalElements !== 1 ? "s" : ""}</p>
-        {hasPermission("DOCUMENT_UPLOAD") && (
-          <Button icon="pi pi-plus" label="Upload Files" onClick={handleUploadClick} />
-        )}
+    <div>
+      <PageHead title="Documents" sub="Pleadings, orders, evidence and client papers across all matters."
+        actions={hasPermission("DOCUMENT_UPLOAD") && <Button variant="primary" icon="upload" onClick={openUpload}>Upload</Button>} />
+
+      <div className="p3-storage">
+        <span><b className="num">{total}</b> file{total !== 1 ? "s" : ""}{stats && <>, <b className="num">{formatBytes(stats.totalStorageBytes)}</b> stored</>}</span>
       </div>
 
       {error && (
-        <div className="doc-error-banner flex align-items-center justify-content-between">
-          <span>{error}</span>
-          <Button icon="pi pi-times" className="p-button-rounded p-button-text p-button-danger p-button-sm" onClick={() => setError("")} aria-label="Dismiss" />
+        <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
+          <Icon name="warn" size="sm" /><span className="grow">{error}</span>
+          <button type="button" className="icon-btn" style={{ width: 24, height: 24 }} onClick={() => setError("")} aria-label="Dismiss"><Icon name="x" size="sm" /></button>
         </div>
       )}
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap align-items-center gap-2">
-        <span className="p-input-icon-left p-input-icon-right flex-1" style={{ minWidth: 220 }}>
-          <i className="pi pi-search" />
-          <InputText className="w-full" placeholder="Search documents..." value={searchText}
-            onChange={(e) => setSearchText(e.target.value)} />
-          {searchText && <i className="pi pi-times cursor-pointer" onClick={() => setSearchText("")} />}
-        </span>
-        <Dropdown placeholder="All Categories" value={selectedCategory} options={[{ value: "", label: "All Categories" }, ...categoryOptions]}
-          onChange={(e) => { setSelectedCategory(e.value); setPage(0); }} />
-        <Dropdown value={selectedStatus} options={STATUS_OPTIONS}
-          onChange={(e) => { setSelectedStatus(e.value); setPage(0); }} />
-        <Dropdown placeholder="All Types" value={selectedFileType} options={[{ value: "", label: "All Types" }, ...FILE_TYPE_OPTIONS]}
-          onChange={(e) => { setSelectedFileType(e.value); setPage(0); }} />
-        {hasFilters && <Button icon="pi pi-times" label="Clear" className="p-button-text" onClick={clearFilters} />}
-        <SelectButton value={viewMode} onChange={(e) => e.value && setViewMode(e.value)}
-          options={[{ value: "grid", icon: "pi pi-th-large" }, { value: "list", icon: "pi pi-list" }]}
-          itemTemplate={(o) => <i className={o.icon} />} />
+      <div className="toolbar">
+        <SearchInput value={searchText} onChange={setSearchText} placeholder="Search file, case or client" aria-label="Search documents" />
+        <select className="input" aria-label="Category" value={selectedCategory} onChange={(e) => { setSelectedCategory(e.target.value); setPage(0); }}>
+          <option value="">Category: All</option>
+          {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select className="input" aria-label="Case" value={selectedCase} onChange={(e) => { setSelectedCase(e.target.value); setPage(0); }} style={{ maxWidth: 220 }}>
+          <option value="">Case: All</option>
+          {cases.map((c) => <option key={c.id} value={c.id}>{c.caseNumber}</option>)}
+        </select>
+        <select className="input" aria-label="Type" value={selectedFileType} onChange={(e) => { setSelectedFileType(e.target.value); setPage(0); }}>
+          <option value="">Type: All</option>
+          {FILE_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <select className="input" aria-label="Status" value={selectedStatus} onChange={(e) => { setSelectedStatus(e.target.value); setPage(0); }}>
+          <option value="">Status: All</option>
+          <option value="ACTIVE">Active</option>
+          <option value="ARCHIVED">Archived</option>
+        </select>
+        <FilterChip on={sharedOnly} onClick={() => setSharedOnly((v) => !v)}><Icon name="globe" size="sm" />Shared with client</FilterChip>
+        {hasFilters && <Button variant="ghost" size="sm" icon="x" onClick={clearFilters}>Clear</Button>}
+        <span className="grow" />
+        <Segmented<"grid" | "list"> label="View" value={viewMode} onChange={setViewMode} options={[
+          { value: "grid", icon: "grid", label: <span className="sr-only">Grid</span> },
+          { value: "list", icon: "rows", label: <span className="sr-only">List</span> },
+        ]} />
       </div>
 
-      {/* Document Grid/List */}
-      {documents.length === 0 ? (
-        <div className="doc-empty">
-          <i className="pi pi-folder-open" style={{ fontSize: 64 }} />
-          <h3>No documents found</h3>
-          <p>{hasFilters ? "Try adjusting your filters" : "Upload your first document to get started"}</p>
-          {!hasFilters && hasPermission("DOCUMENT_UPLOAD") && <Button icon="pi pi-upload" label="Upload" onClick={handleUploadClick} />}
-        </div>
-      ) : viewMode === "grid" ? (
-        <div className="doc-grid">
-          {documents.map((doc) => (
-            <div key={doc.id} className={highlightedId === doc.id ? "highlight-row" : ""}>
-              <DocumentCard doc={doc} {...handlers} />
+      <div className="dc-body">
+        {viewMode === "grid" ? (
+          loading && documents.length === 0 ? (
+            <div className="doc-grid">{Array.from({ length: 8 }, (_, i) => <Skel key={i} h={220} />)}</div>
+          ) : shown.length === 0 ? (
+            <EmptyState icon="folder" title={hasFilters ? "No documents match" : "No documents yet"}
+              text={hasFilters ? "Try another category or type, or clear the filters." : "Upload pleadings, orders and client papers to keep them with the matter."}
+              action={hasFilters ? <Button size="sm" onClick={clearFilters}>Clear filters</Button>
+                : hasPermission("DOCUMENT_UPLOAD") ? <Button size="sm" variant="primary" icon="upload" onClick={openUpload}>Upload</Button> : undefined} />
+          ) : (
+            <div className="doc-grid">
+              {shown.map((doc) => (
+                <DocumentCard key={doc.id} doc={doc} {...handlers} className={highlightedId === doc.id ? "highlight-row" : undefined} />
+              ))}
             </div>
-          ))}
-        </div>
-      ) : (
-        <DataTable value={documents} dataKey="id" size="small" stripedRows responsiveLayout="scroll"
-          rowClassName={(d: any) => (highlightedId === d.id ? "highlight-row" : "")}>
-          <Column header="Name" body={(doc: any) => (
-            <div className="flex align-items-center gap-2">
-              <i className={`pi ${getFileIcon(doc.fileType)}`} style={{ color: categoryColor(doc), fontSize: 18 }} />
-              <strong>{doc.documentName}</strong>
-              <button type="button" className="doc-card-version-btn" onClick={() => setVersionsDoc(doc)} title="Version history">v{doc.version}</button>
-            </div>
-          )} />
-          <Column header="Category" body={(doc: any) => <CategoryChip doc={doc} />} />
-          <Column header="Size" body={(doc: any) => formatBytes(doc.fileSize)} />
-          <Column header="Case" body={(doc: any) => doc.caseEntity?.caseNumber || "-"} />
-          <Column header="Client" body={(doc: any) => doc.client?.name || "-"} />
-          <Column header="Uploaded" body={(doc: any) => new Date(doc.uploadDate).toLocaleDateString()} />
-          <Column header="Status" body={(doc: any) => (
-            <Tag value={doc.status || "ACTIVE"} severity={(doc.status || "ACTIVE") === "ACTIVE" ? "success" : "secondary"} />
-          )} />
-          <Column header="Actions" body={(doc: any) => (
-            <div className="flex align-items-center gap-1">
-              <Button icon="pi pi-bolt" label="Summary" className="p-button-text p-button-sm" onClick={() => setSummaryDoc(doc)} />
-              <DocumentActions doc={doc} {...handlers} />
-            </div>
-          )} />
-        </DataTable>
-      )}
+          )
+        ) : (
+          <DataTable rows={shown} columns={columns} rowKey={(d) => d.id} loading={loading && documents.length === 0}
+            onRow={(d) => setPreviewDoc(d)} pageSize={0} caption="Documents"
+            rowClass={(d) => (highlightedId === d.id ? "highlight-row" : undefined)}
+            empty={{ icon: "folder", title: "No documents match", text: "Clear the filters above to see everything." }} />
+        )}
+      </div>
 
       {totalElements > PAGE_SIZE && (
-        <Paginator first={page * PAGE_SIZE} rows={PAGE_SIZE} totalRecords={totalElements}
-          onPageChange={(e) => setPage(e.page)} />
+        <div className="row between wrap" style={{ marginTop: "var(--s4)", gap: "var(--s3)" }}>
+          <span className="faint small">Page {page + 1} of {pages}, {totalElements} files</span>
+          <div className="row" style={{ gap: 6 }}>
+            <Button size="sm" icon="chevronLeft" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>
+            <Button size="sm" disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>Next<Icon name="chevron" size="sm" /></Button>
+          </div>
+        </div>
       )}
 
-      {/* Upload Modal */}
-      <Dialog visible={showUploadModal} header="Upload Files" style={{ width: "40rem" }} breakpoints={{ "640px": "95vw" }}
-        onHide={() => { if (!uploading) setShowUploadModal(false); }} closable={!uploading} modal
-        footer={
-          <Button onClick={handleUpload} disabled={uploadFiles.length === 0 || uploading} loading={uploading}
-            label={uploading ? `Uploading... (${uploadProgress.current}/${uploadProgress.total})` : `Upload ${uploadFiles.length} file${uploadFiles.length !== 1 ? "s" : ""}`} />
-        }>
-        <div className="flex flex-column gap-3">
-          <div
-            className={`upload-dropzone ${dragOver ? "drag-over" : ""}`}
+      {/* Upload */}
+      <Modal open={showUploadModal} title="Upload documents" sub="PDF, DOC, DOCX, PNG, JPG or ZIP, up to 25 MB each."
+        onClose={() => { if (!uploading) setShowUploadModal(false); }} dismissable={!uploading}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowUploadModal(false)} disabled={uploading}>Cancel</Button>
+          <Button variant="primary" icon="upload" onClick={handleUpload} disabled={uploadFiles.length === 0 || uploading} loading={uploading}>
+            {uploading ? `Uploading (${uploadProgress.current}/${uploadProgress.total})` : `Upload ${uploadFiles.length} file${uploadFiles.length !== 1 ? "s" : ""}`}
+          </Button>
+        </>}>
+        <div className="stack">
+          <button type="button" className={`dropzone${dragOver ? " over" : ""}`}
             onDrop={handleDrop}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <i className="pi pi-upload" style={{ fontSize: 36 }} />
-            <p>Drag & drop files here, or click to browse</p>
-            <small>Supports PDF, DOC, DOCX, PNG, JPG, ZIP (max 25 MB each)</small>
-            <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} style={{ display: "none" }} />
-          </div>
+            onClick={() => fileInputRef.current?.click()}>
+            <Icon name="upload" size="lg" />
+            <div style={{ marginTop: 8 }}><b>Drop files here</b> or click to browse</div>
+            <div className="faint xs" style={{ marginTop: 4 }}>You can add several files at once.</div>
+          </button>
+          <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} aria-label="Choose files" />
 
           {uploadFiles.length > 0 && (
-            <div className="flex flex-column gap-1">
+            <div className="dc-files">
               {uploadFiles.map((file, i) => (
-                <div key={i} className="upload-file-item flex align-items-center gap-2">
-                  <i className="pi pi-file" />
-                  <span className="flex-1">{file.name}</span>
-                  <small className="doc-subtle">{(file.size / 1024 / 1024).toFixed(1)} MB</small>
-                  {!uploading && <Button icon="pi pi-times" className="p-button-rounded p-button-text p-button-sm" onClick={() => removeUploadFile(i)} aria-label="Remove" />}
+                <div key={i} className="dc-file">
+                  <Icon name="file" size="sm" />
+                  <span className="grow ellipsis" title={file.name}>{file.name}</span>
+                  <span className="faint xs mono">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
+                  {!uploading && (
+                    <button type="button" className="icon-btn" style={{ width: 26, height: 26 }} onClick={() => removeUploadFile(i)} aria-label={`Remove ${file.name}`}>
+                      <Icon name="x" size="sm" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
-          <div className="grid">
-            <div className="col-12 md:col-6">
-              <Dropdown className="w-full" value={uploadOptions.category} options={categoryOptions} placeholder="Select Category" showClear
-                onChange={(e) => setUploadOptions((o: any) => ({ ...o, category: e.value || "" }))} />
-            </div>
-            <div className="col-12 md:col-6">
-              <Dropdown className="w-full" value={uploadOptions.caseId} options={caseOptions} placeholder="Link to Case (optional)" showClear filter
-                onChange={(e) => setUploadOptions((o: any) => ({ ...o, caseId: e.value || "" }))} />
-            </div>
-            <div className="col-12">
-              <InputText className="w-full" placeholder="Document name (optional)" value={uploadOptions.documentName}
-                onChange={(e) => setUploadOptions((o: any) => ({ ...o, documentName: e.target.value }))} />
-            </div>
+          <div className="form-grid">
+            <SelectField label="Category" value={uploadOptions.category} options={categoryOptions} placeholder="Select category"
+              onChange={(e) => setUploadOptions((o: any) => ({ ...o, category: e.target.value }))} />
+            <SelectField label="Link to case" value={uploadOptions.caseId} options={caseOptions} placeholder="Not linked (optional)"
+              onChange={(e) => setUploadOptions((o: any) => ({ ...o, caseId: e.target.value }))} />
+            <TextField full label="Document name" hint="Optional. Defaults to the file name." value={uploadOptions.documentName}
+              onChange={(e) => setUploadOptions((o: any) => ({ ...o, documentName: e.target.value }))} />
           </div>
 
           {uploadProgress.total > 0 && (
             <div>
-              <ProgressBar value={Math.round((uploadProgress.current / uploadProgress.total) * 100)} showValue={false} style={{ height: 8 }} />
-              <small className="doc-subtle">{uploadProgress.current}/{uploadProgress.total} uploaded</small>
+              <div className="meter" role="progressbar" aria-label="Upload progress" aria-valuemin={0} aria-valuemax={100}
+                aria-valuenow={Math.round((uploadProgress.current / uploadProgress.total) * 100)}>
+                <i style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%`, background: "var(--ink)" }} />
+              </div>
+              <div className="faint xs" style={{ marginTop: 4 }}>{uploadProgress.current}/{uploadProgress.total} uploaded</div>
             </div>
           )}
 
           {uploadResults.length > 0 && (
-            <div className="flex flex-column gap-1">
+            <div className="dc-files" role="status">
               {uploadResults.map((r, i) => (
-                <div key={i} className={`upload-result ${r.success ? "success" : "error"}`}>
-                  {r.success ? "✓" : "✗"} {r.file}
+                <div key={i} className={`dc-result ${r.success ? "ok" : "bad"}`}>
+                  <Icon name={r.success ? "ok" : "warn"} size="sm" /> {r.file}
                   {!r.success && <span> — {r.error}</span>}
                 </div>
               ))}
             </div>
           )}
         </div>
-      </Dialog>
+      </Modal>
 
       {previewDoc && <FilePreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} onDownload={handleDownload} />}
 
@@ -467,35 +502,23 @@ export default function DocumentsPanel() {
           canUpload={hasPermission("DOCUMENT_UPLOAD")} onUpdated={fetchDocuments} />
       )}
 
-      {/* Delete Confirmation */}
-      <Dialog visible={!!deleteConfirm} header="Delete Document" onHide={() => setDeleteConfirm(null)} style={{ width: "28rem" }}
-        breakpoints={{ "640px": "95vw" }} modal dismissableMask
+      {/* Edit details */}
+      <Modal open={!!editDoc} title="Edit document" size="narrow" onClose={() => setEditDoc(null)}
         footer={<>
-          <Button label="Cancel" className="p-button-text" onClick={() => setDeleteConfirm(null)} />
-          <Button label="Delete" icon="pi pi-trash" className="p-button-danger" onClick={confirmDelete} />
-        </>}>
-        <p>Are you sure you want to delete <strong>{deleteConfirm?.documentName}</strong>?</p>
-        <p style={{ color: "var(--danger)", fontSize: 13 }}>This action cannot be undone. The file will be permanently removed.</p>
-      </Dialog>
-
-      {/* Edit Modal */}
-      <Dialog visible={!!editDoc} header="Edit Document" onHide={() => setEditDoc(null)} style={{ width: "32rem" }}
-        breakpoints={{ "640px": "95vw" }} modal dismissableMask
-        footer={<>
-          <Button label="Cancel" className="p-button-text" onClick={() => setEditDoc(null)} />
-          <Button label="Save Changes" icon="pi pi-check" onClick={saveEdit} />
+          <Button variant="ghost" onClick={() => setEditDoc(null)}>Cancel</Button>
+          <Button variant="primary" icon="check" onClick={saveEdit}>Save changes</Button>
         </>}>
         {editDoc && (
-          <div className="flex flex-column gap-2">
-            <label className="doc-label">Document Name</label>
-            <InputText value={editDoc.documentName} onChange={(e) => setEditDoc((d: any) => ({ ...d, documentName: e.target.value }))} />
-            <label className="doc-label">Category</label>
-            <Dropdown value={editDoc.category} options={categoryOptions} onChange={(e) => setEditDoc((d: any) => ({ ...d, category: e.value }))} />
-            <label className="doc-label">Description</label>
-            <InputTextarea rows={3} value={editDoc.description || ""} onChange={(e) => setEditDoc((d: any) => ({ ...d, description: e.target.value }))} />
+          <div className="stack">
+            <TextField label="Document name" required value={editDoc.documentName || ""}
+              onChange={(e) => setEditDoc((d: any) => ({ ...d, documentName: e.target.value }))} />
+            <SelectField label="Category" value={editDoc.category || ""} options={categoryOptions} placeholder="Select category"
+              onChange={(e) => setEditDoc((d: any) => ({ ...d, category: e.target.value }))} />
+            <TextArea label="Description" rows={3} value={editDoc.description || ""}
+              onChange={(e) => setEditDoc((d: any) => ({ ...d, description: e.target.value }))} />
           </div>
         )}
-      </Dialog>
+      </Modal>
     </div>
   );
 }

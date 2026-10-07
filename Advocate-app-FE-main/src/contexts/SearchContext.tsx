@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
-import { useLoading } from "../contexts/LoadingContext";
 
 const SearchContext = createContext(null);
 
@@ -25,7 +24,6 @@ function saveRecentSearches(searches) {
 }
 
 export function SearchProvider({ children }) {
-  const { withLoading } = useLoading();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -43,13 +41,11 @@ export function SearchProvider({ children }) {
     setLoading(true);
 
     try {
-      const res = await withLoading(
-        fetch(`${BASE_URL}?q=${encodeURIComponent(q.trim())}`, {
-          headers: authHeaders(),
-          signal: controller.signal,
-        }),
-        "Searching..."
-      );
+      // No global loader here: the palette shows its own spinner while you type.
+      const res = await fetch(`${BASE_URL}?q=${encodeURIComponent(q.trim())}`, {
+        headers: authHeaders(),
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error("Search failed");
       const data = await res.json();
       setResults(data);
@@ -62,7 +58,7 @@ export function SearchProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [withLoading]);
+  }, []);
 
   const debouncedSearch = useCallback((value) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);

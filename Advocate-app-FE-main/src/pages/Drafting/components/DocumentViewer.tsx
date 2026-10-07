@@ -1,8 +1,8 @@
 import { authHeaders } from '../../../api/client'
 import { useEffect, useState } from 'react'
-import { Dialog } from 'primereact/dialog'
-import { ProgressSpinner } from 'primereact/progressspinner'
-import { Message } from 'primereact/message'
+import { Modal } from '../../../ui/overlays'
+import { Spinner } from '../../../ui/kit'
+import Icon from '../../../ui/Icon'
 import * as mammoth from 'mammoth'
 
 /** Props for the in-app document preview dialog. */
@@ -62,41 +62,33 @@ export default function DocumentViewer({ visible, onHide, fileUrl, name }: Props
   }, [visible, fileUrl, isPdf, isDocx])
 
   return (
-    <Dialog
-      header={name ?? 'Document'}
-      visible={visible}
-      onHide={onHide}
-      maximizable
-      style={{ width: '80vw', maxWidth: 920 }}
-      contentStyle={{ paddingTop: '1rem' }}
-    >
-      {!fileUrl && <Message severity="warn" className="w-full" text="No file available for this item." />}
+    <Modal title={name ?? 'Document'} open={visible} onClose={onHide} size="xwide">
+      {!fileUrl && <div className="callout warn"><Icon name="warn" size="sm" /><div>No file available for this item.</div></div>}
 
       {fileUrl && (isPdf || isDocx) && (
         <div style={{ minHeight: '40vh' }}>
           {loading && (
-            <div className="flex flex-column align-items-center justify-content-center p-6 gap-3">
-              <ProgressSpinner style={{ width: 44, height: 44 }} />
-              <span className="text-color-secondary">Loading document…</span>
+            <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
+              <Spinner label="Loading document" />
             </div>
           )}
-          {error && <Message severity="error" className="w-full" text={error} />}
+          {error && <div className="callout bad"><Icon name="warn" size="sm" /><div>{error}</div></div>}
           {!loading && !error && isPdf && pdfUrl && (
             <iframe
               title={name ?? 'document'}
               src={pdfUrl}
-              style={{ width: '100%', height: '72vh', border: 'none', borderRadius: 8 }}
+              style={{ width: '100%', height: '72vh', border: 'none', borderRadius: 'var(--r-md)' }}
             />
           )}
           {!loading && !error && isDocx && (
-            <div className="pp-docx-preview" dangerouslySetInnerHTML={{ __html: html }} />
+            <div className="paper-sheet pp-docx-preview" dangerouslySetInnerHTML={{ __html: html }} />
           )}
         </div>
       )}
 
       {fileUrl && !isPdf && !isDocx && (
-        <Message severity="warn" className="w-full" text="In-app preview isn't supported for this file type." />
+        <div className="callout warn"><Icon name="warn" size="sm" /><div>In-app preview isn't supported for this file type.</div></div>
       )}
-    </Dialog>
+    </Modal>
   )
 }

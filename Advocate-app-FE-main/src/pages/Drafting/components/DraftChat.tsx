@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { ASSISTANT_NAME } from '../../../constants/assistant'
-import { InputTextarea } from 'primereact/inputtextarea'
-import { Button } from 'primereact/button'
-import { Dialog } from 'primereact/dialog'
-import { Menu } from 'primereact/menu'
 import { diffWords } from 'diff'
+import { Modal } from '../../../ui/overlays'
+import { Button, PopMenu } from '../../../ui/kit'
+import Icon from '../../../ui/Icon'
+import '../../../ui/lisa.css'
 import { draftingApi, type EditProposal, type RefineResult } from '../api/drafting'
 
 type Msg =
@@ -28,9 +28,9 @@ const CF_ORDER = ['document_title', 'parties', 'purpose', 'instructions']
 
 /** Whole-document refine actions — presets that run through the refine endpoint. */
 const REFINE_ACTIONS = [
-  { key: 'formal', short: 'More formal', chip: 'Make the language more formal', prompt: 'Make the whole document more formal', icon: 'pi pi-briefcase' },
-  { key: 'concise', short: 'More concise', chip: 'Make the document more concise', prompt: 'Make the whole document more concise', icon: 'pi pi-align-center' },
-  { key: 'grammar', short: 'Fix grammar', chip: 'Fix grammar & spelling', prompt: 'Fix grammar and spelling across the document', icon: 'pi pi-check-circle' },
+  { key: 'formal', short: 'More formal', chip: 'Make the language more formal', prompt: 'Make the whole document more formal', icon: 'case' as const },
+  { key: 'concise', short: 'More concise', chip: 'Make the document more concise', prompt: 'Make the whole document more concise', icon: 'minus' as const },
+  { key: 'grammar', short: 'Fix grammar', chip: 'Fix grammar & spelling', prompt: 'Fix grammar and spelling across the document', icon: 'check' as const },
 ]
 
 /** Collapsible "Created from" — the original brief/prompt/facts the draft was
@@ -44,8 +44,8 @@ function CreatedFrom({ facts }: { facts: Record<string, string> }) {
   const preview = entries[0][1].replace(/\s+/g, ' ').trim().slice(0, 80)
   return (
     <div className="pp-createdfrom">
-      <button type="button" className="pp-cf-head" onClick={() => setOpen(o => !o)}>
-        <i className={`pi ${open ? 'pi-chevron-down' : 'pi-chevron-right'}`} />
+      <button type="button" className="pp-cf-head" aria-expanded={open} onClick={() => setOpen(o => !o)}>
+        <Icon name={open ? 'chevronDown' : 'chevron'} size="sm" />
         <span>Created from</span>
       </button>
       {open ? (
@@ -97,7 +97,7 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
   const followupBlock = useRef<number | null>(null)   // target hint after "Edit further"
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
-  const refineMenu = useRef<Menu>(null)
+  const [refineAnchor, setRefineAnchor] = useState<HTMLElement | null>(null)
   const [thinking, setThinking] = useState('Processing…')  // spinner label
   const [expanded, setExpanded] = useState(false)  // full-width modal view
 
@@ -194,19 +194,37 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
     inputRef.current?.focus()
   }
 
+
+  // Assistant turns carry Lisa's seal; user turns are right-aligned ink bubbles,
+  // the same visual language as the global Lisa panel (ui/lisa.css).
+  const ai = (key: number | string, body: React.ReactNode) => (
+    <div key={key} className="lisa-msg ai">
+      <span className="lisa-seal sm" aria-hidden="true">L</span>
+      <div className="lisa-bubble dr-card">{body}</div>
+    </div>
+  )
+  const diffBox = (removed: string, added: string) => (
+    <div className="dr-diff">
+      <div className="dr-diff-label del"><Icon name="minus" size="sm" /> Removed</div>
+      <div className="dr-diff-text del">{removed}</div>
+      <div className="dr-diff-label ins"><Icon name="plus" size="sm" /> Added</div>
+      <div className="dr-diff-text ins">{added}</div>
+    </div>
+  )
+
   const chatInner = (
     <>
       <CreatedFrom facts={facts} />
 
-      <div className="pp-chat-msgs">
+      <div className="pp-chat-msgs" aria-live="polite">
         {messages.length === 0 && !sending && (
           <div className="pp-chat-intro">
-            <div className="pp-chat-intro-icon"><i className="pi pi-sparkles" /></div>
-            <div className="pp-chat-intro-title">Work on this draft with AI</div>
+            <span className="lisa-seal lg" aria-hidden="true">L</span>
+            <div className="pp-chat-intro-title">Work on this draft with {ASSISTANT_NAME}</div>
             <div className="pp-chat-intro-sub">Refine the whole document, or ask for a specific change.</div>
-            <div className="pp-chat-chips">
+            <div className="stack" style={{ gap: 6 }}>
               {REFINE_ACTIONS.map(a => (
-                <button key={a.key} type="button" className="pp-chat-chip" onClick={() => runRefine(a.key)}>
+                <button key={a.key} type="button" className="dr-chip" onClick={() => runRefine(a.key)}>
                   {a.chip}
                 </button>
               ))}
@@ -215,160 +233,132 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
         )}
 
         {messages.map((msg, i) => {
-          if (msg.role === 'user') return <div key={i} className="pp-chat-user">{msg.text}</div>
-          if (msg.role === 'error') return <div key={i} className="pp-chat-error">{msg.text}</div>
+          if (msg.role === 'user') return <div key={i} className="lisa-msg me"><div className="lisa-bubble">{msg.text}</div></div>
+          if (msg.role === 'error') return <div key={i} className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{msg.text}</div></div>
           if (msg.role === 'refine') {
             if (msg.results.length === 0) {
-              return (
-                <div key={i} className="pp-chat-card">
-                  <div className="pp-chat-card-lead">No changes needed for <strong>{msg.label.toLowerCase()}</strong> — the document already reads well.</div>
-                </div>
-              )
+              return ai(i, <>No changes needed for <strong>{msg.label.toLowerCase()}</strong>. The document already reads well.</>)
             }
             const pending = msg.results.filter(r => (msg.statuses[r.block_id] ?? 'pending') === 'pending').length
             const accepted = msg.results.filter(r => msg.statuses[r.block_id] === 'accepted').length
             const rejected = msg.results.filter(r => msg.statuses[r.block_id] === 'rejected').length
-            return (
-              <div key={i} className="pp-chat-card">
-                <div className="pp-chat-card-lead">
-                  Reworked <strong>{msg.results.length}</strong> clause{msg.results.length === 1 ? '' : 's'} — <strong>{msg.label.toLowerCase()}</strong>.
-                  {' '}Review each, or apply all.
-                </div>
-
-                {/* Per-clause step-through */}
-                {msg.results.map(r => {
-                  const st = msg.statuses[r.block_id] ?? 'pending'
-                  const rfd = focusedDiff(r.before_text, r.after_text)
-                  return (
-                    <div key={r.block_id} className="pp-refine-item">
-                      <div className="pp-refine-item-head">
-                        <span className="pp-refine-item-title">{r.heading || `Clause ${r.block_id}`}</span>
-                        {st !== 'pending' && (
-                          <span className={`pp-refine-item-badge ${st}`}>
-                            <i className={`pi ${st === 'accepted' ? 'pi-check' : 'pi-times'}`} /> {st}
-                          </span>
-                        )}
-                      </div>
-                      {st === 'pending' && (
-                        <>
-                          <div className="pp-chat-diff">
-                            <div className="pp-chat-diff-label del"><i className="pi pi-times" /> Removed</div>
-                            <div className="pp-chat-removed">{rfd.removed}</div>
-                            <div className="pp-chat-diff-label ins"><i className="pi pi-check" /> Added</div>
-                            <div className="pp-chat-added">{rfd.added}</div>
-                          </div>
-                          {r.shrunk && (
-                            <div className="pp-chat-warn">
-                              <i className="pi pi-exclamation-triangle" /> Much shorter than the original — check nothing was dropped.
-                            </div>
-                          )}
-                          <div className="flex gap-2 mt-1">
-                            <Button label="Accept" icon="pi pi-check" size="small" onClick={() => acceptOne(i, r)} />
-                            <Button label="Reject" icon="pi pi-times" size="small" outlined severity="secondary" onClick={() => rejectOne(i, r.block_id)} />
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )
-                })}
-
-                {pending > 0 ? (
-                  <div className="flex gap-2 mt-2 flex-wrap">
-                    <Button label={`Apply all (${pending})`} icon="pi pi-check" size="small" onClick={() => applyAllRefine(i, msg.results, msg.statuses)} />
-                    <Button label="Reject all" icon="pi pi-times" size="small" outlined severity="secondary" onClick={() => rejectAllRefine(i)} />
-                  </div>
-                ) : (
-                  <div className="pp-chat-status accepted">
-                    <i className="pi pi-check-circle" /> {accepted} applied{rejected ? `, ${rejected} rejected` : ''} — review the highlighted changes and Save
-                  </div>
-                )}
+            return ai(i, <>
+              <div>
+                Reworked <strong>{msg.results.length}</strong> clause{msg.results.length === 1 ? '' : 's'}: <strong>{msg.label.toLowerCase()}</strong>.
+                {' '}Review each, or apply all.
               </div>
-            )
+
+              {/* Per-clause step-through */}
+              {msg.results.map(r => {
+                const st = msg.statuses[r.block_id] ?? 'pending'
+                const rfd = focusedDiff(r.before_text, r.after_text)
+                return (
+                  <div key={r.block_id} className="dr-refine-item">
+                    <div className="row between">
+                      <span className="small" style={{ fontWeight: 600 }}>{r.heading || `Clause ${r.block_id}`}</span>
+                      {st !== 'pending' && <span className={`chip ${st === 'accepted' ? 'ok' : ''}`}>{st === 'accepted' ? 'Accepted' : 'Rejected'}</span>}
+                    </div>
+                    {st === 'pending' && (
+                      <>
+                        {diffBox(rfd.removed, rfd.added)}
+                        {r.shrunk && (
+                          <div className="callout warn" style={{ marginTop: 6 }}><Icon name="warn" size="sm" /><div>Much shorter than the original. Check nothing was dropped.</div></div>
+                        )}
+                        <div className="row" style={{ marginTop: 8, gap: 6 }}>
+                          <Button variant="primary" size="sm" icon="check" onClick={() => acceptOne(i, r)}>Accept</Button>
+                          <Button variant="ghost" size="sm" onClick={() => rejectOne(i, r.block_id)}>Reject</Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+
+              {pending > 0 ? (
+                <div className="row wrap" style={{ marginTop: 10, gap: 6 }}>
+                  <Button variant="primary" size="sm" icon="check" onClick={() => applyAllRefine(i, msg.results, msg.statuses)}>Apply all ({pending})</Button>
+                  <Button variant="ghost" size="sm" onClick={() => rejectAllRefine(i)}>Reject all</Button>
+                </div>
+              ) : (
+                <div className="row small" style={{ marginTop: 10, gap: 6, color: 'var(--ok)' }}>
+                  <Icon name="ok" size="sm" /> {accepted} applied{rejected ? `, ${rejected} rejected` : ''}. Review the highlighted changes and save.
+                </div>
+              )}
+            </>)
           }
           const p = msg.proposal
           const fd = focusedDiff(p.before_text, p.after_text)
-          return (
-            <div key={i} className="pp-chat-card">
-              <div className="pp-chat-card-lead">
-                Located <strong>{p.heading || 'clause'}</strong>. {p.rationale}
+          return ai(i, <>
+            <div>Located <strong>{p.heading || 'clause'}</strong>. {p.rationale}</div>
+            {diffBox(fd.removed, fd.added)}
+            {p.shrunk && (
+              <div className="callout warn" style={{ marginTop: 6 }}><Icon name="warn" size="sm" /><div>The revision is much shorter than the original. Check nothing was dropped before accepting.</div></div>
+            )}
+            {msg.status === 'pending' ? (
+              <div className="row wrap" style={{ marginTop: 10, gap: 6 }}>
+                <Button variant="primary" size="sm" icon="check" onClick={() => accept(i, p)}>Accept</Button>
+                <Button variant="ghost" size="sm" onClick={() => reject(i, p)}>Reject</Button>
+                <Button variant="ghost" size="sm" icon="edit" onClick={() => editFurther(p)}>Edit further</Button>
               </div>
-              <div className="pp-chat-diff">
-                <div className="pp-chat-diff-label del"><i className="pi pi-times" /> Removed</div>
-                <div className="pp-chat-removed">{fd.removed}</div>
-                <div className="pp-chat-diff-label ins"><i className="pi pi-check" /> Added</div>
-                <div className="pp-chat-added">{fd.added}</div>
-              </div>
-              {p.shrunk && (
-                <div className="pp-chat-warn">
-                  <i className="pi pi-exclamation-triangle" /> The revision is much shorter than the original — check nothing was dropped before accepting.
-                </div>
-              )}
-              {msg.status === 'pending' ? (
-                <div className="flex gap-2 mt-2 flex-wrap">
-                  <Button label="Accept" icon="pi pi-check" size="small" onClick={() => accept(i, p)} />
-                  <Button label="Reject" icon="pi pi-times" size="small" outlined severity="secondary" onClick={() => reject(i, p)} />
-                  <Button label="Edit further" icon="pi pi-pencil" size="small" text onClick={() => editFurther(p)} />
-                </div>
-              ) : (
-                <div className={`pp-chat-status ${msg.status}`}>
-                  <i className={`pi ${msg.status === 'accepted' ? 'pi-check-circle' : 'pi-ban'}`} /> {msg.status}
-                </div>
-              )}
-              <div className="pp-chat-foot">{(p.elapsed_ms / 1000).toFixed(1)}s</div>
-            </div>
-          )
+            ) : (
+              <div style={{ marginTop: 8 }}><span className={`chip ${msg.status === 'accepted' ? 'ok' : ''}`}>{msg.status === 'accepted' ? 'Accepted' : 'Rejected'}</span></div>
+            )}
+            <div className="faint xs mono" style={{ textAlign: 'right', marginTop: 6 }}>{(p.elapsed_ms / 1000).toFixed(1)}s</div>
+          </>)
         })}
 
-        {sending && (
-          <div className="pp-chat-card pp-chat-thinking">
-            <i className="pi pi-spin pi-spinner mr-2" />{thinking}
-          </div>
-        )}
+        {sending && ai('thinking', <span className="row faint" style={{ gap: 8 }}><span className="lisa-thinking" aria-hidden="true"><i /><i /><i /></span>{thinking}</span>)}
         <div ref={endRef} />
       </div>
 
       <div className="pp-chat-input">
-        <Menu popup ref={refineMenu} model={REFINE_ACTIONS.map(a => ({ label: a.short, icon: a.icon, command: () => runRefine(a.key) }))} />
-        <InputTextarea
-          ref={inputRef}
-          value={input} onChange={e => setInput(e.target.value)} rows={2} autoResize
-          placeholder="Ask about this draft or request changes…"
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-          disabled={sending}
-        />
-        <div className="pp-chat-input-bar">
-          <Button className="pp-chat-feature" label="Refine" icon="pi pi-sparkles" size="small"
-            onClick={e => refineMenu.current?.toggle(e)} disabled={sending} aria-label="Refine document" />
-          <span style={{ flex: 1 }} />
-          <Button icon="pi pi-send" rounded onClick={send} disabled={sending || !input.trim()} aria-label="Send" />
+        <div className="lisa-quick">
+          <button type="button" className="pp-pill" aria-haspopup="menu" disabled={sending}
+            onClick={e => setRefineAnchor(refineAnchor ? null : e.currentTarget)}>
+            <Icon name="sparkle" size="sm" /> Refine
+          </button>
         </div>
+        {refineAnchor && (
+          <PopMenu anchor={refineAnchor} onClose={() => setRefineAnchor(null)} width={200}
+            items={REFINE_ACTIONS.map(a => ({ label: a.short, icon: a.icon, onClick: () => runRefine(a.key) }))} />
+        )}
+        <form className="lisa-form" onSubmit={e => { e.preventDefault(); send() }}>
+          <label className="sr-only" htmlFor={`dchat-in-${sessionId}`}>Message {ASSISTANT_NAME}</label>
+          <textarea
+            id={`dchat-in-${sessionId}`}
+            ref={inputRef}
+            className="input grow dr-chat-ta"
+            value={input} onChange={e => setInput(e.target.value)} rows={2}
+            placeholder={`Ask ${ASSISTANT_NAME} to change the draft`}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+            disabled={sending}
+          />
+          <button type="submit" className="btn primary icon" disabled={sending || !input.trim()} aria-label="Send"><Icon name="send" size="sm" /></button>
+        </form>
       </div>
     </>
   )
 
   if (expanded) {
     return (
-      <Dialog
-        header={<span className="pp-chat-dialog-title"><i className="pi pi-sparkles mr-2" />{ASSISTANT_NAME} · drafting assistant</span>}
-        visible
-        onHide={() => setExpanded(false)}
-        maximizable
-        dismissableMask
-        style={{ width: '92vw', maxWidth: '1000px', height: '85vh' }}
-        contentClassName="pp-chat-dialog-body"
+      <Modal
+        title={<span className="row" style={{ gap: 10 }}><span className="lisa-seal sm" aria-hidden="true">L</span>{ASSISTANT_NAME} · drafting assistant</span>}
+        open
+        onClose={() => setExpanded(false)}
+        size="xwide"
       >
-        <div className="pp-chat pp-chat--wide">{chatInner}</div>
-      </Dialog>
+        <div className="pp-dchat pp-dchat--wide">{chatInner}</div>
+      </Modal>
     )
   }
 
   return (
-    <div className="pp-chat">
+    <div className="pp-dchat">
       <div className="pp-chat-head">
-        <span><i className="pi pi-sparkles mr-2" />{ASSISTANT_NAME} · drafting assistant</span>
-        <Button icon="pi pi-window-maximize" text rounded severity="secondary" size="small"
-          onClick={() => setExpanded(true)} tooltip="Expand" tooltipOptions={{ position: 'top' }}
-          aria-label="Expand chat" />
+        <span className="row" style={{ gap: 10 }}><span className="lisa-seal sm" aria-hidden="true">L</span>
+          <span><b>{ASSISTANT_NAME}</b><span className="faint xs" style={{ display: 'block', fontWeight: 400 }}>Drafting assistant</span></span></span>
+        <button type="button" className="btn ghost sm icon" title="Expand" aria-label="Expand chat"
+          onClick={() => setExpanded(true)}><Icon name="external" size="sm" /></button>
       </div>
       {chatInner}
     </div>

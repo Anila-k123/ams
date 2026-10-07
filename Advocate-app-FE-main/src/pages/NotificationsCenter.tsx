@@ -1,22 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Dropdown } from "primereact/dropdown";
-import { Calendar } from "primereact/calendar";
-import { Button } from "primereact/button";
-import { InputSwitch } from "primereact/inputswitch";
-import { Dialog } from "primereact/dialog";
-import { Tag } from "primereact/tag";
-import { Card } from "primereact/card";
-import { Skeleton } from "primereact/skeleton";
 import api from "../api/client";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
+import { PageHead, Chip, StatusChip, Skel, Button, Icon, titleCase, type Tone } from "../ui/kit";
+import { SelectField, TextField, Switch } from "../ui/forms";
+import { DataTable, type Column } from "../ui/DataTable";
+import { Modal } from "../ui/overlays";
+import "../ui/pages/research.css";
 
 const PAGE_SIZE = 15;
 
-const CHANNEL_SEVERITY: Record<string, any> = { EMAIL: "info", WHATSAPP: "success", IN_APP: "warning" };
-const STATUS_SEVERITY: Record<string, any> = { SENT: "success", FAILED: "danger", PENDING: "warning" };
+const CHANNEL_TONE: Record<string, Tone> = { EMAIL: "info", WHATSAPP: "", IN_APP: "tape" };
+const CHANNEL_LABEL: Record<string, string> = { EMAIL: "Email", WHATSAPP: "WhatsApp", IN_APP: "In-app" };
 
 const EVENT_LABELS: Record<string, string> = {
   CLIENT_REGISTERED: "Client Registered",
@@ -41,43 +36,23 @@ const EVENT_LABELS: Record<string, string> = {
 };
 
 const CHANNEL_OPTIONS = [
-  { value: "", label: "All Channels" },
   { value: "EMAIL", label: "Email" },
   { value: "WHATSAPP", label: "WhatsApp" },
-  { value: "IN_APP", label: "In-App" },
+  { value: "IN_APP", label: "In-app" },
 ];
 const STATUS_OPTIONS = [
-  { value: "", label: "All Statuses" },
   { value: "SENT", label: "Sent" },
   { value: "FAILED", label: "Failed" },
   { value: "PENDING", label: "Pending" },
 ];
-const EVENT_OPTIONS = [{ value: "", label: "All Events" }, ...Object.entries(EVENT_LABELS).map(([value, label]) => ({ value, label }))];
+const EVENT_OPTIONS = Object.entries(EVENT_LABELS).map(([value, label]) => ({ value, label }));
 
-// Calendar gives a Date; the API wants the same YYYY-MM-DD the old <input type="date"> produced.
-const toYmd = (d: any) => {
-  if (!d) return "";
-  const dt = d as Date;
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+const formatDate = (dt: any) => {
+  if (!dt) return "—";
+  return new Date(dt).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
-const fromYmd = (s: string) => (s ? new Date(`${s}T00:00:00`) : null);
 
-function StatCard({ icon, label, value, color, subtitle }: any) {
-  return (
-    <Card className="flex-1" style={{ minWidth: 170 }}>
-      <div className="flex align-items-center gap-3">
-        <i className={`pi ${icon}`} style={{ fontSize: 26, color }} />
-        <div>
-          <div style={{ fontSize: 30, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-          <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 6, fontWeight: 600 }}>{label}</div>
-          {subtitle && <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>{subtitle}</div>}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-const labelStyle: any = { fontSize: 11, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8 };
+const channelChip = (c: string) => <Chip tone={CHANNEL_TONE[c] ?? ""}>{CHANNEL_LABEL[c] || titleCase(c)}</Chip>;
 
 export default function NotificationsCenter() {
   const { withLoading } = useLoading() as any;
@@ -187,160 +162,118 @@ export default function NotificationsCenter() {
     }
   };
 
+  const filtered = !!(channel || status || eventType || fromDate || toDate);
   const handleReset = () => {
     setChannel(""); setStatus(""); setEventType(""); setFromDate(""); setToDate(""); setPage(0);
   };
 
-  const formatDate = (dt: any) => {
-    if (!dt) return "—";
-    return new Date(dt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  };
+  const columns: Column<any>[] = [
+    { key: "event", label: "Event", render: (row) => (
+      <>
+        <div className="cell-title nowrap">{EVENT_LABELS[row.eventType] || titleCase(row.eventType)}</div>
+        {row.caseNumber && <div className="cell-sub mono">{row.caseNumber}</div>}
+      </>
+    ) },
+    { key: "channel", label: "Channel", hideSm: true, render: (row) => channelChip(row.channel) },
+    { key: "recipient", label: "Recipient", render: (row) => (
+      <>
+        <div className="cell-title">{row.recipientName || "—"}</div>
+        <div className="cell-sub">{row.recipientEmail || row.recipientPhone || ""}</div>
+      </>
+    ) },
+    { key: "subject", label: "Subject", hideSm: true, render: (row) => <span className="small ellipsis" style={{ display: "block", maxWidth: 260 }}>{row.subject || "—"}</span> },
+    { key: "sentAt", label: "Sent", render: (row) => <span className="small nowrap">{formatDate(row.sentAt)}</span> },
+    { key: "status", label: "Status", render: (row) => <StatusChip status={row.status} /> },
+    { key: "actions", label: <span className="sr-only">Actions</span>, render: (row) => (
+      <div className="row" style={{ gap: 6, justifyContent: "flex-end", flexWrap: "nowrap" }}>
+        <Button variant="ghost" size="sm" onClick={() => setSelected(row)}>View</Button>
+        {row.status === "FAILED" && row.channel === "EMAIL" && (
+          <Button size="sm" icon="refresh" onClick={() => handleResend(row.id)}>Resend</Button>
+        )}
+      </div>
+    ) },
+  ];
 
-  const channelTag = (c: string) => <Tag value={c} severity={CHANNEL_SEVERITY[c] || "secondary"} />;
-  const statusTag = (s: string) => <Tag value={s} severity={STATUS_SEVERITY[s] || "secondary"} />;
-
-  const filterField = (label: string, input: any) => (
-    <div className="flex flex-column gap-1">
-      <label style={labelStyle}>{label}</label>
-      {input}
+  const figure = (label: string, value: any, meta?: string, bad?: boolean) => (
+    <div className="figure">
+      <div className="lbl">{label}</div>
+      <div className="val" style={bad && value ? { color: "var(--bad)" } : undefined}>{value}</div>
+      {meta && <div className="meta">{meta}</div>}
     </div>
   );
 
   return (
-    <div className="p-4" style={{ color: "var(--text-primary)" }}>
-      {/* Header */}
-      <div className="flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
-        <p className="m-0" style={{ color: "var(--text-muted)", fontSize: 14 }}>
-          Monitor email delivery and notification history
-        </p>
-        <div className="flex align-items-center gap-3">
-          <label className="flex align-items-center gap-2 cursor-pointer" style={{ fontSize: 13, fontWeight: 600 }}>
-            <InputSwitch checked={!!settings.emailNotificationsEnabled} onChange={() => toggleSetting("emailNotificationsEnabled")} />
-            Auto Email Notifications
-          </label>
-          <Button icon="pi pi-sync" label={triggeringCheck ? "Syncing..." : "Sync Now"} loading={triggeringCheck}
-            disabled={triggeringCheck} onClick={handleTriggerCheck} />
-        </div>
-      </div>
+    <div>
+      <PageHead title="Delivery Log"
+        sub="Every email, WhatsApp and in-app message PactPro sent for the practice, and whether it arrived."
+        actions={<>
+          <Switch checked={!!settings.emailNotificationsEnabled} onChange={() => toggleSetting("emailNotificationsEnabled")} label="Automatic client emails" />
+          <Button icon="refresh" loading={triggeringCheck} disabled={triggeringCheck} onClick={handleTriggerCheck}>
+            {triggeringCheck ? "Syncing…" : "Sync now"}
+          </Button>
+        </>} />
 
-      {/* Stats */}
       {statsLoading ? (
-        <div className="flex gap-3 flex-wrap mb-4">{[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} height="96px" className="flex-1" style={{ minWidth: 170 }} />)}</div>
+        <div className="figures" style={{ marginBottom: 20 }}>
+          {[1, 2, 3, 4, 5].map((i) => <div key={i} className="figure"><Skel h={12} w="60%" /><Skel h={28} w="40%" style={{ marginTop: 8 }} /></div>)}
+        </div>
       ) : (
-        <div className="flex gap-3 flex-wrap mb-4">
-          <StatCard icon="pi-check-circle" label="Total Sent" value={stats?.totalSent ?? 0} color="var(--success)" />
-          <StatCard icon="pi-envelope" label="Emails Today" value={stats?.emailsSentToday ?? 0} color="var(--primary)" subtitle="Since midnight" />
-          <StatCard icon="pi-whatsapp" label="WhatsApp Today" value={stats?.whatsappSentToday ?? 0} color="var(--success)" subtitle="Since midnight" />
-          <StatCard icon="pi-times-circle" label="Failed Total" value={stats?.totalFailed ?? 0} color="var(--danger)" />
-          <StatCard icon="pi-exclamation-triangle" label="Failed Today" value={stats?.failedToday ?? 0} color="var(--warning)" subtitle="Since midnight" />
+        <div className="figures" style={{ marginBottom: 20 }}>
+          {figure("Total sent", stats?.totalSent ?? 0)}
+          {figure("Emails today", stats?.emailsSentToday ?? 0, "Since midnight")}
+          {figure("WhatsApp today", stats?.whatsappSentToday ?? 0, "Channel unavailable")}
+          {figure("Failed today", stats?.failedToday ?? 0, "Since midnight", true)}
+          {figure("Failed in total", stats?.totalFailed ?? 0)}
         </div>
       )}
 
-      {/* Filters */}
-      <Card className="mb-4">
-        <div className="flex flex-wrap gap-3 align-items-end">
-          {filterField("Channel", <Dropdown value={channel} options={CHANNEL_OPTIONS} onChange={(e) => { setChannel(e.value); setPage(0); }} style={{ minWidth: 150 }} />)}
-          {filterField("Status", <Dropdown value={status} options={STATUS_OPTIONS} onChange={(e) => { setStatus(e.value); setPage(0); }} style={{ minWidth: 150 }} />)}
-          {filterField("Event Type", <Dropdown value={eventType} options={EVENT_OPTIONS} onChange={(e) => { setEventType(e.value); setPage(0); }} filter style={{ minWidth: 190 }} />)}
-          {filterField("From Date", <Calendar value={fromYmd(fromDate)} onChange={(e) => { setFromDate(toYmd(e.value)); setPage(0); }} dateFormat="dd/mm/yy" showIcon showButtonBar />)}
-          {filterField("To Date", <Calendar value={fromYmd(toDate)} onChange={(e) => { setToDate(toYmd(e.value)); setPage(0); }} dateFormat="dd/mm/yy" showIcon showButtonBar />)}
-          <Button outlined severity="secondary" icon="pi pi-refresh" label="Reset" onClick={handleReset} />
-        </div>
-      </Card>
+      <div className="rs-filters" role="group" aria-label="Filters">
+        <SelectField label="Channel" value={channel} placeholder="All channels" options={CHANNEL_OPTIONS}
+          onChange={(e) => { setChannel(e.target.value); setPage(0); }} />
+        <SelectField label="Status" value={status} placeholder="All statuses" options={STATUS_OPTIONS}
+          onChange={(e) => { setStatus(e.target.value); setPage(0); }} />
+        <SelectField label="Event type" value={eventType} placeholder="All events" options={EVENT_OPTIONS}
+          onChange={(e) => { setEventType(e.target.value); setPage(0); }} />
+        <TextField label="From" type="date" value={fromDate} max={toDate || undefined}
+          onChange={(e) => { setFromDate(e.target.value); setPage(0); }} />
+        <TextField label="To" type="date" value={toDate} min={fromDate || undefined}
+          onChange={(e) => { setToDate(e.target.value); setPage(0); }} />
+        {filtered && <Button variant="ghost" icon="x" onClick={handleReset}>Clear filters</Button>}
+      </div>
 
-      {/* History */}
-      <DataTable
-        value={history}
-        dataKey="id"
-        loading={loading}
-        lazy
-        paginator
-        first={page * PAGE_SIZE}
-        rows={PAGE_SIZE}
-        totalRecords={totalElements}
-        onPage={(e) => setPage(e.page ?? 0)}
-        onRowClick={(e) => setSelected(e.data)}
-        rowHover
-        stripedRows
-        className="cursor-pointer"
-        header={
-          <div className="flex justify-content-between align-items-center">
-            <span className="font-bold"><i className="pi pi-list mr-2" />Notification History</span>
-            <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              {history.length} record{history.length !== 1 ? "s" : ""} shown
-            </span>
-          </div>
-        }
-        emptyMessage={
-          <div className="text-center p-5" style={{ color: "var(--text-muted)" }}>
-            <i className="pi pi-inbox" style={{ fontSize: 44 }} />
-            <div className="font-semibold mt-2 mb-1" style={{ fontSize: 16 }}>No notifications yet</div>
-            <div style={{ fontSize: 13 }}>Notifications will appear here after client events like case creation, invoices, and hearing reminders.</div>
-          </div>
-        }
-      >
-        <Column header="Event" body={(row) => (
-          <>
-            <span className="font-semibold">{EVENT_LABELS[row.eventType] || row.eventType}</span>
-            {row.caseNumber && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Case: {row.caseNumber}</div>}
-          </>
-        )} />
-        <Column header="Channel" body={(row) => channelTag(row.channel)} />
-        <Column header="Status" body={(row) => statusTag(row.status)} />
-        <Column header="Recipient" body={(row) => (
-          <>
-            <div className="font-semibold">{row.recipientName || "—"}</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{row.recipientEmail || row.recipientPhone || ""}</div>
-          </>
-        )} />
-        <Column header="Subject" body={(row) => (
-          <span className="block white-space-nowrap overflow-hidden text-overflow-ellipsis" style={{ maxWidth: 200, fontSize: 12, color: "var(--text-muted)" }}>{row.subject || "—"}</span>
-        )} />
-        <Column header="Sent At" body={(row) => <span className="white-space-nowrap" style={{ fontSize: 12, color: "var(--text-muted)" }}>{formatDate(row.sentAt)}</span>} />
-        <Column body={(row) => (
-          <div className="flex gap-2">
-            <Button size="small" outlined label="View" onClick={(e) => { e.stopPropagation(); setSelected(row); }} />
-            {row.status === "FAILED" && row.channel === "EMAIL" && (
-              <Button size="small" outlined severity="danger" label="Resend" onClick={(e) => { e.stopPropagation(); handleResend(row.id); }} />
-            )}
-          </div>
-        )} />
-      </DataTable>
+      <DataTable rows={history} columns={columns} rowKey={(r) => r.id} loading={loading} caption="Delivery log"
+        onRow={(r) => setSelected(r)}
+        page={page} total={totalElements} onPage={setPage} pageSize={PAGE_SIZE}
+        empty={filtered
+          ? { icon: "filter", title: "No messages match these filters", action: <Button size="sm" onClick={handleReset}>Clear filters</Button> }
+          : { icon: "send", title: "No notifications yet", text: "Notifications appear here after client events like case creation, invoices and hearing reminders." }} />
 
-      {/* Detail dialog */}
-      <Dialog
-        visible={!!selected}
-        onHide={() => setSelected(null)}
-        style={{ width: "36rem" }}
-        breakpoints={{ "640px": "95vw" }}
-        header={selected && (
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>{EVENT_LABELS[selected.eventType] || selected.eventType}</div>
-            <div className="flex gap-2 mt-2">{channelTag(selected.channel)}{statusTag(selected.status)}</div>
-          </div>
-        )}
-      >
+      <Modal open={!!selected} onClose={() => setSelected(null)}
+        title={selected ? (selected.subject || EVENT_LABELS[selected.eventType] || titleCase(selected.eventType)) : ""}
+        sub={selected ? `${EVENT_LABELS[selected.eventType] || titleCase(selected.eventType)} by ${CHANNEL_LABEL[selected.channel] || selected.channel}, ${formatDate(selected.sentAt)}` : undefined}
+        footer={<Button variant="primary" onClick={() => setSelected(null)}>Close</Button>}>
         {selected && (
-          <div className="grid" style={{ margin: 0 }}>
-            {[
-              ["Recipient", selected.recipientName],
-              ["Email", selected.recipientEmail],
-              ["Phone", selected.recipientPhone],
-              ["Case", selected.caseNumber],
-              ["Client", selected.clientName],
-              ["Subject", selected.subject],
-              ["Sent At", formatDate(selected.sentAt)],
-              ["Error", selected.errorMessage],
-            ].filter(([, v]) => v).map(([label, value]) => (
-              <div key={label} className="col-12 flex gap-3 py-1">
-                <span style={{ ...labelStyle, fontSize: 12, minWidth: 80 }}>{label}</span>
-                <span style={{ fontSize: 13, color: label === "Error" ? "var(--danger)" : "var(--text-primary)" }}>{value}</span>
-              </div>
-            ))}
+          <div className="stack">
+            <div className="row wrap" style={{ gap: 8 }}>{channelChip(selected.channel)}<StatusChip status={selected.status} /></div>
+            <dl className="kv">
+              {[
+                ["Recipient", selected.recipientName],
+                ["Email", selected.recipientEmail],
+                ["Phone", selected.recipientPhone],
+                ["Case", selected.caseNumber],
+                ["Client", selected.clientName],
+                ["Subject", selected.subject],
+                ["Sent", formatDate(selected.sentAt)],
+              ].filter(([, v]) => v).map(([label, value]) => (
+                <div key={label} style={{ display: "contents" }}><dt>{label}</dt><dd className={label === "Case" ? "mono" : undefined} style={{ overflowWrap: "anywhere" }}>{value}</dd></div>
+              ))}
+            </dl>
+            {selected.errorMessage && (
+              <div className="callout bad"><Icon name="warn" size="sm" /><div>{selected.errorMessage}</div></div>
+            )}
             {selected.body && (
-              <div className="col-12 mt-2 pt-3" style={{ borderTop: "1px solid var(--border-color)" }}>
-                <div style={{ ...labelStyle, fontSize: 12, marginBottom: 8 }}>Message Body</div>
-                <div style={{ background: "var(--bg-primary)", borderRadius: 8, padding: 12, fontSize: 12, color: "var(--text-secondary)", maxHeight: 200, overflowY: "auto", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+              <div className="panel tinted">
+                <div className="panel-body rs-msg">
                   {selected.channel === "EMAIL"
                     ? selected.body.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
                     : selected.body}
@@ -349,7 +282,7 @@ export default function NotificationsCenter() {
             )}
           </div>
         )}
-      </Dialog>
+      </Modal>
     </div>
   );
 }

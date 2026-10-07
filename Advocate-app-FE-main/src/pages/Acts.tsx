@@ -1,32 +1,28 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { InputText } from "primereact/inputtext";
-import { Dropdown } from "primereact/dropdown";
-import { SelectButton } from "primereact/selectbutton";
-import { Paginator } from "primereact/paginator";
-import { Skeleton } from "primereact/skeleton";
-import { Message } from "primereact/message";
 import api, { errorMessage } from "../api/client";
 import useDebouncedValue from "../hooks/useDebouncedValue";
 import usePagination from "../hooks/usePagination";
-import "../assets/styles/Acts.css";
+import { PageHead, Chip, EmptyState, Skel, Icon } from "../ui/kit";
+import { SearchInput, FilterChip, Segmented } from "../ui/forms";
+import "../ui/pages/research.css";
 
 const FIELD_CHIPS: [string, string][] = [
   ["all", "All"],
-  ["short_title", "Short Title"],
-  ["long_title", "Long Title"],
-  ["department", "Department Name"],
-  ["section_title", "Section Title"],
-  ["section_contents", "Section Contents"],
-  ["act_number", "Act Number"],
-  ["act_year", "Act Year"],
+  ["short_title", "Short title"],
+  ["long_title", "Long title"],
+  ["department", "Department"],
+  ["section_title", "Section title"],
+  ["section_contents", "Section contents"],
+  ["act_number", "Act number"],
+  ["act_year", "Act year"],
 ];
 
 // Only what's actually been imported so far (Central + Tamil Nadu).
-const JURISDICTIONS: [string, string][] = [
-  ["", "All jurisdictions"],
-  ["CENTRAL", "Central Acts"],
-  ["Tamil Nadu", "Tamil Nadu"],
+const JURISDICTIONS = [
+  { value: "", label: "All" },
+  { value: "CENTRAL", label: "Central" },
+  { value: "Tamil Nadu", label: "Tamil Nadu" },
 ];
 
 // What the search box should ask for, per chip.
@@ -56,7 +52,7 @@ function formatDate(iso: string) {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
 // Keep the card compact by cutting the abstract to one short line at a word boundary.
@@ -66,6 +62,8 @@ function shortDescription(text: string, max = 140) {
   if (clean.length <= max) return clean;
   return clean.slice(0, max).replace(/\s+\S*$/, "") + "…";
 }
+
+const isCentral = (j: string) => String(j || "").toUpperCase() === "CENTRAL";
 
 export default function Acts() {
   const navigate = useNavigate();
@@ -101,98 +99,90 @@ export default function Acts() {
 
   useEffect(() => { fetchActs(); }, [fetchActs]);
 
+  const pages = Math.max(1, Math.ceil(totalElements / size));
+  const fieldLabel = (FIELD_CHIPS.find(([v]) => v === field) || ["", "All"])[1];
+
   return (
-    <div className="acts-container">
-      <div className="flex gap-2 flex-wrap mb-3">
-        <span className="p-input-icon-left flex-1" style={{ minWidth: 240 }}>
-          <i className="pi pi-search" />
-          <InputText
-            className="w-full"
-            placeholder={FIELD_PLACEHOLDERS[field] || "Search Bare Acts"}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </span>
-        <Dropdown
-          value={jurisdiction}
-          options={JURISDICTIONS.map(([value, label]) => ({ value, label }))}
-          onChange={(e) => setJurisdiction(e.value)}
-        />
+    <div>
+      <PageHead title="Bare Acts" sub="Central and Tamil Nadu bare acts with sections, act papers and the cases you have linked to them." />
+
+      <div className="toolbar">
+        <SearchInput value={query} onChange={setQuery} style={{ width: "min(420px, 100%)" }}
+          placeholder={FIELD_PLACEHOLDERS[field] || "Search Bare Acts"}
+          aria-label={`Search acts by ${fieldLabel.toLowerCase()}`}
+          inputMode={field === "act_number" || field === "act_year" ? "numeric" : "text"}
+          aria-invalid={!!yearProblem || undefined} />
+        <Segmented label="Jurisdiction" value={jurisdiction} onChange={setJurisdiction} options={JURISDICTIONS} />
       </div>
 
-      <SelectButton
-        className="acts-field-chips mb-3"
-        value={field}
-        options={FIELD_CHIPS.map(([value, label]) => ({ value, label }))}
-        onChange={(e) => { if (e.value) setField(e.value); }}
-      />
+      <div className="row wrap" role="group" aria-label="Search in" style={{ marginBottom: 8 }}>
+        {FIELD_CHIPS.map(([v, l]) => <FilterChip key={v} on={field === v} onClick={() => setField(v)}>{l}</FilterChip>)}
+      </div>
 
       {yearProblem && (
-        <p className="acts-filter-warning">
-          {yearProblem} Enter a year like <code>2015</code> or a range like <code>2010-2015</code>.
-        </p>
+        <div className="field invalid" style={{ marginBottom: 12 }}>
+          <span className="err" role="alert"><Icon name="warn" size="sm" />{yearProblem} Enter a year like 2015 or a range like 2010-2015.</span>
+        </div>
       )}
 
-      {error && <Message severity="error" text={error} className="mb-3" />}
+      {error && <div className="callout bad" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
 
-      <div className="acts-list">
+      {!loading && !error && acts.length > 0 && (
+        <div className="faint small" style={{ margin: "8px 0 10px" }}>{totalElements.toLocaleString("en-IN")} {totalElements === 1 ? "act" : "acts"}</div>
+      )}
+
+      <div className="stack">
         {loading ? (
-          [1, 2, 3, 4, 5, 6].map((i) => <Skeleton key={i} height="92px" className="mb-2" />)
+          [1, 2, 3, 4, 5].map((i) => <div key={i} className="panel"><div className="panel-body stack"><Skel h={12} w="30%" /><Skel h={18} w="70%" /><Skel h={12} /></div></div>)
         ) : acts.length === 0 ? (
-          <div className="acts-empty">
+          <div className="panel">
             {yearProblem ? (
-              <>
-                <p className="no-data">{yearProblem}</p>
-                <p className="acts-empty-hint">
-                  The <strong>Act Year</strong> filter takes a four-digit year such
-                  as <code>2015</code>, or a range such as <code>2010-2015</code>.
-                  To search text instead, pick another filter above.
-                </p>
-              </>
+              <EmptyState icon="book" title={yearProblem}
+                text="The Act year filter takes a four-digit year such as 2015, or a range such as 2010-2015. To search text instead, pick another filter above." />
             ) : debouncedQuery.trim() ? (
-              <>
-                <p className="no-data">
-                  No acts match &ldquo;{debouncedQuery.trim()}&rdquo; in{" "}
-                  {(FIELD_CHIPS.find(([v]) => v === field) || ["", "All"])[1]}
-                  {jurisdiction ? ` (${jurisdiction})` : ""}.
-                </p>
-                <p className="acts-empty-hint">
-                  Try a different filter above
-                  {jurisdiction ? ", or set the jurisdiction back to All" : ""}.
-                </p>
-              </>
+              <EmptyState icon="book" title="No acts match"
+                text={<>Nothing matches &ldquo;{debouncedQuery.trim()}&rdquo; in {fieldLabel}{jurisdiction ? ` (${jurisdiction})` : ""}. Try a different filter{jurisdiction ? ", or set the jurisdiction back to All" : ""}.</>}
+                action={<button type="button" className="btn sm" onClick={() => setQuery("")}>Clear search</button>} />
             ) : (
-              <p className="no-data">No acts found.</p>
+              <EmptyState icon="book" title="No acts found" />
             )}
           </div>
         ) : (
           acts.map((act) => (
-            <div key={act.id} className="act-card" onClick={() => navigate(`/dashboard/acts/${act.id}`)}>
-              <div className="act-card-head">
-                <span className="act-card-title">{act.title} - {act.jurisdiction}</span>
-                <span className="act-card-number">Act {act.actNumber} of {act.actYear}</span>
+            <button key={act.id} type="button" className="panel rs-card" onClick={() => navigate(`/dashboard/acts/${act.id}`)}>
+              <div className="panel-body" style={{ padding: "16px 20px" }}>
+                <div className="row wrap" style={{ gap: 10, marginBottom: 6 }}>
+                  <Chip tone={isCentral(act.jurisdiction) ? "info" : "tape"}>{isCentral(act.jurisdiction) ? "Central" : act.jurisdiction}</Chip>
+                  <span className="mono faint small">Act {act.actNumber} of {act.actYear}</span>
+                </div>
+                <h3>{act.title}</h3>
+                {act.description && <p className="muted small" style={{ marginTop: 4 }}>{shortDescription(act.description)}</p>}
+                <div className="faint xs" style={{ marginTop: 8 }}>
+                  {[act.ministry, act.department && act.department !== act.ministry ? act.department : null,
+                    act.enactmentDate ? `Enacted ${formatDate(act.enactmentDate)}` : null].filter(Boolean).join(" · ")}
+                </div>
               </div>
-              {act.description && <p className="act-card-desc">Description : {shortDescription(act.description)}</p>}
-              <div className="act-card-meta">
-                {act.ministry && <span><strong>Ministry</strong> : {act.ministry}</span>}
-                {act.department && <span><strong>Department</strong> : {act.department}</span>}
-                {act.enactmentDate && <span><strong>Enactment Date</strong> : {formatDate(act.enactmentDate)}</span>}
-              </div>
-            </div>
+            </button>
           ))
         )}
       </div>
 
       {totalElements > 0 && (
-        <Paginator
-          first={page * size}
-          rows={size}
-          totalRecords={totalElements}
-          rowsPerPageOptions={[10, 20, 50, 100]}
-          onPageChange={(e) => {
-            if (e.rows !== size) { setSize(e.rows); setPage(0); } else setPage(e.page);
-          }}
-        />
+        <div className="rs-pager">
+          <span>{page * size + 1}–{Math.min(totalElements, page * size + size)} of {totalElements.toLocaleString("en-IN")}</span>
+          <div className="row" style={{ gap: 8 }}>
+            <label className="row small" style={{ gap: 6 }}>Per page
+              <select className="input" style={{ width: "auto" }} value={size} onChange={(e) => { setSize(Number(e.target.value)); setPage(0); }}>
+                {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
+            <div className="pager" role="navigation" aria-label="Pages">
+              <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)} aria-label="Previous page">‹</button>
+              <button type="button" aria-current="true">{page + 1} / {pages}</button>
+              <button type="button" disabled={page >= pages - 1} onClick={() => setPage(page + 1)} aria-label="Next page">›</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

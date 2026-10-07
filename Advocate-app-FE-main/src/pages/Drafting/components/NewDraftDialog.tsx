@@ -1,59 +1,57 @@
-import { useState, type CSSProperties } from 'react'
+import { useState } from 'react'
 import { DRAFTING } from '../routes'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Dialog } from 'primereact/dialog'
-import { Button } from 'primereact/button'
-import { Tag } from 'primereact/tag'
+import { Modal } from '../../../ui/overlays'
+import Icon, { type IconName } from '../../../ui/Icon'
 
 /** The two ways to start a draft. */
 type Choice = 'reference' | 'scratch'
 
 interface CardDef {
   choice: Choice
-  icon: string
+  icon: IconName
   title: string
   desc: string
-  disabled?: boolean // not yet available (e.g. from-scratch drafting = Mode 3)
+  disabled?: boolean // not yet available
 }
 
 const CARDS: CardDef[] = [
   {
     choice: 'reference',
-    icon: 'pi pi-upload',
-    title: 'Upload reference files',
-    desc: "Provide past records. We'll extract details to build your drafts.",
+    icon: 'folder',
+    title: 'Start from reference documents',
+    desc: 'Pick the plaint, agreement or past records. Facts are pulled from them and cited.',
   },
   {
     choice: 'scratch',
-    icon: 'pi pi-pencil',
-    title: 'Type facts directly',
-    desc: 'Start from scratch — by entering the facts.',
+    icon: 'pen',
+    title: 'Type the facts directly',
+    desc: 'Set up the parties and key terms yourself. Good for agreements and fresh matters with no papers yet.',
   },
 ]
 
-const cardStyle = (active: boolean, disabled: boolean): CSSProperties => ({
-  flex: 1,
-  minWidth: 0,
-  border: `1.5px solid ${active ? 'var(--primary-color)' : 'var(--surface-300, #e5e7eb)'}`,
-  background: active ? 'var(--primary-50, #eef2ff)' : '#fff',
-  borderRadius: 12,
-  padding: '1.1rem 1.2rem',
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  opacity: disabled ? 0.6 : 1,
-  transition: 'border-color .12s, background .12s',
-})
-
-const iconTile: CSSProperties = {
-  width: 40, height: 40, borderRadius: 10, display: 'flex', alignItems: 'center',
-  justifyContent: 'center', background: 'var(--primary-50, #eef2ff)', color: 'var(--primary-color)',
-  fontSize: '1.1rem', marginBottom: '0.7rem',
+/** The chooser cards, shared by the modal and the inline /new page. */
+export function BeginChoices({ choice, onChoose }: { choice: Choice | null; onChoose: (c: Choice) => void }) {
+  return (
+    <div className="cols g-2 dr-begin" role="radiogroup" aria-label="How to begin">
+      {CARDS.map(c => (
+        <button key={c.choice} type="button" className={`pp-opt${choice === c.choice ? ' on' : ''}`}
+          role="radio" aria-checked={choice === c.choice} disabled={c.disabled}
+          onClick={() => !c.disabled && onChoose(c.choice)}>
+          <Icon name={c.icon} size="lg" />
+          <h3>{c.title}</h3>
+          <span className="muted small">{c.desc}</span>
+          {c.disabled && <span className="chip warn">Coming soon</span>}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 /**
  * "How would you like to begin?" chooser shown when starting a new draft:
  * reference files (template/sample + prompt) vs typing facts directly (from
- * scratch). On Next it routes to the wizard with the chosen mode as a query
- * param. The from-scratch card is disabled until Mode 3 is built.
+ * scratch). On Next it routes to the wizard with the chosen mode as a query param.
  */
 export default function NewDraftDialog({ visible, onHide }: { visible: boolean; onHide: () => void }) {
   const navigate = useNavigate()
@@ -73,44 +71,19 @@ export default function NewDraftDialog({ visible, onHide }: { visible: boolean; 
     navigate(`${DRAFTING.newDraft}?${q.toString()}`)
   }
 
-  const footer = (
-    <div className="flex align-items-center justify-content-between w-full">
-      <Button label="Cancel" text onClick={close} />
-      <Button label="Next" icon="pi pi-arrow-right" iconPos="right" disabled={!choice} onClick={next} />
-    </div>
-  )
-
   return (
-    <Dialog
-      header="How would you like to begin?"
-      visible={visible}
-      onHide={close}
-      footer={footer}
-      dismissableMask
-      style={{ width: '46rem', maxWidth: '95vw' }}
+    <Modal
+      title="New draft"
+      sub="How would you like to begin?"
+      open={visible}
+      onClose={close}
+      size="wide"
+      footer={<>
+        <button type="button" className="btn ghost" onClick={close}>Cancel</button>
+        <button type="button" className="btn primary" disabled={!choice} onClick={next}>Continue<Icon name="chevron" size="sm" /></button>
+      </>}
     >
-      <div className="flex align-items-stretch gap-3">
-        {CARDS.map((c, i) => (
-          <div key={c.choice} className="flex align-items-stretch gap-3" style={{ flex: 1, minWidth: 0 }}>
-            {i > 0 && (
-              <div className="flex align-items-center">
-                <span className="text-xs font-semibold text-color-secondary">OR</span>
-              </div>
-            )}
-            <div
-              style={cardStyle(choice === c.choice, !!c.disabled)}
-              onClick={() => !c.disabled && setChoice(c.choice)}
-            >
-              <div style={iconTile}><i className={c.icon} /></div>
-              <div className="flex align-items-center gap-2 mb-1">
-                <span className="font-semibold">{c.title}</span>
-                {c.disabled && <Tag value="Coming soon" severity="warning" style={{ fontSize: '0.65rem' }} />}
-              </div>
-              <p className="m-0 text-sm text-color-secondary" style={{ lineHeight: 1.45 }}>{c.desc}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Dialog>
+      <BeginChoices choice={choice} onChoose={setChoice} />
+    </Modal>
   )
 }

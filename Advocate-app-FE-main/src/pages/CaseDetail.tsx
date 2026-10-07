@@ -1,23 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+// Case file (/dashboard/cases/:id): the docket cover (number, parties, court,
+// tags, actions), tabs for every part of the matter, and a summary rail (next
+// hearing, fees, client, team). Every action is shown only to a role that holds
+// its permission; the API enforces the same rules.
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Button } from "primereact/button";
-import { InputText } from "primereact/inputtext";
-import { InputTextarea } from "primereact/inputtextarea";
-import { InputNumber } from "primereact/inputnumber";
-import { Dropdown } from "primereact/dropdown";
-import { AutoComplete } from "primereact/autocomplete";
-import { Calendar } from "primereact/calendar";
-import { Checkbox } from "primereact/checkbox";
-import { Dialog } from "primereact/dialog";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
-import { Tag } from "primereact/tag";
-import { TabMenu } from "primereact/tabmenu";
-import { Card } from "primereact/card";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Menu } from "primereact/menu";
-import { ProgressSpinner } from "primereact/progressspinner";
-import { Skeleton } from "primereact/skeleton";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { DRAFTING, newDraftUrl } from "./Drafting/routes";
@@ -31,16 +17,12 @@ import { usePermission } from "../contexts/PermissionContext";
 import { useLoading } from "../contexts/LoadingContext";
 import { formatCurrency } from "../utils/formatCurrency";
 import { persistCourtRecord } from "./AddCase";
-import "../assets/styles/CourtRecordView.css";
-import "../assets/styles/CaseDetail.css";
+import { Button, Chip, StatusChip, Avatar, Panel, EmptyState, Skel, Spinner, PopMenu, Icon, titleCase, type MenuItem, type Tone } from "../ui/kit";
+import { TextField, TextArea, SelectField, Field, Check, Tabs, SearchInput } from "../ui/forms";
+import { Modal, confirm } from "../ui/overlays";
+import "../ui/pages/casedetail.css";
 
-const TABS = ["Parties", "Hearings", "Events", "Orders", "Expenses", "Invoices", "Tasks", "Notes", "Documents", "Related Cases", "Acts", "Extra Details", "Timeline"];
-// A tab only shows to someone allowed to see what is in it (the API refuses the rest).
-const TAB_PERMS: Record<string, string> = {
-  Hearings: "EVENT_VIEW", Events: "EVENT_VIEW",
-  Orders: "DOCUMENT_VIEW", Documents: "DOCUMENT_VIEW",
-  Expenses: "EXPENSE_VIEW", Invoices: "INVOICE_VIEW", Tasks: "TASK_VIEW",
-};
+type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
 // Same document categories offered on the main Documents upload, so a document
 // attached to a task is filed under the same taxonomy.
@@ -60,6 +42,7 @@ const TAG_OPTIONS = [
   "High Priority", "Urgent", "Follow Up", "On Hold", "Important",
   "Awaiting Documents", "For Argument", "Reserved", "For Orders", "Appeal",
 ];
+const HOT_TAGS = ["High Priority", "Urgent"];
 const PRIORITIES = [
   { value: "LOW", label: "Low" },
   { value: "MEDIUM", label: "Medium" },
@@ -70,57 +53,18 @@ const PAYMENT_STATUSES = [
   { value: "PENDING", label: "Pending" },
   { value: "UNPAID", label: "Unpaid" },
 ];
+const prioTone = (p: string): Tone => (p === "HIGH" ? "bad" : p === "LOW" ? "ok" : "warn");
 
-// The forms keep dates as "yyyy-mm-dd" and times as "HH:mm" strings (what the API
-// takes); these bridge them to PrimeReact's Calendar, which works on Date objects.
-const pad2 = (n: number) => String(n).padStart(2, "0");
-function isoToDate(s: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
-  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
-}
-function dateToIso(d: any): string {
-  return d instanceof Date ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : "";
-}
-function hmToDate(s: string): Date | null {
-  const m = /^(\d{1,2}):(\d{2})/.exec(s || "");
-  if (!m) return null;
-  const d = new Date(); d.setHours(Number(m[1]), Number(m[2]), 0, 0); return d;
-}
-function dateToHm(d: any): string {
-  return d instanceof Date ? `${pad2(d.getHours())}:${pad2(d.getMinutes())}` : "";
-}
-function DateField({ value, onChange, placeholder, className }: { value: string; onChange: (v: string) => void; placeholder?: string; className?: string }) {
-  return (
-    <Calendar value={isoToDate(value)} onChange={(e) => onChange(dateToIso(e.value))} dateFormat="dd/mm/yy"
-      showIcon showButtonBar placeholder={placeholder} className={className || "w-full"} />
-  );
-}
-
-// window.confirm replacement on PrimeReact's ConfirmDialog (mounted by the page).
-const confirmAsync = (message: string, header = "Please confirm") =>
+// The kit's confirm() as a promise, so handlers read top to bottom.
+const confirmAsync = (message: string, title = "Please confirm", confirmLabel = "Confirm") =>
   new Promise<boolean>((resolve) => {
-    let done = false;
-    const finish = (v: boolean) => { if (!done) { done = true; resolve(v); } };
-    confirmDialog({
-      message, header, icon: "pi pi-exclamation-triangle", acceptClassName: "p-button-danger",
-      accept: () => finish(true), reject: () => finish(false), onHide: () => finish(false),
-    });
+    confirm({ title, message, danger: true, confirmLabel, accept: () => resolve(true), reject: () => resolve(false) });
   });
-
-const statusSeverity = (s: string): any => {
-  const v = (s || "").toLowerCase();
-  if (v === "active" || v === "paid") return "success";
-  if (v === "pending" || v === "partial" || v === "partially_paid") return "warning";
-  if (v === "closed" || v === "overdue" || v === "unpaid" || v === "cancelled") return "danger";
-  return "info";
-};
-const prioSeverity = (p: string): any => (p === "HIGH" ? "danger" : p === "LOW" ? "success" : "warning");
 
 // One field's pencil-edit affordance: shows the value + a pencil; clicking turns
 // it into an input/select with save/cancel. `onSave(newValue)` should throw to
-// keep the field open on failure. `hideValue` shows only the pencil (e.g. next
-// to a badge that already renders the value).
-function InlineEdit({ value, display, type = "text", options, onSave, onStart, hideValue }: any) {
+// keep the field open on failure.
+function InlineEdit({ value, display, type = "text", options, onSave, onStart, label }: any) {
   // Every inline field on this page edits the case, so without CASE_EDIT it is plain text.
   const { hasPermission } = usePermission();
   const canEdit = hasPermission("CASE_EDIT");
@@ -134,26 +78,59 @@ function InlineEdit({ value, display, type = "text", options, onSave, onStart, h
   };
   if (!editing) {
     return (
-      <span className="cd-inline">
-        {!hideValue && <span className="cd-inline-val">{display ?? (value || "—")}</span>}
-        {canEdit && <Button icon="pi pi-pencil" rounded text size="small" className="cd-pencil" onClick={start} aria-label="Edit"
-          tooltip="Edit" tooltipOptions={{ position: "top" }} />}
+      <span className="cs-inline">
+        <span>{display ?? (value || "—")}</span>
+        {canEdit && <button type="button" className="btn ghost sm icon" onClick={start} aria-label={`Edit ${label || "field"}`} title="Edit"><Icon name="edit" size="sm" /></button>}
       </span>
     );
   }
   return (
-    <span className="cd-inline editing">
+    <span className="cs-inline">
       {type === "select" ? (
-        <Dropdown autoFocus value={val} options={options || []} optionLabel="label" optionValue="value"
-          onChange={(e) => setVal(e.value)} filter={(options || []).length > 8} className="p-inputtext-sm" />
+        <select autoFocus className="input" aria-label={label} value={val} onChange={(e) => setVal(e.target.value)}>
+          {(options || []).map((o: any) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
       ) : (
-        <InputText autoFocus value={val} className="p-inputtext-sm"
+        <input autoFocus className="input" aria-label={label} value={val}
           onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }} />
       )}
-      <Button icon="pi pi-check" rounded text size="small" severity="success" onClick={commit} disabled={saving} aria-label="Save" />
-      <Button icon="pi pi-times" rounded text size="small" severity="secondary" onClick={() => setEditing(false)} aria-label="Cancel" />
+      <button type="button" className={`btn sm icon${saving ? " loading" : ""}`} onClick={commit} disabled={saving} aria-label="Save"><Icon name="check" size="sm" /></button>
+      <button type="button" className="btn ghost sm icon" onClick={() => setEditing(false)} aria-label="Cancel"><Icon name="x" size="sm" /></button>
     </span>
+  );
+}
+
+// Plain ISO date -> calendar days from today (0 today, 1 tomorrow), read as a
+// local date so IST never shifts it.
+function daysFrom(iso?: string | null) {
+  if (!iso) return NaN;
+  const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  return Math.round((new Date(y, m - 1, d).getTime() - t.getTime()) / 86400000);
+}
+const relDay = (iso?: string | null) => {
+  const n = daysFrom(iso);
+  if (Number.isNaN(n)) return "";
+  if (n === 0) return "Today";
+  if (n === 1) return "Tomorrow";
+  if (n === -1) return "Yesterday";
+  return n > 0 ? `In ${n} days` : `${-n} days ago`;
+};
+const fmtTime = (t?: string | null) => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const d = new Date(); d.setHours(h, m || 0, 0, 0);
+  return d.toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
+};
+
+function Stamp({ iso }: { iso: string }) {
+  const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  return (
+    <div className={`stamp${daysFrom(iso) === 0 ? " today" : ""}`} aria-label={date.toDateString()}>
+      <span>{date.toLocaleDateString("en-IN", { month: "short" })}</span><b>{d}</b>
+    </div>
   );
 }
 
@@ -316,15 +293,13 @@ export default function CaseDetail() {
   const [actSuggestions, setActSuggestions] = useState<any[]>([]);
 
 
-  const [tab, setTab] = useState("Parties");
+  const [tab, setTab] = useState<TabKey>("overview");
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showTimeline, setShowTimeline] = useState(false);
 
   // Inline edit of the case's own (app-owned) fields. Clients power the client picker.
   const [clients, setClients] = useState([]);
-  // Header Actions menu + transfer modal.
-  const [showActions, setShowActions] = useState(false);
+  // Transfer modal.
   const [showTransfer, setShowTransfer] = useState(false);
   const [advocates, setAdvocates] = useState([]);
   const [transferTo, setTransferTo] = useState("");
@@ -508,8 +483,7 @@ export default function CaseDetail() {
 
   // ---------- Header actions: archive / transfer ----------
   const archiveCase = async () => {
-    setShowActions(false);
-    if (!(await confirmAsync("Archive this case? It will be hidden from the workspace (you can restore it from the Cases list)."))) return;
+    if (!(await confirmAsync("Archive this case? It will be hidden from the workspace (you can restore it from the Cases list).", "Archive this case?", "Archive case"))) return;
     try {
       await api.delete(`/api/cases/delete/${id}`);
       success("Case archived.");
@@ -520,7 +494,6 @@ export default function CaseDetail() {
   };
 
   const openTransfer = async () => {
-    setShowActions(false);
     setShowTransfer(true);
     if (advocates.length === 0) {
       try {
@@ -573,7 +546,6 @@ export default function CaseDetail() {
   const [linkError, setLinkError] = useState("");
   const [linkFound, setLinkFound] = useState<any>(null);   // {courtId, record}
   const openLink = () => {
-    setShowActions(false);
     setLinkCnr(""); setLinkError(""); setLinkFound(null); setLinkOpen(true);
   };
   const findCnr = async () => {
@@ -611,7 +583,6 @@ export default function CaseDetail() {
   };
 
   const refreshCourtData = async () => {
-    setShowActions(false);
     setRefreshing(true);
     try {
       const res = await api.post(`/api/courtsearch/cases/${id}/refresh`, {}, { timeout: 240000 });
@@ -837,7 +808,7 @@ export default function CaseDetail() {
   };
 
   const deleteHearingEvent = async (evId) => {
-    if (!(await confirmAsync("Delete this hearing/reminder?"))) return;
+    if (!(await confirmAsync("This removes it from the case and the calendar.", "Delete this hearing or reminder?", "Delete"))) return;
     try {
       await api.delete(`/api/events/delete/${evId}`);
       fetchEvents();
@@ -1030,15 +1001,24 @@ export default function CaseDetail() {
 
   // Lazily load tab data on demand
   useEffect(() => {
-    if (tab === "Parties") fetchParties();
-    if (tab === "Related Cases") { fetchRelated(); fetchLinkableCases(); }
-    if (tab === "Acts") { fetchLinkedActs(); fetchCitedActs(); }
-    if (tab === "Expenses" || tab === "Invoices") fetchFinancials();
-    if (tab === "Hearings" || tab === "Events") fetchEvents();
-    if (tab === "Documents" || tab === "Orders") fetchDocs();
-    if (tab === "Notes") fetchNotes();
-    if (tab === "Tasks") fetchTasks();
-    if ((tab === "Extra Details" || tab === "Orders" || tab === "Hearings") && !courtRecordLoaded) fetchCourtRecord();
+    // Overview pulls a little of everything it summarises (each only if the
+    // role may see it, so the API is not asked for what it would refuse).
+    if (tab === "overview") {
+      if (hasPermission("EVENT_VIEW")) fetchEvents();
+      if (hasPermission("TASK_VIEW")) fetchTasks();
+      if (hasPermission("DOCUMENT_VIEW")) fetchDocs();
+      fetchNotes();
+    }
+    if (tab === "parties") fetchParties();
+    if (tab === "related") { fetchRelated(); fetchLinkableCases(); }
+    if (tab === "acts") { fetchLinkedActs(); fetchCitedActs(); }
+    if (tab === "billing") fetchFinancials();
+    if (tab === "hearings" || tab === "events") fetchEvents();
+    if (tab === "docs" || tab === "orders") fetchDocs();
+    if (tab === "notes") fetchNotes();
+    if (tab === "tasks") fetchTasks();
+    if ((tab === "court" || tab === "orders" || tab === "hearings") && !courtRecordLoaded) fetchCourtRecord();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, fetchFinancials, fetchEvents, fetchDocs, fetchNotes, fetchTasks, fetchParties, fetchRelated, fetchLinkableCases, fetchLinkedActs, fetchCitedActs, fetchCourtRecord, courtRecordLoaded]);
 
   // ---------- Tags ----------
@@ -1196,23 +1176,38 @@ export default function CaseDetail() {
   };
 
 
+  // ---------- Page chrome state (menus, act search) ----------
+  const [moreAnchor, setMoreAnchor] = useState<HTMLElement | null>(null);
+  const [tagAnchor, setTagAnchor] = useState<HTMLElement | null>(null);
+  const [actQuery, setActQuery] = useState("");
+  const actTimer = useRef<any>(null);
+  // Search acts as the user types (1250+ acts, so the server filters).
+  useEffect(() => {
+    clearTimeout(actTimer.current);
+    if (!actQuery.trim()) { setActSuggestions([]); return; }
+    actTimer.current = setTimeout(async () => setActSuggestions(await loadActOptions(actQuery.trim())), 250);
+    return () => clearTimeout(actTimer.current);
+  }, [actQuery, loadActOptions]);
+
+  const goTab = (k: TabKey) => {
+    setTab(k);
+    document.getElementById("case-tabs")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+
   if (loading) {
     return (
-      <div className="case-detail flex flex-column gap-3">
-        <Skeleton height="2rem" width="12rem" />
-        <Skeleton height="10rem" />
-        <Skeleton height="3rem" />
-        <Skeleton height="16rem" />
+      <div className="stack" style={{ gap: "var(--s5)" }} aria-busy="true">
+        <div className="docket"><Skel h={12} w={160} /><Skel h={34} w="60%" style={{ margin: "12px 0" }} /><Skel h={14} w="80%" /></div>
+        <div className="split"><div className="stack" style={{ gap: 12 }}><Skel h={36} /><Skel h={180} /><Skel h={140} /></div><div className="stack" style={{ gap: 12 }}><Skel h={160} /><Skel h={120} /></div></div>
       </div>
     );
   }
 
   if (!summary) {
     return (
-      <div className="case-detail">
-        <Button text icon="pi pi-arrow-left" label="Back to Workspace" className="cd-back" onClick={() => navigate("/dashboard/cases")} />
-        <p className="cd-empty">Case not found or you don&apos;t have access.</p>
-      </div>
+      <EmptyState icon="case" title="This case isn't in your workspace"
+        text="It may have been archived or transferred, or the link is wrong. Search the register to find it."
+        action={<Button variant="primary" onClick={() => navigate("/dashboard/cases")}>Back to cases</Button>} />
     );
   }
 
@@ -1228,1025 +1223,1070 @@ export default function CaseDetail() {
   const hearingEvents = (events || []).filter(
     (ev) => ev.eventType === "HEARING" && (!ev.date || ev.date >= _todayISO));
   const otherEvents = (events || []).filter((ev) => ev.eventType !== "HEARING");
-
-  const actionItems = [
-    ...(courtRecord && hasPermission("CASE_EDIT") ? [{ label: "Refresh court data", icon: "pi pi-clock", command: refreshCourtData }] : []),
-    // A manual case with no court record yet can be linked to one by CNR.
-    ...(!courtRecord && courtRecordLoaded && hasPermission("CASE_EDIT")
-      ? [{ label: "Link to court record…", icon: "pi pi-link", command: openLink }] : []),
-    // Only when you can edit AND there's actually someone to transfer to — a solo
-    // advocate has no target, so it hides.
-    ...(canTransfer ? [{ label: "Transfer case…", icon: "pi pi-users", command: openTransfer }] : []),
-    ...(hasPermission("CASE_DELETE") ? [{ label: "Archive case", icon: "pi pi-trash", className: "cd-menu-danger", command: archiveCase }] : []),
-  ];
-
-  const visibleTabs = TABS.filter((t) => !TAB_PERMS[t] || hasPermission(TAB_PERMS[t]));
-  const tabModel = visibleTabs.map((t) => {
-    const badge = t === "Notes" ? summary.noteCount : t === "Tasks" ? summary.taskCounts?.open : 0;
-    return {
-      label: t,
-      template: (item: any, options: any) => (
-        <a className={options.className} onClick={options.onClick} role="tab">
-          <span className={options.labelClassName}>{item.label}</span>
-          {badge ? <span className="cd-badge">{badge}</span> : null}
-        </a>
-      ),
-    };
-  });
-
-  const sectionHead = (icon: string, title: any, action?: any) => (
-    <div className="cd-section-head">
-      <h4><i className={`pi ${icon}`} /> {title}</h4>
-      {action}
-    </div>
-  );
-
-  const listItem = (key: any, icon: string, body: any, trailing?: any) => (
-    <div className="cd-list-item" key={key}>
-      <div className="cd-li-icon"><i className={`pi ${icon}`} /></div>
-      <div className="cd-li-body">{body}</div>
-      {trailing}
-    </div>
-  );
-
-  const eventDate = (ev: any) => (
-    <span className="cd-li-date">{fmtDate(ev.date)}{ev.time ? ` · ${ev.time.slice(0, 5)}` : ""}</span>
-  );
-
-  const closeHearingModal = () => { setShowHearingModal(false); setEditingEventId(null); };
   const orders = extractOrders(courtRecord);
   const uploadedOrders = (docs || []).filter((d) => (d.category || "").toLowerCase() === "order");
   const transferTarget = advocates.find((a) => String(a.id) === String(transferTo));
-  const advocateOption = (a: any) => ({ value: String(a.id), label: `${a.fullName || a.email}${a.email ? ` — ${a.email}` : ""}` });
-  const transferGroups = [
-    ...(advocates.some((a) => !a.crossTeam) ? [{ label: "Your team", items: advocates.filter((a) => !a.crossTeam).map(advocateOption) }] : []),
-    ...(advocates.some((a) => a.crossTeam) ? [{ label: "Other teams (senior)", items: advocates.filter((a) => a.crossTeam).map(advocateOption) }] : []),
+
+  const can = (p: string) => hasPermission(p);
+  const canEdit = can("CASE_EDIT");
+  const canEventCreate = can("EVENT_CREATE");
+  const canBilling = can("INVOICE_VIEW") || can("EXPENSE_VIEW");
+  const cnr = caseIdentity.find((f) => f.label === "CNR")?.value || "";
+  const otherIdentity = caseIdentity.filter((f) => f.label !== "CNR");
+  const titleParts = String(summary.caseTitle || "").split(/\s+(?:vs\.?|v\/s\.?|versus)\s+/i);
+  const next = summary.nextHearing;
+  const nd = next ? daysFrom(next.date) : NaN;
+  const openTasks = tasks.filter((t) => !t.completed && !t.cancelled);
+  const totals = financials?.totals;
+  const paidPct = totals?.totalInvoiced ? Math.min(100, Math.round((totals.totalPaid / totals.totalInvoiced) * 100)) : 0;
+  // People on the matter, as far as this page knows them: who assigned and who holds its tasks.
+  const team: { name: string; role: string }[] = [];
+  tasks.forEach((t) => {
+    if (t.assignedByName && !team.some((x) => x.name === t.assignedByName)) team.push({ name: t.assignedByName, role: "Assigns work" });
+    if (t.assignedToName && !team.some((x) => x.name === t.assignedToName)) team.push({ name: t.assignedToName, role: "Working on tasks" });
+  });
+
+  const openHearingModal = (mode: "hearing" | "event") => {
+    setEditingEventId(null);
+    setEventModalMode(mode);
+    setHearingForm(mode === "event" ? { ...EMPTY_HEARING, eventType: "MEETING" } : EMPTY_HEARING);
+    setShowHearingModal(true);
+  };
+  const closeHearingModal = () => { setShowHearingModal(false); setEditingEventId(null); };
+
+  const moreItems: MenuItem[] = [
+    ...(courtRecord && canEdit ? [{ label: "Refresh court data", icon: "refresh" as const, onClick: refreshCourtData }] : []),
+    // A manual case with no court record yet can be linked to one by CNR.
+    ...(!courtRecord && courtRecordLoaded && canEdit ? [{ label: "Link to court record…", icon: "link" as const, onClick: openLink }] : []),
+    ...(canEventCreate ? [{ label: "Add event or reminder", icon: "calendar" as const, onClick: () => openHearingModal("event") }] : []),
+    // Only when you can edit AND there's someone to transfer to — a solo advocate has no target.
+    ...(canTransfer ? [{ label: "Transfer case…", icon: "swap" as const, onClick: openTransfer }] : []),
+    ...(can("CASE_DELETE") ? ["-" as const, { label: "Archive case", icon: "archive" as const, danger: true, onClick: archiveCase }] : []),
   ];
+  const showMore = moreItems.some((m) => m !== "-");
 
-  return (
-    <div className="case-detail">
-      <ConfirmDialog />
-      <Dialog header="Link to court record" visible={linkOpen} style={{ width: "min(560px, 95vw)" }}
-        onHide={() => !linkBusy && setLinkOpen(false)} modal
-        footer={<div className="flex justify-content-end gap-2">
-          <Button label="Cancel" text disabled={linkBusy} onClick={() => setLinkOpen(false)} />
-          {linkFound
-            ? <Button label="Link this record" icon="pi pi-link" loading={linkBusy} onClick={doLink} />
-            : <Button label="Find" icon="pi pi-search" loading={linkBusy} onClick={findCnr} disabled={!linkCnr.trim()} />}
-        </div>}>
-        <p className="mt-0 text-sm text-color-secondary">
-          For a case entered by hand: once it has a CNR, its court record (parties, hearings, orders) is added to
-          this case. Notes, tasks, documents and bills stay as they are.
-        </p>
-        <label htmlFor="link-cnr" className="font-medium text-sm block mb-1">CNR</label>
-        <InputText id="link-cnr" value={linkCnr} maxLength={16} className="w-full" autoFocus
-          placeholder="16 characters, e.g. TNCH010015532025"
-          onChange={(e) => { setLinkCnr(e.target.value.toUpperCase()); setLinkFound(null); setLinkError(""); }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
-        {linkError && <small className="field-error">{linkError}</small>}
-        {linkFound && (
-          <div className="mt-3 p-2 border-round surface-ground text-sm">
-            <i className="pi pi-check-circle mr-1" style={{ color: "var(--success)" }} />
-            Found <strong>{linkFound.record.cases[0]?.case_number || linkFound.cnr}</strong>
-            {linkFound.record.cases[0]?.parties ? <> · {linkFound.record.cases[0].parties}</> : null}
-            <div className="text-color-secondary mt-1">Check this is the same case, then link it.</div>
-          </div>
+  const tabs: { value: TabKey; label: string; count?: number }[] = [
+    { value: "overview", label: "Overview" },
+    { value: "parties", label: "Parties", count: parties.length || undefined },
+    ...(can("EVENT_VIEW") ? [
+      { value: "hearings" as TabKey, label: "Hearings", count: (hearingEvents.length + hearingHistory.length) || undefined },
+      { value: "events" as TabKey, label: "Events", count: otherEvents.length || undefined },
+    ] : []),
+    ...(can("DOCUMENT_VIEW") ? [
+      { value: "orders" as TabKey, label: "Orders", count: (orders.length + uploadedOrders.length) || undefined },
+      { value: "docs" as TabKey, label: "Documents", count: docs.length || undefined },
+    ] : []),
+    ...(can("TASK_VIEW") ? [{ value: "tasks" as TabKey, label: "Tasks", count: summary.taskCounts?.open || undefined }] : []),
+    ...(canBilling ? [{ value: "billing" as TabKey, label: "Billing", count: (financials ? financials.totals.invoiceCount + financials.totals.expenseCount : 0) || undefined }] : []),
+    { value: "notes", label: "Notes", count: summary.noteCount || undefined },
+    { value: "related", label: "Related cases", count: related.length || undefined },
+    { value: "acts", label: "Acts", count: linkedActs.length || undefined },
+    { value: "court", label: "Court record" },
+    { value: "timeline", label: "Timeline" },
+  ];
+  const activeTab: TabKey = tabs.some((t) => t.value === tab) ? tab : "overview";
+
+  const copyCnr = async () => {
+    try { await navigator.clipboard.writeText(cnr); success(`CNR ${cnr} copied.`); } catch { error("Couldn't copy to clipboard."); }
+  };
+
+  const openDocSummary = (d: any) => setSummaryDoc(d);
+
+  // ---------- Row renderers ----------
+  const eventWhen = (ev: any) => `${fmtDate(ev.date)}${ev.time ? `, ${fmtTime(ev.time)}` : ""}`;
+
+  const eventRow = (ev: any, withBiz: boolean) => (
+    <div className="list-item" key={ev.id} style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
+      {ev.date ? <Stamp iso={ev.date} /> : <span className="stamp" aria-hidden="true"><span>—</span><b>?</b></span>}
+      <div className="grow" style={{ minWidth: 180 }}>
+        <div className="small" style={{ fontWeight: 500 }}>
+          {ev.title}{" "}
+          {ev.hearingDetail?.purpose && <Chip tone="info">{ev.hearingDetail.purpose}</Chip>}
+          {ev.eventType !== "HEARING" && <Chip>{titleCase(ev.eventType)}</Chip>}
+        </div>
+        <div className="cs-sub">{eventWhen(ev)}{ev.date ? ` · ${relDay(ev.date)}` : ""}</div>
+        {(ev.hearingDetail?.court || ev.hearingDetail?.benchHall || ev.hearingDetail?.judge) && (
+          <div className="cs-sub">{[ev.hearingDetail.court, ev.hearingDetail.benchHall && `Hall ${ev.hearingDetail.benchHall}`, ev.hearingDetail.judge].filter(Boolean).join(" · ")}</div>
         )}
-      </Dialog>
-      <Button text icon="pi pi-arrow-left" label="Back to Workspace" className="cd-back" onClick={() => navigate("/dashboard/cases")} />
+        {ev.hearingDetail?.nextDate && <div className="cs-sub">Next date: {fmtDate(ev.hearingDetail.nextDate)}</div>}
+        {ev.hearingDetail?.outcome && <div className="cs-sub">Outcome: {ev.hearingDetail.outcome}</div>}
+        {ev.description && <div className="cs-sub">{ev.description}</div>}
+      </div>
+      <div className="row wrap" style={{ gap: 4 }}>
+        {withBiz && hearingBizByDate.has(ev.date) && (
+          <Button size="sm" loading={hearingViewBusy === ev.id} onClick={() => viewHearingBusiness(ev)}>Daily status</Button>
+        )}
+        {canEventCreate && <Button size="sm" variant="ghost" icon="edit" onClick={() => editHearing(ev)}>Edit</Button>}
+        {can("EVENT_DELETE") && <Button size="sm" variant="ghost" iconOnly icon="trash" aria-label={`Delete ${ev.title}`} onClick={() => deleteHearingEvent(ev.id)} />}
+      </div>
+    </div>
+  );
 
-      {/* Header */}
-      <Card className="cd-header">
-        <div className="flex flex-column lg:flex-row gap-4 justify-content-between">
-          <div className="cd-header-main flex-1">
-            <div className="cd-title-row">
-              <h2>
-                <InlineEdit value={summary.caseTitle} display={summary.caseTitle || summary.caseNumber}
-                  onSave={(v) => patchCase({ caseTitle: v })} />
-              </h2>
-              <Tag rounded value={summary.status || "—"} severity={statusSeverity(summary.status)} />
-              <InlineEdit value={summary.status} type="select" options={STATUS_SELECT} hideValue
-                onSave={(v) => patchCase({ status: v })} />
-            </div>
-            <div className="cd-meta">
-              <span><strong>Case No:</strong> {summary.caseNumber}</span>
-              <span><strong>Type:</strong>{" "}
-                <InlineEdit value={summary.caseType} display={summary.caseType || "—"}
-                  onSave={(v) => patchCase({ caseType: v })} />
-              </span>
-              <span><strong>Court:</strong>{" "}
-                <InlineEdit value={summary.courtLevel} display={summary.courtLevel || "—"}
-                  onSave={(v) => patchCase({ courtLevel: v })} />
-              </span>
-              <span><strong>Client:</strong>{" "}
-                <InlineEdit value={summary.clientId ?? ""} display={summary.clientName || "—"}
-                  type="select" onStart={fetchClients}
-                  options={[{ value: "", label: "— None —" },
-                    ...(summary.clientId && !clients.some((c) => c.id === summary.clientId)
-                      ? [{ value: String(summary.clientId), label: summary.clientName || `Client #${summary.clientId}` }] : []),
-                    ...clients.map((c) => ({ value: String(c.id), label: c.name }))]}
-                  onSave={(v) => patchCase({ clientId: v === "" ? null : Number(v) })} />
-              </span>
-              {hasPermission("INVOICE_VIEW") && (
-                <span title="Total invoiced for this case">
-                  <strong>Amount:</strong>{" "}
-                  {formatCurrency(financials?.totals?.totalInvoiced || 0)}
-                </span>
-              )}
-            </div>
-
-            {caseIdentity.length > 0 && (
-              <div className="cd-court-strip">
-                {caseIdentity.map((it) => (
-                  <div className="cd-cs-item" key={it.label}>
-                    <span className="cd-cs-k">{it.label}</span>
-                    <span className="cd-cs-v">{it.value}</span>
-                  </div>
+  const taskRow = (t: any, full: boolean) => {
+    const mine = (t.assignedById ?? t.createdById) === myId;
+    const canToggle = hasPermission("TASK_EDIT") || t.assignedToId === myId;
+    return (
+      <div className={`cs-task${t.completed ? " done" : ""}${t.cancelled ? " cancelled" : ""}`} key={t.id}>
+        <button type="button" className="cs-task-check" aria-pressed={!!t.completed} disabled={!canToggle}
+          onClick={() => toggleTask(t.id)}
+          aria-label={t.completed ? `Reopen ${t.title}` : `Mark ${t.title} done`}
+          title={t.needsReview && t.assignedToId === myId && !t.completed ? "Submit for review" : "Mark done / reopen"}>
+          {t.completed && <Icon name="check" size="sm" />}
+        </button>
+        <div className="grow">
+          <div className="ttl">{t.title}{t.cancelled && <> <Chip>Cancelled</Chip></>}</div>
+          <div className="cs-sub">
+            {[t.assignedToName && `With ${t.assignedToName}`, t.deadline && `due ${fmtDate(t.deadline)}`].filter(Boolean).join(", ") || "No deadline"}
+          </div>
+          {full && <>
+            <ReviewNote task={t} />
+            <SubmissionHistory task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast}
+              onDone={() => { fetchTasks(); fetchSummary(); }} onViewDocument={previewDoc}
+              onOpenDraft={() => navigate(DRAFTING.draft(t.draftSessionId))} />
+            {t.documents?.length > 0 && (
+              <div className="row wrap" style={{ gap: 4, marginTop: 6 }}>
+                {t.documents.map((d: any) => (
+                  <button type="button" key={d.id} className="cs-file-chip" onClick={() => previewDoc(d.id)} title={`View ${d.name}`}>
+                    <Icon name="eye" size="sm" />{d.name}
+                  </button>
                 ))}
               </div>
             )}
-
-            <div className="cd-header-tags">
-              <i className="pi pi-tag cd-ht-icon" />
-              {(summary.tags || []).map((t) => (
-                <Tag key={t.id} className="cd-tag-chip" rounded>
-                  <span className="flex align-items-center gap-1">
-                    {t.label}
-                    {hasPermission("CASE_EDIT") && (
-                      <i className="pi pi-times cd-tag-x" role="button" title="Remove" onClick={() => removeTag(t.id)} />
-                    )}
-                  </span>
-                </Tag>
-              ))}
-              {hasPermission("CASE_EDIT") && (
-                <Dropdown value={null} placeholder="+ tag" className="cd-tag-select p-inputtext-sm"
-                  options={TAG_OPTIONS.filter((t) => !(summary.tags || []).some((x) => x.label === t))}
-                  onChange={(e) => { if (e.value) addTag(e.value); }} />
-              )}
-            </div>
-          </div>
-
-          <div className="cd-header-side">
-            <div className="flex gap-2 justify-content-end flex-wrap">
-              {hasPermission("DRAFT_CREATE") && (
-                <Button size="small" outlined icon="pi pi-pencil" label="Draft for this case"
-                  onClick={() => navigate(newDraftUrl({ caseId: Number(id) }))} />
-              )}
-              {hasPermission("INVOICE_CREATE") && (
-                <Button size="small" icon="pi pi-indian-rupee" label="Raise Invoice" onClick={() => setShowInvoiceModal(true)} />
-              )}
-              {actionItems.length > 0 && (
-                <div className="cd-actions-wrap">
-                  <Button size="small" outlined icon={refreshing ? "pi pi-spin pi-spinner" : "pi pi-chevron-down"} iconPos="right"
-                    label={refreshing ? "Refreshing…" : "Actions"} onClick={() => setShowActions((s) => !s)} disabled={refreshing} />
-                  {showActions && (
-                    <>
-                      <div className="cd-actions-backdrop" onClick={() => setShowActions(false)} />
-                      <Menu model={actionItems} className="cd-actions-menu" />
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-            {summary.nextHearing ? (
-              <div className="cd-next-hearing">
-                <i className="pi pi-calendar" />
-                <div>
-                  <span className="cd-nh-label">Next Hearing</span>
-                  <span className="cd-nh-date">{fmtDate(summary.nextHearing.date)}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="cd-next-hearing muted"><i className="pi pi-calendar" /> No upcoming hearing</div>
-            )}
-          </div>
+          </>}
         </div>
-      </Card>
-
-      {/* Tabs */}
-      <TabMenu className="cd-tabs" model={tabModel} activeIndex={visibleTabs.indexOf(tab)}
-        onTabChange={(e) => setTab(visibleTabs[e.index])} />
-
-      <div className="cd-panel">
-        {/* PARTIES */}
-        {tab === "Parties" && (
-          <div className="cd-card">
-            {sectionHead("pi-users", "Parties")}
-            {parties.length === 0 && <span className="cd-muted">No parties added yet.</span>}
-            <div className="cd-list">
-              {parties.map((p) => (
-                <div className={`cd-list-item ${p.isOpponent ? "opponent" : ""}`} key={p.id}>
-                  <div className="cd-li-icon"><i className="pi pi-user" /></div>
-                  <div className="cd-li-body">
-                    <span className="cd-li-title">
-                      {p.name}
-                      {p.role && <Tag className="cd-li-type" value={p.role} severity="info" />}
-                      {p.isOpponent && <Tag className="cd-li-type" value="Opponent" severity="danger" />}
-                    </span>
-                    <span className="cd-li-desc">
-                      {[p.counsel && `Counsel: ${p.counsel}`, p.contact].filter(Boolean).join(" · ")}
-                    </span>
-                  </div>
-                  {hasPermission("CASE_EDIT") && (
-                    <Button icon="pi pi-trash" rounded text severity="danger" size="small" aria-label="Remove"
-                      onClick={() => deleteParty(p.id)} />
-                  )}
-                </div>
-              ))}
-            </div>
-            {hasPermission("CASE_EDIT") && <div className="cd-add-row">
-              <InputText placeholder="Party name" value={partyForm.name}
-                onChange={(e) => setPartyForm({ ...partyForm, name: e.target.value })} />
-              <Dropdown placeholder="Role" value={partyForm.role} options={PARTY_ROLES} showClear
-                onChange={(e) => setPartyForm({ ...partyForm, role: e.value || "" })} />
-              <InputText placeholder="Counsel (optional)" value={partyForm.counsel}
-                onChange={(e) => setPartyForm({ ...partyForm, counsel: e.target.value })} />
-              <InputText placeholder="Contact (optional)" value={partyForm.contact}
-                onChange={(e) => setPartyForm({ ...partyForm, contact: e.target.value })} />
-              <div className="flex align-items-center gap-2">
-                <Checkbox inputId="party-opp" checked={partyForm.isOpponent}
-                  onChange={(e) => setPartyForm({ ...partyForm, isOpponent: !!e.checked })} />
-                <label htmlFor="party-opp">Opponent</label>
-              </div>
-              <Button icon="pi pi-plus" label="Add" onClick={addParty} />
-            </div>}
-          </div>
-        )}
-
-        {/* HEARINGS */}
-        {tab === "Hearings" && (
-          <div>
-            {sectionHead("pi-calendar", `Hearings (${hearingEvents.length})`,
-              hasPermission("EVENT_CREATE") && (
-                <Button size="small" icon="pi pi-plus" label="Add Hearing"
-                  onClick={() => { setEditingEventId(null); setEventModalMode("hearing"); setHearingForm(EMPTY_HEARING); setShowHearingModal(true); }} />
-              ))}
-            <div className="cd-list">
-              {hearingEvents.length === 0 ? (
-                <p className="cd-muted">No upcoming hearings. Add one here — past court hearings appear under Court Hearing History below.</p>
-              ) : hearingEvents.map((ev) => listItem(ev.id, "pi-calendar", (
-                <>
-                  <span className="cd-li-title">
-                    {ev.title}
-                    {ev.hearingDetail?.purpose && <Tag className="cd-li-type" value={ev.hearingDetail.purpose} severity="info" />}
-                  </span>
-                  {(ev.hearingDetail?.court || ev.hearingDetail?.benchHall || ev.hearingDetail?.judge) && (
-                    <span className="cd-li-desc">
-                      {[ev.hearingDetail.court, ev.hearingDetail.benchHall && `Hall ${ev.hearingDetail.benchHall}`, ev.hearingDetail.judge].filter(Boolean).join(" · ")}
-                    </span>
-                  )}
-                  {ev.hearingDetail?.nextDate && <span className="cd-li-desc">Next date: {fmtDate(ev.hearingDetail.nextDate)}</span>}
-                  {ev.hearingDetail?.outcome && <span className="cd-li-desc">Outcome: {ev.hearingDetail.outcome}</span>}
-                  {ev.description && <span className="cd-li-desc">{ev.description}</span>}
-                </>
-              ), (
-                <div className="cd-li-actions">
-                  {eventDate(ev)}
-                  {hearingBizByDate.has(ev.date) && (
-                    <Button size="small" outlined label="View" loading={hearingViewBusy === ev.id}
-                      onClick={() => viewHearingBusiness(ev)} />
-                  )}
-                  {hasPermission("EVENT_CREATE") && <Button size="small" text label="Edit" onClick={() => editHearing(ev)} />}
-                  {hasPermission("EVENT_DELETE") && <Button size="small" text severity="danger" label="Delete" onClick={() => deleteHearingEvent(ev.id)} />}
-                </div>
-              )))}
-            </div>
-
-            {/* Court hearing/listing history from the imported record (Provakil "Listings"). */}
-            {hearingHistory.length > 0 && (
-              <div className="mt-4">
-                {sectionHead("pi-calendar", `Court Hearing History (${hearingHistory.length})`)}
-                <DataTable value={hearingHistory.map((h, i) => ({ ...h, _i: i }))} size="small" stripedRows scrollable className="text-sm">
-                  <Column header="Cause List" body={(h) => h.causeList || "—"} />
-                  <Column header="Judge / Bench" body={(h) => h.judge || "—"} />
-                  <Column header="Business Date" body={(h) => h.businessDate || "—"} />
-                  <Column header="Hearing Date" body={(h) => h.hearingDate || "—"} />
-                  <Column header="Purpose" body={(h) => h.purpose || "—"} />
-                  <Column header="Daily Status" body={(h) => (
-                    (h.businessDetail && Object.keys(h.businessDetail.fields || {}).length) || (h.business && h.businessDate) ? (
-                      <Button size="small" outlined label="View" loading={hearingViewBusy === `h${h._i}`}
-                        onClick={() => viewHistoryBusiness(h, h._i)} />
-                    ) : <span className="cd-muted">—</span>
-                  )} />
-                  <Column header="Actions" body={(h) => (
-                    <div className="flex gap-1 flex-wrap">
-                      <Button size="small" text label="Copy" onClick={() => copyHearing(h)} />
-                      {hasPermission("EVENT_CREATE") && <Button size="small" text label={alertBusy === `a${h._i}` ? "Sending…" : "Send Alert to Client"}
-                        tooltip={summary.clientId ? "Email this hearing to the client" : "No client email on this case"}
-                        tooltipOptions={{ position: "top", showOnDisabled: true }}
-                        disabled={!summary.clientId || alertBusy === `a${h._i}`} onClick={() => alertClient(h, h._i)} />}
-                      {hasPermission("INVOICE_CREATE") && <Button size="small" text label="Raise Invoice" onClick={() => setShowInvoiceModal(true)} />}
-                    </div>
-                  )} />
-                </DataTable>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* EVENTS */}
-        {tab === "Events" && (
-          <div>
-            {sectionHead("pi-calendar", `Events (${otherEvents.length})`,
-              hasPermission("EVENT_CREATE") && (
-                <Button size="small" icon="pi pi-plus" label="Add Event"
-                  onClick={() => { setEditingEventId(null); setEventModalMode("event"); setHearingForm({ ...EMPTY_HEARING, eventType: "MEETING" }); setShowHearingModal(true); }} />
-              ))}
-            <div className="cd-list">
-              {otherEvents.length === 0 ? (
-                <p className="cd-muted">No meetings, payment-due or document reminders for this case yet.</p>
-              ) : otherEvents.map((ev) => listItem(ev.id, "pi-calendar", (
-                <>
-                  <span className="cd-li-title">{ev.title} <Tag className="cd-li-type" value={ev.eventType} severity="info" /></span>
-                  {ev.description && <span className="cd-li-desc">{ev.description}</span>}
-                </>
-              ), (
-                <div className="cd-li-actions">
-                  {eventDate(ev)}
-                  {hasPermission("EVENT_CREATE") && <Button size="small" text label="Edit" onClick={() => editHearing(ev)} />}
-                  {hasPermission("EVENT_DELETE") && <Button size="small" text severity="danger" label="Delete" onClick={() => deleteHearingEvent(ev.id)} />}
-                </div>
-              )))}
-            </div>
-          </div>
-        )}
-
-        {/* ORDERS */}
-        {tab === "Orders" && (
-          <div>
-            {sectionHead("pi-file", "Orders",
-              hasPermission("DOCUMENT_UPLOAD") && (
-                <Button size="small" icon="pi pi-upload" label="Upload Order" onClick={() => setShowUploadOrder(true)} />
-              ))}
-
-            {/* Court-record orders (scraped, downloaded live) */}
-            {courtRecordLoading && <div className="flex justify-content-center p-4"><ProgressSpinner style={{ width: 36, height: 36 }} strokeWidth="4" /></div>}
-            {!courtRecordLoading && orders.length === 0 && courtRecordLoaded && (
-              <p className="cd-muted">No orders found on the court record for this case.</p>
-            )}
-            {!courtRecordLoading && orders.length > 0 && (
-              <>
-                <DataTable value={orders.map((o, i) => ({ ...o, _i: i }))} size="small" stripedRows scrollable className="text-sm">
-                  <Column header="#" body={(o) => o.number || o._i + 1} />
-                  <Column header="Order Date" field="date" />
-                  <Column header="Details" field="details" />
-                  <Column header="Judge" field="judge" />
-                  <Column header="Document" body={(o) => (
-                    o.pdf && o.pdf.filename ? (
-                      <Button size="small" outlined icon="pi pi-download" label={orderDlBusy === o._i ? "Fetching…" : "Download PDF"}
-                        disabled={orderDlBusy === o._i} onClick={() => downloadOrderPdf(o, o._i)} />
-                    ) : o.pdfUrl ? (
-                      <Button size="small" outlined icon="pi pi-download" label={orderDlBusy === o._i ? "Fetching…" : "Download PDF"}
-                        disabled={orderDlBusy === o._i} onClick={() => downloadOrderPdfByUrl(o, o._i)} />
-                    ) : <span className="cd-muted">—</span>
-                  )} />
-                </DataTable>
-                <p className="cd-muted cd-orders-note">Court PDFs are fetched live from the court and downloaded to your device.</p>
-              </>
-            )}
-
-            {/* Orders you've uploaded (stored documents tagged as "Order") */}
-            {uploadedOrders.length > 0 && (
-              <div className="mt-4">
-                {sectionHead("pi-file", `Uploaded Orders (${uploadedOrders.length})`)}
-                <div className="cd-list">
-                  {uploadedOrders.map((d) => listItem(d.id, "pi-file", (
-                    <>
-                      <span className="cd-li-title">{d.documentName}</span>
-                      <span className="cd-li-desc">{d.description || "Order"}{d.uploadDate ? ` · ${fmtDate(d.uploadDate)}` : ""}</span>
-                    </>
-                  ), (
-                    <div className="cd-li-actions">
-                      <Button size="small" outlined label="Preview" onClick={() => previewDoc(d.id)} />
-                      <Button size="small" outlined label="Download" onClick={() => downloadDoc(d.id, d.documentName)} />
-                    </div>
-                  )))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* EXPENSES — live expenses for this case */}
-        {tab === "Expenses" && (
-          <div>
-            <div className="cd-financials">
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Total Expenses</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalExpenses || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">No. of Expenses</span>
-                <span className="cd-fin-value">{financials?.totals?.expenseCount ?? 0}</span>
-              </div>
-            </div>
-            {sectionHead("pi-indian-rupee", `Expenses ${financials ? `(${financials.totals.expenseCount})` : ""}`,
-              hasPermission("EXPENSE_CREATE") && (
-                <Button size="small" icon="pi pi-plus" label="Add Expense" onClick={() => setShowExpenseModal(true)} />
-              ))}
-            {!financials ? (
-              <p className="cd-muted">Loading…</p>
-            ) : financials.expenses.length === 0 ? (
-              <p className="cd-muted">No expenses for this case yet. Add one here or from the Expenses section — it maps to this case automatically.</p>
-            ) : (
-              <div className="cd-list">
-                {financials.expenses.map((exp) => listItem(exp.id, "pi-indian-rupee", (
-                  <>
-                    <span className="cd-li-title">{exp.title}
-                      {exp.category && <Tag className="cd-li-type" value={exp.category} severity="info" />}
-                    </span>
-                    <span className="cd-li-desc">
-                      {fmtDate(exp.paymentDate)}{exp.paymentStatus ? ` · ${exp.paymentStatus}` : ""}
-                    </span>
-                  </>
-                ), <span className="cd-li-date">{formatCurrency(exp.amount || 0)}</span>))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* INVOICES — live invoices for this case */}
-        {tab === "Invoices" && (
-          <div>
-            <div className="cd-financials">
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Total Invoiced</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalInvoiced || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Paid</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalPaid || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">Unpaid</span>
-                <span className="cd-fin-value">{formatCurrency(financials?.totals?.totalUnpaid || 0)}</span>
-              </div>
-              <div className="cd-fin-card">
-                <span className="cd-fin-label">No. of Invoices</span>
-                <span className="cd-fin-value">{financials?.totals?.invoiceCount ?? 0}</span>
-              </div>
-            </div>
-            {sectionHead("pi-file", `Invoices ${financials ? `(${financials.totals.invoiceCount})` : ""}`,
-              hasPermission("INVOICE_CREATE") && (
-                <Button size="small" icon="pi pi-plus" label="Add Invoice" onClick={() => setShowInvoiceModal(true)} />
-              ))}
-            {!financials ? (
-              <p className="cd-muted">Loading…</p>
-            ) : financials.invoices.length === 0 ? (
-              <p className="cd-muted">No invoices for this case yet. Add one here or from the Invoices section — it maps to this case automatically.</p>
-            ) : (
-              <div className="cd-list">
-                {financials.invoices.map((inv) => listItem(inv.id, "pi-file", (
-                  <>
-                    <span className="cd-li-title">{inv.invoiceNumber}</span>
-                    <span className="cd-li-desc">
-                      Issued {fmtDate(inv.invoiceDate)} · Due {fmtDate(inv.dueDate)}
-                      {inv.raisedByName ? ` · Raised by ${inv.raisedByName}` : ""}
-                      {inv.handledByName && inv.handledByName !== inv.raisedByName ? ` · Handled by ${inv.handledByName}` : ""}
-                      {inv.paidAmount > 0 && inv.balance > 0 ? ` · ${formatCurrency(inv.balance)} still due` : ""}
-                    </span>
-                  </>
-                ), (
-                  <div className="cd-li-actions">
-                    <Tag rounded value={inv.status} severity={statusSeverity(inv.status)} />
-                    <span className="cd-li-date">{formatCurrency(inv.amount || 0)}</span>
-                  </div>
-                )))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TASKS */}
-        {tab === "Tasks" && (
-          <div>
-            {hasPermission("TASK_CREATE") && <div className="cd-task-add grid formgrid p-fluid">
-              <div className="field col-12 md:col-4">
-                <label>Task</label>
-                <InputText placeholder="Task title" value={newTask.title}
-                  onChange={(e) => setNewTask({ ...newTask, title: e.target.value })} />
-              </div>
-              <div className="field col-6 md:col-2">
-                <label>Priority</label>
-                <Dropdown value={newTask.priority} options={PRIORITIES} optionLabel="label" optionValue="value"
-                  onChange={(e) => setNewTask({ ...newTask, priority: e.value })} />
-              </div>
-              <div className="field col-6 md:col-2">
-                <label>Deadline</label>
-                <DateField value={newTask.deadline} onChange={(v) => setNewTask({ ...newTask, deadline: v })} />
-              </div>
-              {hasPermission("DOCUMENT_UPLOAD") && <div className="field col-6 md:col-2">
-                <label>Documents</label>
-                <label className="cd-task-attach p-button p-button-outlined p-button-secondary" title="Attach documents">
-                  <i className="pi pi-paperclip mr-2" />
-                  <span>{taskFiles.length ? `${taskFiles.length} file(s)` : "Attach files"}</span>
-                  <input type="file" multiple style={{ display: "none" }}
-                    onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />
-                </label>
-              </div>}
-              {hasPermission("DOCUMENT_UPLOAD") && <div className="field col-6 md:col-2">
-                <label>Category</label>
-                <Dropdown value={newTask.category} options={DOC_CATEGORIES} placeholder="Select category" showClear
-                  onChange={(e) => setNewTask({ ...newTask, category: e.value || "" })} />
-              </div>}
-              {hasPermission("TASK_ASSIGN") && (
-                <div className="field col-6 md:col-3">
-                  <label>Assign to</label>
-                  <Dropdown placeholder="Myself" value={newTask.assignedTo}
-                    options={[{ value: "", label: "Myself" }, ...assignees.map((a) => ({ value: a.id, label: a.fullName || a.email }))]}
-                    optionLabel="label" optionValue="value"
-                    onChange={(e) => setNewTask({ ...newTask, assignedTo: e.value })} />
-                </div>
-              )}
-              <div className="field col-6 md:col-2 flex align-items-end">
-                <Button icon="pi pi-plus" label="Add" onClick={addTask} />
-              </div>
-            </div>}
-            {tasks.length === 0 ? (
-              <p className="cd-muted">No tasks for this case.</p>
-            ) : tasks.map((t) => (
-              <div className={`cd-task ${t.completed ? "done" : ""}${t.cancelled ? " cancelled" : ""}`} key={t.id}>
-                <Button rounded text className="cd-task-check" onClick={() => toggleTask(t.id)}
-                  disabled={!hasPermission("TASK_EDIT") && t.assignedToId !== myId}
-                  icon={t.completed ? "pi pi-check-circle" : "pi pi-circle"}
-                  severity={t.completed ? "success" : "secondary"}
-                  tooltip={t.needsReview && t.assignedToId === myId && !t.completed ? "Submit for review" : "Toggle"}
-                  tooltipOptions={{ position: "top" }} />
-                <div className="cd-task-main">
-                  <span className="cd-task-title">{t.title}{t.cancelled && <span className="cd-task-cancelled"> Cancelled</span>}</span>
-                  <ReviewNote task={t} />
-                  <SubmissionHistory task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast}
-                    onDone={() => { fetchTasks(); fetchSummary(); }} onViewDocument={previewDoc}
-                    onOpenDraft={() => navigate(DRAFTING.draft(t.draftSessionId))} />
-                  {t.documents?.length > 0 && (
-                    <div className="cd-task-docs">
-                      {t.documents.map((d) => (
-                        <span key={d.id} className="cd-task-doc" onClick={() => previewDoc(d.id)} title={`View ${d.name}`}>
-                          <i className="pi pi-eye" style={{ fontSize: 11 }} /> {d.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <ReviewChip task={t} />
-                <SubmitWork task={t} myId={myId} toast={toast} caseId={Number(id)}
-                  onDone={() => { fetchTasks(); fetchSummary(); }} />
-                <ReviewActions task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast}
-                  onDone={() => { fetchTasks(); fetchSummary(); }} />
-                {t.assignedToName && (
-                  <span className="cd-task-assignee" title={`Assigned to ${t.assignedToName}`}>
-                    <i className="pi pi-user" style={{ fontSize: 11 }} /> {t.assignedToName}
-                  </span>
-                )}
-                {/* Priority and cancel are the assigner's (the server enforces it). */}
-                {(t.assignedById ?? t.createdById) === myId ? <Dropdown
-                  className={`cd-task-prio p-inputtext-sm prio-${(t.priority || "medium").toLowerCase()}`}
-                  value={t.priority || "MEDIUM"}
-                  options={["HIGH", "MEDIUM", "LOW"]}
-                  valueTemplate={(v) => <Tag value={v} severity={prioSeverity(v)} />}
-                  onChange={(e) => changeTaskPriority(t.id, e.value)}
-                  tooltip="Change priority" tooltipOptions={{ position: "top" }}
-                /> : <Tag value={t.priority || "MEDIUM"} severity={prioSeverity(t.priority || "MEDIUM")} />}
-                {t.deadline && <span className="cd-task-deadline"><i className="pi pi-clock" style={{ fontSize: 11 }} /> {fmtDate(t.deadline)}</span>}
-                {t.draftSessionId && hasPermission("DRAFT_VIEW") && (
-                  <Button size="small" text icon="pi pi-eye" label="Open draft"
-                    tooltip="Open the draft in the drafting editor" tooltipOptions={{ position: "top" }}
-                    onClick={() => navigate(DRAFTING.draft(t.draftSessionId))} />
-                )}
-                {!t.completed && !t.cancelled && hasPermission("DRAFT_CREATE") && (
-                  <Button rounded text size="small" icon="pi pi-file-edit" aria-label="Draft for this task"
-                    tooltip="Draft for this task" tooltipOptions={{ position: "top" }}
-                    onClick={() => navigate(newDraftUrl({ caseId: Number(id), taskId: t.id }))} />
-                )}
-                {(t.assignedById ?? t.createdById) === myId && (
-                  t.cancelled
-                    ? <Button rounded text size="small" icon="pi pi-replay" aria-label="Restore task" tooltip="Restore task"
-                        tooltipOptions={{ position: "top" }} onClick={() => cancelTask(t.id, false)} />
-                    : <Button rounded text size="small" severity="danger" icon="pi pi-times-circle" aria-label="Cancel task"
-                        tooltip="Cancel task" tooltipOptions={{ position: "top" }} onClick={() => cancelTask(t.id, true)} />
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* NOTES */}
-        {tab === "Notes" && (
-          <div>
-            {hasPermission("CASE_EDIT") && (
-              <div className="flex flex-column gap-2 mb-3">
-                <InputTextarea rows={3} autoResize className="w-full"
-                  placeholder="Write a case note (diary entry)..."
-                  value={newNote}
-                  onChange={(e) => setNewNote(e.target.value)}
-                />
-                <div className="flex justify-content-end"><Button icon="pi pi-plus" label="Add Note" onClick={addNote} /></div>
-              </div>
-            )}
-            {notes.length === 0 ? (
-              <p className="cd-muted">No notes yet.</p>
-            ) : notes.map((n) => (
-              <div className="cd-note" key={n.id}>
-                <div className="cd-note-body">{n.body}</div>
-                <div className="cd-note-foot">
-                  <span>{new Date(n.createdAt).toLocaleString("en-IN")}</span>
-                  {hasPermission("CASE_EDIT") && (
-                    <Button icon="pi pi-trash" rounded text severity="danger" size="small" aria-label="Delete" onClick={() => deleteNote(n.id)} />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* DOCUMENTS */}
-        {tab === "Documents" && (
-          <div>
-            {hasPermission("DOCUMENT_UPLOAD") && (
-              <div className="cd-add-row mb-3">
-                <label className="p-button p-button-outlined p-button-secondary p-button-sm">
-                  <i className="pi pi-paperclip mr-2" />
-                  <span>{uploadFile ? uploadFile.name : "Choose file"}</span>
-                  <input type="file" style={{ display: "none" }} onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
-                </label>
-                <Button size="small" icon="pi pi-upload" label="Upload" onClick={uploadDoc} disabled={!uploadFile} />
-              </div>
-            )}
-            {docs.length === 0 ? (
-              <p className="cd-muted">No documents linked to this case.</p>
-            ) : (
-              <div className="cd-list">
-                {docs.map((d) => listItem(d.id, "pi-folder", (
-                  <>
-                    <span className="cd-li-title">{d.documentName}</span>
-                    <span className="cd-li-desc">{d.category || "Other"} · {d.version > 1 ? `v${d.version}` : "v1"}</span>
-                  </>
-                ), (
-                  <div className="cd-li-actions">
-                    <Button rounded text size="small" icon="pi pi-eye" aria-label="Preview" tooltip="Preview"
-                      tooltipOptions={{ position: "top" }} onClick={() => previewDoc(d.id)} />
-                    <Button size="small" outlined icon="pi pi-bolt" label="See Summary" onClick={() => setSummaryDoc(d)} />
-                    <Button rounded text size="small" icon="pi pi-download" aria-label="Download" tooltip="Download"
-                      tooltipOptions={{ position: "top" }} onClick={() => downloadDoc(d.id, d.originalName || d.documentName)} />
-                  </div>
-                )))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {summaryDoc && (
-          <DocumentSummaryModal
-            doc={summaryDoc}
-            onClose={() => setSummaryDoc(null)}
-            canRegenerate={hasPermission("DOCUMENT_EDIT")}
-          />
-        )}
-
-        {/* RELATED CASES */}
-        {tab === "Related Cases" && (
-          <div className="cd-card">
-            {sectionHead("pi-link", "Related Cases")}
-            {related.length === 0 && <span className="cd-muted">No linked cases.</span>}
-            <div className="cd-list">
-              {related.map((r) => listItem(`${r.direction}-${r.id}`, "pi-link", (
-                <>
-                  <span className="cd-li-title cd-link-case" onClick={() => r.linkedCaseId && navigate(`/dashboard/cases/${r.linkedCaseId}`)}>
-                    {r.caseNumber || `Case #${r.linkedCaseId}`}
-                    {r.relation && <Tag className="cd-li-type" value={r.relation} severity="info" />}
-                  </span>
-                  <span className="cd-li-desc">{r.caseTitle || ""}{r.note ? ` · ${r.note}` : ""}</span>
-                </>
-              ), hasPermission("CASE_EDIT") && (
-                <Button icon="pi pi-trash" rounded text severity="danger" size="small" aria-label="Unlink" onClick={() => deleteRelated(r.id)} />
-              )))}
-            </div>
-            {hasPermission("CASE_EDIT") && <div className="cd-add-row">
-              <Dropdown value={relatedForm.relatedCaseId} placeholder="Select a case to link…" filter showClear
-                options={linkableCases.map((c) => ({ value: String(c.id), label: `${c.caseNumber} — ${c.caseTitle}` }))}
-                optionLabel="label" optionValue="value" className="cd-grow"
-                onChange={(e) => setRelatedForm({ ...relatedForm, relatedCaseId: e.value || "" })} />
-              <Dropdown value={relatedForm.relation} placeholder="Relation" options={RELATION_TYPES} showClear
-                onChange={(e) => setRelatedForm({ ...relatedForm, relation: e.value || "" })} />
-              <InputText placeholder="Note (optional)" value={relatedForm.note}
-                onChange={(e) => setRelatedForm({ ...relatedForm, note: e.target.value })} />
-              <Button icon="pi pi-plus" label="Link" onClick={addRelated} />
-            </div>}
-          </div>
-        )}
-
-        {/* ACTS — statutes linked to this case (for validation / reference) */}
-        {tab === "Acts" && (
-          <div className="flex flex-column gap-3">
-            <div className="cd-card">
-              {sectionHead("pi-book", "Linked Acts")}
-              {linkedActs.length === 0 && <span className="cd-muted">No acts linked to this case yet.</span>}
-              <div className="cd-list">
-                {linkedActs.map((a) => listItem(a.id, "pi-book", (
-                  <>
-                    <span className="cd-li-title cd-link-case" onClick={() => navigate(`/dashboard/acts/${a.actId}`)}>
-                      {a.actTitle || `Act #${a.actId}`}
-                      {a.actNumber && <Tag className="cd-li-type" value={`No. ${a.actNumber}`} severity="info" />}
-                    </span>
-                    <span className="cd-li-desc">{[a.actYear, a.jurisdiction].filter(Boolean).join(" · ")}</span>
-                  </>
-                ), hasPermission("CASE_EDIT") && (
-                  <Button icon="pi pi-trash" rounded text severity="danger" size="small" aria-label="Unlink act" onClick={() => deleteAct(a.actId)} />
-                )))}
-              </div>
-              <div className="cd-add-row">
-                <AutoComplete
-                  className="cd-grow" inputClassName="w-full"
-                  value={selectedAct}
-                  suggestions={actSuggestions}
-                  field="label"
-                  dropdown
-                  forceSelection
-                  completeMethod={async (e) => setActSuggestions(await loadActOptions(e.query))}
-                  onChange={(e) => setSelectedAct(e.value && typeof e.value === "object" ? e.value : (e.value ? e.value : null))}
-                  placeholder="Search acts to link…"
-                  emptyMessage="Type to search acts"
-                  showEmptyMessage
-                />
-                {hasPermission("CASE_EDIT") && (
-                  <Button icon="pi pi-plus" label={linkingAct ? "Linking…" : "Link"} onClick={addAct}
-                    disabled={!selectedAct || typeof selectedAct !== "object" || linkingAct} />
-                )}
-              </div>
-            </div>
-
-            {/* Acts cited by the court on the imported record. Matched ones link
-                to our library and can be added to Linked Acts in one click. */}
-            {citedActs.length > 0 && (
-              <div className="cd-card">
-                {sectionHead("pi-book", "Cited by the court")}
-                <div className="cd-list">
-                  {citedActs.map((a, i) => {
-                    const alreadyLinked = a.actId && linkedActs.some((l) => l.actId === a.actId);
-                    return listItem(i, "pi-book", (
-                      <>
-                        {a.actId ? (
-                          <span className="cd-li-title cd-link-case" onClick={() => navigate(`/dashboard/acts/${a.actId}`)}>
-                            {a.actTitle}
-                          </span>
-                        ) : (
-                          <span className="cd-li-title">
-                            {a.name} <Tag className="cd-li-type" value="not in library" severity="secondary" />
-                          </span>
-                        )}
-                        <span className="cd-li-desc">
-                          {a.section ? `Section ${a.section}` : ""}
-                          {a.actId && a.name !== a.actTitle ? `${a.section ? " · " : ""}cited as “${a.name}”` : ""}
-                        </span>
-                      </>
-                    ), a.actId && (
-                      alreadyLinked
-                        ? <Tag value="Linked" icon="pi pi-check" severity="success" title="Already in Linked Acts" />
-                        : <Button size="small" outlined icon="pi pi-plus" label="Link" tooltip="Add to Linked Acts"
-                            tooltipOptions={{ position: "top" }} onClick={() => linkCitedAct(a.actId)} />
-                    ));
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === "Extra Details" && (
-          <div>
-            {courtRecordLoading && <div className="flex justify-content-center p-4"><ProgressSpinner style={{ width: 36, height: 36 }} strokeWidth="4" /></div>}
-            {!courtRecordLoading && courtRecord && (
-              <>
-                <p className="cd-muted">Additional details from the imported court record. The key fields (CNR, filing, status, jurisdiction, category, dates) are in the header; parties, hearings and orders — and the acts cited by the court — have their own tabs. This holds any other fields the court captured.</p>
-                <CaseExtraDetails record={courtRecord} courtId={courtRecordCourtId} />
-              </>
-            )}
-            {!courtRecordLoading && courtRecordLoaded && !courtRecord && (
-              <p className="cd-muted">No court record was imported for this case (it was added manually, or before import was available).</p>
-            )}
-          </div>
-        )}
-
-        {tab === "Timeline" && (
-          <div className="flex flex-column align-items-start gap-3">
-            <p className="cd-muted">View the full activity timeline for this case — payments, expenses, documents, hearings, status changes and more.</p>
-            <Button icon="pi pi-clock" label="Open Full Timeline" onClick={() => setShowTimeline(true)} />
-          </div>
-        )}
+        <div className="cs-task-side">
+          <ReviewChip task={t} />
+          {full && <>
+            <SubmitWork task={t} myId={myId} toast={toast} caseId={Number(id)} onDone={() => { fetchTasks(); fetchSummary(); }} />
+            <ReviewActions task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast} onDone={() => { fetchTasks(); fetchSummary(); }} />
+          </>}
+          {/* Priority and cancel are the assigner's (the server enforces it). */}
+          {full && mine ? (
+            <select className="input" style={{ height: 28, width: "auto" }} aria-label={`Priority of ${t.title}`}
+              value={t.priority || "MEDIUM"} onChange={(e) => changeTaskPriority(t.id, e.target.value)}>
+              {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          ) : <Chip tone={prioTone(t.priority || "MEDIUM")}>{titleCase(t.priority || "MEDIUM")}</Chip>}
+          {full && t.draftSessionId && can("DRAFT_VIEW") && (
+            <Button size="sm" variant="ghost" icon="eye" onClick={() => navigate(DRAFTING.draft(t.draftSessionId))}>Open draft</Button>
+          )}
+          {full && !t.completed && !t.cancelled && can("DRAFT_CREATE") && (
+            <Button size="sm" variant="ghost" iconOnly icon="pen" aria-label={`Draft for ${t.title}`} title="Draft for this task"
+              onClick={() => navigate(newDraftUrl({ caseId: Number(id), taskId: t.id }))} />
+          )}
+          {full && mine && (t.cancelled
+            ? <Button size="sm" variant="ghost" iconOnly icon="restore" aria-label={`Restore ${t.title}`} title="Restore task" onClick={() => cancelTask(t.id, false)} />
+            : <Button size="sm" variant="ghost" iconOnly icon="x" aria-label={`Cancel ${t.title}`} title="Cancel task" onClick={() => cancelTask(t.id, true)} />)}
+        </div>
       </div>
+    );
+  };
 
-      {showTimeline && (
-        <CaseTimeline
-          caseId={summary.id}
-          caseNumber={summary.caseNumber}
-          onClose={() => setShowTimeline(false)}
-        />
+  const docTable = (list: any[], kind: "docs" | "orders") => (
+    <div className="table-wrap">
+      <table className="t">
+        <thead><tr>
+          <th scope="col">Name</th>
+          <th scope="col" className="hide-sm">{kind === "orders" ? "Details" : "Category"}</th>
+          <th scope="col" className="hide-sm">{kind === "orders" ? "Uploaded" : "Version"}</th>
+          <th scope="col"><span className="sr-only">Actions</span></th>
+        </tr></thead>
+        <tbody>
+          {list.map((d) => (
+            <tr key={d.id}>
+              <td>
+                <button type="button" className="link" style={{ background: "none", border: 0, padding: 0, textAlign: "left", font: "inherit", cursor: "pointer" }}
+                  onClick={() => previewDoc(d.id)}>
+                  <span className="row" style={{ gap: 6 }}><Icon name="file" size="sm" />{d.documentName}</span>
+                </button>
+              </td>
+              <td className="hide-sm small">{kind === "orders" ? (d.description || "Order") : (d.category || "Other")}</td>
+              <td className="hide-sm small">{kind === "orders" ? fmtDate(d.uploadDate) : <span className="mono xs">v{d.version > 1 ? d.version : 1}</span>}</td>
+              <td className="right nowrap">
+                <Button size="sm" variant="ghost" iconOnly icon="eye" aria-label={`Preview ${d.documentName}`} title="Preview" onClick={() => previewDoc(d.id)} />
+                {kind === "docs" && <Button size="sm" variant="ghost" icon="sparkle" onClick={() => openDocSummary(d)}><span className="hide-sm">Summary</span></Button>}
+                <Button size="sm" variant="ghost" iconOnly icon="download" aria-label={`Download ${d.documentName}`} title="Download"
+                  onClick={() => downloadDoc(d.id, kind === "docs" ? (d.originalName || d.documentName) : d.documentName)} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const nothing = (text: string) => <p className="faint small" style={{ padding: "var(--s3) var(--s5)" }}>{text}</p>;
+
+  return (
+    <div className="cs-root">
+      {/* ---------- Docket cover ---------- */}
+      <header className="docket">
+        <div className="row wrap" style={{ gap: "var(--s3)" }}>
+          <span className="no">{summary.caseNumber}</span>
+          <span className="faint xs">CNR</span><span className="mono xs">{cnr || "Not available"}</span>
+          {cnr && <Button size="sm" variant="ghost" iconOnly icon="copy" aria-label="Copy CNR" onClick={copyCnr} />}
+        </div>
+        <h1>
+          {titleParts.length === 2
+            ? <>{titleParts[0]}<span className="vs">vs</span>{titleParts[1]}</>
+            : (summary.caseTitle || summary.caseNumber)}
+        </h1>
+        <div className="meta-line">
+          {summary.courtLevel && <span><Icon name="gavel" size="sm" />{summary.courtLevel} court</span>}
+          {summary.caseType && <span><Icon name="file" size="sm" />{summary.caseType}</span>}
+          {summary.clientName && <span><Icon name="user" size="sm" />Client: {summary.clientName}</span>}
+          {can("INVOICE_VIEW") && <span title="Total invoiced for this case"><Icon name="rupee" size="sm" />{formatCurrency(financials?.totals?.totalInvoiced || 0)} invoiced</span>}
+        </div>
+        {otherIdentity.length > 0 && (
+          <dl className="cs-court-strip">
+            {otherIdentity.map((it) => (
+              <div key={it.label}><dt>{it.label}</dt><dd>{it.value}</dd></div>
+            ))}
+          </dl>
+        )}
+        <div className="row wrap" style={{ marginTop: "var(--s4)", gap: 6 }}>
+          <StatusChip status={summary.status || "—"} />
+          {(summary.tags || []).map((t) => (
+            <span key={t.id} className={`tag${HOT_TAGS.includes(t.label) ? " hot" : ""}`}>
+              {t.label}
+              {canEdit && <button type="button" onClick={() => removeTag(t.id)} aria-label={`Remove tag ${t.label}`}><Icon name="x" size="sm" /></button>}
+            </span>
+          ))}
+          {canEdit && (
+            <button type="button" className="filter-chip" style={{ height: 22 }} aria-haspopup="menu"
+              onClick={(e) => setTagAnchor(tagAnchor ? null : e.currentTarget)}>
+              <Icon name="plus" size="sm" />Add tag
+            </button>
+          )}
+        </div>
+        <div className="row wrap cs-docket-acts" style={{ gap: "var(--s2)" }}>
+          {canEventCreate && <Button variant="primary" icon="calendar" onClick={() => openHearingModal("hearing")}>Add hearing</Button>}
+          {can("DRAFT_CREATE") && <Button icon="pen" onClick={() => navigate(newDraftUrl({ caseId: Number(id) }))}>Draft for this case</Button>}
+          {can("INVOICE_CREATE") && <Button icon="receipt" onClick={() => setShowInvoiceModal(true)}>Raise invoice</Button>}
+          {showMore && (
+            <Button variant="ghost" iconOnly icon="more" aria-label={refreshing ? "Refreshing court data" : "More actions"} aria-haspopup="menu"
+              loading={refreshing} disabled={refreshing} onClick={(e) => setMoreAnchor(moreAnchor ? null : e.currentTarget)} />
+          )}
+          {refreshing && <Spinner label="Refreshing the court record" />}
+        </div>
+      </header>
+      {moreAnchor && <PopMenu anchor={moreAnchor} items={moreItems} onClose={() => setMoreAnchor(null)} width={240} />}
+      {tagAnchor && (
+        <PopMenu anchor={tagAnchor} width={220} onClose={() => setTagAnchor(null)}
+          items={(() => {
+            const avail = TAG_OPTIONS.filter((t) => !(summary.tags || []).some((x) => x.label === t));
+            return avail.length
+              ? avail.map((t) => ({ label: t, icon: "tag" as const, onClick: () => addTag(t) }))
+              : [{ label: "All tags are already on this case", onClick: () => {} }];
+          })()} />
       )}
 
-      {/* Transfer case */}
-      <Dialog visible={showTransfer} onHide={() => setShowTransfer(false)} header="Transfer case" modal
-        style={{ width: "30rem" }} breakpoints={{ "640px": "95vw" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button text label="Cancel" onClick={() => setShowTransfer(false)} />
-            <Button label={transferring ? "Transferring…" : "Transfer"} onClick={doTransfer} disabled={!transferTo || transferring} />
+      <div className="split" style={{ marginTop: "var(--s6)" }}>
+        <div style={{ minWidth: 0 }}>
+          <div id="case-tabs">
+            <Tabs label="Case sections" value={activeTab} onChange={(v) => setTab(v as TabKey)} tabs={tabs} />
           </div>
-        }>
-        <p className="cd-muted mt-0">
-          Reassign this case to another advocate. It will move out of your workspace into theirs.
-        </p>
-        <Dropdown value={transferTo} onChange={(e) => setTransferTo(e.value || "")} className="w-full"
-          options={transferGroups} optionGroupLabel="label" optionGroupChildren="items"
-          optionLabel="label" optionValue="value" placeholder="Select an advocate…" filter />
-        {transferTarget?.crossTeam && (
-          <p className="mt-3 mb-0" style={{ color: "var(--danger)" }}>
-            This moves the entire matter — hearings, invoices, documents and the client — to
-            {" "}{transferTarget?.fullName}&apos;s team.
-            Your team will no longer see it.
-          </p>
-        )}
-      </Dialog>
 
-      {/* Daily status of a hearing */}
-      <Dialog visible={!!hearingBizModal} onHide={() => setHearingBizModal(null)} header="Daily Status" modal
-        style={{ width: "36rem" }} breakpoints={{ "640px": "95vw" }}>
+          {/* ---------- OVERVIEW ---------- */}
+          {activeTab === "overview" && (
+            <div className="cs-sec-gap">
+              <Panel title="About this case">
+                {summary.description ? <p>{summary.description}</p> : <p className="faint">No description yet.</p>}
+                <dl className="kv" style={{ marginTop: "var(--s4)" }}>
+                  <dt>Title</dt>
+                  <dd><InlineEdit label="title" value={summary.caseTitle} display={summary.caseTitle || summary.caseNumber}
+                    onSave={(v) => patchCase({ caseTitle: v })} /></dd>
+                  <dt>Case number</dt><dd className="mono">{summary.caseNumber}</dd>
+                  <dt>Status</dt>
+                  <dd><InlineEdit label="status" value={summary.status} display={<StatusChip status={summary.status || "—"} />} type="select" options={STATUS_SELECT}
+                    onSave={(v) => patchCase({ status: v })} /></dd>
+                  <dt>Case type</dt>
+                  <dd><InlineEdit label="case type" value={summary.caseType} display={summary.caseType || "—"}
+                    onSave={(v) => patchCase({ caseType: v })} /></dd>
+                  <dt>Court</dt>
+                  <dd><InlineEdit label="court" value={summary.courtLevel} display={summary.courtLevel || "—"}
+                    onSave={(v) => patchCase({ courtLevel: v })} /></dd>
+                  <dt>Client</dt>
+                  <dd><InlineEdit label="client" value={summary.clientId ?? ""} display={summary.clientName || "—"}
+                    type="select" onStart={fetchClients}
+                    options={[{ value: "", label: "— None —" },
+                      ...(summary.clientId && !clients.some((c) => c.id === summary.clientId)
+                        ? [{ value: String(summary.clientId), label: summary.clientName || `Client #${summary.clientId}` }] : []),
+                      ...clients.map((c) => ({ value: String(c.id), label: c.name }))]}
+                    onSave={(v) => patchCase({ clientId: v === "" ? null : Number(v) })} /></dd>
+                </dl>
+              </Panel>
+
+              {can("EVENT_VIEW") && (
+                <Panel title="Coming up" flush actions={<Button size="sm" variant="ghost" onClick={() => goTab("hearings")}>All hearings</Button>}>
+                  {events.filter((ev) => !ev.date || ev.date >= _todayISO).length
+                    ? <div className="list">{events.filter((ev) => !ev.date || ev.date >= _todayISO).slice(0, 3).map((ev) => eventRow(ev, true))}</div>
+                    : nothing(summary.status === "Closed" ? "Nothing listed. This case is closed." : "Nothing listed. Add a hearing when the court gives a date.")}
+                </Panel>
+              )}
+
+              <div className="cols g-2">
+                <Panel title="Last hearings" actions={hearingHistory.length > 0 && <Button size="sm" variant="ghost" onClick={() => goTab("hearings")}>History</Button>}>
+                  {hearingHistory.length ? (
+                    <div className="timeline">
+                      {hearingHistory.slice(-3).reverse().map((h, i) => (
+                        <div key={i} className={`tl-item${i === 0 ? " key" : ""}`}>
+                          <div className="small">{h.purpose || "Listed"}</div>
+                          <div className="when">{h.hearingDate || h.businessDate || "—"}{h.judge ? `, ${h.judge}` : ""}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="faint small">No court hearings on record yet.</p>}
+                </Panel>
+                {can("TASK_VIEW") ? (
+                  <Panel title="Open tasks" flush actions={<Button size="sm" variant="ghost" icon={can("TASK_CREATE") ? "plus" : undefined} onClick={() => goTab("tasks")}>{can("TASK_CREATE") ? "Add" : "All tasks"}</Button>}>
+                    {openTasks.length ? openTasks.slice(0, 4).map((t) => taskRow(t, false)) : nothing("Nothing open on this case.")}
+                  </Panel>
+                ) : <div />}
+              </div>
+
+              {can("DOCUMENT_VIEW") && (
+                <Panel title="Recent documents" flush actions={<Button size="sm" variant="ghost" onClick={() => goTab("docs")}>All documents</Button>}>
+                  {docs.length ? (
+                    <div className="list">
+                      {docs.slice(0, 4).map((d) => (
+                        <button type="button" key={d.id} className="list-item" onClick={() => previewDoc(d.id)} style={{ font: "inherit", color: "inherit", cursor: "pointer" }}>
+                          <Icon name="file" size="sm" /><span className="grow ellipsis small">{d.documentName}</span>
+                          <span className="faint xs">{d.category || "Other"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : nothing("No documents yet.")}
+                </Panel>
+              )}
+
+              {notes.length > 0 && (
+                <Panel title="Latest note" actions={<Button size="sm" variant="ghost" onClick={() => goTab("notes")}>All notes</Button>}>
+                  <p className="small" style={{ whiteSpace: "pre-wrap" }}>{notes[0].body}</p>
+                  <div className="faint xs" style={{ marginTop: 6 }}>{new Date(notes[0].createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}</div>
+                </Panel>
+              )}
+            </div>
+          )}
+
+          {/* ---------- PARTIES ---------- */}
+          {activeTab === "parties" && (
+            <div className="cs-sec-gap">
+              {parties.length ? (
+                <div className="table-wrap">
+                  <table className="t">
+                    <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col" className="hide-sm">Counsel</th><th scope="col" className="hide-sm">Contact</th><th scope="col"><span className="sr-only">Side and actions</span></th></tr></thead>
+                    <tbody>
+                      {parties.map((p) => (
+                        <tr key={p.id}>
+                          <td>{p.name}</td>
+                          <td>{p.role || "—"}</td>
+                          <td className="hide-sm">{p.counsel || "—"}</td>
+                          <td className="hide-sm">{p.contact || "—"}</td>
+                          <td className="right nowrap">
+                            {p.isOpponent ? <Chip tone="bad">Opponent</Chip> : <Chip tone="info">Our side</Chip>}
+                            {canEdit && <Button size="sm" variant="ghost" iconOnly icon="trash" aria-label={`Remove ${p.name}`} onClick={() => deleteParty(p.id)} />}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <EmptyState icon="users" title="No parties yet" text="Add the petitioners, respondents and their counsel." />}
+              {canEdit && (
+                <Panel title="Add a party">
+                  <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); addParty(); }}>
+                    <TextField label="Name" required value={partyForm.name} onChange={(e) => setPartyForm({ ...partyForm, name: e.target.value })} />
+                    <SelectField label="Role" placeholder="Select a role" options={PARTY_ROLES} value={partyForm.role}
+                      onChange={(e) => setPartyForm({ ...partyForm, role: e.target.value })} />
+                    <TextField label="Counsel" placeholder="Optional" value={partyForm.counsel} onChange={(e) => setPartyForm({ ...partyForm, counsel: e.target.value })} />
+                    <TextField label="Contact" placeholder="Optional" value={partyForm.contact} onChange={(e) => setPartyForm({ ...partyForm, contact: e.target.value })} />
+                    <div className="row" style={{ alignSelf: "end", gap: "var(--s4)" }}>
+                      <Check label="Opponent" checked={partyForm.isOpponent} onChange={(e) => setPartyForm({ ...partyForm, isOpponent: e.target.checked })} />
+                      <Button type="submit" variant="primary" icon="plus">Add party</Button>
+                    </div>
+                  </form>
+                </Panel>
+              )}
+            </div>
+          )}
+
+          {/* ---------- HEARINGS ---------- */}
+          {activeTab === "hearings" && (
+            <div className="cs-sec-gap">
+              <Panel title="Upcoming" sub={`${hearingEvents.length} listed`} flush
+                actions={canEventCreate && <Button size="sm" icon="plus" onClick={() => openHearingModal("hearing")}>Add hearing</Button>}>
+                {hearingEvents.length
+                  ? <div className="list">{hearingEvents.map((ev) => eventRow(ev, true))}</div>
+                  : nothing("No upcoming hearings. Add one here; past court hearings appear under Court hearing history below.")}
+              </Panel>
+
+              {/* Court hearing/listing history from the imported record (Provakil "Listings"). */}
+              {hearingHistory.length > 0 && (
+                <div>
+                  <div className="section-title" style={{ marginTop: 0 }}><h2>Court hearing history</h2><span className="faint xs">From court records · {hearingHistory.length}</span></div>
+                  <div className="table-wrap">
+                    <table className="t">
+                      <thead><tr>
+                        <th scope="col">Hearing date</th>
+                        <th scope="col" className="hide-sm">Business date</th>
+                        <th scope="col" className="hide-sm">Cause list</th>
+                        <th scope="col" className="hide-sm">Judge / bench</th>
+                        <th scope="col">Purpose</th>
+                        <th scope="col"><span className="sr-only">Actions</span></th>
+                      </tr></thead>
+                      <tbody>
+                        {hearingHistory.map((h, i) => (
+                          <tr key={i}>
+                            <td className="nowrap">{h.hearingDate || "—"}</td>
+                            <td className="hide-sm nowrap">{h.businessDate || "—"}</td>
+                            <td className="hide-sm small">{h.causeList || "—"}</td>
+                            <td className="hide-sm small">{h.judge || "—"}</td>
+                            <td className="small">{h.purpose || "—"}</td>
+                            <td className="right">
+                              <div className="row wrap" style={{ gap: 2, justifyContent: "flex-end" }}>
+                                {((h.businessDetail && Object.keys(h.businessDetail.fields || {}).length) || (h.business && h.businessDate)) ? (
+                                  <Button size="sm" loading={hearingViewBusy === `h${i}`} onClick={() => viewHistoryBusiness(h, i)}>Daily status</Button>
+                                ) : null}
+                                <Button size="sm" variant="ghost" iconOnly icon="copy" aria-label="Copy listing" title="Copy listing" onClick={() => copyHearing(h)} />
+                                {canEventCreate && (
+                                  <Button size="sm" variant="ghost" icon="send" loading={alertBusy === `a${i}`}
+                                    title={summary.clientId ? "Email this hearing to the client" : "No client email on this case"}
+                                    disabled={!summary.clientId || alertBusy === `a${i}`} onClick={() => alertClient(h, i)}>
+                                    <span className="hide-sm">Alert client</span>
+                                  </Button>
+                                )}
+                                {can("INVOICE_CREATE") && (
+                                  <Button size="sm" variant="ghost" iconOnly icon="receipt" aria-label="Raise invoice for this hearing" title="Raise invoice"
+                                    onClick={() => { prefillInvoiceFromHearing(i); setShowInvoiceModal(true); }} />
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {courtRecordLoading && <Spinner label="Loading the court record" />}
+            </div>
+          )}
+
+          {/* ---------- EVENTS ---------- */}
+          {activeTab === "events" && (
+            <Panel title="Meetings and reminders" sub={`${otherEvents.length}`} flush
+              actions={canEventCreate && <Button size="sm" icon="plus" onClick={() => openHearingModal("event")}>Add event</Button>}>
+              {otherEvents.length
+                ? <div className="list">{otherEvents.map((ev) => eventRow(ev, false))}</div>
+                : nothing("No meetings, payment-due or document reminders for this case yet.")}
+            </Panel>
+          )}
+
+          {/* ---------- ORDERS ---------- */}
+          {activeTab === "orders" && (
+            <div className="cs-sec-gap">
+              <div className="row wrap">
+                <p className="muted small grow">Orders and judgments passed in this case. Court PDFs are fetched live from the court and downloaded to your device.</p>
+                {can("DOCUMENT_UPLOAD") && <Button size="sm" icon="upload" onClick={() => setShowUploadOrder(true)}>Upload order</Button>}
+              </div>
+              {courtRecordLoading && <Spinner label="Loading the court record" />}
+              {!courtRecordLoading && orders.length > 0 && (
+                <div className="table-wrap">
+                  <table className="t">
+                    <thead><tr><th scope="col">#</th><th scope="col">Order date</th><th scope="col">Details</th><th scope="col" className="hide-sm">Judge</th><th scope="col"><span className="sr-only">Document</span></th></tr></thead>
+                    <tbody>
+                      {orders.map((o, i) => (
+                        <tr key={i}>
+                          <td className="mono small">{o.number || i + 1}</td>
+                          <td className="nowrap">{o.date || "—"}</td>
+                          <td className="small">{o.details || "—"}</td>
+                          <td className="hide-sm small">{o.judge || "—"}</td>
+                          <td className="right">
+                            {o.pdf && o.pdf.filename ? (
+                              <Button size="sm" icon="download" disabled={orderDlBusy === i} loading={orderDlBusy === i} onClick={() => downloadOrderPdf(o, i)}>
+                                {orderDlBusy === i ? "Fetching…" : "PDF"}
+                              </Button>
+                            ) : o.pdfUrl ? (
+                              <Button size="sm" icon="download" disabled={orderDlBusy === i} loading={orderDlBusy === i} onClick={() => downloadOrderPdfByUrl(o, i)}>
+                                {orderDlBusy === i ? "Fetching…" : "PDF"}
+                              </Button>
+                            ) : <span className="faint">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!courtRecordLoading && courtRecordLoaded && orders.length === 0 && uploadedOrders.length === 0 && (
+                <EmptyState icon="gavel" title="No orders yet" text="None on the court record. Upload interim orders and judgments as the court passes them." />
+              )}
+              {uploadedOrders.length > 0 && (
+                <div>
+                  <h3 style={{ fontSize: "var(--t-md)", marginBottom: "var(--s2)" }}>Uploaded orders</h3>
+                  {docTable(uploadedOrders, "orders")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ---------- DOCUMENTS ---------- */}
+          {activeTab === "docs" && (
+            <div className="cs-sec-gap">
+              {can("DOCUMENT_UPLOAD") && (
+                <div className="row wrap">
+                  <p className="muted small grow">Everything filed on this case. Open a summary for a quick read.</p>
+                  <label className="btn sm cs-file-btn">
+                    <Icon name="upload" size="sm" />
+                    <span className="ellipsis" style={{ maxWidth: 220 }}>{uploadFile ? uploadFile.name : "Choose file"}</span>
+                    <input type="file" aria-label="Choose a file to upload" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
+                  </label>
+                  <Button size="sm" variant="primary" icon="upload" onClick={uploadDoc} disabled={!uploadFile}>Upload</Button>
+                </div>
+              )}
+              {docs.length ? docTable(docs, "docs") : <EmptyState icon="folder" title="No documents yet" text="Upload the plaint, affidavits and evidence for this case." />}
+            </div>
+          )}
+
+          {/* ---------- TASKS ---------- */}
+          {activeTab === "tasks" && (
+            <div className="cs-sec-gap">
+              {can("TASK_CREATE") && (
+                <Panel title="Add a task">
+                  <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); addTask(); }}>
+                    <TextField label="Task" required full placeholder="e.g. Draft the written statement" value={newTask.title}
+                      onChange={(e) => setNewTask({ ...newTask, title: e.target.value })} />
+                    <SelectField label="Priority" options={PRIORITIES} value={newTask.priority}
+                      onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })} />
+                    <TextField label="Deadline" type="date" value={newTask.deadline}
+                      onChange={(e) => setNewTask({ ...newTask, deadline: e.target.value })} />
+                    {can("TASK_ASSIGN") && (
+                      <SelectField label="Assign to" options={[{ value: "", label: "Myself" }, ...assignees.map((a) => ({ value: String(a.id), label: a.fullName || a.email }))]}
+                        value={String(newTask.assignedTo ?? "")} onChange={(e) => setNewTask({ ...newTask, assignedTo: e.target.value })} />
+                    )}
+                    {can("DOCUMENT_UPLOAD") && <>
+                      <Field label="Documents" hint={taskFiles.length ? `${taskFiles.length} file(s) chosen` : "Optional"}>
+                        {(fid, d) => <input id={fid} aria-describedby={d} type="file" multiple className="input"
+                          onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />}
+                      </Field>
+                      <SelectField label="Document category" placeholder="Select category" options={DOC_CATEGORIES} value={newTask.category}
+                        onChange={(e) => setNewTask({ ...newTask, category: e.target.value })} />
+                    </>}
+                    <div className="row full"><span className="grow" /><Button type="submit" variant="primary" icon="plus" disabled={!newTask.title.trim()}>Add task</Button></div>
+                  </form>
+                </Panel>
+              )}
+              <p className="muted small">{tasks.filter((t) => !t.completed && !t.cancelled).length} open, {tasks.filter((t) => t.completed).length} done.</p>
+              {tasks.length ? (
+                <div className="panel"><div className="panel-body flush" style={{ paddingBottom: "var(--s2)" }}>{tasks.map((t) => taskRow(t, true))}</div></div>
+              ) : <EmptyState icon="tasks" title="No tasks" text="Assign research, drafting or filing work to the team." />}
+            </div>
+          )}
+
+          {/* ---------- BILLING ---------- */}
+          {activeTab === "billing" && (
+            <div className="cs-sec-gap">
+              {!financials ? <Skel h={90} /> : (
+                <div className="figures">
+                  {can("INVOICE_VIEW") && <>
+                    <div className="figure"><div className="lbl">Invoiced</div><div className="val">{formatCurrency(totals.totalInvoiced || 0)}</div><div className="meta">{totals.invoiceCount ?? 0} invoices</div></div>
+                    <div className="figure"><div className="lbl">Paid</div><div className="val">{formatCurrency(totals.totalPaid || 0)}</div></div>
+                    <div className="figure"><div className="lbl">Unpaid</div><div className="val">{formatCurrency(totals.totalUnpaid || 0)}</div></div>
+                  </>}
+                  {can("EXPENSE_VIEW") && <div className="figure"><div className="lbl">Expenses</div><div className="val">{formatCurrency(totals.totalExpenses || 0)}</div><div className="meta">{totals.expenseCount ?? 0} entries</div></div>}
+                </div>
+              )}
+              <div className="row wrap">
+                {can("INVOICE_CREATE") && <Button icon="receipt" onClick={() => setShowInvoiceModal(true)}>Raise invoice</Button>}
+                {can("EXPENSE_CREATE") && <Button icon="wallet" onClick={() => setShowExpenseModal(true)}>Add expense</Button>}
+              </div>
+              {financials && can("INVOICE_VIEW") && (
+                <div>
+                  <h3 style={{ fontSize: "var(--t-md)", marginBottom: "var(--s2)" }}>Invoices</h3>
+                  {financials.invoices.length ? (
+                    <div className="table-wrap">
+                      <table className="t">
+                        <thead><tr><th scope="col">Invoice</th><th scope="col" className="hide-sm">Issued</th><th scope="col" className="hide-sm">Due</th><th scope="col" className="right">Amount</th><th scope="col">Status</th></tr></thead>
+                        <tbody>
+                          {financials.invoices.map((inv) => (
+                            <tr key={inv.id}>
+                              <td>
+                                <div className="mono small">{inv.invoiceNumber}</div>
+                                <div className="cs-sub">
+                                  {[inv.raisedByName && `Raised by ${inv.raisedByName}`,
+                                    inv.handledByName && inv.handledByName !== inv.raisedByName && `Handled by ${inv.handledByName}`,
+                                    inv.paidAmount > 0 && inv.balance > 0 && `${formatCurrency(inv.balance)} still due`].filter(Boolean).join(" · ")}
+                                </div>
+                              </td>
+                              <td className="hide-sm nowrap">{fmtDate(inv.invoiceDate)}</td>
+                              <td className="hide-sm nowrap">{fmtDate(inv.dueDate)}</td>
+                              <td className="mono right nowrap">{formatCurrency(inv.amount || 0)}</td>
+                              <td><StatusChip status={inv.status} /></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <p className="faint small">No invoices for this case yet. Raise one here or from Invoices; it maps to this case automatically.</p>}
+                </div>
+              )}
+              {financials && can("PAYMENT_VIEW") && (financials.payments || []).length > 0 && (
+                <div>
+                  <h3 style={{ fontSize: "var(--t-md)", marginBottom: "var(--s2)" }}>Payments</h3>
+                  <div className="table-wrap">
+                    <table className="t">
+                      <thead><tr><th scope="col">Date</th><th scope="col">Mode</th><th scope="col" className="hide-sm">Reference</th><th scope="col" className="right">Amount</th></tr></thead>
+                      <tbody>
+                        {financials.payments.map((p: any) => (
+                          <tr key={p.id}>
+                            <td className="nowrap">{fmtDate(p.paymentDate || p.date)}</td>
+                            <td>{titleCase(p.paymentMode || p.mode || "—")}</td>
+                            <td className="hide-sm mono xs">{p.referenceNumber || p.reference || "—"}</td>
+                            <td className="mono right nowrap">{formatCurrency(p.amount || 0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {financials && can("EXPENSE_VIEW") && (
+                <div>
+                  <h3 style={{ fontSize: "var(--t-md)", marginBottom: "var(--s2)" }}>Expenses</h3>
+                  {financials.expenses.length ? (
+                    <div className="table-wrap">
+                      <table className="t">
+                        <thead><tr><th scope="col">Date</th><th scope="col">For</th><th scope="col" className="hide-sm">Category</th><th scope="col" className="hide-sm">Status</th><th scope="col" className="right">Amount</th></tr></thead>
+                        <tbody>
+                          {financials.expenses.map((exp) => (
+                            <tr key={exp.id}>
+                              <td className="nowrap">{fmtDate(exp.paymentDate)}</td>
+                              <td>{exp.title}</td>
+                              <td className="hide-sm">{exp.category || "—"}</td>
+                              <td className="hide-sm">{exp.paymentStatus ? <StatusChip status={exp.paymentStatus} /> : "—"}</td>
+                              <td className="mono right nowrap">{formatCurrency(exp.amount || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : <p className="faint small">No expenses for this case yet. Add one here or from Expenses; it maps to this case automatically.</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ---------- NOTES ---------- */}
+          {activeTab === "notes" && (
+            <div className="cs-sec-gap">
+              {canEdit && (
+                <form className="panel" noValidate onSubmit={(e) => { e.preventDefault(); addNote(); }}>
+                  <div className="panel-body stack" style={{ gap: "var(--s3)" }}>
+                    <TextArea label="Add a note" rows={3} placeholder="A case diary entry. Only your team can see notes."
+                      value={newNote} onChange={(e) => setNewNote(e.target.value)} />
+                    <div className="row"><span className="grow" /><Button type="submit" size="sm" variant="primary" disabled={!newNote.trim()}>Add note</Button></div>
+                  </div>
+                </form>
+              )}
+              <div className="panel"><div className="panel-body" style={{ paddingBlock: "var(--s2)" }}>
+                {notes.length ? notes.map((n) => (
+                  <div className="cs-note" key={n.id}>
+                    <div className="row">
+                      <Icon name="note" size="sm" />
+                      <span className="faint xs grow">{new Date(n.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                      {canEdit && <Button size="sm" variant="ghost" iconOnly icon="trash" aria-label="Delete note"
+                        onClick={async () => { if (await confirmAsync("This note will be removed from the case diary.", "Delete this note?", "Delete")) deleteNote(n.id); }} />}
+                    </div>
+                    <p className="small" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>{n.body}</p>
+                  </div>
+                )) : <p className="faint small" style={{ padding: "var(--s3) 0" }}>No notes yet.</p>}
+              </div></div>
+            </div>
+          )}
+
+          {/* ---------- RELATED CASES ---------- */}
+          {activeTab === "related" && (
+            <div className="cs-sec-gap">
+              <p className="muted small">Appeals and connected matters, linked so the file stays together.</p>
+              {related.length ? (
+                <div className="table-wrap">
+                  <table className="t">
+                    <thead><tr><th scope="col">Case</th><th scope="col">Relation</th><th scope="col" className="hide-sm">Note</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+                    <tbody>
+                      {related.map((r) => (
+                        <tr key={`${r.direction}-${r.id}`} className={r.linkedCaseId ? "clickable" : undefined}
+                          onClick={() => r.linkedCaseId && navigate(`/dashboard/cases/${r.linkedCaseId}`)}>
+                          <td>
+                            <div className="mono small">{r.caseNumber || `Case #${r.linkedCaseId}`}</div>
+                            <div className="cs-sub">{r.caseTitle || ""}</div>
+                          </td>
+                          <td>{r.relation ? <span className="tag">{r.relation}</span> : "—"}</td>
+                          <td className="hide-sm small">{r.note || "—"}</td>
+                          <td className="right">
+                            {canEdit && <Button size="sm" variant="ghost" iconOnly icon="trash" aria-label={`Unlink ${r.caseNumber || "case"}`}
+                              onClick={(e) => { e.stopPropagation(); deleteRelated(r.id); }} />}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <EmptyState icon="link" title="No related cases" text="Link appeals and connected matters for this client." />}
+              {canEdit && (
+                <Panel title="Link a case">
+                  <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); addRelated(); }}>
+                    <SelectField label="Case" required full placeholder="Select a case to link…" value={relatedForm.relatedCaseId}
+                      options={linkableCases.map((c) => ({ value: String(c.id), label: `${c.caseNumber} — ${c.caseTitle}` }))}
+                      onChange={(e) => setRelatedForm({ ...relatedForm, relatedCaseId: e.target.value })} />
+                    <SelectField label="Relation" placeholder="Select" options={RELATION_TYPES} value={relatedForm.relation}
+                      onChange={(e) => setRelatedForm({ ...relatedForm, relation: e.target.value })} />
+                    <TextField label="Note" placeholder="Optional" value={relatedForm.note} onChange={(e) => setRelatedForm({ ...relatedForm, note: e.target.value })} />
+                    <div className="row full"><span className="grow" /><Button type="submit" variant="primary" icon="link">Link case</Button></div>
+                  </form>
+                </Panel>
+              )}
+            </div>
+          )}
+
+          {/* ---------- ACTS ---------- */}
+          {activeTab === "acts" && (
+            <div className="cs-sec-gap">
+              <p className="muted small">Provisions this case is argued under. Linked acts open in Bare Acts.</p>
+              <div className="row wrap" style={{ gap: 6 }}>
+                {linkedActs.length ? linkedActs.map((a) => (
+                  <span key={a.id} className="tag">
+                    <Icon name="book" size="sm" />
+                    <a className="link" href={`/dashboard/acts/${a.actId}`} onClick={(e) => { e.preventDefault(); navigate(`/dashboard/acts/${a.actId}`); }}>
+                      {a.actTitle || `Act #${a.actId}`}
+                    </a>
+                    {[a.actNumber && `No. ${a.actNumber}`, a.actYear, a.jurisdiction].filter(Boolean).length > 0 &&
+                      <span className="faint">{[a.actNumber && `No. ${a.actNumber}`, a.actYear, a.jurisdiction].filter(Boolean).join(" · ")}</span>}
+                    {canEdit && <button type="button" onClick={() => deleteAct(a.actId)} aria-label={`Unlink ${a.actTitle || "act"}`}><Icon name="x" size="sm" /></button>}
+                  </span>
+                )) : <span className="faint small">No acts linked to this case yet.</span>}
+              </div>
+              {canEdit && (
+                <Panel title="Link an act">
+                  <div className="stack" style={{ gap: "var(--s2)" }}>
+                    <SearchInput value={selectedAct ? selectedAct.label : actQuery} placeholder="Search acts to link…" aria-label="Search acts to link"
+                      onChange={(v) => { setSelectedAct(null); setActQuery(v); }} />
+                    {!selectedAct && actQuery.trim() && (
+                      <div className="cs-act-results" role="listbox" aria-label="Matching acts">
+                        {actSuggestions.length ? actSuggestions.slice(0, 30).map((o) => (
+                          <button type="button" role="option" aria-selected={false} key={o.value} onClick={() => setSelectedAct(o)}>{o.label}</button>
+                        )) : <p className="faint small" style={{ padding: "8px 12px" }}>No matching acts.</p>}
+                      </div>
+                    )}
+                    <div className="row">
+                      <span className="grow" />
+                      {selectedAct && <Button variant="ghost" size="sm" onClick={() => { setSelectedAct(null); setActQuery(""); }}>Clear</Button>}
+                      <Button variant="primary" icon="plus" loading={linkingAct} disabled={!selectedAct || typeof selectedAct !== "object" || linkingAct}
+                        onClick={async () => { await addAct(); setActQuery(""); }}>{linkingAct ? "Linking…" : "Link act"}</Button>
+                    </div>
+                  </div>
+                </Panel>
+              )}
+
+              {/* Acts cited by the court on the imported record. Matched ones link
+                  to our library and can be added to Linked Acts in one click. */}
+              {citedActs.length > 0 && (
+                <Panel title="Cited by the court" flush>
+                  <div className="list">
+                    {citedActs.map((a, i) => {
+                      const alreadyLinked = a.actId && linkedActs.some((l) => l.actId === a.actId);
+                      return (
+                        <div className="list-item" key={i}>
+                          <Icon name="book" size="sm" />
+                          <div className="grow" style={{ minWidth: 0 }}>
+                            {a.actId ? (
+                              <a className="link small" href={`/dashboard/acts/${a.actId}`} onClick={(e) => { e.preventDefault(); navigate(`/dashboard/acts/${a.actId}`); }}>{a.actTitle}</a>
+                            ) : <span className="small">{a.name} <Chip>Not in library</Chip></span>}
+                            <div className="cs-sub">
+                              {a.section ? `Section ${a.section}` : ""}
+                              {a.actId && a.name !== a.actTitle ? `${a.section ? " · " : ""}cited as “${a.name}”` : ""}
+                            </div>
+                          </div>
+                          {a.actId && (alreadyLinked
+                            ? <Chip tone="ok" title="Already in Linked Acts">Linked</Chip>
+                            : canEdit && <Button size="sm" icon="plus" title="Add to Linked Acts" onClick={() => linkCitedAct(a.actId)}>Link</Button>)}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </Panel>
+              )}
+            </div>
+          )}
+
+          {/* ---------- COURT RECORD (extra details) ---------- */}
+          {activeTab === "court" && (
+            <div className="cs-sec-gap">
+              {courtRecordLoading && <Spinner label="Loading the court record" />}
+              {!courtRecordLoading && courtRecord && (
+                <>
+                  <p className="muted small">Further details from the imported court record. Key fields (CNR, filing, status, category, dates) are on the cover above; parties, hearings, orders and cited acts have their own tabs.</p>
+                  <CaseExtraDetails record={courtRecord} courtId={courtRecordCourtId} />
+                </>
+              )}
+              {!courtRecordLoading && courtRecordLoaded && !courtRecord && (
+                <EmptyState icon="gavel" title="No court record imported"
+                  text="This case was added by hand, or before import was available."
+                  action={canEdit ? <Button variant="primary" icon="link" onClick={openLink}>Link to court record</Button> : undefined} />
+              )}
+            </div>
+          )}
+
+          {/* ---------- TIMELINE ---------- */}
+          {activeTab === "timeline" && <CaseTimeline caseId={summary.id} caseNumber={summary.caseNumber} />}
+        </div>
+
+        {/* ---------- Summary rail ---------- */}
+        <aside className="rail stack" style={{ gap: "var(--s4)" }} aria-label="Case summary">
+          <Panel title={next && next.eventType !== "HEARING" ? "Coming up" : "Next hearing"} actions={nd === 0 ? <Chip tone="tape">Today</Chip> : undefined}>
+            {next ? <>
+              <div className="cs-big-date">{new Date(`${next.date}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "long" })}</div>
+              <div className="muted small" style={{ margin: "4px 0 var(--s3)" }}>
+                {new Date(`${next.date}T00:00:00`).toLocaleDateString("en-IN", { weekday: "long" })}
+                {next.time ? `, ${fmtTime(next.time)}` : ""}. <span className={nd === 0 ? "cs-today" : ""}>{relDay(next.date)}</span>
+              </div>
+              <dl className="kv">
+                <dt>What</dt><dd>{next.title}</dd>
+                {next.eventType !== "HEARING" && <><dt>Type</dt><dd>{titleCase(next.eventType)}</dd></>}
+                {next.hearingDetail?.benchHall && <><dt>Hall</dt><dd>{next.hearingDetail.benchHall}</dd></>}
+                {next.hearingDetail?.purpose && <><dt>Purpose</dt><dd>{next.hearingDetail.purpose}</dd></>}
+              </dl>
+              {can("EVENT_VIEW") && <div className="row wrap" style={{ marginTop: "var(--s4)" }}><Button size="sm" icon="calendar" onClick={() => goTab(next.eventType === "HEARING" ? "hearings" : "events")}>View</Button></div>}
+            </> : <p className="faint small">Nothing listed. {summary.status === "Closed" ? "The case is closed." : ""}</p>}
+          </Panel>
+
+          {canBilling && (
+            <Panel title="Fees" actions={<Button size="sm" variant="ghost" onClick={() => goTab("billing")}>Billing</Button>}>
+              {!financials ? <Skel h={50} /> : <>
+                {can("INVOICE_VIEW") && <>
+                  <div className="row between small"><span className="muted">Paid</span><span className="mono">{formatCurrency(totals.totalPaid || 0)} of {formatCurrency(totals.totalInvoiced || 0)}</span></div>
+                  <div className="meter" style={{ margin: "8px 0" }} role="progressbar" aria-valuenow={paidPct} aria-valuemin={0} aria-valuemax={100} aria-label="Invoiced amount paid">
+                    <i style={{ width: `${paidPct}%`, background: paidPct >= 100 ? "var(--ok)" : "var(--ink)" }} />
+                  </div>
+                  <div className="row between small"><span className="muted">Unpaid</span><b className="mono">{formatCurrency(totals.totalUnpaid || 0)}</b></div>
+                </>}
+                {can("EXPENSE_VIEW") && <div className="row between small" style={{ marginTop: 6 }}><span className="muted">Expenses</span><span className="mono">{formatCurrency(totals.totalExpenses || 0)}</span></div>}
+              </>}
+            </Panel>
+          )}
+
+          <Panel title="Client">
+            {summary.clientName ? (
+              <div className="row">
+                <Avatar name={summary.clientName} />
+                <div className="grow" style={{ minWidth: 0 }}>
+                  {can("CLIENT_VIEW")
+                    ? <a className="link" href="/dashboard/clients" onClick={(e) => { e.preventDefault(); navigate("/dashboard/clients", { state: { search: summary.clientName, id: summary.clientId } }); }}><b>{summary.clientName}</b></a>
+                    : <b>{summary.clientName}</b>}
+                  <div className="cs-sub">Client on this case</div>
+                </div>
+              </div>
+            ) : <p className="faint small">No client linked. {canEdit ? "Set one under Overview." : ""}</p>}
+          </Panel>
+
+          {(team.length > 0 || canTransfer) && (
+            <Panel title="Team" flush actions={canTransfer && <Button size="sm" variant="ghost" onClick={openTransfer}>Transfer</Button>}>
+              {team.length ? (
+                <div className="list">
+                  {team.map((m) => (
+                    <div className="list-item" key={m.name}>
+                      <Avatar name={m.name} size="sm" />
+                      <div className="grow"><div className="small"><b>{m.name}</b></div><div className="cs-sub">{m.role}</div></div>
+                    </div>
+                  ))}
+                </div>
+              ) : nothing("No one else is working on this case yet.")}
+            </Panel>
+          )}
+        </aside>
+      </div>
+
+      {summaryDoc && (
+        <DocumentSummaryModal doc={summaryDoc} onClose={() => setSummaryDoc(null)} canRegenerate={hasPermission("DOCUMENT_EDIT")} />
+      )}
+
+      {/* ---------- Link to court record ---------- */}
+      <Modal open={linkOpen} onClose={() => !linkBusy && setLinkOpen(false)} title="Link to court record" size="narrow"
+        footer={<>
+          <Button variant="ghost" disabled={linkBusy} onClick={() => setLinkOpen(false)}>Cancel</Button>
+          {linkFound
+            ? <Button variant="primary" icon="link" loading={linkBusy} onClick={doLink}>Link this record</Button>
+            : <Button variant="primary" icon="search" loading={linkBusy} onClick={findCnr} disabled={!linkCnr.trim()}>Find</Button>}
+        </>}>
+        <div className="stack" style={{ gap: "var(--s3)" }}>
+          <p className="muted small">For a case entered by hand: once it has a CNR, its court record (parties, hearings, orders) is added to this case. Notes, tasks, documents and bills stay as they are.</p>
+          <TextField label="CNR" className="mono" value={linkCnr} maxLength={16} autoFocus placeholder="16 characters, e.g. TNCH010015532025"
+            error={linkError || undefined}
+            onChange={(e) => { setLinkCnr(e.target.value.toUpperCase()); setLinkFound(null); setLinkError(""); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
+          {linkFound && (
+            <div className="callout ok">
+              <Icon name="ok" size="sm" />
+              <div>
+                Found <strong className="mono">{linkFound.record.cases[0]?.case_number || linkFound.cnr}</strong>
+                {linkFound.record.cases[0]?.parties ? <> · {linkFound.record.cases[0].parties}</> : null}
+                <div className="muted small">Check this is the same case, then link it.</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ---------- Transfer ---------- */}
+      <Modal open={showTransfer} onClose={() => setShowTransfer(false)} title="Transfer case" sub={<span className="mono">{summary.caseNumber}</span>} size="narrow"
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowTransfer(false)}>Cancel</Button>
+          <Button variant="primary" loading={transferring} onClick={doTransfer} disabled={!transferTo || transferring}>{transferring ? "Transferring…" : "Transfer case"}</Button>
+        </>}>
+        <div className="stack" style={{ gap: "var(--s3)" }}>
+          <p className="muted small">Reassign this case to another advocate. It moves out of your workspace into theirs.</p>
+          <Field label="New handling advocate" required>
+            {(fid) => (
+              <select id={fid} className="input" value={transferTo} onChange={(e) => setTransferTo(e.target.value)}>
+                <option value="">Select an advocate…</option>
+                {advocates.some((a) => !a.crossTeam) && (
+                  <optgroup label="Your team">
+                    {advocates.filter((a) => !a.crossTeam).map((a) => <option key={a.id} value={String(a.id)}>{a.fullName || a.email}{a.email ? ` — ${a.email}` : ""}</option>)}
+                  </optgroup>
+                )}
+                {advocates.some((a) => a.crossTeam) && (
+                  <optgroup label="Other teams (senior)">
+                    {advocates.filter((a) => a.crossTeam).map((a) => <option key={a.id} value={String(a.id)}>{a.fullName || a.email}{a.email ? ` — ${a.email}` : ""}</option>)}
+                  </optgroup>
+                )}
+              </select>
+            )}
+          </Field>
+          {transferTarget?.crossTeam && (
+            <div className="callout warn"><Icon name="warn" size="sm" />
+              <div>This moves the entire matter (hearings, invoices, documents and the client) to {transferTarget?.fullName}&apos;s team. Your team will no longer see it.</div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ---------- Daily status of a hearing ---------- */}
+      <Modal open={!!hearingBizModal} onClose={() => setHearingBizModal(null)} title="Daily status" sub={hearingBizModal?.court}>
         {hearingBizModal && (
-          <>
-            {hearingBizModal.court && <p className="cr-modal-court">{hearingBizModal.court}</p>}
-            {hearingBizModal.parties && <p className="cr-modal-parties">{hearingBizModal.parties}</p>}
-            <dl className="cr-kv">
+          <div className="stack" style={{ gap: "var(--s3)" }}>
+            {hearingBizModal.parties && <p className="small"><b>{hearingBizModal.parties}</b></p>}
+            <dl className="kv">
               {Object.entries(hearingBizModal.fields || {}).map(([k, v]) => (
-                <div className="cr-kv-row" key={k}><dt>{k}</dt><dd>{String(v)}</dd></div>
+                <div key={k} style={{ display: "contents" }}><dt>{k}</dt><dd style={{ wordBreak: "break-word" }}>{String(v)}</dd></div>
               ))}
             </dl>
-          </>
+          </div>
         )}
-      </Dialog>
+      </Modal>
 
-      {/* Add Expense */}
-      <Dialog visible={showExpenseModal} onHide={() => setShowExpenseModal(false)} modal
-        header={`Add Expense — ${summary.caseNumber}`} style={{ width: "32rem" }} breakpoints={{ "640px": "95vw" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button text label="Cancel" onClick={() => setShowExpenseModal(false)} />
-            <Button label={savingFin ? "Saving..." : "Add Expense"} onClick={addExpense} disabled={savingFin} />
-          </div>
-        }>
-        <div className="flex flex-column gap-3 p-fluid">
-          <InputText placeholder="Title *" value={expenseForm.title}
-            onChange={(e) => setExpenseForm({ ...expenseForm, title: e.target.value })} />
-          <InputNumber placeholder="Amount" value={expenseForm.amount === "" ? null : Number(expenseForm.amount)}
-            mode="decimal" minFractionDigits={0} maxFractionDigits={2}
-            onValueChange={(e) => setExpenseForm({ ...expenseForm, amount: e.value == null ? "" : String(e.value) })} />
-          <InputText placeholder="Category" value={expenseForm.category}
-            onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })} />
-          <div className="flex flex-column gap-1">
-            <label className="cd-modal-label">Payment Date</label>
-            <DateField value={expenseForm.paymentDate} onChange={(v) => setExpenseForm({ ...expenseForm, paymentDate: v })} />
-          </div>
-          <Dropdown value={expenseForm.paymentStatus} placeholder="Payment Status" showClear
-            options={PAYMENT_STATUSES} optionLabel="label" optionValue="value"
-            onChange={(e) => setExpenseForm({ ...expenseForm, paymentStatus: e.value || "" })} />
-        </div>
-      </Dialog>
+      {/* ---------- Add expense ---------- */}
+      <Modal open={showExpenseModal} onClose={() => setShowExpenseModal(false)} title="Add expense" sub={<span className="mono">{summary.caseNumber}</span>}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowExpenseModal(false)}>Cancel</Button>
+          <Button variant="primary" loading={savingFin} onClick={addExpense} disabled={savingFin}>{savingFin ? "Saving…" : "Add expense"}</Button>
+        </>}>
+        <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); addExpense(); }}>
+          <TextField label="Title" required full value={expenseForm.title} onChange={(e) => setExpenseForm({ ...expenseForm, title: e.target.value })} />
+          <TextField label="Amount (₹)" type="number" min={0} step="0.01" value={expenseForm.amount}
+            onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} />
+          <TextField label="Category" value={expenseForm.category} onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })} />
+          <TextField label="Payment date" type="date" value={expenseForm.paymentDate} onChange={(e) => setExpenseForm({ ...expenseForm, paymentDate: e.target.value })} />
+          <SelectField label="Payment status" placeholder="—" options={PAYMENT_STATUSES} value={expenseForm.paymentStatus}
+            onChange={(e) => setExpenseForm({ ...expenseForm, paymentStatus: e.target.value })} />
+        </form>
+      </Modal>
 
-      {/* Add Invoice */}
-      <Dialog visible={showInvoiceModal} onHide={() => setShowInvoiceModal(false)} modal
-        header={`Add Invoice — ${summary.caseNumber}`} style={{ width: "40rem" }} breakpoints={{ "700px": "95vw" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button text label="Cancel" onClick={() => setShowInvoiceModal(false)} />
-            <Button label={savingFin ? "Saving..." : hasPermission("INVOICE_ISSUE") ? "Raise Invoice" : "Send to Accounts"} onClick={addInvoice} disabled={savingFin || invoiceTotal <= 0} />
-          </div>
-        }>
-        {!summary.clientName && (
-          <p className="cd-modal-warn">This case has no client linked. An invoice needs a client — set one on the case first.</p>
-        )}
-        <div className="flex flex-column gap-3">
-          {hearingHistory.length > 0 && (
-            <div className="flex flex-column gap-1">
-              <label className="cd-modal-label">Link a hearing (optional)</label>
-              <Dropdown className="w-full" placeholder="— none (bill by date) —" value={null}
-                options={hearingHistory.map((h, idx) => ({
-                  value: idx, label: `${h.hearingDate || h.businessDate || "hearing"}${h.purpose ? ` — ${h.purpose}` : ""}`,
-                }))}
-                optionLabel="label" optionValue="value"
-                onChange={(e) => { if (e.value !== null && e.value !== undefined) prefillInvoiceFromHearing(e.value); }} />
-            </div>
+      {/* ---------- Raise invoice ---------- */}
+      <Modal open={showInvoiceModal} onClose={() => setShowInvoiceModal(false)} size="wide"
+        title={hasPermission("INVOICE_ISSUE") ? "Raise invoice" : "Send invoice to accounts"} sub={<span className="mono">{summary.caseNumber}</span>}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowInvoiceModal(false)}>Cancel</Button>
+          <Button variant="primary" loading={savingFin} onClick={addInvoice} disabled={savingFin || invoiceTotal <= 0}>
+            {savingFin ? "Saving…" : hasPermission("INVOICE_ISSUE") ? "Raise invoice" : "Send to accounts"}
+          </Button>
+        </>}>
+        <div className="stack" style={{ gap: "var(--s4)" }}>
+          {!summary.clientName && (
+            <div className="callout warn"><Icon name="warn" size="sm" /><div>This case has no client linked. An invoice needs a client; set one on the case first.</div></div>
           )}
-          <div className="grid">
-            <div className="col-12 sm:col-6 flex flex-column gap-1">
-              <label className="cd-modal-label">Invoice Date</label>
-              <DateField value={invoiceForm.invoiceDate} onChange={(v) => setInvoiceForm({ ...invoiceForm, invoiceDate: v })} />
-            </div>
-            <div className="col-12 sm:col-6 flex flex-column gap-1">
-              <label className="cd-modal-label">Due Date</label>
-              <DateField value={invoiceForm.dueDate} onChange={(v) => setInvoiceForm({ ...invoiceForm, dueDate: v })} />
-            </div>
+          {hearingHistory.length > 0 && (
+            <SelectField label="Link a hearing" hint="Optional. Adds an appearance line and sets the invoice date." value="" placeholder="— none (bill by date) —"
+              options={hearingHistory.map((h, idx) => ({ value: idx, label: `${h.hearingDate || h.businessDate || "hearing"}${h.purpose ? ` — ${h.purpose}` : ""}` }))}
+              onChange={(e) => { if (e.target.value !== "") prefillInvoiceFromHearing(Number(e.target.value)); }} />
+          )}
+          <div className="form-grid">
+            <TextField label="Invoice date" type="date" value={invoiceForm.invoiceDate} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceDate: e.target.value })} />
+            <TextField label="Due date" type="date" value={invoiceForm.dueDate} onChange={(e) => setInvoiceForm({ ...invoiceForm, dueDate: e.target.value })} />
           </div>
-
-          <div className="flex justify-content-between align-items-center">
-            <label className="cd-modal-label">Particulars</label>
-            <Button text size="small" icon="pi pi-plus" label="Add Particulars" onClick={addInvParticular} />
-          </div>
+          <div className="row between"><span className="label">Particulars</span><Button size="sm" variant="ghost" icon="plus" onClick={addInvParticular}>Add line</Button></div>
           {invoiceForm.particulars.map((p, i) => (
-            <div className="flex gap-2 align-items-center" key={i}>
-              <InputText className="flex-1" placeholder="Particulars" value={p.description}
-                onChange={(e) => setInvParticular(i, "description", e.target.value)} />
-              <InputNumber className="cd-inv-amount" inputClassName="w-full" placeholder="₹ Amount"
-                value={p.amount === "" ? null : Number(p.amount)} min={0} mode="decimal" minFractionDigits={0} maxFractionDigits={2}
-                onValueChange={(e) => setInvParticular(i, "amount", e.value == null ? "" : String(e.value))} />
-              <Button icon="pi pi-times" rounded text severity="danger" aria-label="Remove line"
-                onClick={() => removeInvParticular(i)} disabled={invoiceForm.particulars.length === 1} />
+            <div className="cs-inv-line" key={i}>
+              <TextField label={`Particular ${i + 1}`} placeholder="e.g. Appearance fee" value={p.description} onChange={(e) => setInvParticular(i, "description", e.target.value)} />
+              <TextField label="Amount (₹)" type="number" min={0} step="0.01" value={p.amount} onChange={(e) => setInvParticular(i, "amount", e.target.value)} />
+              <Button variant="ghost" iconOnly icon="x" aria-label={`Remove line ${i + 1}`} onClick={() => removeInvParticular(i)} disabled={invoiceForm.particulars.length === 1} />
             </div>
           ))}
-          <div className="cd-inv-total">
-            <span>Total</span>
-            <span>₹ {invoiceTotal.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-          </div>
+          <div className="cs-inv-total"><span>Total</span><span className="mono">{formatCurrency(invoiceTotal)}</span></div>
         </div>
-      </Dialog>
+      </Modal>
 
-      {/* Upload Order */}
-      <Dialog visible={showUploadOrder} onHide={() => setShowUploadOrder(false)} modal
-        header={`Upload Order — ${summary.caseNumber}`} style={{ width: "32rem" }} breakpoints={{ "640px": "95vw" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button text label="Cancel" onClick={() => setShowUploadOrder(false)} />
-            <Button label={uploadingOrder ? "Uploading…" : "Upload Order"} onClick={uploadOrder} disabled={uploadingOrder || !orderForm.file} />
-          </div>
-        }>
-        <div className="flex flex-column gap-2 p-fluid">
-          <label className="cd-modal-label">Document name</label>
-          <InputText placeholder="e.g. Interim Order 21-01-2025" value={orderForm.documentName}
+      {/* ---------- Upload order ---------- */}
+      <Modal open={showUploadOrder} onClose={() => setShowUploadOrder(false)} title="Upload order" sub={<span className="mono">{summary.caseNumber}</span>}
+        footer={<>
+          <Button variant="ghost" onClick={() => setShowUploadOrder(false)}>Cancel</Button>
+          <Button variant="primary" icon="upload" loading={uploadingOrder} onClick={uploadOrder} disabled={uploadingOrder || !orderForm.file}>{uploadingOrder ? "Uploading…" : "Upload order"}</Button>
+        </>}>
+        <div className="form-grid">
+          <TextField label="Document name" full placeholder="e.g. Interim Order 21-01-2025" value={orderForm.documentName}
             onChange={(e) => setOrderForm({ ...orderForm, documentName: e.target.value })} />
-          <label className="cd-modal-label">Order date</label>
-          <DateField value={orderForm.orderDate} onChange={(v) => setOrderForm({ ...orderForm, orderDate: v })} />
-          <label className="cd-modal-label">Description (optional)</label>
-          <InputText placeholder="Notes about this order" value={orderForm.description}
-            onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
-          <label className="cd-modal-label">File *</label>
-          <input type="file" className="cd-file-input" onChange={(e) => setOrderForm({ ...orderForm, file: e.target.files?.[0] || null })} />
+          <TextField label="Order date" type="date" value={orderForm.orderDate} onChange={(e) => setOrderForm({ ...orderForm, orderDate: e.target.value })} />
+          <TextField label="Description" placeholder="Optional" value={orderForm.description} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
+          <Field label="File" required full>
+            {(fid) => <input id={fid} type="file" className="input" onChange={(e) => setOrderForm({ ...orderForm, file: e.target.files?.[0] || null })} />}
+          </Field>
         </div>
-      </Dialog>
+      </Modal>
 
-      {/* Add / Edit Hearing or Event */}
-      <Dialog visible={showHearingModal} onHide={closeHearingModal} modal
-        header={`${editingEventId
-          ? (eventModalMode === "event" ? "Edit Event" : "Edit Hearing")
-          : (eventModalMode === "event" ? "Add Event" : "Add Hearing")} — ${summary.caseNumber}`}
-        style={{ width: "36rem" }} breakpoints={{ "640px": "95vw" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button text label="Cancel" onClick={closeHearingModal} />
-            <Button onClick={addHearing} disabled={savingFin || !hearingForm.title.trim() || !hearingForm.date}
-              label={savingFin ? "Saving..." : (editingEventId
-                ? (eventModalMode === "event" ? "Save Event" : "Save Hearing")
-                : (eventModalMode === "event" ? "Add Event" : "Add Hearing"))} />
-          </div>
-        }>
-        <div className="flex flex-column gap-2 p-fluid">
-          <InputText placeholder="Title *" value={hearingForm.title}
-            onChange={(e) => setHearingForm({ ...hearingForm, title: e.target.value })} />
+      {/* ---------- Add / edit hearing or event ---------- */}
+      <Modal open={showHearingModal} onClose={closeHearingModal} sub={<span className="mono">{summary.caseNumber}</span>}
+        title={editingEventId
+          ? (eventModalMode === "event" ? "Edit event" : "Edit hearing")
+          : (eventModalMode === "event" ? "Add event" : "Add hearing")}
+        footer={<>
+          <Button variant="ghost" onClick={closeHearingModal}>Cancel</Button>
+          <Button variant="primary" loading={savingFin} onClick={addHearing} disabled={savingFin || !hearingForm.title.trim() || !hearingForm.date}>
+            {savingFin ? "Saving…" : (editingEventId
+              ? (eventModalMode === "event" ? "Save event" : "Save hearing")
+              : (eventModalMode === "event" ? "Add event" : "Add hearing"))}
+          </Button>
+        </>}>
+        <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); addHearing(); }}>
+          <TextField label="Title" required full value={hearingForm.title} onChange={(e) => setHearingForm({ ...hearingForm, title: e.target.value })} />
           {eventModalMode === "event" && (
-            <Dropdown value={hearingForm.eventType} options={OTHER_EVENT_TYPES} optionLabel="label" optionValue="value"
-              onChange={(e) => setHearingForm({ ...hearingForm, eventType: e.value })} />
+            <SelectField label="Type" full options={OTHER_EVENT_TYPES} value={hearingForm.eventType}
+              onChange={(e) => setHearingForm({ ...hearingForm, eventType: e.target.value })} />
           )}
-          <div className="grid">
-            <div className="col-12 sm:col-6 flex flex-column gap-1">
-              <label className="cd-modal-label">Date *</label>
-              <DateField value={hearingForm.date} onChange={(v) => setHearingForm({ ...hearingForm, date: v })} />
-            </div>
-            <div className="col-12 sm:col-6 flex flex-column gap-1">
-              <label className="cd-modal-label">Time</label>
-              <Calendar timeOnly hourFormat="24" showIcon icon="pi pi-clock" value={hmToDate(hearingForm.time)}
-                onChange={(e) => setHearingForm({ ...hearingForm, time: dateToHm(e.value) })} />
-            </div>
-          </div>
-
-          {eventModalMode === "hearing" && (
-            <>
-              <label className="cd-modal-label">Purpose / stage</label>
-              <Dropdown value={hearingForm.purpose} options={HEARING_PURPOSES} placeholder="Select purpose…" showClear
-                onChange={(e) => setHearingForm({ ...hearingForm, purpose: e.value || "" })} />
-              <InputText placeholder="Court" value={hearingForm.court}
-                onChange={(e) => setHearingForm({ ...hearingForm, court: e.target.value })} />
-              <InputText placeholder="Bench / Hall no." value={hearingForm.benchHall}
-                onChange={(e) => setHearingForm({ ...hearingForm, benchHall: e.target.value })} />
-              <InputText placeholder="Judge / Coram" value={hearingForm.judge}
-                onChange={(e) => setHearingForm({ ...hearingForm, judge: e.target.value })} />
-              <label className="cd-modal-label">Next hearing date</label>
-              <DateField value={hearingForm.nextDate} onChange={(v) => setHearingForm({ ...hearingForm, nextDate: v })} />
-              <InputTextarea rows={3} autoResize placeholder="Outcome / order (after the hearing)" value={hearingForm.outcome}
-                onChange={(e) => setHearingForm({ ...hearingForm, outcome: e.target.value })} />
-            </>
-          )}
-
-          <label className="cd-modal-label">Description</label>
-          <InputTextarea rows={3} autoResize placeholder="Notes" value={hearingForm.description}
+          <TextField label="Date" required type="date" value={hearingForm.date} onChange={(e) => setHearingForm({ ...hearingForm, date: e.target.value })} />
+          <TextField label="Time" type="time" value={hearingForm.time} onChange={(e) => setHearingForm({ ...hearingForm, time: e.target.value })} />
+          {eventModalMode === "hearing" && <>
+            <SelectField label="Purpose / stage" placeholder="Select purpose…" options={HEARING_PURPOSES} value={hearingForm.purpose}
+              onChange={(e) => setHearingForm({ ...hearingForm, purpose: e.target.value })} />
+            <TextField label="Court" value={hearingForm.court} onChange={(e) => setHearingForm({ ...hearingForm, court: e.target.value })} />
+            <TextField label="Bench / hall no." value={hearingForm.benchHall} onChange={(e) => setHearingForm({ ...hearingForm, benchHall: e.target.value })} />
+            <TextField label="Judge / coram" value={hearingForm.judge} onChange={(e) => setHearingForm({ ...hearingForm, judge: e.target.value })} />
+            <TextField label="Next hearing date" type="date" value={hearingForm.nextDate} onChange={(e) => setHearingForm({ ...hearingForm, nextDate: e.target.value })} />
+            <TextArea label="Outcome / order" hint="After the hearing" full rows={3} value={hearingForm.outcome}
+              onChange={(e) => setHearingForm({ ...hearingForm, outcome: e.target.value })} />
+          </>}
+          <TextArea label="Description" full rows={3} placeholder="Notes" value={hearingForm.description}
             onChange={(e) => setHearingForm({ ...hearingForm, description: e.target.value })} />
-        </div>
-      </Dialog>
+        </form>
+      </Modal>
     </div>
   );
 }

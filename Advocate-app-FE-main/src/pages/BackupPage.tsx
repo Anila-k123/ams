@@ -1,20 +1,15 @@
+// Backup & Restore: create backups by section, restore one from a .zip (typed
+// confirmation when it deletes data), and the history of past backups.
 import { useState, useEffect, useCallback } from "react";
-import { Button } from "primereact/button";
-import { Card } from "primereact/card";
-import { Dialog } from "primereact/dialog";
-import { Dropdown } from "primereact/dropdown";
-import { InputText } from "primereact/inputtext";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { Tag } from "primereact/tag";
-import { Message } from "primereact/message";
-import { ProgressBar } from "primereact/progressbar";
-import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 import api from "../api/client";
 import { useLoading } from "../contexts/LoadingContext";
 import { useDownload } from "../hooks/useDownload";
 import DownloadLoader from "../components/DownloadLoader";
-import "../assets/styles/BackupPage.css";
+import { PageHead, Button, Chip, Icon, Panel, type IconName, type Tone } from "../ui/kit";
+import { Field } from "../ui/forms";
+import { Modal, Drawer, confirm } from "../ui/overlays";
+import { DataTable, type Column } from "../ui/DataTable";
+import "../ui/pages/firm.css";
 
 const API = "/api/backup";
 
@@ -40,28 +35,27 @@ const SECTION_LABELS: Record<string, string> = {
 const DESTRUCTIVE_RESTORE = new Set(["FULL", "DATABASE"]);
 const RESTORE_CONFIRM_WORD = "RESTORE";
 
-const SECTION_ICONS: Record<string, string> = {
-  DATABASE: "pi pi-database",
-  JSON: "pi pi-file",
-  DOCUMENTS: "pi pi-folder",
-  REPORTS: "pi pi-file",
-  SETTINGS: "pi pi-cog",
+const SECTION_ICONS: Record<string, IconName> = {
+  DATABASE: "database",
+  JSON: "file",
+  DOCUMENTS: "folder",
+  REPORTS: "chart",
+  SETTINGS: "cog",
 };
-const secIcon = (name: string) => (SECTION_ICONS[name] ? <i className={`${SECTION_ICONS[name]} mr-1`} /> : null);
 
-const BACKUP_TYPES = [
-  { key: "DATABASE", label: "Database Only", desc: "Export database schema & data", icon: "pi pi-database" },
-  { key: "DOCUMENTS", label: "Documents Only", desc: "Uploaded files & documents", icon: "pi pi-folder" },
-  { key: "REPORTS", label: "Reports Only", desc: "Generated reports & PDFs", icon: "pi pi-file" },
-  { key: "SETTINGS", label: "Settings Only", desc: "Application preferences", icon: "pi pi-cog" },
+const BACKUP_TYPES: { key: string; label: string; desc: string; icon: IconName }[] = [
+  { key: "DATABASE", label: "Database only", desc: "Cases, clients, billing and history.", icon: "database" },
+  { key: "DOCUMENTS", label: "Documents only", desc: "Uploaded files and documents.", icon: "folder" },
+  { key: "REPORTS", label: "Reports only", desc: "Generated reports and PDFs.", icon: "chart" },
+  { key: "SETTINGS", label: "Settings only", desc: "Profile and preferences.", icon: "cog" },
 ];
 
 const RESTORE_TYPES = [
-  { value: "FULL", label: "Full Restore" },
-  { value: "DATABASE", label: "Database Only" },
-  { value: "DOCUMENTS", label: "Documents Only" },
-  { value: "REPORTS", label: "Reports Only" },
-  { value: "SETTINGS", label: "Settings Only" },
+  { value: "FULL", label: "Full restore" },
+  { value: "DATABASE", label: "Database only" },
+  { value: "DOCUMENTS", label: "Documents only" },
+  { value: "REPORTS", label: "Reports only" },
+  { value: "SETTINGS", label: "Settings only" },
 ];
 
 const formatSize = (bytes: any) => {
@@ -80,10 +74,13 @@ const formatDurationMs = (ms: any) => {
   if (ms < 1000) return `${ms}ms`;
   return (ms / 1000).toFixed(1) + "s";
 };
-const formatDate = (dateStr: any) => (dateStr ? new Date(dateStr).toLocaleString() : "");
-const healthColor = (score: number) => (score >= 90 ? "var(--success)" : score >= 60 ? "var(--warning)" : "var(--danger)");
-const statusSeverity = (s: string): any =>
-  s === "SUCCESS" ? "success" : s === "FAILED" || s === "PARTIAL" ? "danger" : s === "RUNNING" ? "warning" : "secondary";
+const formatDate = (dateStr: any) => (dateStr
+  ? new Date(dateStr).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })
+  : "");
+const healthTone = (score: number): Tone => (score >= 90 ? "ok" : score >= 60 ? "warn" : "bad");
+const statusTone = (s: string): Tone =>
+  s === "SUCCESS" ? "ok" : s === "FAILED" || s === "PARTIAL" ? "bad" : s === "RUNNING" ? "warn" : "";
+const cap = (s?: string) => (s ? s.charAt(0) + s.slice(1).toLowerCase() : "—");
 
 const parseMetadata = (h: any) => {
   if (!h.metadataJson) return { sections: [], healthScore: 100 };
@@ -95,26 +92,20 @@ const parseMetadata = (h: any) => {
 };
 
 function SectionItem({ sec, label }: { sec: any; label?: boolean }) {
-  const icon = sec.status === "SUCCESS" ? "pi pi-check-circle" : sec.status === "FAILED" ? "pi pi-times-circle" : "pi pi-clock";
-  const color = sec.status === "SUCCESS" ? "var(--success)" : sec.status === "FAILED" ? "var(--danger)" : "var(--text-muted)";
+  const ok = sec.status === "SUCCESS";
+  const bad = sec.status === "FAILED";
   return (
-    <div className="backup-section-item">
-      <i className={icon} style={{ color }} />
-      <div className="flex flex-column flex-1">
-        <span className="font-semibold">{secIcon(sec.name)}{label ? SECTION_LABELS[sec.name] || sec.name : sec.name}</span>
-        {!label && <span className="backup-muted text-sm">{sec.status}</span>}
-        {sec.error && <span className="backup-error text-sm">{sec.error}</span>}
+    <div className={`fm-sec${ok ? " ok" : bad ? " bad" : ""}`}>
+      <Icon name={ok ? "ok" : bad ? "x" : "clock"} size="sm" />
+      <div className="grow">
+        <div className="row" style={{ gap: 6 }}>
+          {SECTION_ICONS[sec.name] && <Icon name={SECTION_ICONS[sec.name]} size="sm" />}
+          <b className="small">{label ? SECTION_LABELS[sec.name] || sec.name : sec.name}</b>
+        </div>
+        {!label && <div className="faint xs">{cap(sec.status)}</div>}
+        {sec.error && <div className="xs fm-err">{sec.error}</div>}
       </div>
-      <span className="backup-muted text-sm">{formatDurationMs(sec.durationMs)}</span>
-    </div>
-  );
-}
-
-function Detail({ label, children }: { label: string; children: any }) {
-  return (
-    <div className="flex justify-content-between gap-3 py-1 backup-detail-row">
-      <span className="backup-muted">{label}</span>
-      <span className="font-semibold">{children}</span>
+      <span className="faint xs num">{formatDurationMs(sec.durationMs)}</span>
     </div>
   );
 }
@@ -139,7 +130,8 @@ function BackupPage() {
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [restoreConfirmText, setRestoreConfirmText] = useState("");
   const [restoreValidation, setRestoreValidation] = useState<any>(null);
-  const [expandedRows, setExpandedRows] = useState<any>(null);
+  const [detailRow, setDetailRow] = useState<any>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -270,17 +262,16 @@ function BackupPage() {
   };
 
   const requestDelete = (id: any) => {
-    confirmDialog({
-      header: "Confirm",
-      message: "Delete this backup permanently?",
-      icon: "pi pi-exclamation-triangle",
-      acceptClassName: "p-button-danger",
-      acceptLabel: "Confirm",
-      rejectLabel: "Cancel",
+    confirm({
+      title: "Delete this backup?",
+      message: "The backup file is removed permanently.",
+      danger: true,
+      confirmLabel: "Delete backup",
       accept: async () => {
         try {
           await withLoading(api.delete(`${API}/${id}`), "Deleting Backup...");
           setStatusMsg({ type: "success", text: "Backup deleted" });
+          setDetailRow(null);
           await loadHistory();
           await loadStats();
         } catch {
@@ -297,239 +288,209 @@ function BackupPage() {
 
   const latestBackup = history.length > 0 ? history[0] : null;
   const latestMeta = latestBackup ? parseMetadata(latestBackup) : { healthScore: 100 };
+  const healthBadge = (score: number) => <Chip tone={healthTone(score)}>{score}%</Chip>;
 
-  const healthBadge = (score: number) => (
-    <span className="backup-health-badge" style={{ color: healthColor(score), borderColor: healthColor(score) }}>{score}%</span>
-  );
+  const columns: Column<any>[] = [
+    { key: "createdAt", label: "Created", render: (h) => <span className="nowrap">{formatDate(h.createdAt)}</span> },
+    { key: "backupType", label: "Type", render: (h) => cap(h.backupType) },
+    { key: "fileSize", label: "Size", align: "right", render: (h) => <span className="num nowrap">{formatSize(h.fileSize)}</span> },
+    { key: "durationSeconds", label: "Took", hideSm: true, render: (h) => <span className="num">{formatDuration(h.durationSeconds)}</span> },
+    { key: "health", label: "Health", hideSm: true, render: (h) => healthBadge(parseMetadata(h).healthScore) },
+    { key: "status", label: "Status", render: (h) => <Chip tone={statusTone(h.status)}>{cap(h.status)}</Chip> },
+    {
+      key: "act", label: <span className="sr-only">Actions</span>, render: (h) => (
+        <div className="row nowrap" style={{ gap: 2 }}>
+          <button type="button" className="btn ghost sm icon" aria-label="Download backup" onClick={() => downloadBackup(h.id)}><Icon name="download" size="sm" /></button>
+          <button type="button" className="btn ghost sm icon" aria-label="Delete backup" onClick={() => requestDelete(h.id)}><Icon name="trash" size="sm" /></button>
+        </div>
+      ),
+    },
+  ];
 
-  const rowExpansion = (h: any) => {
-    const meta = parseMetadata(h);
-    return (
-      <div className="p-2">
-        <h4 className="mt-0 mb-2">Section Breakdown</h4>
-        {meta.sections && meta.sections.length > 0
-          ? meta.sections.map((sec: any, idx: number) => <SectionItem key={idx} sec={sec} />)
-          : <p className="backup-muted m-0">No section data available</p>}
-      </div>
-    );
-  };
+  const detail = detailRow ? parseMetadata(detailRow) : null;
 
   return (
-    <div className="backup-page">
-      <ConfirmDialog />
+    <div>
       {isDownloading && <DownloadLoader />}
+      <PageHead
+        title="Backup & Restore"
+        sub="Take a fresh backup before you restore: a restore replaces current data."
+        actions={<>
+          <Button icon="refresh" onClick={() => { loadHistory(); loadStats(); }}>Refresh</Button>
+          <Button icon="archive" onClick={() => createBackup("FULL")} disabled={loading}>Full backup</Button>
+          <Button variant="primary" icon="bolt" onClick={() => createBackup("QUICK")} disabled={loading}>Quick backup</Button>
+        </>}
+      />
 
       {statusMsg.text && (
-        <div className="flex align-items-center gap-2 mb-3">
-          <Message
-            className="flex-1 justify-content-start"
-            severity={statusMsg.type === "success" ? "success" : "error"}
-            text={statusMsg.text}
-          />
-          <Button icon="pi pi-times" rounded text severity="secondary" aria-label="Dismiss" onClick={() => setStatusMsg({ type: "", text: "" })} />
+        <div className={`callout ${statusMsg.type === "success" ? "ok" : "bad"}`} role="status" style={{ marginBottom: 16 }}>
+          <Icon name={statusMsg.type === "success" ? "ok" : "warn"} className="i" size="sm" />
+          <div className="grow">{statusMsg.text}</div>
+          <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => setStatusMsg({ type: "", text: "" })}><Icon name="x" size="sm" /></button>
         </div>
       )}
 
-      <div className="grid">
-        <div className="col-12 md:col-4">
-          <Card className="h-full">
-            <div className="flex gap-3">
-              <i className="pi pi-clock backup-card-icon" />
-              <div className="flex flex-column gap-1">
-                <span className="backup-muted text-sm">Latest Backup</span>
-                <span className="font-bold">{latestBackup ? `${latestBackup.backupType} - ${formatSize(latestBackup.fileSize)}` : "No backups"}</span>
-                <span className="backup-muted text-sm">
-                  {latestBackup ? formatDate(latestBackup.createdAt) : "—"}
-                  {latestBackup && latestMeta.healthScore < 100 && (
-                    <span style={{ color: healthColor(latestMeta.healthScore), marginLeft: 6 }}>
-                      {"·"} partial ({latestMeta.healthScore}%)
-                    </span>
-                  )}
-                </span>
-              </div>
-            </div>
-          </Card>
+      <div className="figures">
+        <div className="figure">
+          <div className="lbl">Latest backup</div>
+          <div className="val fm-val">{latestBackup ? formatDate(latestBackup.createdAt) : "None yet"}</div>
+          <div className="meta">
+            {latestBackup ? `${cap(latestBackup.backupType)}, ${formatSize(latestBackup.fileSize)}` : "Create your first backup below."}
+            {latestBackup && latestMeta.healthScore < 100 && <> · partial ({latestMeta.healthScore}%)</>}
+          </div>
         </div>
-        <div className="col-12 md:col-4">
-          <Card className="h-full">
-            <div className="flex gap-3">
-              <i className="pi pi-database backup-card-icon" />
-              <div className="flex flex-column gap-1">
-                <span className="backup-muted text-sm">Total Storage</span>
-                <span className="font-bold">{formatSize(stats.totalSize)}</span>
-                <span className="backup-muted text-sm">{stats.totalBackups} backup(s)</span>
-              </div>
-            </div>
-          </Card>
+        <div className="figure">
+          <div className="lbl">Storage used</div>
+          <div className="val">{formatSize(stats.totalSize)}</div>
+          <div className="meta">{stats.totalBackups} backup{stats.totalBackups === 1 ? "" : "s"}</div>
         </div>
-        <div className="col-12 md:col-4">
-          <Card className="h-full">
-            <div className="flex gap-3">
-              <i className="pi pi-bolt backup-card-icon" />
-              <div className="flex flex-column gap-2">
-                <span className="backup-muted text-sm">Quick Actions</span>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="small" icon="pi pi-bolt" label="Quick Backup" onClick={() => createBackup("QUICK")} disabled={loading} />
-                  <Button size="small" outlined icon="pi pi-database" label="Full Backup" onClick={() => createBackup("FULL")} disabled={loading} />
-                </div>
-              </div>
-            </div>
-          </Card>
+        <div className="figure">
+          <div className="lbl">Latest health</div>
+          <div className="val">{latestBackup ? `${latestMeta.healthScore}%` : "—"}</div>
+          <div className="meta">{latestBackup ? (latestMeta.healthScore < 100 ? "Some sections failed" : "Every section completed") : "No backups"}</div>
         </div>
       </div>
 
-      <h3>Create Backup</h3>
+      <div className="section-title"><h2>Create a backup</h2></div>
       {/* A backup covers the rows this account created, not everything it can see. */}
-      <p className="backup-muted">
-        Covers the records <strong>you created</strong>. If you share a practice,
-        colleagues' records are backed up from their own accounts.
+      <p className="muted small" style={{ marginBottom: 12 }}>
+        Covers the records <strong>you created</strong>. If you share a practice, colleagues' records are backed up from their own accounts.
       </p>
-      <div className="grid">
+      <div className="pp-type-cards">
         {BACKUP_TYPES.map((bt) => (
-          <div key={bt.key} className="col-12 sm:col-6 lg:col-3">
-            <Card className="h-full backup-type-card" onClick={() => createBackup(bt.key)}>
-              <i className={`${bt.icon} backup-card-icon`} />
-              <h4 className="mb-1">{bt.label}</h4>
-              <p className="backup-muted mt-0">{bt.desc}</p>
-              <Button size="small" outlined icon="pi pi-download" label="Backup" disabled={loading} />
-            </Card>
-          </div>
+          <button key={bt.key} type="button" onClick={() => createBackup(bt.key)} disabled={loading}>
+            <Icon name={bt.icon} />
+            <b>{bt.label}</b>
+            <span className="small muted">{bt.desc}</span>
+          </button>
         ))}
       </div>
 
-      <h3>Restore Backup</h3>
-      <Card>
-        <div
-          className="backup-drop-zone"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) pickFile(f); }}
-        >
-          {restoreFile ? (
-            <>
-              <p className="font-semibold m-0"><i className="pi pi-upload mr-2" />{restoreFile.name}</p>
-              <p className="backup-muted m-0">{formatSize(restoreFile.size)}</p>
-            </>
-          ) : (
-            <p className="backup-muted m-0"><i className="pi pi-upload mr-2" />Drag &amp; drop a backup ZIP file, or click to select</p>
-          )}
-          <input type="file" accept=".zip" onChange={(e) => pickFile(e.target.files?.[0])} hidden id="restore-input" />
-          <label htmlFor="restore-input" className="p-button p-button-outlined p-button-sm">Browse Files</label>
-        </div>
+      <div className="section-title"><h2>Restore from a backup</h2></div>
+      <Panel>
+        <div className="stack">
+          <label className={`dropzone${dragOver ? " over" : ""}`} htmlFor="restore-input"
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pickFile(f); }}>
+            <Icon name="upload" size="lg" />
+            {restoreFile ? (
+              <div style={{ marginTop: 8 }}><b className="mono">{restoreFile.name}</b>, {formatSize(restoreFile.size)}</div>
+            ) : (
+              <div style={{ marginTop: 8 }}><b>Drop a backup .zip here</b> or <span className="link">browse</span></div>
+            )}
+            <div className="faint xs" style={{ marginTop: 4 }}>AMS backup files only</div>
+            <input type="file" accept=".zip" className="sr-only" id="restore-input" onChange={(e) => pickFile(e.target.files?.[0])} />
+          </label>
 
-        {restoreValidation && (
-          <div className="mt-3">
-            <h4 className="mb-2">Backup Details</h4>
-            <div className="grid">
-              <div className="col-6 md:col"><div className="backup-muted text-sm">Type</div>{restoreValidation.backupType || "N/A"}</div>
-              <div className="col-6 md:col"><div className="backup-muted text-sm">Date</div>{restoreValidation.backupDate ? formatDate(restoreValidation.backupDate) : "N/A"}</div>
-              <div className="col-6 md:col">
-                <div className="backup-muted text-sm">Health</div>
-                <span style={{ color: healthColor(restoreValidation.healthScore) }}><i className="pi pi-heart mr-1" />{restoreValidation.healthScore}%</span>
+          {restoreValidation && (
+            <div className={`callout ${restoreValidation.healthScore < 100 ? "warn" : "ok"}`}>
+              <Icon name={restoreValidation.healthScore < 100 ? "warn" : "ok"} className="i" size="sm" />
+              <div className="grow stack" style={{ gap: 8 }}>
+                <b>{restoreValidation.healthScore < 100 ? "This backup is partial. Some data may be missing." : `Backup is readable. Health ${restoreValidation.healthScore}%.`}</b>
+                <dl className="kv">
+                  <dt>Type</dt><dd>{restoreValidation.backupType || "N/A"}</dd>
+                  <dt>Created</dt><dd>{restoreValidation.backupDate ? formatDate(restoreValidation.backupDate) : "N/A"}</dd>
+                  <dt>Health</dt><dd>{healthBadge(restoreValidation.healthScore)}</dd>
+                  <dt>Version</dt><dd>{restoreValidation.backupVersion || "N/A"}</dd>
+                  <dt>Size</dt><dd>{formatSize(restoreFile?.size)}</dd>
+                </dl>
+                {restoreValidation.failedSections?.length > 0 && (
+                  <div className="small fm-err">Failed sections: {restoreValidation.failedSections.join(", ")}</div>
+                )}
+                {restoreValidation.skippedSections?.length > 0 && (
+                  <div className="small muted">Skipped sections: {restoreValidation.skippedSections.join(", ")}</div>
+                )}
               </div>
-              <div className="col-6 md:col"><div className="backup-muted text-sm">Version</div>{restoreValidation.backupVersion || "N/A"}</div>
-              <div className="col-6 md:col"><div className="backup-muted text-sm">Size</div>{formatSize(restoreFile?.size)}</div>
             </div>
-            {restoreValidation.failedSections?.length > 0 && (
-              <Message className="w-full justify-content-start mt-2" severity="error" text={`Failed sections: ${restoreValidation.failedSections.join(", ")}`} />
-            )}
-            {restoreValidation.skippedSections?.length > 0 && (
-              <Message className="w-full justify-content-start mt-2" severity="info" text={`Skipped sections: ${restoreValidation.skippedSections.join(", ")}`} />
-            )}
-            {restoreValidation.healthScore < 100 && (
-              <Message className="w-full justify-content-start mt-2" severity="warn" text="This backup is partial. Some data may be missing." />
-            )}
+          )}
+
+          <div className="row wrap" style={{ alignItems: "flex-end" }}>
+            <Field label="Restore type">
+              {(id) => (
+                <select id={id} className="input" value={restoreType} onChange={(e) => { setRestoreType(e.target.value); setRestoreConfirmText(""); }}>
+                  {RESTORE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              )}
+            </Field>
+            <Button icon="shield" onClick={handleValidate} disabled={!restoreFile}>Validate</Button>
+            <Button variant="danger-solid" icon="restore" loading={restoring} onClick={() => setShowRestoreConfirm(true)} disabled={!restoreFile || restoring}>
+              {restoring ? "Restoring…" : "Restore"}
+            </Button>
+            <span className="faint xs">Validate checks the file before anything is changed.</span>
+          </div>
+        </div>
+      </Panel>
+
+      <div className="section-title"><h2>History</h2></div>
+      <DataTable
+        rows={history}
+        columns={columns}
+        rowKey={(h) => h.id}
+        onRow={setDetailRow}
+        caption="Backup history"
+        empty={{ icon: "archive", title: "No backups yet", text: "Create your first backup above." }}
+      />
+
+      <Drawer
+        open={!!detailRow}
+        onClose={() => setDetailRow(null)}
+        title={detailRow ? `${cap(detailRow.backupType)} backup` : ""}
+        sub={detailRow ? <span className="faint small">{formatDate(detailRow.createdAt)}</span> : null}
+        footer={detailRow ? <>
+          <Button icon="download" onClick={() => downloadBackup(detailRow.id)}>Download</Button>
+          <Button variant="primary" onClick={() => setDetailRow(null)}>Done</Button>
+        </> : null}
+      >
+        {detailRow && detail && (
+          <div className="stack" style={{ gap: 20 }}>
+            <dl className="kv">
+              <dt>Size</dt><dd>{formatSize(detailRow.fileSize)}</dd>
+              <dt>Took</dt><dd>{formatDuration(detailRow.durationSeconds) || "—"}</dd>
+              <dt>Health</dt><dd>{healthBadge(detail.healthScore)}</dd>
+              <dt>Status</dt><dd><Chip tone={statusTone(detailRow.status)}>{cap(detailRow.status)}</Chip></dd>
+            </dl>
+            <div>
+              <h4 className="fm-h4">Sections</h4>
+              {detail.sections && detail.sections.length > 0
+                ? <div className="stack" style={{ gap: 8 }}>{detail.sections.map((sec: any, idx: number) => <SectionItem key={idx} sec={sec} />)}</div>
+                : <p className="faint small">No section data available</p>}
+            </div>
           </div>
         )}
+      </Drawer>
 
-        <div className="flex flex-wrap align-items-center gap-2 mt-3">
-          <Button outlined label="Validate" onClick={handleValidate} disabled={!restoreFile} />
-          <Button label={restoring ? "Restoring..." : "Restore"} onClick={() => setShowRestoreConfirm(true)} disabled={!restoreFile || restoring} />
-          <label className="ml-auto">Restore Type:</label>
-          <Dropdown value={restoreType} options={RESTORE_TYPES} onChange={(e) => { setRestoreType(e.value); setRestoreConfirmText(""); }} />
-        </div>
-      </Card>
-
-      <div className="flex justify-content-between align-items-center mt-4">
-        <h3>Backup History</h3>
-        <Button outlined size="small" icon="pi pi-refresh" label="Refresh" onClick={() => { loadHistory(); loadStats(); }} />
-      </div>
-      {history.length === 0 ? (
-        <p className="backup-muted">No backups yet. Create your first backup above.</p>
-      ) : (
-        <DataTable
-          value={history}
-          dataKey="id"
-          size="small"
-          expandedRows={expandedRows}
-          onRowToggle={(e) => setExpandedRows(e.data)}
-          rowExpansionTemplate={rowExpansion}
-        >
-          <Column expander style={{ width: "3rem" }} />
-          <Column header="Date" body={(h: any) => formatDate(h.createdAt)} />
-          <Column header="Type" body={(h: any) => <Tag severity="info" value={h.backupType} />} />
-          <Column header="Size" body={(h: any) => formatSize(h.fileSize)} />
-          <Column header="Duration" body={(h: any) => formatDuration(h.durationSeconds)} />
-          <Column header="Health" body={(h: any) => healthBadge(parseMetadata(h).healthScore)} />
-          <Column header="Status" body={(h: any) => <Tag severity={statusSeverity(h.status)} value={h.status} />} />
-          <Column header="Actions" body={(h: any) => (
-            <div className="flex gap-1">
-              <Button icon="pi pi-download" rounded text tooltip="Download" tooltipOptions={{ position: "top" }} onClick={() => downloadBackup(h.id)} />
-              <Button icon="pi pi-trash" rounded text severity="danger" tooltip="Delete" tooltipOptions={{ position: "top" }} onClick={() => requestDelete(h.id)} />
-            </div>
-          )} />
-        </DataTable>
-      )}
-
-      <Dialog
-        visible={showProgress}
-        onHide={() => {}}
-        closable={false}
-        header={<span><i className="pi pi-spin pi-spinner mr-2" />Backup in Progress</span>}
-        style={{ width: "min(480px, 95vw)" }}
-      >
-        <p className="backup-muted mt-0">
-          Building a {progressType} backup. This runs in one step on the
-          server, so there is nothing to report until it finishes.
-        </p>
-        <div className="flex flex-column gap-2 mb-3">
+      <Modal open={showProgress} onClose={() => {}} dismissable={false} size="narrow"
+        title="Backup in progress" sub="This runs in one step on the server, so there is nothing to report until it finishes.">
+        <div className="pp-progress fm-indet" role="progressbar" aria-label="Backup progress" aria-busy="true"><i /></div>
+        <div className="pp-steps">
           {(TYPE_SECTIONS[progressType] || TYPE_SECTIONS.FULL).map((s) => (
-            <div key={s} className="flex align-items-center gap-2">
-              <i className={SECTION_ICONS[s] || "pi pi-clock"} />
-              <span>{SECTION_LABELS[s] || s}</span>
+            <div key={s} className="on">
+              <Icon name={SECTION_ICONS[s] || "clock"} size="sm" />
+              <span className="grow">{SECTION_LABELS[s] || s}</span>
             </div>
           ))}
         </div>
-        <ProgressBar mode="indeterminate" style={{ height: 6 }} />
-      </Dialog>
+      </Modal>
 
-      <Dialog
-        visible={showSuccess && !!successData}
-        onHide={() => setShowSuccess(false)}
-        closable={false}
-        header={<span className="backup-success"><i className="pi pi-check-circle mr-2" />Backup Completed</span>}
-        footer={<Button label="Done" onClick={() => setShowSuccess(false)} />}
-        style={{ width: "min(520px, 95vw)" }}
-      >
+      <Modal open={showSuccess && !!successData} onClose={() => setShowSuccess(false)} size="narrow" title="Backup completed"
+        footer={<Button variant="primary" onClick={() => setShowSuccess(false)}>Done</Button>}>
         {successData && (
-          <>
-            <Detail label="Type">{successData.type}</Detail>
-            <Detail label="Size">{formatSize(successData.fileSize)}</Detail>
-            <Detail label="Duration">{formatDuration(successData.durationSeconds)}</Detail>
-            <Detail label="Status">
-              <span style={{ color: successData.status === "SUCCESS" ? "var(--success)" : "var(--warning)" }}>{successData.status}</span>
-            </Detail>
-            {successData.healthScore !== undefined && (
-              <Detail label="Health">
-                <span style={{ color: healthColor(successData.healthScore) }}><i className="pi pi-heart mr-1" />{successData.healthScore}%</span>
-              </Detail>
-            )}
+          <div className="stack" style={{ gap: 16 }}>
+            <dl className="kv">
+              <dt>Type</dt><dd>{cap(successData.type)}</dd>
+              <dt>Size</dt><dd>{formatSize(successData.fileSize)}</dd>
+              <dt>Took</dt><dd>{formatDuration(successData.durationSeconds)}</dd>
+              <dt>Status</dt><dd><Chip tone={successData.status === "SUCCESS" ? "ok" : "warn"}>{cap(successData.status)}</Chip></dd>
+              {successData.healthScore !== undefined && <><dt>Health</dt><dd>{healthBadge(successData.healthScore)}</dd></>}
+            </dl>
             {successData.sections?.length > 0 && (
-              <div className="mt-3">
+              <div className="stack" style={{ gap: 8 }}>
                 {successData.sections.map((sec: any, idx: number) => <SectionItem key={idx} sec={sec} label />)}
               </div>
             )}
             {Object.keys(successData.recordCounts || {}).length > 0 && (
-              <p className="backup-muted">
+              <p className="muted small">
                 Captured{" "}
                 {Object.entries(successData.recordCounts)
                   .filter(([, n]: any) => n > 0)
@@ -538,99 +499,68 @@ function BackupPage() {
                 .
               </p>
             )}
-          </>
-        )}
-      </Dialog>
-
-      <Dialog
-        visible={showError}
-        onHide={() => setShowError(false)}
-        closable={false}
-        header={<span className="backup-error"><i className="pi pi-times-circle mr-2" />Backup Failed</span>}
-        footer={<Button label="Close" onClick={() => setShowError(false)} />}
-        style={{ width: "min(480px, 95vw)" }}
-      >
-        <p className="m-0">{errorMsg}</p>
-      </Dialog>
-
-      <Dialog
-        visible={showRestoreConfirm}
-        onHide={closeRestoreConfirm}
-        closable={false}
-        header={<span><i className="pi pi-exclamation-triangle mr-2 backup-warning" />Confirm Restore</span>}
-        style={{ width: "min(560px, 95vw)" }}
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button label="Cancel" outlined severity="secondary" onClick={closeRestoreConfirm} />
-            <Button
-              severity="danger"
-              label={isDestructiveRestore ? "Delete & Restore" : "Restore"}
-              disabled={isDestructiveRestore && !restoreConfirmed}
-              tooltip={isDestructiveRestore && !restoreConfirmed ? `Type ${RESTORE_CONFIRM_WORD} to enable` : undefined}
-              tooltipOptions={{ showOnDisabled: true }}
-              onClick={handleRestoreConfirm}
-            />
           </div>
-        }
-      >
-        <Detail label="File">{restoreFile?.name}</Detail>
-        <Detail label="Type">{restoreType}</Detail>
-        <Detail label="Size">{formatSize(restoreFile?.size)}</Detail>
-        {restoreValidation?.healthScore !== undefined && (
-          <Detail label="Backup Health">{healthBadge(restoreValidation.healthScore)}</Detail>
         )}
-        {restoreValidation?.isPartial && (
-          <Message className="w-full justify-content-start mt-2" severity="warn"
-            text="This backup is partial. Some sections failed when it was created, so restoring it may leave gaps." />
-        )}
+      </Modal>
 
-        {/* A FULL/DATABASE restore deletes every row this account owns first: make someone type. */}
-        {isDestructiveRestore ? (
-          <>
-            <Message
-              className="w-full justify-content-start mt-3"
-              severity="error"
-              content={
-                <span>
-                  <strong>This deletes your current data.</strong> A {restoreType}{" "}
-                  restore removes every client, case, hearing, document record,
-                  invoice, expense and task on this account, then re-inserts
-                  only what is in this file. Anything added since{" "}
-                  {restoreValidation?.backupDate ? formatDate(restoreValidation.backupDate) : "the backup was taken"}{" "}
-                  will be lost.
-                </span>
-              }
-            />
-            {!restoreValidation && (
-              <p className="backup-muted">
-                You have not validated this file yet. Cancel and click
-                <strong> Validate</strong> first to see what it contains.
-              </p>
-            )}
-            <p className="backup-muted text-sm mt-3">
-              A rollback backup of the current data is created first, so this
-              can be undone by restoring that file.
-            </p>
-            <div className="flex flex-column gap-1">
-              <label htmlFor="restore-confirm">Type <strong>{RESTORE_CONFIRM_WORD}</strong> to continue:</label>
-              <InputText
-                id="restore-confirm"
-                value={restoreConfirmText}
-                autoFocus
-                spellCheck={false}
-                autoComplete="off"
-                onChange={(e) => setRestoreConfirmText(e.target.value)}
-                placeholder={RESTORE_CONFIRM_WORD}
-              />
+      <Modal open={showError} onClose={() => setShowError(false)} size="narrow" title="Backup failed"
+        footer={<Button variant="primary" onClick={() => setShowError(false)}>Close</Button>}>
+        <div className="callout bad"><Icon name="warn" className="i" size="sm" /><div>{errorMsg}</div></div>
+      </Modal>
+
+      <Modal open={showRestoreConfirm} onClose={closeRestoreConfirm} title="Restore this backup?"
+        footer={<>
+          <Button variant="ghost" onClick={closeRestoreConfirm}>Cancel</Button>
+          <Button variant="danger-solid" icon="restore" onClick={handleRestoreConfirm}
+            disabled={isDestructiveRestore && !restoreConfirmed}
+            title={isDestructiveRestore && !restoreConfirmed ? `Type ${RESTORE_CONFIRM_WORD} to enable` : undefined}>
+            {isDestructiveRestore ? "Delete & restore" : "Restore"}
+          </Button>
+        </>}>
+        <div className="stack" style={{ gap: 14 }}>
+          <dl className="kv">
+            <dt>File</dt><dd className="mono" style={{ wordBreak: "break-all" }}>{restoreFile?.name}</dd>
+            <dt>Type</dt><dd>{RESTORE_TYPES.find((t) => t.value === restoreType)?.label}</dd>
+            <dt>Size</dt><dd>{formatSize(restoreFile?.size)}</dd>
+            {restoreValidation?.healthScore !== undefined && <><dt>Backup health</dt><dd>{healthBadge(restoreValidation.healthScore)}</dd></>}
+          </dl>
+          {restoreValidation?.isPartial && (
+            <div className="callout warn"><Icon name="warn" className="i" size="sm" />
+              <div>This backup is partial. Some sections failed when it was created, so restoring it may leave gaps.</div>
             </div>
-          </>
-        ) : (
-          <p className="backup-muted text-sm mt-3">
-            A {restoreType} restore only adds files back; it does not delete
-            your records. A rollback backup is still created first.
-          </p>
-        )}
-      </Dialog>
+          )}
+
+          {/* A FULL/DATABASE restore deletes every row this account owns first: make someone type. */}
+          {isDestructiveRestore ? (
+            <>
+              <div className="callout bad"><Icon name="alert" className="i" size="sm" />
+                <div>
+                  <strong>This deletes your current data.</strong> A {restoreType.toLowerCase()} restore removes every client, case,
+                  hearing, document record, invoice, expense and task on this account, then re-inserts only what is in this
+                  file. Anything added since{" "}
+                  {restoreValidation?.backupDate ? formatDate(restoreValidation.backupDate) : "the backup was taken"} will be lost.
+                </div>
+              </div>
+              {!restoreValidation && (
+                <p className="muted small">
+                  You have not validated this file yet. Cancel and click <strong>Validate</strong> first to see what it contains.
+                </p>
+              )}
+              <p className="faint small">A rollback backup of the current data is created first, so this can be undone by restoring that file.</p>
+              <Field label={<>Type <strong className="mono">{RESTORE_CONFIRM_WORD}</strong> to continue</>}>
+                {(id) => (
+                  <input id={id} className="input mono" value={restoreConfirmText} autoFocus spellCheck={false} autoComplete="off"
+                    placeholder={RESTORE_CONFIRM_WORD} onChange={(e) => setRestoreConfirmText(e.target.value)} />
+                )}
+              </Field>
+            </>
+          ) : (
+            <p className="muted small">
+              A {restoreType.toLowerCase()} restore only adds files back; it does not delete your records. A rollback backup is still created first.
+            </p>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

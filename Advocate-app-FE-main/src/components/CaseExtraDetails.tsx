@@ -1,8 +1,6 @@
 import { useState } from "react";
-import { DataTable } from "primereact/datatable";
-import { Column } from "primereact/column";
-import { TabMenu } from "primereact/tabmenu";
-import "../assets/styles/CourtRecordView.css";
+import { Tabs } from "../ui/forms";
+import "../ui/pages/casedetail.css";
 
 // Provakil-style "Extra Details": the parts of the imported court record that
 // aren't already surfaced in the header or a dedicated tab, arranged as a row
@@ -22,11 +20,16 @@ function ObjectTable({ rows }: { rows: any[] }) {
   rows.forEach((r) => Object.keys(r || {}).forEach((k) => { if (!columns.includes(k)) columns.push(k); }));
   if (!columns.length) return null;
   return (
-    <DataTable value={rows} size="small" stripedRows scrollable className="text-sm">
-      {columns.map((c) => (
-        <Column key={c} header={c} body={(r: any) => (r?.[c] != null ? String(r[c]) : "")} />
-      ))}
-    </DataTable>
+    <div className="table-wrap">
+      <table className="t cs-extra-table">
+        <thead><tr>{columns.map((c) => <th key={c} scope="col">{c}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>{columns.map((c) => <td key={c}>{r?.[c] != null ? String(r[c]) : ""}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -37,13 +40,28 @@ function RowTable({ rows, columns }: { rows: any[]; columns: string[] | null }) 
     ? columns.length
     : Math.max(...rows.map((r) => (Array.isArray(r) ? r.length : 1)), 1);
   return (
-    <DataTable value={rows} size="small" stripedRows scrollable className="text-sm"
-      showHeaders={!!columns}>
-      {Array.from({ length: colCount }).map((_, j) => (
-        <Column key={j} header={columns ? columns[j] : undefined}
-          body={(row: any) => (Array.isArray(row) ? (row[j] || "") : String(row))} />
-      ))}
-    </DataTable>
+    <div className="table-wrap">
+      <table className="t cs-extra-table">
+        <thead>
+          <tr>
+            {Array.from({ length: colCount }).map((_, j) => (
+              columns
+                ? <th key={j} scope="col">{columns[j]}</th>
+                : <th key={j} scope="col"><span className="sr-only">Column {j + 1}</span></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              {Array.from({ length: colCount }).map((_, j) => (
+                <td key={j}>{Array.isArray(row) ? (row[j] || "") : j === 0 ? String(row) : ""}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -75,27 +93,30 @@ function buildSections(record: any, courtId: any) {
 }
 
 export default function CaseExtraDetails({ record, courtId }: { record: any; courtId?: any }) {
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState("0");
   const sections = buildSections(record, courtId);
 
   if (!sections.length) {
-    return <p className="cr-note">No further details — everything from the court record is shown in the header and the other tabs.</p>;
+    return <p className="faint small">No further details. Everything from the court record is shown in the header and the other tabs.</p>;
   }
 
-  const idx = Math.min(active, sections.length - 1);
+  const idx = Math.min(Number(active), sections.length - 1);
   const sec = sections[idx];
 
   return (
-    <div className="flex flex-column gap-3">
-      <TabMenu model={sections.map((s: any) => ({ label: s.title }))} activeIndex={idx}
-        onTabChange={(e) => setActive(e.index)} />
-      <div>
+    <div className="stack" style={{ gap: "var(--s3)" }}>
+      {sections.length > 1 && (
+        <Tabs label="Court record sections" value={String(idx)} onChange={setActive}
+          tabs={sections.map((s: any, i: number) => ({ value: String(i), label: s.title }))} />
+      )}
+      {sections.length === 1 && <h3 style={{ fontSize: "var(--t-md)" }}>{sec.title}</h3>}
+      <div className="stack" style={{ gap: "var(--s3)" }}>
         {sec.objectRows ? <ObjectTable rows={sec.objectRows} /> : null}
         {sec.rows ? <RowTable rows={sec.rows} columns={sec.columns} /> : null}
         {sec.links?.length ? (
-          <ul className="cr-links">
+          <ul className="stack small" style={{ gap: 4, paddingLeft: 18, margin: 0 }}>
             {sec.links.map((l: any, i: number) => (
-              <li key={i}><a href={l.href} target="_blank" rel="noreferrer">{l.text || l.href}</a></li>
+              <li key={i}><a className="link" href={l.href} target="_blank" rel="noreferrer">{l.text || l.href}</a></li>
             ))}
           </ul>
         ) : null}

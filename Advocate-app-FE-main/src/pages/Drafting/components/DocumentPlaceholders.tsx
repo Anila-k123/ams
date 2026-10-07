@@ -1,4 +1,5 @@
-import { InputText } from 'primereact/inputtext'
+import { Field } from '../../../ui/forms'
+import Icon from '../../../ui/Icon'
 
 interface Props {
   // One entry per placeholder label: its humanized display + current value.
@@ -13,30 +14,29 @@ interface Props {
  *  Focusing a field scrolls the document to that placeholder and highlights it. */
 export default function DocumentPlaceholders({ items, onChange, onFocus, onBlur }: Props) {
   if (items.length === 0) {
-    return <p className="text-sm text-color-secondary m-0">No placeholders in this document.</p>
+    return <p className="faint small">No placeholders in this document.</p>
   }
   return (
-    <div className="flex flex-column gap-3">
+    <div className="stack" style={{ gap: 10 }}>
       {items.map(item => {
         const filled = item.value.trim().length > 0
         return (
-          <div key={item.label} className="flex flex-column gap-1">
-            <label className="pp-ph-label">
+          <Field key={item.label} label={
+            <span className="row" style={{ gap: 6 }}>
               {item.display}
-              {filled && <i className="pi pi-check-circle pp-ph-done" />}
-            </label>
-            <InputText
-              value={item.value}
-              placeholder={item.display}
-              onChange={e => onChange(item.label, e.target.value)}
-              onFocus={() => onFocus?.(item.label)}
-              onBlur={() => onBlur?.(item.label)}
-              className="w-full"
-            />
-          </div>
+              {filled && <span style={{ color: 'var(--ok)', display: 'inline-flex' }}><Icon name="check" size="sm" /><span className="sr-only">filled</span></span>}
+            </span>
+          }>
+            {id => (
+              <input id={id} className="input" value={item.value} placeholder={item.display}
+                onChange={e => onChange(item.label, e.target.value)}
+                onFocus={() => onFocus?.(item.label)}
+                onBlur={() => onBlur?.(item.label)} />
+            )}
+          </Field>
         )
       })}
-      <p className="text-xs text-color-secondary m-0">Edits apply to the document as you type.</p>
+      <p className="faint xs">Edits apply to the document as you type.</p>
     </div>
   )
 }

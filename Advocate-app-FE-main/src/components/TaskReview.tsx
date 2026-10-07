@@ -1,30 +1,33 @@
 import { useState } from "react";
-import { Button } from "primereact/button";
-import { Dialog } from "primereact/dialog";
-import { InputTextarea } from "primereact/inputtextarea";
-import { InputNumber } from "primereact/inputnumber";
-import { Tag } from "primereact/tag";
 import api from "../api/client";
 import { canReviewTask, canSubmitTask } from "../utils/taskReview";
 import { usePermission } from "../contexts/PermissionContext";
+import { Button, Chip, Icon, type Tone } from "../ui/kit";
+import { TextArea, TextField, Field } from "../ui/forms";
+import { Modal } from "../ui/overlays";
 import DraftChanges from "./DraftChanges";
-import "../assets/styles/TaskReview.css";
+import "../ui/pages/casedetail.css";
 
 // Senior review of delegated tasks (backend: workspace/review.py). A task one
 // advocate assigned to another is SUBMITTED by the assignee, then APPROVED (the
 // task completes) or sent back with CHANGES_REQUESTED by whoever assigned it.
 
-const STATUS: Record<string, { label: string; severity: "warning" | "danger" | "success" }> = {
-  SUBMITTED: { label: "Awaiting review", severity: "warning" },
-  CHANGES_REQUESTED: { label: "Changes requested", severity: "danger" },
-  APPROVED: { label: "Approved", severity: "success" },
+const STATUS: Record<string, { label: string; tone: Tone }> = {
+  SUBMITTED: { label: "Awaiting review", tone: "warn" },
+  CHANGES_REQUESTED: { label: "Changes requested", tone: "bad" },
+  APPROVED: { label: "Approved", tone: "ok" },
 };
+
+const fmtDate = (iso?: string) =>
+  iso ? new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "";
+const fmtWhen = (iso?: string) =>
+  iso ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 
 export function ReviewChip({ task }: { task: any }) {
   const s = task.needsReview && STATUS[task.reviewStatus];
   if (!s) return null;
   const by = task.reviewedByName && task.reviewStatus !== "SUBMITTED" ? ` by ${task.reviewedByName}` : "";
-  return <Tag className="task-review-chip" rounded severity={s.severity} value={s.label} title={`${s.label}${by}`} />;
+  return <Chip tone={s.tone} title={`${s.label}${by}`}>{s.label}</Chip>;
 }
 
 /** The reviewer's comment, shown on the task when it was sent back (or approved with a note). */
@@ -60,29 +63,19 @@ export function ReviewActions({ task, myId, canAssign, onDone, toast, buttonClas
 
   return (
     <>
-      <Button className={buttonClass} size="small" outlined severity="success" icon="pi pi-check" label="Approve"
-        disabled={busy} tooltip="Approve — completes the task" tooltipOptions={{ position: "top" }}
-        onClick={() => send("approve")} />
-      <Button className={buttonClass} size="small" outlined severity="danger" icon="pi pi-reply" label="Request changes"
-        disabled={busy} tooltip="Send back with comments" tooltipOptions={{ position: "top" }}
-        onClick={() => setAsking(true)} />
-      <Dialog visible={asking} onHide={() => setAsking(false)} header={`Request changes — ${task.title}`}
-        style={{ width: "32rem" }} breakpoints={{ "640px": "95vw" }} modal
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button label="Cancel" text size="small" onClick={() => setAsking(false)} />
-            <Button label="Send back" severity="danger" size="small" disabled={busy || !note.trim()}
-              onClick={() => send("request_changes", note.trim())} />
-          </div>
-        }>
-        <div className="flex flex-column gap-2">
-          <label htmlFor={`review-note-${task.id}`} className="font-semibold text-sm">
-            What should {task.assignedToName || "they"} change?
-          </label>
-          <InputTextarea id={`review-note-${task.id}`} rows={4} value={note} autoFocus autoResize
-            onChange={(e) => setNote(e.target.value)} placeholder="e.g. Add the cause of action and the prayer." />
-        </div>
-      </Dialog>
+      <Button className={buttonClass} size="sm" icon="check" disabled={busy}
+        title="Approve — completes the task" onClick={() => send("approve")}>Approve</Button>
+      <Button className={buttonClass} size="sm" variant="danger" icon="edit" disabled={busy}
+        title="Send back with comments" onClick={() => setAsking(true)}>Request changes</Button>
+      <Modal open={asking} onClose={() => setAsking(false)} title="Request changes" sub={task.title} size="narrow"
+        footer={<>
+          <Button variant="ghost" onClick={() => setAsking(false)}>Cancel</Button>
+          <Button variant="danger-solid" loading={busy} disabled={busy || !note.trim()}
+            onClick={() => send("request_changes", note.trim())}>Send back</Button>
+        </>}>
+        <TextArea label={`What should ${task.assignedToName || "they"} change?`} rows={4} value={note} autoFocus
+          onChange={(e) => setNote(e.target.value)} placeholder="e.g. Add the cause of action and the prayer." />
+      </Modal>
     </>
   );
 }
@@ -130,52 +123,40 @@ export function SubmitWork({ task, myId, onDone, toast, caseId }: any) {
 
   return (
     <>
-      <Button className="task-review-btn" size="small" icon="pi pi-send"
-        label={resubmit ? "Resubmit" : "Submit work"} onClick={() => setOpen(true)}
-        tooltip={`Hand this back to ${task.assignedByName || "the assigner"} for review`} tooltipOptions={{ position: "top" }} />
-      <Dialog visible={open} onHide={() => setOpen(false)} header={`Submit work — ${task.title}`}
-        style={{ width: "34rem" }} breakpoints={{ "640px": "95vw" }} modal
-        footer={
-          <div className="flex justify-content-end gap-2">
-            <Button label="Cancel" text size="small" onClick={() => setOpen(false)} />
-            <Button label={busy ? "Submitting…" : "Submit for review"} icon="pi pi-send" size="small"
-              disabled={busy || !note.trim()} onClick={send} />
-          </div>
-        }>
-        <div className="flex flex-column gap-3">
+      <Button className="task-review-btn" size="sm" variant="primary" icon="send" onClick={() => setOpen(true)}
+        title={`Hand this back to ${task.assignedByName || "the assigner"} for review`}>
+        {resubmit ? "Resubmit" : "Submit work"}
+      </Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Submit work" sub={task.title}
+        footer={<>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button variant="primary" icon="send" loading={busy} disabled={busy || !note.trim()} onClick={send}>
+            {busy ? "Submitting…" : "Submit for review"}
+          </Button>
+        </>}>
+        <div className="stack" style={{ gap: "var(--s4)" }}>
           {resubmit && task.reviewNote && (
             <div className="task-review-note changes">
               <strong>{task.reviewedByName || "Reviewer"} asked:</strong> {task.reviewNote}
             </div>
           )}
-          <div className="flex flex-column gap-1">
-            <label htmlFor={`submit-note-${task.id}`} className="font-semibold text-sm">What was done?</label>
-            <InputTextarea id={`submit-note-${task.id}`} rows={4} autoResize autoFocus value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g. Filed the vakalat at the HC registry, diary no. 45/2026. Next listing 7 Oct." />
-          </div>
-          <div className="flex flex-column gap-1">
-            <label htmlFor={`submit-hours-${task.id}`} className="font-semibold text-sm">
-              Hours spent <span className="font-normal" style={{ color: "var(--text-muted)" }}>(optional)</span>
-            </label>
-            <InputNumber inputId={`submit-hours-${task.id}`} value={hours} onValueChange={(e) => setHours(e.value ?? null)}
-              min={0} max={999} minFractionDigits={0} maxFractionDigits={2} placeholder="e.g. 1.5" />
-          </div>
+          <TextArea label="What was done?" rows={4} autoFocus value={note} required
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. Filed the vakalat at the HC registry, diary no. 45/2026. Next listing 7 Oct." />
+          <TextField label="Hours spent" hint="Optional" type="number" min={0} max={999} step="0.25"
+            value={hours ?? ""} placeholder="e.g. 1.5"
+            onChange={(e) => setHours(e.target.value === "" ? null : Number(e.target.value))} />
           {canUpload && (
-            <div className="flex flex-column gap-1">
-              <label className="font-semibold text-sm">
-                Attach files <span className="font-normal" style={{ color: "var(--text-muted)" }}>(optional)</span>
-              </label>
-              <input type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} />
-            </div>
+            <Field label="Attach files" hint="Optional">
+              {(id, d) => <input id={id} aria-describedby={d} type="file" multiple className="input"
+                onChange={(e) => setFiles(Array.from(e.target.files || []))} />}
+            </Field>
           )}
         </div>
-      </Dialog>
+      </Modal>
     </>
   );
 }
-
-const fmtWhen = (iso?: string) => (iso ? new Date(iso).toLocaleString() : "");
 
 /**
  * The hand-backs on a delegated task. The list shows one summary line; the
@@ -200,30 +181,26 @@ export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onView
     <>
       <div className="task-submission task-submission-summary">
         <span className="task-submission-head" title={latest.note || ""}>
-          <i className="pi pi-send" /> {latest.submittedByName || "Assignee"} submitted
-          {latest.createdAt ? ` · ${new Date(latest.createdAt).toLocaleDateString()}` : ""}
+          {latest.submittedByName || "Assignee"} submitted
+          {latest.createdAt ? ` · ${fmtDate(latest.createdAt)}` : ""}
           {latest.hours ? ` · ${latest.hours} h` : ""}
           {subs.length > 1 ? ` · ${subs.length} submissions` : ""}
           {latest.changes?.length
             ? ` · ${latest.changes.length} section${latest.changes.length > 1 ? "s" : ""} changed` : ""}
         </span>
-        <Button className="task-submission-view" text size="small" icon="pi pi-eye" label="View work"
-          onClick={() => setOpen(true)} />
+        <Button variant="ghost" size="sm" icon="eye" onClick={() => setOpen(true)}>View work</Button>
       </div>
 
-      <Dialog visible={open} onHide={() => setOpen(false)} header={`Submitted work — ${task.title}`}
-        style={{ width: "min(720px, 95vw)" }} modal dismissableMask
-        footer={myId !== undefined ? (
-          <div className="flex justify-content-end gap-2">
-            <ReviewActions task={task} myId={myId} canAssign={canAssign} toast={toast}
-              onDone={(t: any) => { setOpen(false); onDone?.(t); }} />
-          </div>
+      <Modal open={open} onClose={() => setOpen(false)} title="Submitted work" sub={task.title} size="wide"
+        footer={myId !== undefined && canReviewTask(task, myId, canAssign) ? (
+          <ReviewActions task={task} myId={myId} canAssign={canAssign} toast={toast}
+            onDone={(t: any) => { setOpen(false); onDone?.(t); }} />
         ) : undefined}>
         <div className="task-work">
           <div className="task-work-facts">
-            {task.caseNumber && <span><i className="pi pi-briefcase" /> {task.caseNumber}</span>}
-            {task.deadline && <span><i className="pi pi-calendar" /> Due {new Date(task.deadline).toLocaleDateString()}</span>}
-            {task.assignedToName && <span><i className="pi pi-user" /> {task.assignedToName}</span>}
+            {task.caseNumber && <span><Icon name="case" size="sm" /><span className="mono">{task.caseNumber}</span></span>}
+            {task.deadline && <span><Icon name="calendar" size="sm" />Due {fmtDate(task.deadline)}</span>}
+            {task.assignedToName && <span><Icon name="user" size="sm" />{task.assignedToName}</span>}
             <ReviewChip task={task} />
           </div>
           <ReviewNote task={task} />
@@ -231,7 +208,7 @@ export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onView
           {subs.map((s: any, i: number) => (
             <div key={s.id} className="task-submission">
               <div className="task-submission-head">
-                <i className="pi pi-send" /> {i === 0 ? "Latest submission" : "Earlier submission"}:{" "}
+                <Icon name="send" size="sm" /> {i === 0 ? "Latest submission" : "Earlier submission"}:{" "}
                 {s.submittedByName || "Assignee"}, {fmtWhen(s.createdAt)}
                 {s.hours ? ` · ${s.hours} h` : ""}
               </div>
@@ -249,16 +226,15 @@ export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onView
           {((onViewDocument && task.documents?.length > 0) || (onOpenDraft && task.draftSessionId)) && (
             <div className="task-work-files">
               {onOpenDraft && task.draftSessionId && (
-                <Button text size="small" icon="pi pi-file-edit" label="Open draft"
-                  onClick={() => { setOpen(false); onOpenDraft(); }} />
+                <Button variant="ghost" size="sm" icon="pen" onClick={() => { setOpen(false); onOpenDraft(); }}>Open draft</Button>
               )}
               {onViewDocument && task.documents?.map((d: any) => (
-                <Button key={d.id} text size="small" icon="pi pi-eye" label={d.name} onClick={() => onViewDocument(d.id)} />
+                <Button key={d.id} variant="ghost" size="sm" icon="eye" onClick={() => onViewDocument(d.id)}>{d.name}</Button>
               ))}
             </div>
           )}
         </div>
-      </Dialog>
+      </Modal>
     </>
   );
 }

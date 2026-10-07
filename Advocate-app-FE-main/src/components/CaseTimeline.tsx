@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { Dialog } from "primereact/dialog";
-import { InputText } from "primereact/inputtext";
-import { MultiSelect } from "primereact/multiselect";
-import { Button } from "primereact/button";
-import { ProgressSpinner } from "primereact/progressspinner";
 import api from "../api/client";
 import { usePermission } from "../contexts/PermissionContext";
-import "../assets/styles/CaseTimeline.css";
+import { Button, EmptyState, Skel } from "../ui/kit";
+import { SearchInput, FilterChip } from "../ui/forms";
+import "../ui/pages/casedetail.css";
+
+// The case's activity timeline (payments, expenses, documents, hearings, status
+// changes …), rendered inline in the case page's Timeline tab.
 
 // `perm`: the filter only shows to someone who can see those entries (the
 // server leaves them out of the timeline for everyone else).
@@ -22,7 +22,9 @@ const ALL_FILTER_GROUPS: { label: string; perm?: string; types: string[] }[] = [
   { label: "Communication", types: ["EMAIL_SENT", "WHATSAPP_SENT"] },
 ];
 
-export default function CaseTimeline({ caseId, caseNumber, onClose }: { caseId: any; caseNumber?: any; onClose: () => void }) {
+const KEY_TYPES = new Set(["CASE_CREATED", "CASE_STATUS_CHANGED", "CASE_CLOSED", "CASE_REOPENED", "HEARING_COMPLETED", "INVOICE_PAID", "PAYMENT_RECEIVED"]);
+
+export default function CaseTimeline({ caseId }: { caseId: any; caseNumber?: any; onClose?: () => void }) {
   const { hasPermission } = usePermission() as any;
   const FILTER_GROUPS = ALL_FILTER_GROUPS.filter((g) => !g.perm || hasPermission(g.perm));
   const [events, setEvents] = useState<any[]>([]);
@@ -61,110 +63,62 @@ export default function CaseTimeline({ caseId, caseNumber, onClose }: { caseId: 
     fetchTimeline(0, false);
   }, [fetchTimeline]);
 
-  // A filter group is selected when all of its event types are active.
-  const selectedGroups = FILTER_GROUPS.filter((g) => g.types.every((t) => activeFilters.includes(t))).map((g) => g.label);
-  const setGroups = (labels: string[]) => {
-    const types: string[] = [];
-    FILTER_GROUPS.filter((g) => labels.includes(g.label)).forEach((g) => types.push(...g.types));
-    setActiveFilters(types);
-  };
+  // A filter group is on when all of its event types are active.
+  const isOn = (g: { types: string[] }) => g.types.every((t) => activeFilters.includes(t));
+  const toggleGroup = (g: { types: string[] }) =>
+    setActiveFilters((prev) => (g.types.every((t) => prev.includes(t))
+      ? prev.filter((t) => !g.types.includes(t))
+      : [...prev, ...g.types.filter((t) => !prev.includes(t))]));
 
   const loadMore = () => fetchTimeline(page + 1, true);
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return "";
     const d = new Date(dateStr);
-    const diffMs = Date.now() - d.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
+    const diffDays = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
     if (diffDays === 0) return "Today";
     if (diffDays === 1) return "Yesterday";
     if (diffDays < 7) return `${diffDays} days ago`;
-
     return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
   };
-
-  const formatTime = (dateStr: string) => {
-    if (!dateStr) return "";
-    return new Date(dateStr).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-  };
+  const formatTime = (dateStr: string) =>
+    dateStr ? new Date(dateStr).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "";
 
   return (
-    <Dialog
-      visible
-      onHide={onClose}
-      modal
-      style={{ width: "720px" }}
-      breakpoints={{ "768px": "100vw" }}
-      header={
-        <div>
-          <div>Case Timeline</div>
-          <div className="text-sm font-normal" style={{ color: "var(--text-muted)" }}>{caseNumber}</div>
-        </div>
-      }
-      footer={hasMore && events.length > 0 ? (
-        <div className="timeline-load-more">
-          <Button size="small" outlined label={loading ? "Loading..." : "Load More"} onClick={loadMore} disabled={loading} />
-        </div>
-      ) : null}
-    >
-      <div className="flex flex-column md:flex-row gap-2 mb-3">
-        <span className="p-input-icon-left flex-1">
-          <i className="pi pi-search" />
-          <InputText className="w-full" placeholder="Search timeline..." value={search}
-            onChange={(e) => setSearch(e.target.value)} />
-        </span>
-        <MultiSelect value={selectedGroups} options={FILTER_GROUPS.map((g) => g.label)}
-          onChange={(e) => setGroups(e.value || [])} placeholder="Filters" showClear
-          maxSelectedLabels={1} selectedItemsLabel={`${selectedGroups.length} filters`}
-          className="md:w-14rem" />
+    <div className="stack" style={{ gap: "var(--s4)" }}>
+      <div className="toolbar" style={{ marginBottom: 0 }}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search the timeline" />
+      </div>
+      <div className="cs-tl-filters" role="group" aria-label="Filter the timeline">
+        {FILTER_GROUPS.map((g) => (
+          <FilterChip key={g.label} on={isOn(g)} onClick={() => toggleGroup(g)}>{g.label}</FilterChip>
+        ))}
+        {activeFilters.length > 0 && <Button variant="ghost" size="sm" onClick={() => setActiveFilters([])}>Clear</Button>}
       </div>
 
-      <div className="timeline-body">
-        {loading && events.length === 0 ? (
-          <div className="timeline-loading"><ProgressSpinner style={{ width: 32, height: 32 }} strokeWidth="4" /></div>
-        ) : events.length === 0 ? (
-          <div className="timeline-empty">No timeline events found for this case.</div>
-        ) : (
-          <div className="timeline-list">
-            {events.map((event, idx) => (
-              <div
-                key={event.id}
-                className={`timeline-item ${idx === 0 ? "latest" : ""}`}
-                style={{ "--event-color": event.color || "#94A3B8" } as any}
-              >
-                <div className="timeline-connector">
-                  <div className="timeline-dot" style={{ background: event.color || "#94A3B8" }}>
-                    <span className="timeline-dot-icon">{event.icon || "📌"}</span>
-                  </div>
-                  {idx < events.length - 1 && <div className="timeline-line" />}
-                </div>
-                <div className="timeline-card">
-                  <div className="timeline-card-header">
-                    <span className="timeline-event-title">{event.title}</span>
-                    <div className="timeline-date-badge">
-                      <i className="pi pi-calendar" style={{ fontSize: 11 }} />
-                      <span>{formatDate(event.createdAt)}</span>
-                      <i className="pi pi-clock" style={{ fontSize: 11 }} />
-                      <span>{formatTime(event.createdAt)}</span>
-                    </div>
-                  </div>
-                  {event.description && <p className="timeline-event-desc">{event.description}</p>}
-                  <div className="timeline-card-footer">
-                    {event.referenceType && (
-                      <span className="timeline-ref-badge" style={{ borderColor: event.color || "#94A3B8", color: event.color || "#94A3B8" }}>
-                        {event.referenceType}
-                        {event.referenceId ? ` #${event.referenceId}` : ""}
-                      </span>
-                    )}
-                    {event.performedBy && <span className="timeline-performed-by">{event.performedBy}</span>}
-                  </div>
-                </div>
+      {loading && events.length === 0 ? (
+        <div className="stack" style={{ gap: 10 }}><Skel h={16} w="60%" /><Skel h={12} w="40%" /><Skel h={16} w="70%" /><Skel h={12} w="30%" /></div>
+      ) : events.length === 0 ? (
+        <EmptyState icon="history" title="Nothing on the timeline" text="No timeline events match for this case." />
+      ) : (
+        <div className="timeline">
+          {events.map((event, idx) => (
+            <div key={event.id} className={`tl-item${idx === 0 || KEY_TYPES.has(event.eventType) ? " key" : ""}`}>
+              <div className="small"><b>{event.title}</b></div>
+              {event.description && <div className="small muted" style={{ whiteSpace: "pre-wrap" }}>{event.description}</div>}
+              <div className="when">
+                {formatDate(event.createdAt)}, {formatTime(event.createdAt)}
+                {event.performedBy ? ` · ${event.performedBy}` : ""}
+                {event.referenceType ? ` · ${event.referenceType}${event.referenceId ? ` #${event.referenceId}` : ""}` : ""}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </Dialog>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hasMore && events.length > 0 && (
+        <div><Button size="sm" loading={loading} disabled={loading} onClick={loadMore}>{loading ? "Loading…" : "Load more"}</Button></div>
+      )}
+    </div>
   );
 }

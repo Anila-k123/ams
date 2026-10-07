@@ -1,0 +1,19 @@
+/* Legal Research + Communications pages. Red Tape tokens only. */
+.rs-card { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; transition: border-color var(--d-fast), background var(--d-fast); }
+.rs-card:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.rs-card h3 { font: 500 var(--t-lg) var(--f-display); }
+.rs-pager { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--s3); margin-top: var(--s4); font-size: var(--t-sm); color: var(--ink-3); }
+.rs-sec-body { padding: 0 var(--s5) var(--s4); font-size: var(--t-sm); line-height: 1.7; color: var(--ink-2); overflow-wrap: anywhere; }
+.rs-sec-body table { max-width: 100%; display: block; overflow-x: auto; }
+.rs-sec-body p { margin: 0 0 8px; }
+.rs-sec-label { font-size: var(--t-xs); color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; margin: 10px 0 4px; }
+.rs-list { max-height: 70vh; overflow-y: auto; }
+.rs-list .list-item { align-items: flex-start; }
+.rs-big-sec { font: 500 var(--t-xl) var(--f-mono); margin-top: 4px; }
+.rs-def { font-size: var(--t-lg); line-height: 1.7; max-width: 62ch; margin-top: var(--s4); }
+.rs-def p { margin: 0 0 12px; }
+.rs-msg { white-space: pre-wrap; line-height: 1.6; max-height: 240px; overflow-y: auto; font-size: var(--t-sm); }
+.rs-disabled { opacity: .72; }
+.rs-filters { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end; margin-bottom: var(--s4); }
+.rs-filters .field { min-width: 150px; margin: 0; }
+@media (max-width: 640px) { .rs-filters .field { min-width: 0; flex: 1 1 140px; } .rs-list { max-height: 40vh; } }

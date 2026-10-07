@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Button } from 'primereact/button';
+import { Icon } from '../ui/kit';
 import api from '../api/client';
 
 const SNOOZE_MINUTES = 5;
@@ -113,29 +113,29 @@ export default function HearingAlertPopup({ onView }: { onView?: (alert: any) =>
   if (alerts.length === 0) return null;
 
   return (
-    <div className="hearing-alerts-container">
-      <div className="hearing-alerts-toolbar">
-        <Button text rounded size="small" className="hearing-sound-toggle" onClick={toggleSound}
-          icon={soundEnabled ? 'pi pi-volume-up' : 'pi pi-volume-off'} tooltip={soundEnabled ? 'Mute alerts' : 'Enable sound'} tooltipOptions={{ position: "top" }} />
+    <div className="hearing-alerts" role="region" aria-label="Hearing reminders">
+      <div className="hearing-alerts-bar">
+        <button type="button" className="icon-btn" onClick={toggleSound}
+          aria-label={soundEnabled ? 'Mute hearing alerts' : 'Turn on sound for hearing alerts'} title={soundEnabled ? 'Mute alerts' : 'Enable sound'}>
+          <Icon name="bell" size="sm" />{!soundEnabled && <span className="hearing-muted" aria-hidden="true" />}
+        </button>
       </div>
       {alerts.map((alert) => (
-        <div key={alert.id} className="hearing-alert-popup slide-in-down">
-          <div className="hearing-alert-header flex align-items-center gap-2">
-            <i className="pi pi-clock hearing-alert-icon" />
-            <span className="hearing-alert-title flex-1">Hearing today</span>
-            <Button text rounded size="small" icon="pi pi-times" className="hearing-alert-close" aria-label="Dismiss" onClick={() => dismiss(alert.id)} />
+        <div key={alert.id} className="hearing-alert" role="alert">
+          <div className="hearing-alert-head">
+            <Icon name="clock" size="sm" />
+            <span className="grow">Hearing today{alert.time ? `, ${alert.time}` : ''}</span>
+            <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => dismiss(alert.id)}><Icon name="x" size="sm" /></button>
           </div>
-          <div className="hearing-alert-body">
-            <p className="hearing-alert-message">{alert.message}</p>
-            <p className="hearing-alert-case">
-              {alert.caseNumber && <><strong>Case:</strong> {alert.caseNumber} | </>}
-              <strong>Time:</strong> {alert.time || 'not listed'}
-            </p>
-          </div>
-          <div className="hearing-alert-actions flex gap-2">
-            <Button size="small" icon="pi pi-eye" label="View" onClick={() => { dismiss(alert.id); if (onView) onView(alert); }} />
-            <Button size="small" outlined label={`Snooze ${SNOOZE_MINUTES}m`} onClick={() => snooze(alert.id)} />
-            <Button size="small" text label="Dismiss" onClick={() => dismiss(alert.id)} />
+          <p className="hearing-alert-msg">{alert.message}</p>
+          <p className="hearing-alert-meta">
+            {alert.caseNumber && <><span className="mono">{alert.caseNumber}</span> · </>}
+            {alert.time ? `at ${alert.time}` : 'Time not listed'}
+          </p>
+          <div className="hearing-alert-acts">
+            <button type="button" className="btn sm primary" onClick={() => { dismiss(alert.id); if (onView) onView(alert); }}><Icon name="eye" size="sm" />View</button>
+            <button type="button" className="btn sm" onClick={() => snooze(alert.id)}>Snooze {SNOOZE_MINUTES}m</button>
+            <button type="button" className="btn sm ghost" onClick={() => dismiss(alert.id)}>Dismiss</button>
           </div>
         </div>
       ))}

@@ -1,20 +1,23 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { InputText } from "primereact/inputtext";
-import { Button } from "primereact/button";
-import { TabMenu } from "primereact/tabmenu";
-import { Tag } from "primereact/tag";
-import { ProgressSpinner } from "primereact/progressspinner";
 import api from "../api/client";
-import "../assets/styles/LawCodes.css";
+import { useToast } from "../contexts/ToastContext";
+import { PageHead, Chip, EmptyState, Icon, Skel, Button } from "../ui/kit";
+import { SearchInput, Segmented, Tabs } from "../ui/forms";
+import "../ui/pages/research.css";
 
 // The three act pairs replaced on 1 July 2024.
 const PAIRS = [
-  { key: "IPC-BNS", oldAct: "IPC", newAct: "BNS", label: "IPC → BNS" },
-  { key: "CrPC-BNSS", oldAct: "CrPC", newAct: "BNSS", label: "CrPC → BNSS" },
-  { key: "IEA-BSA", oldAct: "IEA", newAct: "BSA", label: "IEA → BSA" },
+  { key: "IPC-BNS", oldAct: "IPC", newAct: "BNS", label: "IPC to BNS", oldName: "Indian Penal Code", newName: "Bharatiya Nyaya Sanhita" },
+  { key: "CrPC-BNSS", oldAct: "CrPC", newAct: "BNSS", label: "CrPC to BNSS", oldName: "Code of Criminal Procedure", newName: "Bharatiya Nagarik Suraksha Sanhita" },
+  { key: "IEA-BSA", oldAct: "IEA", newAct: "BSA", label: "IEA to BSA", oldName: "Indian Evidence Act", newName: "Bharatiya Sakshya Adhiniyam" },
 ];
 
+const kindChip = (r: any) =>
+  r.repealed ? <Chip tone="bad">Repealed</Chip>
+    : r.changed ? <Chip tone="warn">Changed</Chip> : <Chip tone="ok">Same</Chip>;
+
 export default function LawCodes() {
+  const { success } = useToast() as any;
   const [pair, setPair] = useState("IPC-BNS");
   const [direction, setDirection] = useState("old-new"); // which side the query matches
   const [query, setQuery] = useState("");
@@ -55,116 +58,104 @@ export default function LawCodes() {
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [pair, query, direction, load]);
 
-  const badge = (r: any) =>
-    r.repealed ? <Tag severity="danger" value="Repealed" className="lc-badge" />
-      : r.changed ? <Tag severity="warning" value="Changed" className="lc-badge" /> : null;
+  // Keep a mapping open on the right: the clicked one, else the first result.
+  const sel = rows.find((r) => r.id === selected?.id) || rows[0] || null;
 
-  const activeIndex = Math.max(0, PAIRS.findIndex((p) => p.key === pair));
+  const copyCitation = () => {
+    const text = sel.repealed
+      ? `Sec. ${sel.oldSection} ${sel.oldAct} (repealed, no ${sel.newAct} equivalent)`
+      : `Sec. ${sel.oldSection} ${sel.oldAct} (now Sec. ${sel.newSection} ${sel.newAct})`;
+    try { navigator.clipboard?.writeText(text); } catch { /* clipboard blocked */ }
+    success(`Copied: ${text}`);
+  };
 
   return (
-    <div className="lc-container">
-      <p className="lc-subtitle">
-        Find the new section for an old IPC / CrPC / Evidence Act reference.
-      </p>
+    <div>
+      <PageHead title="Section Cross-Reference"
+        sub="Find the new section for an old one, or trace a new section back. The new criminal codes apply to offences from 1 July 2024." />
 
-      <TabMenu
-        className="mb-3"
-        model={PAIRS.map((p) => ({ label: p.label }))}
-        activeIndex={activeIndex}
-        onTabChange={(e) => { setPair(PAIRS[e.index].key); setSelected(null); }}
-      />
+      <Tabs label="Code pair" value={pair} onChange={(v) => { setPair(v); setSelected(null); }}
+        tabs={PAIRS.map((p) => ({ value: p.key, label: p.label }))} />
 
-      <div className="flex gap-2 mb-3 flex-wrap">
-        <div className="flex align-items-center gap-2 flex-1" style={{ minWidth: 260 }}>
-          <span className="p-input-icon-left flex-1">
-            <i className="pi pi-search" />
-            <InputText
-              autoFocus
-              className="w-full"
-              placeholder={direction === "new-old"
-                ? `Search a new ${activePair.newAct} section or keyword…`
-                : `Search an old ${activePair.oldAct} section (e.g. 302) or keyword…`}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </span>
-          {query && <Button icon="pi pi-times" text rounded severity="secondary" aria-label="Clear" onClick={() => setQuery("")} />}
-        </div>
-        <Button
-          outlined
-          icon="pi pi-sync"
-          label={`Search by ${direction === "new-old" ? activePair.newAct : activePair.oldAct}`}
-          tooltip="Switch which side your search matches"
-          tooltipOptions={{ position: "bottom" }}
-          onClick={() => setDirection((d) => (d === "old-new" ? "new-old" : "old-new"))}
-        />
+      <div className="toolbar" style={{ marginTop: 16 }}>
+        <SearchInput autoFocus value={query} onChange={setQuery} style={{ width: "min(420px, 100%)" }}
+          aria-label="Search sections"
+          placeholder={direction === "new-old"
+            ? `${activePair.newAct} section or keyword, like 318`
+            : `${activePair.oldAct} section or keyword, like 420`} />
+        <Segmented label="Search direction" value={direction} onChange={setDirection} options={[
+          { value: "old-new", label: `Search ${activePair.oldAct}` },
+          { value: "new-old", label: `Search ${activePair.newAct}` },
+        ]} />
       </div>
 
-      <div className="lc-body">
-        <div className="lc-results">
-          {loading && (
-            <div className="flex align-items-center gap-2 lc-muted">
-              <ProgressSpinner style={{ width: 20, height: 20, margin: 0 }} strokeWidth="6" /> Loading…
-            </div>
-          )}
-          {!loading && rows.length === 0 && (
-            <p className="lc-muted">No mappings found{query ? ` for “${query}”` : ""}.</p>
-          )}
-          {!loading && rows.length > 0 && (
-            <div className="lc-count">
-              {browsing ? `${activePair.label} — showing ${rows.length}` : `${rows.length} match${rows.length !== 1 ? "es" : ""}`}
-            </div>
-          )}
-          {rows.map((r) => (
-            <button key={r.id}
-              className={`lc-result ${selected?.id === r.id ? "active" : ""}`}
-              onClick={() => setSelected(r)}>
-              <span className="lc-map">
-                <span className="lc-old">{r.oldAct} §{r.oldSection}</span>
-                <i className="pi pi-arrow-right lc-arrow" />
-                <span className={`lc-new ${r.repealed ? "repealed" : ""}`}>
-                  {r.repealed ? "Repealed" : `${r.newAct} §${r.newSection}`}
-                </span>
-                {badge(r)}
-              </span>
-              {r.description && <span className="lc-desc">{r.description}</span>}
-            </button>
-          ))}
-        </div>
+      <div className="faint small" style={{ marginBottom: 10 }} aria-live="polite">
+        {!loading && rows.length > 0 && (browsing
+          ? `${activePair.label}: showing ${rows.length}`
+          : `${rows.length} match${rows.length !== 1 ? "es" : ""}`)}
+      </div>
 
-        <div className="lc-detail">
-          {selected ? (
-            <>
-              <div className="lc-detail-map">
-                <div className="lc-detail-side">
-                  <div className="lc-detail-act">{selected.oldAct}</div>
-                  <div className="lc-detail-sec">Section {selected.oldSection}</div>
-                </div>
-                <i className="pi pi-arrow-right lc-detail-arrow" />
-                <div className="lc-detail-side">
-                  <div className="lc-detail-act new">{selected.newAct}</div>
-                  <div className="lc-detail-sec">
-                    {selected.repealed ? "Repealed" : `Section ${selected.newSection}`}
+      {loading && !rows.length ? (
+        <div className="split wide-rail">
+          <div className="panel"><div className="panel-body stack">{[1, 2, 3, 4, 5, 6].map((i) => <Skel key={i} h={16} />)}</div></div>
+          <Skel h={220} />
+        </div>
+      ) : !rows.length ? (
+        <div className="panel">
+          <EmptyState icon="swap" title="No section found"
+            text={query ? `Nothing in ${activePair.label} matches "${query}". Check the section number, or switch the search direction.` : "No mappings available for this pair."}
+            action={query ? <button type="button" className="btn sm" onClick={() => setQuery("")}>Clear search</button> : undefined} />
+        </div>
+      ) : (
+        <div className="split wide-rail" style={{ opacity: loading ? 0.6 : 1 }}>
+          <div className="panel rs-list" style={{ padding: "6px 0" }} role="listbox" aria-label="Mappings">
+            {rows.map((r) => (
+              <button key={r.id} type="button" role="option" aria-selected={sel?.id === r.id}
+                className={`list-item${sel?.id === r.id ? " sel" : ""}`} onClick={() => setSelected(r)}>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="row wrap" style={{ gap: 8 }}>
+                    <span className="mono small nowrap">{r.oldAct} {r.oldSection}</span>
+                    <Icon name="swap" size="sm" className="faint" />
+                    <span className="mono small nowrap">{r.repealed ? <span className="faint">None</span> : `${r.newAct} ${r.newSection}`}</span>
                   </div>
+                  {r.description && <div className="faint xs ellipsis" style={{ marginTop: 2 }}>{r.description}</div>}
+                </div>
+                {(r.repealed || r.changed) && kindChip(r)}
+              </button>
+            ))}
+          </div>
+
+          {sel && (
+            <div className="panel">
+              <div className="panel-body" style={{ padding: 22 }}>
+                <div className="row" style={{ gap: 8, marginBottom: 12 }}>{kindChip(sel)}</div>
+                <div className="pp-two" style={{ gap: 12 }}>
+                  <div className="panel tinted"><div className="panel-body" style={{ padding: "14px 16px" }}>
+                    <div className="faint xs">{activePair.oldName}</div>
+                    <div className="rs-big-sec">{sel.oldAct} {sel.oldSection}</div>
+                  </div></div>
+                  <div className="panel tinted"><div className="panel-body" style={{ padding: "14px 16px" }}>
+                    <div className="faint xs">{activePair.newName}</div>
+                    <div className="rs-big-sec">{sel.repealed ? <span className="faint">No section</span> : `${sel.newAct} ${sel.newSection}`}</div>
+                  </div></div>
+                </div>
+                {sel.description && <p style={{ marginTop: 16, lineHeight: 1.65 }}>{sel.description}</p>}
+                {sel.repealed && (
+                  <div className="callout warn" style={{ marginTop: 14 }}><Icon name="alert" size="sm" />
+                    <div>This provision was repealed with no direct equivalent in the {activePair.newAct}. For offences committed before 1 July 2024, the {activePair.oldAct} continues to apply to pending proceedings.</div></div>
+                )}
+                {sel.changed && !sel.repealed && (
+                  <div className="callout warn" style={{ marginTop: 14 }}><Icon name="alert" size="sm" />
+                    <div>The wording or penalty was substantively changed. Verify against the bare act before relying on it.</div></div>
+                )}
+                <div className="row wrap" style={{ marginTop: 18 }}>
+                  <Button size="sm" icon="copy" onClick={copyCitation}>Copy citation</Button>
                 </div>
               </div>
-              {badge(selected)}
-              {selected.description && <p className="lc-detail-desc">{selected.description}</p>}
-              {selected.repealed && (
-                <p className="lc-detail-note">This provision was repealed with no direct equivalent in the new code.</p>
-              )}
-              {selected.changed && !selected.repealed && (
-                <p className="lc-detail-note">The wording or penalty was substantively changed — verify against the bare Act before relying on it.</p>
-              )}
-            </>
-          ) : (
-            <div className="lc-detail-empty">
-              <i className="pi pi-sync" style={{ fontSize: 38 }} />
-              <p>Select a mapping to see the details.</p>
             </div>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

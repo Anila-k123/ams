@@ -2,16 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ProgressSpinner } from 'primereact/progressspinner'
-import { Message } from 'primereact/message'
-import { Button } from 'primereact/button'
+import { Button, Chip, EmptyState, PopMenu } from '../../ui/kit'
+import { Modal } from '../../ui/overlays'
+import { Field } from '../../ui/forms'
+import Icon from '../../ui/Icon'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import TextAlign from '@tiptap/extension-text-align'
-import { Menu } from 'primereact/menu'
-import { Dialog } from 'primereact/dialog'
-import { InputTextarea } from 'primereact/inputtextarea'
 import amsApi, { errorMessage } from '../../api/client'
 import AmsCasePicker from './components/AmsCasePicker'
 import { DOMSerializer } from '@tiptap/pm/model'
@@ -289,7 +287,7 @@ export default function DraftPage() {
   const [leftW, setLeftW] = useState(() => Number(localStorage.getItem('pp_editor_left_w')) || 244)
   const [rightW, setRightW] = useState(() => Number(localStorage.getItem('pp_editor_right_w')) || 300)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const downloadMenu = useRef<Menu>(null)   // popup for PDF / Word export
+  const [dlAnchor, setDlAnchor] = useState<HTMLElement | null>(null)   // popup for PDF / Word export
   const loadedRef = useRef(false)   // seeded the editor once
   const citationsRef = useRef<Record<number, Citation>>({})  // blockId → citation (for the [N] markers)
   const suppressRef = useRef(false) // ignore the update fired by programmatic setContent
@@ -730,7 +728,12 @@ export default function DraftPage() {
   }
 
   if (error && !session) {
-    return <div className="pp-editor-fs pp-editor-center"><Message severity="error" text={error} /></div>
+    return (
+      <div className="pp-editor-fs pp-editor-center">
+        <EmptyState icon="pen" title="This draft could not be opened" text={error}
+          action={<button type="button" className="btn" onClick={() => navigate(DRAFTING.drafts)}>Back to drafts</button>} />
+      </div>
+    )
   }
 
   if (!session || session.status === 'pending' || session.status === 'generating') {
@@ -742,10 +745,10 @@ export default function DraftPage() {
       : 'Assembling the draft from your brief.'
     return (
       <div className="pp-editor-fs pp-editor-center">
-        <div className="flex flex-column align-items-center">
-          <ProgressSpinner style={{ width: 54, height: 54 }} strokeWidth="4" />
-          <h3 className="mt-4 mb-1">{heading}</h3>
-          <p className="text-color-secondary m-0">{sub}</p>
+        <div className="stack" style={{ alignItems: 'center', gap: 8, textAlign: 'center' }} role="status">
+          <span className="pp-spin" style={{ width: 28, height: 28, borderWidth: 3 }} aria-hidden="true" />
+          <h2 className="serif" style={{ fontSize: 'var(--t-xl)', marginTop: 8 }}>{heading}</h2>
+          <p className="muted small">{sub}</p>
         </div>
       </div>
     )
@@ -754,14 +757,12 @@ export default function DraftPage() {
   if (session.status === 'failed') {
     return (
       <div className="pp-editor-fs pp-editor-center">
-        <div style={{ maxWidth: 520 }} className="flex flex-column gap-3">
-          <Message severity="error" className="w-full"
-            text="Draft generation failed. Please try again — if it keeps failing, make sure your documents finished processing." />
-          <div className="flex gap-2">
-            <Button label="Back to Drafts" icon="pi pi-arrow-left" severity="secondary" outlined onClick={() => navigate(DRAFTING.drafts)} />
-            <Button label="Re-draft" icon="pi pi-refresh" loading={redrafting} onClick={triggerRedraft} />
-          </div>
-        </div>
+        <EmptyState icon="pen" title={`Draft #${session.id} failed`}
+          text="Draft generation failed. Try again. If it keeps failing, make sure your documents finished processing."
+          action={<div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+            <button type="button" className="btn" onClick={() => navigate(DRAFTING.drafts)}>Back to drafts</button>
+            <Button variant="primary" icon="refresh" loading={redrafting} disabled={redrafting} onClick={triggerRedraft}>Re-draft</Button>
+          </div>} />
       </div>
     )
   }
@@ -773,228 +774,212 @@ export default function DraftPage() {
   const docTitle = resolveDocTitle()
   // Count still-to-fill: empty placeholder fields + any legacy ______ blanks.
   const toFill = placeholders.filter(p => !p.value.trim()).length + blankCount
+  const canEdit = !isReviewer || review?.canEdit
 
   return (
     <RiskContext.Provider value={riskMap}>
     <div className="pp-editor-fs">
       {/* Top bar */}
-      <div className="pp-editor-topbar">
-        <div className="flex align-items-center gap-2" style={{ minWidth: 0 }}>
-          <Button icon="pi pi-arrow-left" text rounded severity="secondary" onClick={() => navigate(DRAFTING.drafts)} tooltip="Drafts" tooltipOptions={{ position: 'bottom' }} />
-          <div style={{ minWidth: 0 }}>
-            <div className="pp-editor-title" title={title}>{title}</div>
-            <span className="text-sm text-color-secondary">Draft #{session.id}</span>
+      <div className="ed-top">
+        <button type="button" className="btn ghost sm" onClick={() => navigate(DRAFTING.drafts)}><Icon name="chevronLeft" size="sm" />Drafts</button>
+        <div className="grow" style={{ minWidth: 200 }}>
+          <h1 className="serif ellipsis" title={title}>{title}</h1>
+          <div className="faint xs"><span className="mono">#{session.id}</span></div>
+        </div>
+        {toFill > 0
+          ? <span title="Values left blank. Fill these in before use."><Chip tone="warn">{toFill} to fill</Chip></span>
+          : placeholders.length > 0 && <Chip tone="ok">All filled</Chip>}
+        {/* File on the AMS case / task (drafting/filing.py). Author only. */}
+        {!isReviewer && amsSyncedLabel && (
+          <span className="chip ok" title="Last copy filed in PactPro"><Icon name="check" size="sm" />{amsSyncedLabel}</span>
+        )}
+        {canEdit && (
+          <div className="seg" role="group" aria-label="Mode">
+            <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}><Icon name="edit" size="sm" />Edit</button>
+            <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}><Icon name="eye" size="sm" />Preview</button>
           </div>
-        </div>
-        <div className="flex align-items-center gap-2 flex-wrap justify-content-end">
-          {toFill > 0 && (
-            <span className="pp-chip review" title="Values left blank — fill these in before use">
-              <i className="pi pi-exclamation-triangle" /> {toFill} to fill
-            </span>
-          )}
-          <Menu popup ref={downloadMenu} model={[
-            { label: 'Download PDF', icon: 'pi pi-file-pdf', command: downloadPdf },
-            { label: 'Download Word (.docx)', icon: 'pi pi-file-word', command: () => downloadDocx() },
-            { label: 'Word on PactPro letterhead', icon: 'pi pi-id-card', command: () => downloadDocx(true) },
+        )}
+        {hasPermission('DRAFT_EXPORT') && (
+          <Button size="sm" icon="download" aria-haspopup="menu" loading={exporting} disabled={exporting}
+            onClick={e => setDlAnchor(dlAnchor ? null : e.currentTarget)}>Download</Button>
+        )}
+        {dlAnchor && (
+          <PopMenu anchor={dlAnchor} onClose={() => setDlAnchor(null)} width={230} align="right" items={[
+            { label: 'PDF', icon: 'file', onClick: downloadPdf },
+            { label: 'Word (.docx)', icon: 'file', onClick: () => downloadDocx() },
+            { label: 'Word on PactPro letterhead', icon: 'file', onClick: () => downloadDocx(true) },
           ]} />
-          {/* File on the AMS case / task (drafting/filing.py). Author only. */}
-          {!isReviewer && <>
-              {amsSyncedLabel && (
-                <span className="pp-chip verified" title="Last copy filed in PactPro">
-                  <i className="pi pi-check" /> {amsSyncedLabel}
-                </span>
-              )}
-              <Button label={session?.ams_task_id ? 'Submit to task' : 'Save to PactPro'} icon="pi pi-send"
-                size="small" outlined loading={sendingAms}
-                onClick={() => (session?.ams_task_id ? submitToTask() : sendToAms())}
-                tooltip={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'} tooltipOptions={{ position: "top" }} />
-          </>}
-          {hasPermission('DRAFT_EXPORT') && (
-            <Button label="Download" icon="pi pi-download" size="small" outlined severity="secondary"
-              loading={exporting}
-              onClick={e => downloadMenu.current?.toggle(e)} />
-          )}
-          {isReviewer ? null : confirmRedraft ? (
-            <div className="flex align-items-center gap-1">
-              <span className="text-sm text-color-secondary">Re-draft? Existing content will be replaced.</span>
-              <Button label="Confirm" icon="pi pi-check" size="small" severity="danger"
-                loading={redrafting} onClick={triggerRedraft} />
-              <Button label="Cancel" size="small" text severity="secondary"
-                onClick={() => setConfirmRedraft(false)} />
-            </div>
-          ) : (
-            <Button label="Re-draft" icon="pi pi-refresh" size="small" outlined severity="secondary"
-              tooltip="Wipe this draft and regenerate with the same inputs"
-              tooltipOptions={{ position: 'bottom' }}
-              onClick={() => setConfirmRedraft(true)} />
-          )}
-          {(!isReviewer || review?.canEdit) && (
-            <Button label={preview ? 'Edit' : 'Preview'} icon={preview ? 'pi pi-pencil' : 'pi pi-eye'}
-              size="small" outlined onClick={() => setPreview(p => !p)} />
-          )}
-          {(!isReviewer || review?.canEdit) && (
-            <Button label={dirty ? 'Save' : 'Saved'} icon="pi pi-save" size="small"
-              badge={dirty ? '●' : undefined} loading={saving} disabled={!dirty} onClick={save} />
-          )}
-        </div>
+        )}
+        {isReviewer ? null : confirmRedraft ? (
+          <div className="row wrap" style={{ gap: 4 }}>
+            <span className="small muted">Re-draft? Existing content will be replaced.</span>
+            <Button variant="danger" size="sm" icon="check" loading={redrafting} disabled={redrafting} onClick={triggerRedraft}>Confirm</Button>
+            <button type="button" className="btn ghost sm" onClick={() => setConfirmRedraft(false)}>Cancel</button>
+          </div>
+        ) : (
+          <Button size="sm" icon="refresh" title="Wipe this draft and regenerate with the same inputs"
+            onClick={() => setConfirmRedraft(true)}>Re-draft</Button>
+        )}
+        {canEdit && (
+          <Button size="sm" icon="check" loading={saving} disabled={!dirty || saving} onClick={save}>{dirty ? 'Save' : 'Saved'}</Button>
+        )}
+        {!isReviewer && (
+          <Button variant="primary" size="sm" icon="folder" loading={sendingAms} disabled={sendingAms}
+            title={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'}
+            onClick={() => (session?.ams_task_id ? submitToTask() : sendToAms())}>
+            {session?.ams_task_id ? 'Submit to task' : 'Save to case'}
+          </Button>
+        )}
       </div>
-      {error && <Message severity="warn" className="w-full" text={error} />}
+      {error && <div className="callout warn" role="alert" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
       {isReviewer && review && (
         <div className="pp-review-bar">
           <div>
-            <i className="pi pi-user-edit" />{' '}
+            <Icon name="user" size="sm" />{' '}
             Reviewing <strong>{session.created_by_name || 'the advocate'}</strong>'s draft for task
-            {' '}<strong>"{review.taskTitle}"</strong> —{' '}
+            {' '}<strong>"{review.taskTitle}"</strong>:{' '}
             {review.status === 'SUBMITTED' ? 'awaiting your review'
               : review.status === 'APPROVED' ? `approved${review.reviewedByName ? ` by ${review.reviewedByName}` : ''}`
               : 'sent back for changes'}
-            {review.note && review.status !== 'SUBMITTED' && <span className="text-color-secondary"> · "{review.note}"</span>}
+            {review.note && review.status !== 'SUBMITTED' && <span className="muted"> · "{review.note}"</span>}
             {review.status === 'SUBMITTED' && review.lastChanges != null && (
               <div className="pp-review-changes">
-                <i className="pi pi-history" />{' '}
+                <Icon name="history" size="sm" />{' '}
                 {review.lastChanges.length
                   ? <>Changed since the last version: <strong>{changeSummary(review.lastChanges)}</strong></>
                   : 'No text changes since the last version.'}
-                {review.lastNote && <div className="text-color-secondary pp-review-changes-note">"{review.lastNote}"</div>}
+                {review.lastNote && <div className="muted pp-review-changes-note">"{review.lastNote}"</div>}
                 {review.lastChanges.length > 0 && (
-                  <Button label="What changed" icon="pi pi-eye" size="small" text onClick={() => setShowChanges(true)} />
+                  <button type="button" className="btn ghost sm" onClick={() => setShowChanges(true)}><Icon name="eye" size="sm" />What changed</button>
                 )}
               </div>
             )}
           </div>
           {review.canReview && review.status === 'SUBMITTED' && (
-            <div className="flex gap-2">
-              <Button label="Request changes" icon="pi pi-replay" size="small" severity="warning" outlined
-                disabled={reviewing || dirty} tooltip={dirty ? 'Save your edits first' : undefined} tooltipOptions={{ position: "top" }}
-                onClick={() => { setReviewNote(''); setAskChanges(true) }} />
-              <Button label="Approve" icon="pi pi-check" size="small" severity="success"
-                loading={reviewing} disabled={dirty} tooltip={dirty ? 'Save your edits first' : undefined} tooltipOptions={{ position: "top" }}
-                onClick={() => submitReview('approve')} />
+            <div className="row" style={{ gap: 6 }}>
+              <Button size="sm" icon="restore" disabled={reviewing || dirty} title={dirty ? 'Save your edits first' : undefined}
+                onClick={() => { setReviewNote(''); setAskChanges(true) }}>Request changes</Button>
+              <Button variant="primary" size="sm" icon="check" loading={reviewing} disabled={dirty || reviewing}
+                title={dirty ? 'Save your edits first' : undefined} onClick={() => submitReview('approve')}>Approve</Button>
             </div>
           )}
         </div>
       )}
-      <Dialog header="What changed since the last version" visible={showChanges}
-        style={{ width: 'min(720px, 95vw)' }} onHide={() => setShowChanges(false)} dismissableMask>
-        {review?.lastNote && <p className="mt-0 text-color-secondary">"{review.lastNote}"</p>}
+      <Modal title="What changed since the last version" open={showChanges} size="wide" onClose={() => setShowChanges(false)}>
+        {review?.lastNote && <p className="muted" style={{ marginBottom: 12 }}>"{review.lastNote}"</p>}
         <DraftChanges changes={review?.lastChanges} />
-      </Dialog>
-      <Dialog header="Submit to task" visible={askResubmit} style={{ width: 'min(520px, 95vw)' }}
-        onHide={() => setAskResubmit(false)}
-        footer={<div className="flex justify-content-end gap-2">
-          <Button label="Cancel" text onClick={() => setAskResubmit(false)} />
-          <Button label="Submit" icon="pi pi-send" loading={sendingAms}
-            disabled={!resubmitNote.trim()} onClick={() => sendToAms(undefined, resubmitNote.trim())} />
-        </div>}>
+      </Modal>
+      <Modal title="Submit to task" open={askResubmit} onClose={() => setAskResubmit(false)}
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setAskResubmit(false)}>Cancel</button>
+          <Button variant="primary" icon="send" loading={sendingAms} disabled={!resubmitNote.trim() || sendingAms}
+            onClick={() => sendToAms(undefined, resubmitNote.trim())}>Submit</Button>
+        </>}>
         {amsTask?.reviewNote && (
-          <div className="task-review-note changes mb-3">
+          <div className="callout warn" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>
             <strong>{amsTask.reviewedByName || 'Your senior'} asked:</strong> {amsTask.reviewNote}
-          </div>
+          </div></div>
         )}
-        <label className="font-medium text-sm block mb-2">What did you change?</label>
-        <InputTextarea value={resubmitNote} onChange={e => setResubmitNote(e.target.value)} rows={3}
-          autoResize autoFocus className="w-full"
-          placeholder="e.g. Added the arrears figure Rs. 3,15,000 in Reliefs claimed; kept the fallback." />
-        <small className="text-color-secondary block mt-2">
-          Your reviewer also sees exactly which sections changed.
-        </small>
-      </Dialog>
-      <Dialog header="Request changes" visible={askChanges} style={{ width: 'min(520px, 95vw)' }}
-        onHide={() => setAskChanges(false)}
-        footer={<div className="flex justify-content-end gap-2">
-          <Button label="Cancel" text onClick={() => setAskChanges(false)} />
-          <Button label="Send back" icon="pi pi-send" severity="warning" loading={reviewing}
-            disabled={!reviewNote.trim()} onClick={() => submitReview('request_changes', reviewNote)} />
-        </div>}>
-        <label className="font-medium text-sm block mb-2">What should {session?.created_by_name || 'the advocate'} change?</label>
-        <InputTextarea value={reviewNote} onChange={e => setReviewNote(e.target.value)} rows={4}
-          autoResize className="w-full" placeholder="e.g. Add the limitation calculation and cite the trial court order." />
-      </Dialog>
+        <Field label="What did you change?" required hint="Your reviewer also sees exactly which sections changed.">
+          {(id, d) => <textarea id={id} aria-describedby={d} className="input" rows={3} autoFocus value={resubmitNote}
+            onChange={e => setResubmitNote(e.target.value)}
+            placeholder="Added the arrears figure Rs. 3,15,000 in Reliefs claimed; kept the fallback." />}
+        </Field>
+      </Modal>
+      <Modal title="Request changes" open={askChanges} onClose={() => setAskChanges(false)}
+        footer={<>
+          <button type="button" className="btn ghost" onClick={() => setAskChanges(false)}>Cancel</button>
+          <Button variant="primary" icon="send" loading={reviewing} disabled={!reviewNote.trim() || reviewing}
+            onClick={() => submitReview('request_changes', reviewNote)}>Send back</Button>
+        </>}>
+        <Field label={`What should ${session?.created_by_name || 'the advocate'} change?`} required>
+          {id => <textarea id={id} className="input" rows={4} value={reviewNote} onChange={e => setReviewNote(e.target.value)}
+            placeholder="Add the limitation calculation and cite the trial court order." />}
+        </Field>
+      </Modal>
       {/* The senior's review of this draft's AMS task (as seen by the author). */}
       {!isReviewer && amsTask?.needsReview && amsTask.reviewStatus === 'CHANGES_REQUESTED' && (
-        <Message severity="warn" className="w-full" text={
-          `${amsTask.reviewedByName || 'Your senior'} asked for changes: ${amsTask.reviewNote || ''}`
-          + ' — edit the draft and click "Submit to task" again.'} />
+        <div className="callout warn" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>
+          {`${amsTask.reviewedByName || 'Your senior'} asked for changes: ${amsTask.reviewNote || ''}`} Edit the draft and choose <b>Submit to task</b> again.
+        </div></div>
       )}
       {!isReviewer && amsTask?.needsReview && amsTask.reviewStatus === 'APPROVED' && (
-        <Message severity="success" className="w-full" text={
-          `Approved by ${amsTask.reviewedByName || 'your senior'}${amsTask.reviewNote ? `: ${amsTask.reviewNote}` : ''}.`} />
+        <div className="callout ok" style={{ marginBottom: 12 }}><Icon name="ok" size="sm" /><div>
+          {`Approved by ${amsTask.reviewedByName || 'your senior'}${amsTask.reviewNote ? `: ${amsTask.reviewNote}` : ''}.`}
+        </div></div>
       )}
 
       {preview && (
         /* Read-only filled document */
-        <div className="pp-editor-preview-scroll">
-          <div className="pp-paper">
+        <div className="ed-mid dr-preview">
+          <article className="paper-sheet preview" aria-label="Draft preview">
             {docTitle && <h1 className="pp-doc-title">{docTitle}</h1>}
             {session.blocks.map(b => <PreviewClause key={b.id} block={b} docTitle={docTitle} />)}
-          </div>
+          </article>
         </div>
       )}
       {/* Three-pane editor — kept MOUNTED while previewing (just hidden) so the chat /
-          review panels and their state survive the Preview → Edit toggle. */}
-      <div className="pp-editor-shell" style={{ display: preview ? 'none' : 'grid', gridTemplateColumns: `${leftW}px 6px minmax(0, 1fr) 6px ${rightW}px` }}>
+          review panels and their state survive the Preview → Edit toggle. Pane widths
+          are user-resizable (drag handles) and fed in as CSS variables. */}
+      <div className="editor-shell dr-ed-shell"
+        style={{ display: preview ? 'none' : undefined, ['--dr-l' as string]: `${leftW}px`, ['--dr-r' as string]: `${rightW}px` }}>
           {/* Left — document placeholders + reference documents */}
-          <aside className="pp-editor-side pp-editor-left">
-            <div className="pp-editor-side-head">Document placeholders</div>
-            <div className="pp-editor-side-body">
+          <aside className="ed-pane ed-side dr-ed-pane" aria-label="Placeholders and references">
+            <div className="ed-sec">
+              <h3>Placeholders</h3>
               <DocumentPlaceholders items={placeholders} onChange={setPlaceholderValue}
                 onFocus={focusPlaceholder} onBlur={blurPlaceholder} />
-
-              {(session.reference_documents?.length ?? 0) > 0 && (
-                <div className="pp-ref-docs">
-                  <div className="pp-ref-docs-head">Reference documents</div>
-                  {session.reference_documents!.map(d => (
-                    <button key={`${d.kind}-${d.id}`} type="button" className="pp-ref-doc"
-                      onClick={() => { setRefDoc({ name: d.name, url: d.url }); setRightW(w => Math.max(w, 440)) }}>
-                      <i className="pi pi-file" />
-                      <span className="pp-ref-doc-name">{d.name}</span>
-                      <i className="pi pi-chevron-right pp-ref-doc-arrow" />
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
+
+            {(session.reference_documents?.length ?? 0) > 0 && (
+              <div className="ed-sec">
+                <h3>Reference documents</h3>
+                {session.reference_documents!.map((d, i) => (
+                  <button key={`${d.kind}-${d.id}`} type="button" className="pp-ref-doc"
+                    onClick={() => { setRefDoc({ name: d.name, url: d.url }); setRightW(w => Math.max(w, 440)) }}>
+                    <span className="mono faint xs" style={{ width: 22 }}>[{i + 1}]</span>
+                    <span className="pp-ref-doc-name">{d.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </aside>
 
-          <div className="pp-gutter" onMouseDown={startDrag('left')} title="Drag to resize" />
+          <div className="pp-gutter" onMouseDown={startDrag('left')} title="Drag to resize" aria-hidden="true" />
 
           {/* Middle — the editable document */}
-          <div className="pp-editor-main">
+          <div className="ed-mid dr-ed-mid">
             <EditorToolbar editor={editor} />
-            <div className="pp-editor-scroll">
-              <div className="pp-paper pp-editor-paper">
-                {docTitle && <h1 className="pp-doc-title">{docTitle}</h1>}
-                <EditorContent editor={editor} />
-              </div>
+            <div className="paper-sheet pp-editor-paper">
+              {docTitle && <h1 className="pp-doc-title">{docTitle}</h1>}
+              <EditorContent editor={editor} />
             </div>
           </div>
 
-          <div className="pp-gutter" onMouseDown={startDrag('right')} title="Drag to resize" />
+          <div className="pp-gutter" onMouseDown={startDrag('right')} title="Drag to resize" aria-hidden="true" />
 
-          {/* Right — a reference document (if opened), else the tabbed Chat / Review pane */}
-          <aside className="pp-editor-side pp-editor-right">
+          {/* Right — a reference document (if opened), else the tabbed Lisa / Review pane */}
+          <aside className="ed-pane ed-side dr-ed-pane" aria-label="Assistant">
             {refDoc ? (
               <div className="pp-refview">
                 <div className="pp-refview-head">
-                  <div className="pp-refview-title" title={refDoc.name}>
-                    <span className="truncate"><i className="pi pi-file mr-2" />{refDoc.name}</span>
-                    <div className="pp-refview-sub">Reference document</div>
+                  <div style={{ minWidth: 0 }} title={refDoc.name}>
+                    <div className="small ellipsis" style={{ fontWeight: 500 }}>{refDoc.name}</div>
+                    <div className="faint xs">Reference document</div>
                   </div>
-                  <Button icon="pi pi-times" text rounded severity="secondary"
-                    onClick={() => setRefDoc(null)} tooltip="Close" tooltipOptions={{ position: 'top' }} />
+                  <button type="button" className="btn ghost sm icon" aria-label="Close reference document" title="Close"
+                    onClick={() => setRefDoc(null)}><Icon name="x" size="sm" /></button>
                 </div>
                 <div className="pp-refview-body"><InlineDocViewer fileUrl={refDoc.url} name={refDoc.name} /></div>
               </div>
             ) : (
               <div className="pp-rpane">
-                <div className="pp-rtabs" role="tablist">
-                  <button type="button" role="tab" className={`pp-rtab ${rightTab === 'review' ? 'active' : ''}`}
-                    aria-selected={rightTab === 'review'} onClick={() => setRightTab('review')}>
-                    <i className="pi pi-verified" /> Review
+                <div className="tabs dr-rtabs" role="tablist" aria-label="Assistant">
+                  <button type="button" role="tab" aria-selected={rightTab === 'chat'} onClick={() => setRightTab('chat')}>
+                    <Icon name="chat" size="sm" /> Ask Lisa
                   </button>
-                  <button type="button" role="tab" className={`pp-rtab ${rightTab === 'chat' ? 'active' : ''}`}
-                    aria-selected={rightTab === 'chat'} onClick={() => setRightTab('chat')}>
-                    <i className="pi pi-comments" /> Chat
+                  <button type="button" role="tab" aria-selected={rightTab === 'review'} onClick={() => setRightTab('review')}>
+                    <Icon name="shield" size="sm" /> Review
                   </button>
                 </div>
                 {/* Both mounted; inactive one is hidden so its state (chat thread / findings) persists. */}
@@ -1010,10 +995,9 @@ export default function DraftPage() {
                     onApply={patchClause}
                   />
                 </div>
-                <div className={`pp-rtab-slot ${rightTab === 'review' ? '' : 'pp-hidden'}`}
-                  style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <div className={`pp-rtab-slot dr-review-slot ${rightTab === 'review' ? '' : 'pp-hidden'}`}>
                   {/* Consistency panel — height controlled by drag handle */}
-                  <div style={{ height: reviewTopH, minHeight: 80, flexShrink: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ height: reviewTopH, minHeight: 80, flexShrink: 0, overflow: 'auto' }}>
                     <ConsistencyPanel
                       sessionId={session.id}
                       model={session.llm ?? 'local'}
@@ -1023,7 +1007,8 @@ export default function DraftPage() {
                   </div>
                   {/* Drag handle */}
                   <div
-                    style={{ height: 6, cursor: 'row-resize', flexShrink: 0, background: 'var(--pp-slate-200)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    className="dr-row-handle"
+                    aria-hidden="true"
                     onMouseDown={e => {
                       e.preventDefault()
                       const startY = e.clientY
@@ -1039,11 +1024,9 @@ export default function DraftPage() {
                       window.addEventListener('mousemove', onMove)
                       window.addEventListener('mouseup', onUp)
                     }}
-                  >
-                    <div style={{ width: 32, height: 2, borderRadius: 2, background: 'var(--pp-slate-400)' }} />
-                  </div>
+                  />
                   {/* Playbook panel — takes remaining height */}
-                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
                     <PlaybookRiskPanel
                       sessionId={session.id}
                       initialPlaybookId={session.playbook ?? null}
@@ -1058,13 +1041,10 @@ export default function DraftPage() {
             )}
           </aside>
         </div>
-      <Dialog header="Save to PactPro — pick the case" visible={pickAmsCase} style={{ width: 'min(560px, 95vw)' }}
-        onHide={() => setPickAmsCase(false)}>
-        <p className="mt-0 text-color-secondary text-sm">
-          This draft isn't linked to a PactPro case yet. Choose the case to file it on.
-        </p>
-        <AmsCasePicker onPick={c => sendToAms(c.id)} />
-      </Dialog>
+      <Modal title="Save to case" sub="This draft isn't linked to a PactPro case yet. Choose the case to file it on." open={pickAmsCase}
+        onClose={() => setPickAmsCase(false)}>
+        <AmsCasePicker onPick={c => sendToAms(c.id)} label="Case" />
+      </Modal>
     </div>
     </RiskContext.Provider>
   )

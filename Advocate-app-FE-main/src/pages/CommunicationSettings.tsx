@@ -1,39 +1,44 @@
 import { useEffect, useState } from "react";
-import { InputText } from "primereact/inputtext";
-import { InputNumber } from "primereact/inputnumber";
-import { InputTextarea } from "primereact/inputtextarea";
-import { InputSwitch } from "primereact/inputswitch";
-import { Password } from "primereact/password";
-import { Button } from "primereact/button";
-import { Message } from "primereact/message";
-import { Card } from "primereact/card";
+import { Link } from "react-router-dom";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useLoading } from "../contexts/LoadingContext";
-import "../assets/styles/Communication.css";
+import { useToast } from "../contexts/ToastContext";
+import { PageHead, Chip, Icon, Button, type Tone } from "../ui/kit";
+import { TextField, TextArea, Switch, Field } from "../ui/forms";
+import { Modal } from "../ui/overlays";
+import "../ui/pages/research.css";
 
 const API = `/api/communication`;
 
+const EMPTY = {
+  emailEnabled: false,
+  whatsappEnabled: false,
+  smtpHost: "",
+  smtpPort: 587,
+  senderEmail: "",
+  senderName: "",
+  encryptedPassword: "",
+  whatsappPhoneNumberId: "",
+  whatsappBusinessAccountId: "",
+  whatsappAccessToken: "",
+};
+
 export default function CommunicationSettings() {
   const { withLoading } = useLoading() as any;
+  const { success, error: toastError } = useToast() as any;
   const { token } = useAuth();
-  const [settings, setSettings] = useState<any>({
-    emailEnabled: false,
-    whatsappEnabled: false,
-    smtpHost: "",
-    smtpPort: 587,
-    senderEmail: "",
-    senderName: "",
-    encryptedPassword: "",
-    whatsappPhoneNumberId: "",
-    whatsappBusinessAccountId: "",
-    whatsappAccessToken: "",
-  });
+  const [settings, setSettings] = useState<any>(EMPTY);
+  const [draft, setDraft] = useState<any>(EMPTY);
+  const [editOpen, setEditOpen] = useState(false);
+  const [showPw, setShowPw] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<any>(null);
+  const [saveError, setSaveError] = useState("");
   const [testEmail, setTestEmail] = useState({ recipient: "", subject: "Test Email", message: "This is a test email from PactPro." });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
+  // "Automatic client emails" lives on the advocate profile, not the SMTP settings.
+  const [autoEmail, setAutoEmail] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -56,24 +61,46 @@ export default function CommunicationSettings() {
         if (s.senderEmail) setTestEmail((prev) => ({ ...prev, recipient: s.senderEmail }));
       })
       .catch(() => {});
+    api.get(`/api/advocates/profile`)
+      .then((res) => setAutoEmail(!!res.data.emailNotificationsEnabled))
+      .catch(() => {});
   }, [token]);
 
-  const handleChange = (field: string, value: any) => setSettings((prev: any) => ({ ...prev, [field]: value }));
+  const set = (field: string, value: any) => setDraft((prev: any) => ({ ...prev, [field]: value }));
+
+  const openEdit = () => { setDraft(settings); setSaveError(""); setShowPw(false); setEditOpen(true); };
 
   const handleSave = async () => {
+    const port = Number(draft.smtpPort);
+    if (draft.emailEnabled && !(port > 0 && port < 65536)) { setSaveError("Enter a port between 1 and 65535, usually 587 or 465."); return; }
     setSaving(true);
-    setMessage(null);
+    setSaveError("");
     try {
-      await withLoading(api.put(`${API}/settings`, settings), "Saving Settings...");
-      setMessage({ type: "success", text: "Settings saved successfully" });
+      await withLoading(api.put(`${API}/settings`, { ...draft, smtpPort: port || 587 }), "Saving Settings...");
+      setSettings({ ...draft, smtpPort: port || 587 });
+      setEditOpen(false);
+      success("Email settings saved. Send a test to check them.");
     } catch {
-      setMessage({ type: "error", text: "Failed to save settings" });
+      setSaveError("Failed to save settings");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleTestEmail = async () => {
+  const toggleAuto = async () => {
+    const next = !autoEmail;
+    setAutoEmail(next); // optimistic
+    try {
+      await withLoading(api.patch(`/api/advocates/notification-settings`, { emailNotificationsEnabled: next }), "Updating...");
+      success(next ? "Automatic client emails are on." : "Automatic client emails are off. Hearing reminders will not be emailed.");
+    } catch {
+      setAutoEmail(!next);
+      toastError("Couldn't change automatic client emails.");
+    }
+  };
+
+  const handleTestEmail = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!testEmail.recipient) {
       setTestResult({ success: false, errorMessage: "Recipient email is required" });
       return;
@@ -96,98 +123,107 @@ export default function CommunicationSettings() {
     }
   };
 
-  const text = (field: string, label: string, placeholder: string, disabled: boolean, type = "text") => (
-    <div className="col-12 md:col-6 flex flex-column gap-1">
-      <label className="comm-label">{label}</label>
-      {type === "password" ? (
-        <Password value={settings[field]} onChange={(e) => handleChange(field, e.target.value)} placeholder={placeholder}
-          disabled={disabled} feedback={false} toggleMask className="w-full" inputClassName="w-full" />
-      ) : (
-        <InputText type={type} value={settings[field]} onChange={(e) => handleChange(field, e.target.value)}
-          placeholder={placeholder} disabled={disabled} />
-      )}
-    </div>
-  );
-
-  const saveBtn = (
-    <Button icon="pi pi-save" label={saving ? "Saving..." : "Save Settings"} onClick={handleSave} disabled={saving} className="mb-3" />
-  );
+  const emailChip: { tone: Tone; label: string } = !settings.emailEnabled
+    ? { tone: "", label: "Off" }
+    : !settings.smtpHost || !settings.senderEmail ? { tone: "warn", label: "Not configured" } : { tone: "ok", label: "On" };
 
   return (
-    <div className="comm-page">
-      {message && (
-        <div className="flex align-items-center gap-2 mb-3">
-          <Message className="flex-1 justify-content-start" severity={message.type === "success" ? "success" : "error"} text={message.text} />
-          <Button icon="pi pi-times" text rounded severity="secondary" aria-label="Dismiss" onClick={() => setMessage(null)} />
-        </div>
-      )}
+    <div>
+      <PageHead title="Communication Channels" sub="How PactPro sends reminders, updates and documents to your team and clients."
+        actions={<Link className="btn" to="/dashboard/notifications"><Icon name="list" size="sm" />Delivery log</Link>} />
 
-      <Card className="mb-3" title={<span className="flex align-items-center gap-2"><i className="pi pi-envelope" /> Email Configuration</span>}>
-        <div className="grid">
-          <div className="col-12 flex align-items-center gap-2">
-            <InputSwitch inputId="emailEnabled" checked={settings.emailEnabled} onChange={(e) => handleChange("emailEnabled", !!e.value)} />
-            <label htmlFor="emailEnabled" className="comm-label">Enable Email</label>
-          </div>
-          {text("smtpHost", "SMTP Host", "smtp.gmail.com", !settings.emailEnabled)}
-          <div className="col-12 md:col-6 flex flex-column gap-1">
-            <label className="comm-label">SMTP Port</label>
-            <InputNumber value={settings.smtpPort} useGrouping={false} placeholder="587" disabled={!settings.emailEnabled}
-              onChange={(e) => handleChange("smtpPort", e.value || 587)} />
-          </div>
-          {text("senderEmail", "Sender Email", "you@example.com", !settings.emailEnabled, "email")}
-          {text("senderName", "Sender Name", "Your Name", !settings.emailEnabled)}
-          {text("encryptedPassword", "SMTP Password", "App password", !settings.emailEnabled, "password")}
-        </div>
-      </Card>
-
-      {saveBtn}
-
-      <Card className="mb-3" title={<span className="flex align-items-center gap-2"><i className="pi pi-send" /> Test Email</span>}
-        subTitle="Send a test email to verify your SMTP configuration.">
-        <div className="grid">
-          <div className="col-12 md:col-6 flex flex-column gap-1">
-            <label className="comm-label">Recipient Email</label>
-            <InputText type="email" value={testEmail.recipient} placeholder="recipient@example.com"
-              onChange={(e) => setTestEmail({ ...testEmail, recipient: e.target.value })} />
-          </div>
-          <div className="col-12 md:col-6 flex flex-column gap-1">
-            <label className="comm-label">Subject</label>
-            <InputText value={testEmail.subject} onChange={(e) => setTestEmail({ ...testEmail, subject: e.target.value })} />
-          </div>
-          <div className="col-12 flex flex-column gap-1">
-            <label className="comm-label">Message</label>
-            <InputTextarea rows={3} value={testEmail.message} onChange={(e) => setTestEmail({ ...testEmail, message: e.target.value })} />
-          </div>
-        </div>
-
-        <Button severity="success" icon="pi pi-send" loading={testing} label={testing ? "Sending..." : "Send Test Email"}
-          onClick={handleTestEmail} disabled={testing} />
-
-        {testResult && (
-          <div className={`comm-test-result mt-3 ${testResult.success ? "success" : "error"}`}>
-            <i className={`pi ${testResult.success ? "pi-check-circle" : "pi-times-circle"}`} />
-            <div>
-              <strong>{testResult.success ? "Email sent successfully" : "Email failed"}</strong>
-              {testResult.providerResponse && <p>{testResult.providerResponse}</p>}
-              {testResult.errorMessage && <p>{testResult.errorMessage}</p>}
+      <div className="cols g-2" style={{ alignItems: "start" }}>
+        <section className="panel">
+          <div className="panel-head"><div className="row"><Icon name="mail" /><h3>Email</h3></div><Chip tone={emailChip.tone}>{emailChip.label}</Chip></div>
+          <div className="panel-body">
+            <dl className="kv">
+              <dt>SMTP host</dt><dd className="mono">{settings.smtpHost || "—"}</dd>
+              <dt>Port</dt><dd className="mono">{settings.smtpPort || "—"}</dd>
+              <dt>Sender email</dt><dd style={{ overflowWrap: "anywhere" }}>{settings.senderEmail || "—"}</dd>
+              <dt>Sender name</dt><dd>{settings.senderName || "—"}</dd>
+              <dt>Password</dt><dd className="mono">{settings.encryptedPassword ? "••••••••••••" : "Not set"}</dd>
+            </dl>
+            <div className="row wrap between" style={{ marginTop: 16 }}>
+              <Button size="sm" icon="edit" onClick={openEdit}>Edit settings</Button>
+              {autoEmail !== null && <Switch checked={autoEmail} onChange={toggleAuto} label="Automatic client emails" />}
             </div>
-          </div>
-        )}
-      </Card>
 
-      <Card className="mb-3" title={<span className="flex align-items-center gap-2"><i className="pi pi-whatsapp" /> WhatsApp Configuration</span>}>
-        <div className="grid">
-          <div className="col-12 flex align-items-center gap-2">
-            <InputSwitch inputId="waEnabled" checked={settings.whatsappEnabled} onChange={(e) => handleChange("whatsappEnabled", !!e.value)} />
-            <label htmlFor="waEnabled" className="comm-label">Enable WhatsApp</label>
+            <form className="stack" noValidate onSubmit={handleTestEmail}
+              style={{ borderTop: "1px solid var(--line)", marginTop: 18, paddingTop: 16 }}>
+              <h4>Send a test email</h4>
+              <div className="form-grid">
+                <TextField label="Send test to" type="email" value={testEmail.recipient} placeholder="recipient@example.com"
+                  onChange={(e) => setTestEmail({ ...testEmail, recipient: e.target.value })} />
+                <TextField label="Subject" value={testEmail.subject} onChange={(e) => setTestEmail({ ...testEmail, subject: e.target.value })} />
+                <TextArea full label="Message" rows={3} value={testEmail.message} onChange={(e) => setTestEmail({ ...testEmail, message: e.target.value })} />
+              </div>
+              <div><Button type="submit" icon="send" loading={testing} disabled={testing}>{testing ? "Sending…" : "Send test"}</Button></div>
+              <div aria-live="polite">
+                {testResult && (
+                  <div className={`callout ${testResult.success ? "ok" : "bad"}`}>
+                    <Icon name={testResult.success ? "ok" : "warn"} size="sm" />
+                    <div>
+                      <b>{testResult.success ? `Test email sent to ${testEmail.recipient}.` : "The test email failed."}</b>
+                      {testResult.providerResponse && <div className="small">{testResult.providerResponse}</div>}
+                      {testResult.errorMessage && <div className="small">{testResult.errorMessage}</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </form>
           </div>
-          {text("whatsappPhoneNumberId", "Phone Number ID", "123456789012345", !settings.whatsappEnabled)}
-          {text("whatsappBusinessAccountId", "Business Account ID", "123456789012345", !settings.whatsappEnabled)}
-          {text("whatsappAccessToken", "WhatsApp Access Token", "EAAx...", !settings.whatsappEnabled, "password")}
+        </section>
+
+        <div className="stack" style={{ gap: 16 }}>
+          <section className="panel rs-disabled">
+            <div className="panel-head"><div className="row"><Icon name="chat" /><h3>WhatsApp</h3></div><Chip>Not available</Chip></div>
+            <div className="panel-body stack">
+              {/* WhatsApp is not wired to Meta in this product; the fields are shown read-only. */}
+              <p className="small muted">WhatsApp needs a verified WhatsApp Business account linked through Meta, which this edition of PactPro doesn't include. Reminders go by email and in-app only.</p>
+              <div className="form-grid">
+                <TextField label="Phone number ID" value={settings.whatsappPhoneNumberId} placeholder="From Meta Business" disabled readOnly />
+                <TextField label="Business account ID" value={settings.whatsappBusinessAccountId} placeholder="From Meta Business" disabled readOnly />
+              </div>
+            </div>
+          </section>
+          <section className="panel">
+            <div className="panel-head"><div className="row"><Icon name="bell" /><h3>In-app</h3></div><Chip tone="ok">Always on</Chip></div>
+            <div className="panel-body"><p className="small muted">Everyone sees alerts in the bell menu while signed in. This channel can't be turned off.</p></div>
+          </section>
         </div>
-      </Card>
+      </div>
 
-      {saveBtn}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Email settings" sub="Use an app password if your provider requires one."
+        footer={<>
+          <Button variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Button>
+          <Button variant="primary" loading={saving} disabled={saving} onClick={handleSave}>{saving ? "Saving…" : "Save settings"}</Button>
+        </>}>
+        <div className="stack">
+          <Switch checked={!!draft.emailEnabled} onChange={(e) => set("emailEnabled", e.target.checked)} label="Send email from PactPro" />
+          <div className="form-grid">
+            <TextField label="SMTP host" value={draft.smtpHost} placeholder="smtp.gmail.com" disabled={!draft.emailEnabled}
+              onChange={(e) => set("smtpHost", e.target.value)} />
+            <TextField label="Port" type="number" inputMode="numeric" value={draft.smtpPort} placeholder="587" disabled={!draft.emailEnabled}
+              onChange={(e) => set("smtpPort", e.target.value)} />
+            <TextField label="Sender email" type="email" value={draft.senderEmail} placeholder="you@example.com" disabled={!draft.emailEnabled}
+              onChange={(e) => set("senderEmail", e.target.value)} />
+            <TextField label="Sender name" value={draft.senderName} placeholder="Your name" disabled={!draft.emailEnabled}
+              onChange={(e) => set("senderName", e.target.value)} />
+            <Field label="Password" full hint="Your mail provider's password or app password.">
+              {(id, d) => (
+                <div className="row" style={{ gap: 8 }}>
+                  <input id={id} aria-describedby={d} className="input grow" type={showPw ? "text" : "password"} autoComplete="new-password"
+                    value={draft.encryptedPassword} placeholder="App password" disabled={!draft.emailEnabled}
+                    onChange={(e) => set("encryptedPassword", e.target.value)} />
+                  <Button variant="ghost" iconOnly icon="eye" aria-label={showPw ? "Hide password" : "Show password"} aria-pressed={showPw}
+                    disabled={!draft.emailEnabled} onClick={() => setShowPw((v) => !v)} />
+                </div>
+              )}
+            </Field>
+          </div>
+          {saveError && <div className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{saveError}</div></div>}
+        </div>
+      </Modal>
     </div>
   );
 }

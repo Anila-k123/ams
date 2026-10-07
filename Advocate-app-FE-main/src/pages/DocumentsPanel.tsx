@@ -257,7 +257,8 @@ export default function DocumentsPanel() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Download error:", err);
-      setError("Failed to download file");
+      // Action errors are toasts (they clear themselves); the banner is for page-load failures.
+      toast.error("Failed to download file. It may be missing on the server.");
     }
   };
 
@@ -273,7 +274,7 @@ export default function DocumentsPanel() {
         fetchStats();
       } catch (err) {
         console.error("Delete error:", err);
-        setError("Failed to delete document");
+        toast.error("Failed to delete document.");
       }
     },
   });
@@ -293,7 +294,7 @@ export default function DocumentsPanel() {
       fetchDocuments();
     } catch (err) {
       console.error("Update error:", err);
-      setError("Failed to update document");
+      toast.error("Failed to update document.");
     }
   };
 

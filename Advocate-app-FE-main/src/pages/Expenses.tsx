@@ -285,7 +285,7 @@ function Expenses() {
       fetchCases();
     } catch (err) {
       console.error("Error deleting expense:", err);
-      setErrorMessage("Failed to delete expense.");
+      error("Failed to delete expense.");
     }
   };
 

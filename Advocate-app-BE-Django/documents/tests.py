@@ -96,3 +96,48 @@ class DocumentReadScopeTest(TestCase):
         self.junior.left_on = datetime.date.today()
         self.junior.save()
         self.assertEqual(self.client.get(f'/api/documents/download/{self.senior_doc.id}?token={token}').status_code, 401)
+
+
+class AllowedFileTypesTest(TestCase):
+    """Only document types a practice keeps can be uploaded, as a new document or
+    a new version; web pages, scripts and programs are refused before saving."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.dir = tempfile.mkdtemp()
+        cls._settings = override_settings(SUMMARY_ENABLED=False, DOCUMENT_UPLOAD_DIR=cls.dir)
+        cls._settings.enable()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._settings.disable()
+        shutil.rmtree(cls.dir, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        self.adv = make_advocate(permissions=ALL_PERMISSIONS)
+        self.case = make_case(self.adv)
+
+    def _upload(self, name, body=b'x', url='/api/documents/upload'):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return self.client.post(url, {'file': SimpleUploadedFile(name, body), 'caseId': self.case.id},
+                                **auth(self.adv))
+
+    def test_web_pages_scripts_and_programs_are_refused(self):
+        for name in ('page.html', 'page.HTM', 'logo.svg', 'run.py', 'app.js', 'setup.exe', 'go.bat', 'README'):
+            resp = self._upload(name, b'<html><script>alert(1)</script></html>')
+            self.assertEqual(resp.status_code, 400, name)
+            self.assertIn("can't be uploaded", resp.json()['error'])
+        self.assertFalse(Document.objects.exists())
+
+    def test_documents_are_accepted_and_typed_by_extension(self):
+        for name in ('plaint.pdf', 'Notes.DOCX', 'ledger.xlsx', 'scan.jpg', 'mail.eml', 'bundle.zip'):
+            self.assertEqual(self._upload(name, b'%PDF-1.4').status_code, 201, name)
+        # The stored type comes from the extension, not from what the browser sent.
+        self.assertEqual(Document.objects.get(original_name='plaint.pdf').file_type, 'application/pdf')
+
+    def test_a_new_version_must_be_an_allowed_type_too(self):
+        doc_id = self._upload('plaint.pdf', b'%PDF-1.4').json()['id']
+        resp = self._upload('plaint.html', url=f'/api/documents/{doc_id}/versions')
+        self.assertEqual(resp.status_code, 400)

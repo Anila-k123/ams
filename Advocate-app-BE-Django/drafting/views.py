@@ -54,6 +54,45 @@ class ProtectedDeleteMixin:
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class FirmSetupMixin:
+    """Templates and playbooks are firm set-up (drafting/access.py): visible only
+    within the creator's firm; "delete" archives, and only the creator or a Super
+    Admin may archive or restore. ?archived=1 lists the archived ones."""
+
+    def scoped(self, qs):
+        from .access import firm_setup
+        qs = firm_setup(qs, self.request.user)
+        if self.action == 'list':
+            archived = self.request.query_params.get('archived') in ('1', 'true')
+            qs = qs.filter(archived_at__isnull=not archived)
+        return qs
+
+    def destroy(self, request, *args, **kwargs):
+        from django.utils import timezone
+        from .access import can_archive
+        obj = self.get_object()
+        if not can_archive(obj, request.user):
+            return Response({'detail': 'Only the person who created it or a Super Admin can delete it.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        if obj.archived_at is None:
+            obj.archived_at = timezone.now()
+            obj.archived_by_id = request.user.id
+            obj.save(update_fields=['archived_at', 'archived_by_id'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None):
+        from .access import can_archive
+        obj = self.get_object()
+        if not can_archive(obj, request.user):
+            return Response({'detail': 'Only the person who created it or a Super Admin can restore it.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        obj.archived_at = None
+        obj.archived_by_id = None
+        obj.save(update_fields=['archived_at', 'archived_by_id'])
+        return Response({'restored': obj.id})
+
+
 def _dispatch(task, *args):
     """Start a background job without blocking the request; the client polls status.
 
@@ -68,11 +107,13 @@ def _dispatch(task, *args):
 # uploads that carry case_id (drafting/ams_cases.py). Members were retired.
 
 
-class TemplateViewSet(FileDownloadMixin, ProtectedDeleteMixin, viewsets.ModelViewSet):
+class TemplateViewSet(FirmSetupMixin, FileDownloadMixin, viewsets.ModelViewSet):
     """CRUD endpoints for templates. Creation uploads a file that is parsed
-    into clause slots; deletion is protected if a draft session uses it."""
-    queryset = Template.objects.all().order_by('-created_at')
+    into clause slots. Scoped to the firm; deleting archives (FirmSetupMixin)."""
     serializer_class = TemplateSerializer
+
+    def get_queryset(self):
+        return self.scoped(Template.objects.all().order_by('-created_at'))
 
     def get_serializer_class(self):
         """Use the upload (write) serializer on create, the full one otherwise."""
@@ -90,11 +131,12 @@ class TemplateViewSet(FileDownloadMixin, ProtectedDeleteMixin, viewsets.ModelVie
         name = (request.data.get('name') or '').strip()
         doc_type = (request.data.get('document_type') or '').strip()
         if name:
-            existing = (Template.objects
-                        .filter(name__iexact=name, document_type__iexact=doc_type)
+            from .access import firm_setup
+            existing = (firm_setup(Template.objects, request.user)
+                        .filter(name__iexact=name, document_type__iexact=doc_type, archived_at__isnull=True)
                         .order_by('id').first())
             if existing:
-                return Response(TemplateSerializer(existing).data, status=status.HTTP_200_OK)
+                return Response(TemplateSerializer(existing, context={'request': request}).data, status=status.HTTP_200_OK)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         # Templates accept PDF or DOCX. DOCX also captures formatting
@@ -106,11 +148,11 @@ class TemplateViewSet(FileDownloadMixin, ProtectedDeleteMixin, viewsets.ModelVie
                 {'detail': 'Templates must be a PDF or DOCX file.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        template = serializer.save(status=Template.Status.PROCESSING)
+        template = serializer.save(status=Template.Status.PROCESSING, created_by_id=request.user.id)
         # Parse + name the slots in the background; the client polls status.
         from .tasks import process_template
         _dispatch(process_template, template.id)
-        return Response(TemplateSerializer(template).data, status=status.HTTP_201_CREATED)
+        return Response(TemplateSerializer(template, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 class SampleViewSet(FileDownloadMixin, ProtectedDeleteMixin, viewsets.ModelViewSet):
@@ -466,7 +508,8 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         playbook_id = request.data.get('playbook_id')
         if playbook_id:
             try:
-                pb = Playbook.objects.get(id=playbook_id)
+                from .access import firm_setup
+                pb = firm_setup(Playbook.objects, request.user).get(id=playbook_id, archived_at__isnull=True)
             except Playbook.DoesNotExist:
                 return Response({'detail': 'Playbook not found.'}, status=status.HTTP_404_NOT_FOUND)
             session.playbook = pb
@@ -516,9 +559,12 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         return Response({'status': risk.status})
 
 
-class PlaybookViewSet(viewsets.ModelViewSet):
-    """CRUD for Playbooks + actions to trigger processing and risk analysis."""
-    queryset = Playbook.objects.prefetch_related('documents', 'clauses').order_by('-created_at')
+class PlaybookViewSet(FirmSetupMixin, viewsets.ModelViewSet):
+    """CRUD for Playbooks + actions to trigger processing and risk analysis.
+    Scoped to the firm; deleting archives (FirmSetupMixin)."""
+
+    def get_queryset(self):
+        return self.scoped(Playbook.objects.prefetch_related('documents', 'clauses').order_by('-created_at'))
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -540,8 +586,9 @@ class PlaybookViewSet(viewsets.ModelViewSet):
         name = (request.data.get('name') or '').strip()
         category = (request.data.get('category') or '').strip()
         if name:
-            existing = (Playbook.objects
-                        .filter(name__iexact=name, category__iexact=category)
+            from .access import firm_setup
+            existing = (firm_setup(Playbook.objects, request.user)
+                        .filter(name__iexact=name, category__iexact=category, archived_at__isnull=True)
                         .order_by('id').first())
             if existing:
                 out = PlaybookSerializer(existing, context={'request': request})
@@ -608,7 +655,12 @@ class PlaybookClauseViewSet(viewsets.ModelViewSet):
     serializer_class = PlaybookClauseWriteSerializer
 
     def get_queryset(self):
-        qs = PlaybookClause.objects.all()
+        from .access import firm_member_ids, is_super_admin
+        from django.db.models import Q
+        scope = Q(playbook__created_by_id__in=firm_member_ids(self.request.user))
+        if is_super_admin(self.request.user):
+            scope |= Q(playbook__created_by_id__isnull=True)
+        qs = PlaybookClause.objects.filter(scope)
         playbook_id = self.request.query_params.get('playbook')
         if playbook_id:
             qs = qs.filter(playbook_id=playbook_id)
@@ -616,7 +668,11 @@ class PlaybookClauseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         from django.db.models import Max
+        from rest_framework.exceptions import ValidationError
+        from .access import firm_setup
         playbook_id = self.request.data.get('playbook')
+        if not firm_setup(Playbook.objects, self.request.user).filter(id=playbook_id).exists():
+            raise ValidationError({'playbook': 'Playbook not found.'})
         max_pos = (
             PlaybookClause.objects.filter(playbook_id=playbook_id)
             .aggregate(Max('position'))['position__max']

@@ -7,6 +7,7 @@ import { TextArea, TextField, Field } from "../ui/forms";
 import { Modal } from "../ui/overlays";
 import DraftChanges from "./DraftChanges";
 import "../ui/pages/casedetail.css";
+import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 
 // Senior review of delegated tasks (backend: workspace/review.py). A task one
 // advocate assigned to another is SUBMITTED by the assignee, then APPROVED (the
@@ -148,7 +149,7 @@ export function SubmitWork({ task, myId, onDone, toast, caseId }: any) {
             onChange={(e) => setHours(e.target.value === "" ? null : Number(e.target.value))} />
           {canUpload && (
             <Field label="Attach files" hint="Optional">
-              {(id, d) => <input id={id} aria-describedby={d} type="file" multiple className="input"
+              {(id, d) => <input id={id} aria-describedby={d} type="file" accept={DOCUMENT_ACCEPT} multiple className="input"
                 onChange={(e) => setFiles(Array.from(e.target.files || []))} />}
             </Field>
           )}

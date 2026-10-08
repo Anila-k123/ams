@@ -538,6 +538,14 @@ class FormatValidatorsTest(TestCase):
         # A person's phone is an Indian mobile, saved as its 10 digits.
         for ok in ('+91 90030 11900', '9003011900', '09003011900', '90030-11900'):
             self.assertEqual(v.clean_phone(ok), '9003011900')
+        # Names: real legal names pass (tidied), symbols and bare numbers don't.
+        for ok, out in (('K. M. Anand Joshi', 'K. M. Anand Joshi'), ('M/s. Akshayam Traders', 'M/s. Akshayam Traders'),
+                        ("D'Souza & Ors.", "D'Souza & Ors."), ('  Ravi   Kumar ', 'Ravi Kumar'),
+                        ('ABC Pvt. Ltd. (in liquidation)', 'ABC Pvt. Ltd. (in liquidation)'), ('கண்ணன்', 'கண்ணன்')):
+            self.assertEqual(v.clean_name(ok), out)
+        for bad in ('@@@###', '<script>', '12345', 'A', 'x' * 151, 'John_Doe', 'Smith!'):
+            with self.assertRaises(ValueError, msg=bad):
+                v.clean_name(bad)
         # An office phone may also be a landline or an international number.
         for ok in ('044-24981234', '+1 415 555 0100', '+91 90030 11900'):
             v.clean_landline(ok)

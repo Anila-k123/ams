@@ -49,7 +49,7 @@ def filter_file_kind(qs, value):
         q |= Q(original_name__iendswith=e)
     return qs.filter(q)
 from .models import DocumentSummary, DocumentVersion
-from .storage import add_version, create_document
+from .storage import UnsupportedFileType, add_version, create_document
 from core.practice import practice_ids
 
 log = logging.getLogger(__name__)
@@ -163,13 +163,16 @@ class UploadDocumentView(APIView):
         client_id = request.data.get('clientId') or None
         case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first() if case_id else None
         client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first() if client_id else None
-        doc = create_document(
-            request.user, f,
-            document_name=request.data.get('documentName'),
-            category=request.data.get('category'),
-            description=request.data.get('description'),
-            case=case, client=client,
-        )
+        try:
+            doc = create_document(
+                request.user, f,
+                document_name=request.data.get('documentName'),
+                category=request.data.get('category'),
+                description=request.data.get('description'),
+                case=case, client=client,
+            )
+        except UnsupportedFileType as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(DocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
 
 
@@ -329,7 +332,10 @@ class DocumentVersionsView(APIView):
 
         note = (request.data.get('note') or '').strip() or None
 
-        add_version(doc, f, request.user, note)
+        try:
+            add_version(doc, f, request.user, note)
+        except UnsupportedFileType as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(DocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
 
 

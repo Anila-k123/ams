@@ -19,6 +19,7 @@ import { FilterChip, SearchInput, Segmented, SelectField, TextArea, TextField } 
 import { Modal, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/clients.css";
+import { DOCUMENT_ACCEPT, DOCUMENT_TYPES_LABEL, isAllowedDocument } from "../utils/fileTypes";
 
 const CATEGORIES = [
   "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
@@ -213,16 +214,25 @@ export default function DocumentsPanel() {
 
   const hasFilters = !!(searchText || selectedCategory || selectedStatus || selectedFileType || selectedCase || sharedOnly);
 
+  // Only allowed document types join the upload list (utils/fileTypes); a dropped
+  // web page or script is left out with a message. The server refuses them too.
+  const addFiles = (files: File[]) => {
+    const ok = files.filter((f) => isAllowedDocument(f.name));
+    const refused = files.filter((f) => !isAllowedDocument(f.name));
+    if (refused.length) {
+      toast.error(`${refused.map((f) => f.name).join(", ")} can't be uploaded. Use ${DOCUMENT_TYPES_LABEL}.`);
+    }
+    if (ok.length) setUploadFiles((prev) => [...prev, ...ok]);
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
-    setUploadFiles((prev) => [...prev, ...files]);
+    addFiles(Array.from(e.dataTransfer.files));
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    setUploadFiles((prev) => [...prev, ...files]);
+    addFiles(Array.from(e.target.files || []));
     e.target.value = "";
   };
 
@@ -440,7 +450,7 @@ export default function DocumentsPanel() {
       )}
 
       {/* Upload */}
-      <Modal open={showUploadModal} title="Upload documents" sub="PDF, DOC, DOCX, PNG, JPG or ZIP, up to 25 MB each."
+      <Modal open={showUploadModal} title="Upload documents" sub={`${DOCUMENT_TYPES_LABEL}, up to 25 MB each.`}
         onClose={() => { if (!uploading) setShowUploadModal(false); }} dismissable={!uploading}
         footer={<>
           <Button variant="ghost" onClick={() => setShowUploadModal(false)} disabled={uploading}>Cancel</Button>
@@ -458,7 +468,7 @@ export default function DocumentsPanel() {
             <div style={{ marginTop: 8 }}><b>Drop files here</b> or click to browse</div>
             <div className="faint xs" style={{ marginTop: 4 }}>You can add several files at once.</div>
           </button>
-          <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} aria-label="Choose files" />
+          <input ref={fileInputRef} type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={handleFileSelect} aria-label="Choose files" />
 
           {uploadFiles.length > 0 && (
             <div className="dc-files">

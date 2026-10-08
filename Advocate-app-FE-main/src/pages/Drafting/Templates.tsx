@@ -5,7 +5,7 @@ import { useToast } from '../../contexts/ToastContext'
 import { useNavigate } from 'react-router-dom'
 import { AxiosError } from 'axios'
 import { Button, EmptyState, PageHead, Skel, Spinner } from '../../ui/kit'
-import { SearchInput, TextField } from '../../ui/forms'
+import { FilterChip, SearchInput, TextField } from '../../ui/forms'
 import { Modal, confirm } from '../../ui/overlays'
 import Icon from '../../ui/Icon'
 import DocumentViewer from './components/DocumentViewer'
@@ -29,7 +29,8 @@ export default function Templates() {
   const [viewing, setViewing] = useState<Template | null>(null)    // template whose source document is shown in DocumentViewer
   const [query, setQuery] = useState('')                      // search-box filter (name / type)
 
-  const load = () => draftingApi.getTemplates().then(setTemplates)
+  const [showArchived, setShowArchived] = useState(false)    // archived templates view (restore)
+  const load = () => draftingApi.getTemplates(showArchived).then(setTemplates)
 
   // Templates whose name or document type contains the query (case-insensitive).
   const filtered = templates.filter(t => {
@@ -37,7 +38,8 @@ export default function Templates() {
     return !q || t.name.toLowerCase().includes(q) || (t.document_type || '').toLowerCase().includes(q)
   })
 
-  useEffect(() => { load().finally(() => setLoading(false)) }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when switching to/from the archived view
+  useEffect(() => { load().finally(() => setLoading(false)) }, [showArchived])
 
   // Poll while any template is still processing, so its card flips to Ready/Failed
   // automatically without the user waiting on a modal.
@@ -45,6 +47,7 @@ export default function Templates() {
     if (!templates.some(t => t.status === 'processing')) return
     const id = setInterval(load, 3000)
     return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-armed whenever the list changes
   }, [templates])
 
   // Upload a template file (name defaults to the filename). Parsing + naming run in the
@@ -71,24 +74,35 @@ export default function Templates() {
     }
   }
 
-  // Ask for confirmation, then delete and reload. Surfaces the backend's detail message on failure.
+  // "Delete" archives: hidden and not offered for new drafts, restorable by the
+  // creator or a Super Admin (only they see the button; the server enforces it).
   const confirmDelete = (t: Template) => {
     confirm({
-      title: 'Delete this template?',
-      message: `${t.name} will be removed. Drafts already made from it are kept. This cannot be undone.`,
-      confirmLabel: 'Delete template',
+      title: 'Archive this template?',
+      message: `${t.name} will be hidden and can't be used for new drafts. Drafts already made from it are kept. You or a Super Admin can restore it from Show archived.`,
+      confirmLabel: 'Archive template',
       danger: true,
       accept: async () => {
         try {
           await draftingApi.deleteTemplate(t.id)
-          toast.success(`${t.name} deleted`)
+          toast.success(`${t.name} archived`)
           load()
         } catch (err) {
           const ax = err as AxiosError<{ detail?: string }>
-          toast.error(ax.response?.data?.detail ?? 'Delete failed.')
+          toast.error(ax.response?.data?.detail ?? 'Archive failed.')
         }
       },
     })
+  }
+
+  const restore = async (t: Template) => {
+    try {
+      await draftingApi.restoreTemplate(t.id)
+      toast.success(`${t.name} restored`)
+      load()
+    } catch {
+      toast.error('Restore failed.')
+    }
   }
 
   const canManage = hasPermission('DRAFT_MANAGE')
@@ -105,6 +119,7 @@ export default function Templates() {
 
       <div className="toolbar">
         <SearchInput value={query} onChange={setQuery} placeholder="Search templates" />
+        <FilterChip on={showArchived} onClick={() => setShowArchived(v => !v)}><Icon name="archive" size="sm" />Show archived</FilterChip>
       </div>
 
       <div className="doc-grid dr-card-grid">
@@ -125,20 +140,22 @@ export default function Templates() {
                   <span className="faint xs">{t.language.toUpperCase()}</span>
                 </div>
                 <h3 className="serif dr-tile-title">{t.name}</h3>
-                {t.document_type && <div className="faint xs">{t.document_type.toUpperCase()}</div>}
+                {(t.document_type || t.created_by_name) && (
+                  <div className="faint xs">{[t.document_type?.toUpperCase(), t.created_by_name && `by ${t.created_by_name}`].filter(Boolean).join(' · ')}</div>
+                )}
                 {processing && <p className="faint small">Finding the fields. This will be ready shortly.</p>}
                 {failed && (
-                  <div className="callout bad"><Icon name="warn" size="sm" /><div>Couldn’t process this file. Delete it and upload a PDF or DOCX.</div></div>
+                  <div className="callout bad"><Icon name="warn" size="sm" /><div>Couldn’t process this file. Archive it and upload a PDF or DOCX.</div></div>
                 )}
                 <span className="grow" />
                 <div className="row wrap" style={{ gap: 6 }}>
-                  <Button variant="primary" size="sm" disabled={processing || failed} onClick={() => navigate(DRAFTING.newDraft)}>Use template</Button>
+                  {!showArchived && <Button variant="primary" size="sm" disabled={processing || failed} onClick={() => navigate(DRAFTING.newDraft)}>Use template</Button>}
                   {t.file && <Button size="sm" icon="eye" onClick={() => setViewing(t)}>View</Button>}
                   <span className="grow" />
-                  {canManage && (
-                    <button type="button" className="btn ghost sm icon" aria-label={`Delete ${t.name}`} title="Delete"
-                      onClick={() => confirmDelete(t)}><Icon name="trash" size="sm" /></button>
-                  )}
+                  {t.can_archive && (showArchived
+                    ? <Button size="sm" icon="restore" onClick={() => restore(t)}>Restore</Button>
+                    : <button type="button" className="btn ghost sm icon" aria-label={`Archive ${t.name}`} title="Archive"
+                        onClick={() => confirmDelete(t)}><Icon name="archive" size="sm" /></button>)}
                 </div>
               </div>
             </div>

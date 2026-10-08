@@ -38,10 +38,17 @@ def _now():
 @permission_classes([AllowAny])
 def forgot_password(request):
     email = (request.data.get('email') or '').strip()
-    advocate = Advocate.objects.filter(email=email).first()
-    generic = {'message': 'If an account exists, an OTP has been sent.'}
+    if not email:
+        return Response({'error': 'Enter your email address.'}, status=status.HTTP_400_BAD_REQUEST)
+    # Capitals and spaces don't matter: Priya@Firm.com is priya@firm.com.
+    advocate = Advocate.objects.filter(email__iexact=email).first()
     if advocate is None:
-        return Response(generic)  # do not reveal whether the email exists
+        # Product decision: say so plainly, so a mistyped or unregistered address
+        # isn't left waiting for a code that will never come.
+        return Response({'error': 'This email is not registered with PactPro. Please contact your firm admin.',
+                         'notRegistered': True}, status=status.HTTP_404_NOT_FOUND)
+    email = advocate.email   # the address as stored, for the code row and the mail
+    generic = {'message': 'A verification code has been sent to your email.'}
 
     # Rate limit: max OTP_RATE_LIMIT requests per hour.
     hour_ago = _now() - datetime.timedelta(hours=1)
@@ -73,7 +80,7 @@ def forgot_password(request):
 def _valid_otp_row(email, otp):
     h = _hash_otp(otp)
     return PasswordResetOtp.objects.filter(
-        email=email, hashed_otp=h, used=False, expires_at__gte=_now()
+        email__iexact=email, hashed_otp=h, used=False, expires_at__gte=_now()
     ).order_by('-id').first()
 
 
@@ -100,7 +107,7 @@ def reset_password(request):
     if row is None:
         return Response({'success': False, 'error': 'Invalid or expired OTP.'},
                         status=status.HTTP_400_BAD_REQUEST)
-    advocate = Advocate.objects.filter(email=email).first()
+    advocate = Advocate.objects.filter(email__iexact=email).first()
     if advocate is None:
         return Response({'success': False, 'error': 'Account not found.'},
                         status=status.HTTP_400_BAD_REQUEST)

@@ -15,6 +15,7 @@ import { TextField, TextArea, SelectField, SearchInput, Segmented, FilterChip } 
 import { Modal, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/cases.css";
+import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 
 const SORT_OPTIONS = [
   { value: "createdAt:desc", label: "Newest first" },
@@ -600,7 +601,7 @@ function Cases() {
             )}
             {hasPermission("DOCUMENT_UPLOAD") && (
               <div className="row wrap">
-                <input type="file" aria-label="Choose a document to upload" onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)} />
+                <input type="file" accept={DOCUMENT_ACCEPT} aria-label="Choose a document to upload" onChange={(e) => setUploadDocFile(e.target.files?.[0] || null)} />
                 <Button icon="upload" onClick={uploadCaseDoc} disabled={!uploadDocFile}>Upload</Button>
               </div>
             )}

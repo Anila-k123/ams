@@ -31,6 +31,11 @@ export interface Template {
   slot_schema: SlotField[] // facts the lawyer must enter
   body_json: BodySlot[] // ordered body slots to generate into
   status?: 'processing' | 'ready' | 'failed' // async parse+name pipeline state
+  // Firm set-up ownership (drafting/access.py): who made it, archived, may archive/restore.
+  created_by_id?: number | null
+  created_by_name?: string | null
+  archived?: boolean
+  can_archive?: boolean
 }
 
 /** A law-firm client (top of the Client -> Project -> Sample hierarchy). */
@@ -175,8 +180,9 @@ interface Paginated<T> {
 /** All drafting endpoints. Each method unwraps to the response body, and list
  *  calls additionally unwrap the DRF pagination envelope to a plain array. */
 export const draftingApi = {
-  getTemplates: () =>
-    api.get<Paginated<Template>>('/templates/').then(r => r.data.results),
+  getTemplates: (archived = false) =>
+    api.get<Paginated<Template>>('/templates/', { params: archived ? { archived: 1 } : {} }).then(r => r.data.results),
+  restoreTemplate: (id: number) => api.post(`/templates/${id}/restore/`),
   getTemplate: (id: number) =>
     api.get<Template>(`/templates/${id}/`).then(r => r.data),
   // Poll a template until its background parse finishes (status leaves 'processing').
@@ -358,6 +364,11 @@ export interface Playbook {
   clauses: PlaybookClause[]
   created_at: string
   updated_at: string
+  // Firm set-up ownership (drafting/access.py): who made it, archived, may archive/restore.
+  created_by_id?: number | null
+  created_by_name?: string | null
+  archived?: boolean
+  can_archive?: boolean
 }
 
 export interface PlaybookListItem extends Omit<Playbook, 'clauses'> {}
@@ -397,8 +408,10 @@ export interface RiskReport {
 }
 
 export const playbookApi = {
-  list: () =>
-    api.get<Paginated<PlaybookListItem>>('/playbooks/').then(r => r.data.results),
+  list: (archived = false) =>
+    api.get<Paginated<PlaybookListItem>>('/playbooks/', { params: archived ? { archived: 1 } : {} }).then(r => r.data.results),
+  // "Delete" archives (owner or Super Admin); restore brings it back.
+  restore: (id: number) => api.post(`/playbooks/${id}/restore/`),
   get: (id: number) =>
     api.get<Playbook>(`/playbooks/${id}/`).then(r => r.data),
   create: (data: FormData) =>

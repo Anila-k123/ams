@@ -1,6 +1,6 @@
 import re
 
-from django.db.models import Q
+from django.db.models import Count, Exists, F, Max, Min, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -77,26 +77,95 @@ def _search(qs, field: str, keyword: str):
     return qs.filter(q)
 
 
+def _text_search(qs, keyword):
+    """The page's one search box: short and long title, act number, a four-digit
+    year, and the acts' section headings and text. Sections are matched with
+    EXISTS (one row per act, no DISTINCT); the trigram indexes from
+    `manage.py index_acts_search` keep the ILIKE fast."""
+    sec = Section.objects.filter(act_id=OuterRef('pk')).filter(
+        Q(title__icontains=keyword) | Q(content__icontains=keyword))
+    q = (Q(title__icontains=keyword) | Q(long_title__icontains=keyword)
+         | Q(act_number__icontains=keyword) | Exists(sec))
+    if _YEAR.match(keyword):
+        q |= Q(act_year=int(keyword))
+    return qs.filter(q)
+
+
+def _year(v):
+    v = (v or '').strip()
+    return int(v) if _YEAR.match(v) else None
+
+
+SORTS = {
+    'newest': [F('act_year').desc(nulls_last=True), F('enact_date').desc(nulls_last=True), 'title', 'id'],
+    'oldest': [F('act_year').asc(nulls_last=True), F('enact_date').asc(nulls_last=True), 'title', 'id'],
+    'title': ['title', 'id'],
+    'sections': [F('no_of_section').desc(nulls_last=True), 'title', 'id'],
+}
+
+
+def _filtered(request, skip=()):
+    """Acts matching every filter in the request, except those named in `skip`
+    (the facet lists leave out their own filter, so their counts stay useful)."""
+    p = request.query_params
+    qs = Act.objects.all()
+    jurisdiction = p.get('jurisdiction', '').strip()
+    if jurisdiction and 'jurisdiction' not in skip:
+        qs = qs.filter(source_state_name__iexact=jurisdiction)
+    lo, hi = _year(p.get('year_from')), _year(p.get('year_to'))
+    if lo and hi and lo > hi:
+        lo, hi = hi, lo
+    if lo:
+        qs = qs.filter(act_year__gte=lo)
+    if hi:
+        qs = qs.filter(act_year__lte=hi)
+    if p.get('department', '').strip() and 'department' not in skip:
+        qs = qs.filter(department_name=p['department'].strip())
+    if p.get('ministry', '').strip() and 'ministry' not in skip:
+        qs = qs.filter(ministry_name=p['ministry'].strip())
+    keyword = p.get('q', '').strip()
+    field = p.get('field', 'all')
+    if keyword:
+        # `field` is the older chip-scoped search; the page now sends filters instead.
+        qs = _search(qs, field, keyword) if field != 'all' else _text_search(qs, keyword)
+    return qs
+
+
 class ActListView(APIView):
-    """GET /api/acts?q=...&field=all|short_title|long_title|department|
-    section_title|section_contents|act_number|act_year&jurisdiction=CENTRAL|Tamil%20Nadu
-    """
+    """GET /api/acts?q=&jurisdiction=CENTRAL|Tamil%20Nadu&year_from=&year_to=
+    &department=&ministry=&sort=newest|oldest|title|sections
+
+    Every filter combines with the others. `q` searches titles, act number, a
+    year and the acts' section headings and text. (`field=` still selects the
+    older single-field search.)"""
     permission_classes = [RequirePermission()]
 
     def get(self, request):
-        keyword = request.query_params.get('q', '').strip()
-        field = request.query_params.get('field', 'all')
-        jurisdiction = request.query_params.get('jurisdiction', '').strip()
-
-        qs = Act.objects.all()
-        if jurisdiction:
-            qs = qs.filter(source_state_name__iexact=jurisdiction)
-        qs = _search(qs, field, keyword)
-        qs = qs.order_by('title', 'id')
-
+        qs = _filtered(request)
+        qs = qs.order_by(*SORTS.get(request.query_params.get('sort', 'newest'), SORTS['newest']))
         paginator = SpringStylePagination()
         page = paginator.paginate_queryset(qs, request, self)
         return paginator.get_paginated_response(ActListSerializer(page, many=True).data)
+
+
+class ActFacetsView(APIView):
+    """GET /api/acts/facets?<same filters as the list>
+    -> {departments: [{name, count}], ministries: [...], years: {min, max}}
+    The choices for the Department and Ministry drop-downs, counted within the
+    other filters (a list ignores its own filter, so every option stays visible)."""
+    permission_classes = [RequirePermission()]
+
+    def get(self, request):
+        def counts(field, skip):
+            rows = (_filtered(request, skip=(skip,)).exclude(**{f'{field}__isnull': True})
+                    .exclude(**{field: ''}).values(field).annotate(n=Count('id')).order_by('-n', field))
+            return [{'name': r[field], 'count': r['n']} for r in rows]
+        years = Act.objects.aggregate(min=Min('act_year'), max=Max('act_year'))
+        return Response({
+            'departments': counts('department_name', 'department'),
+            'ministries': counts('ministry_name', 'ministry'),
+            'years': years,
+        })
 
 
 class ActDetailView(APIView):

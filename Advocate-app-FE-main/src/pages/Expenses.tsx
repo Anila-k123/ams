@@ -20,7 +20,12 @@ import "../ui/pages/finance.css";
 
 const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"];
 
-const today = () => new Date().toISOString().split("T")[0];
+// Today's date in the user's own time zone. toISOString() is UTC, which in India
+// gives yesterday's date until 5:30 am.
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 // en-IN date (7 Oct 2026); plain ISO dates read as local dates.
 const fdate = (v?: string | null) => {
   if (!v) return "—";
@@ -436,11 +441,14 @@ function Expenses() {
   };
 
   const handlePrint = () => window.print();
-  const handleDownloadPDF = () => {
+  // Download exactly what the open report shows: today's report → today only; the
+  // month's report → that month; a case's overview → that case. (It used to send no
+  // dates at all, so "today's" PDF listed every expense, even future-dated ones.)
+  const handleDownloadPDF = (range?: { startDate: string; endDate: string }, caseId?: any) => {
     ReportService.downloadFilteredExpenses({
-      caseId: selectedCase || undefined,   // selectedCase is the case id
-      startDate: undefined,
-      endDate: undefined,
+      caseId: caseId || undefined,
+      startDate: range?.startDate,
+      endDate: range?.endDate,
     }).catch((err: any) => {
       console.error("Error downloading expense report:", err);
       error("Failed to download expense PDF.");
@@ -461,13 +469,18 @@ function Expenses() {
   };
 
   const canExport = hasPermission("REPORT_EXPORT");
-  const reportFoot = (close: () => void) => (
+  const reportFoot = (close: () => void, range: { startDate: string; endDate: string }) => (
     <>
       <button type="button" className="btn ghost" onClick={close}>Close</button>
       {canExport && <Button icon="print" onClick={handlePrint}>Print</Button>}
-      {canExport && <Button variant="primary" icon="download" onClick={handleDownloadPDF}>Download PDF</Button>}
+      {canExport && <Button variant="primary" icon="download" onClick={() => handleDownloadPDF(range)}>Download PDF</Button>}
     </>
   );
+  const monthRange = (year: number, month: number) => {
+    const last = new Date(year, month, 0).getDate();
+    const mm = String(month).padStart(2, "0");
+    return { startDate: `${year}-${mm}-01`, endDate: `${year}-${mm}-${String(last).padStart(2, "0")}` };
+  };
 
   const money = (n: any) => formatCurrency(n);
   const expenseHead = [{ label: "Date" }, { label: "Title" }, { label: "Category" }, { label: "Amount", amt: true }];
@@ -590,7 +603,7 @@ function Expenses() {
         sub={viewCase && <><span className="mono">{viewCase.caseNumber}</span><span className="muted">{viewCase.clientName || viewCase.client?.name || ""}</span></>}
         footer={<>
           {canExport && <Button variant="ghost" icon="print" onClick={handlePrint}>Print</Button>}
-          {canExport && <Button variant="ghost" icon="download" onClick={handleDownloadPDF}>Download PDF</Button>}
+          {canExport && <Button variant="ghost" icon="download" onClick={() => handleDownloadPDF(undefined, selectedCase)}>Download PDF</Button>}
           <span className="grow" />
           {hasPermission("EXPENSE_CREATE") && <Button icon="wallet" onClick={() => handleAddExpense(selectedCase)}>Add expense</Button>}
           {hasPermission("PAYMENT_CREATE") && <Button variant="primary" icon="rupee" onClick={() => handleAddPayment(selectedCase)}>Record payment</Button>}
@@ -632,7 +645,7 @@ function Expenses() {
 
       {/* ------------------ TODAY REPORT ------------------ */}
       <Modal open={showTodayModal && !!todaySummary} onClose={() => setShowTodayModal(false)} size="wide"
-        title={`Today’s report, ${fdate(todaySummary?.date)}`} footer={reportFoot(() => setShowTodayModal(false))}>
+        title={`Today’s report, ${fdate(todaySummary?.date)}`} footer={reportFoot(() => setShowTodayModal(false), { startDate: todaySummary?.date || today(), endDate: todaySummary?.date || today() })}>
         {todaySummary && (
           <>
             <div className="figures fin-block">
@@ -652,7 +665,7 @@ function Expenses() {
       {/* ------------------ MONTHLY REPORT ------------------ */}
       <Modal open={showMonthlyModal && !!monthlyReport} onClose={() => setShowMonthlyModal(false)} size="wide"
         title={monthlyReport ? `Monthly report, ${MONTHS[monthlyReport.expenses.month - 1]} ${monthlyReport.expenses.year}` : "Monthly report"}
-        footer={reportFoot(() => setShowMonthlyModal(false))}>
+        footer={reportFoot(() => setShowMonthlyModal(false), monthRange(monthlyReport?.expenses?.year || new Date().getFullYear(), monthlyReport?.expenses?.month || new Date().getMonth() + 1))}>
         {monthlyReport && (() => {
           const cats = Object.entries(monthlyReport.expenses.categoryBreakdown || {}) as [string, number][];
           const max = Math.max(1, ...cats.map(([, a]) => Number(a) || 0));

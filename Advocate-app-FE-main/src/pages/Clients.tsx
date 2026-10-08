@@ -24,9 +24,10 @@ import { Field, FilterChip, SearchInput } from "../ui/forms";
 import { Drawer, Modal, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/clients.css";
+import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 
 // Checked here as you leave a field, and again on the server (core/validators.py).
-const CLIENT_FORMATS = { email: "email", phone: "phone", gstin: "gstin", pincode: "pincode" } as const;
+const CLIENT_FORMATS = { name: "name", email: "email", phone: "phone", gstin: "gstin", pincode: "pincode" } as const;
 
 const fdate = (d?: string | null) =>
   d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
@@ -471,7 +472,7 @@ function Clients() {
         </>}>
         <form id="client-form" className="form-grid cl-form" onSubmit={handleSubmit} noValidate>
           <p className="cl-form-section">Basic details</p>
-          {field("name", "Name", "Name", { required: true })}
+          {field("name", "Name", "e.g. K. M. Anand Joshi, M/s. Akshayam Traders", { required: true, maxLength: 150, hint: "2–150 characters, e.g. initials, & Ors., M/s." })}
           {field("description", "Description", "Short description about the client")}
           {field("website", "Website", "Website", { full: true })}
           {field("email", "Email", "name@example.com", { required: true, type: "email" })}
@@ -613,7 +614,7 @@ function Clients() {
                     <div className="row wrap" style={{ gap: 6 }}>
                       <label className="btn sm">
                         <Icon name="file" size="sm" />{uploadClientDocFile ? <span className="ellipsis" style={{ maxWidth: 160 }}>{uploadClientDocFile.name}</span> : "Choose file"}
-                        <input type="file" hidden onChange={(e) => setUploadClientDocFile(e.target.files?.[0] || null)} aria-label="Document to upload" />
+                        <input type="file" accept={DOCUMENT_ACCEPT} hidden onChange={(e) => setUploadClientDocFile(e.target.files?.[0] || null)} aria-label="Document to upload" />
                       </label>
                       <Button size="sm" variant="primary" icon="upload" onClick={uploadClientDoc} disabled={!uploadClientDocFile}>Upload</Button>
                     </div>

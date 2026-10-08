@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 
 from core.testing import ALL_PERMISSIONS, auth, make_advocate
 
-from .models import Client, DraftSession, Project, Sample, Template
+from .models import Client, DraftSession, Playbook, Project, Sample, Template
 
 
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
@@ -76,7 +76,8 @@ class DraftingPermissionTest(TestCase):
         self.intern = make_advocate(permissions=INTERN, parent_advocate_id=self.senior.id)
         self.junior = make_advocate(permissions=JUNIOR, parent_advocate_id=self.senior.id)
         self.nobody = make_advocate(permissions=('CASE_VIEW',), parent_advocate_id=self.senior.id)
-        self.template = Template.objects.create(name='Mutual NDA', document_type='nda')
+        self.template = Template.objects.create(name='Mutual NDA', document_type='nda',
+                                                created_by_id=self.senior.id)
 
     def test_no_drafting_codes_means_no_drafting(self):
         for url in ('/api/drafting/samples/', '/api/drafting/templates/', '/api/drafting/draft-sessions/',
@@ -263,7 +264,8 @@ class DraftSessionCreateTest(TestCase):
         from workspace.models import CaseTask
         self.senior = make_advocate(permissions=ALL_PERMISSIONS)
         self.outsider = make_advocate(permissions=ALL_PERMISSIONS)
-        self.template = Template.objects.create(name='Mutual NDA', document_type='nda', status='ready')
+        self.template = Template.objects.create(name='Mutual NDA', document_type='nda', status='ready',
+                                                created_by_id=self.senior.id)
         self.case = make_case(self.senior, make_ams_client(self.senior))
         self.client_row, self.project = link_case(self.case)
         self.task = CaseTask.objects.create(advocate_id=self.senior.id, case_id=self.case.id, title='Draft NDA')
@@ -412,3 +414,61 @@ class DraftReviewAccessTest(TestCase):
     def test_task_payload_links_the_draft(self, dispatch):
         tasks = self.client.get(f'/api/workspace/cases/{self.case.id}/tasks', **auth(self.senior)).json()
         self.assertEqual([t['draftSessionId'] for t in tasks if t['id'] == self.task.id], [self.session.id])
+
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+class FirmSetupOwnershipTest(TestCase):
+    """Templates and playbooks are firm set-up: never visible to another firm;
+    "delete" archives, allowed only to the creator or a Super Admin; restorable."""
+    databases = {'default'}
+
+    def setUp(self):
+        from core.models import AdvocateRole, Role
+        self.rajesh = make_advocate(permissions=ALL_PERMISSIONS)                       # creator
+        self.arjun = make_advocate(permissions=ALL_PERMISSIONS, parent_advocate_id=self.rajesh.id)
+        self.admin = make_advocate(permissions=ALL_PERMISSIONS, parent_advocate_id=self.rajesh.id)
+        role, _ = Role.objects.get_or_create(name='Super Admin')
+        AdvocateRole.objects.create(advocate_id=self.admin.id, role_id=role.id)
+        self.other_firm = make_advocate(permissions=ALL_PERMISSIONS)
+        self.pb = Playbook.objects.create(name='NDA Playbook', category='NDA', method='scratch',
+                                          status='ready', created_by_id=self.rajesh.id)
+        self.tpl = Template.objects.create(name='Mutual NDA', document_type='nda', status='ready',
+                                           created_by_id=self.rajesh.id)
+
+    def _ids(self, url, who, **params):
+        body = self.client.get(url, params, **auth(who)).json()
+        return [r['id'] for r in body.get('results', body)]
+
+    def test_another_firm_cannot_see_or_delete(self):
+        for url, obj in (('/api/drafting/playbooks/', self.pb), ('/api/drafting/templates/', self.tpl)):
+            self.assertNotIn(obj.id, self._ids(url, self.other_firm))
+            self.assertEqual(self.client.delete(f'{url}{obj.id}/', **auth(self.other_firm)).status_code, 404)
+
+    def test_a_colleague_sees_and_edits_but_cannot_delete(self):
+        self.assertIn(self.pb.id, self._ids('/api/drafting/playbooks/', self.arjun))
+        resp = self.client.delete(f'/api/drafting/playbooks/{self.pb.id}/', **auth(self.arjun))
+        self.assertEqual(resp.status_code, 403)
+        resp = self.client.patch(f'/api/drafting/playbooks/{self.pb.id}/', {'description': 'Our NDA rules'},
+                                 content_type='application/json', **auth(self.arjun))
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+    def test_the_creator_archives_and_restores(self):
+        for url, obj in (('/api/drafting/playbooks/', self.pb), ('/api/drafting/templates/', self.tpl)):
+            self.assertEqual(self.client.delete(f'{url}{obj.id}/', **auth(self.rajesh)).status_code, 204)
+            obj.refresh_from_db()
+            self.assertIsNotNone(obj.archived_at)                       # kept, not deleted
+            self.assertNotIn(obj.id, self._ids(url, self.rajesh))
+            self.assertIn(obj.id, self._ids(url, self.rajesh, archived='1'))
+            self.assertEqual(self.client.post(f'{url}{obj.id}/restore/', **auth(self.arjun)).status_code, 403)
+            self.assertEqual(self.client.post(f'{url}{obj.id}/restore/', **auth(self.rajesh)).status_code, 200)
+            self.assertIn(obj.id, self._ids(url, self.rajesh))
+
+    def test_a_super_admin_may_archive_anyones(self):
+        self.assertEqual(self.client.delete(f'/api/drafting/playbooks/{self.pb.id}/', **auth(self.admin)).status_code, 204)
+
+    def test_list_says_who_may_archive(self):
+        rows = {r['id']: r for r in self.client.get('/api/drafting/playbooks/', **auth(self.arjun)).json()['results']}
+        self.assertFalse(rows[self.pb.id]['can_archive'])
+        rows = {r['id']: r for r in self.client.get('/api/drafting/playbooks/', **auth(self.rajesh)).json()['results']}
+        self.assertTrue(rows[self.pb.id]['can_archive'])

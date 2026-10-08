@@ -156,9 +156,37 @@ def clean_ifsc(value):
     return i
 
 
+# A person's or organisation's name (Client Name): letters in any script,
+# digits, spaces and the punctuation real legal names use - initials "K. M.",
+# "M/s.", "& Ors.", "D'Souza", "Pillai-Nair", "(in liquidation)", "Ward 15(1)".
+# No symbols such as @ # $ % < > or emoji. 2-150 characters, at least one letter.
+# Spaces are tidied; capitals are kept as typed. (src/utils/validators.ts nameError)
+_NAME_PUNCT = set(" .,&/-'()")
+
+
+def clean_name(value):
+    import unicodedata
+    name = ' '.join(str(value or '').split())
+    if not name:
+        return ''
+    for ch in name:
+        # Letters and digits in any script, plus the vowel signs / marks that
+        # Indian scripts (Tamil, Hindi ...) attach to letters.
+        if ch.isalpha() or ch.isdigit() or ch in _NAME_PUNCT or unicodedata.category(ch) in ('Mn', 'Mc'):
+            continue
+        raise ValueError("Names can use letters, numbers, spaces and . , & / - ' ( ) only.")
+    if not any(ch.isalpha() for ch in name):
+        raise ValueError('A name must contain at least one letter.')
+    if len(name) < 2:
+        raise ValueError('A name must be at least 2 characters.')
+    if len(name) > 150:
+        raise ValueError('A name can be at most 150 characters.')
+    return name
+
+
 # name -> cleaner, for checking a payload's fields in one call.
 CLEANERS = {'gstin': clean_gstin, 'pan': clean_pan, 'pincode': clean_pincode,
-            'phone': clean_phone, 'landline': clean_landline, 'email': clean_email, 'ifsc': clean_ifsc}
+            'phone': clean_phone, 'landline': clean_landline, 'name': clean_name, 'email': clean_email, 'ifsc': clean_ifsc}
 
 
 def error_response(errors):

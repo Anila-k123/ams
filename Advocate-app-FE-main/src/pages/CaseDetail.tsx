@@ -23,6 +23,7 @@ import { Modal, confirm } from "../ui/overlays";
 import "../ui/pages/casedetail.css";
 import { copyText } from "../utils/clipboard";
 import DuplicateEventDialog from "../components/DuplicateEventDialog";
+import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -1152,7 +1153,7 @@ export default function CaseDetail() {
       setUploadFile(null);
       fetchDocs();
       success("Document uploaded.");
-    } catch { error("Upload failed."); }
+    } catch (err) { error(err.response?.data?.error || "Upload failed."); }
   };
 
   // Upload an order document — stored as a normal case document tagged category "Order".
@@ -1745,7 +1746,7 @@ export default function CaseDetail() {
                   <label className="btn sm cs-file-btn">
                     <Icon name="upload" size="sm" />
                     <span className="ellipsis" style={{ maxWidth: 220 }}>{uploadFile ? uploadFile.name : "Choose file"}</span>
-                    <input type="file" aria-label="Choose a file to upload" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
+                    <input type="file" accept={DOCUMENT_ACCEPT} aria-label="Choose a file to upload" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
                   </label>
                   <Button size="sm" variant="primary" icon="upload" onClick={uploadDoc} disabled={!uploadFile}>Upload</Button>
                 </div>
@@ -1772,7 +1773,7 @@ export default function CaseDetail() {
                     )}
                     {can("DOCUMENT_UPLOAD") && <>
                       <Field label="Documents" hint={taskFiles.length ? `${taskFiles.length} file(s) chosen` : "Optional"}>
-                        {(fid, d) => <input id={fid} aria-describedby={d} type="file" multiple className="input"
+                        {(fid, d) => <input id={fid} aria-describedby={d} type="file" accept={DOCUMENT_ACCEPT} multiple className="input"
                           onChange={(e) => setTaskFiles(Array.from(e.target.files || []))} />}
                       </Field>
                       <SelectField label="Document category" placeholder="Select category" options={DOC_CATEGORIES} value={newTask.category}
@@ -2252,7 +2253,7 @@ export default function CaseDetail() {
           <TextField label="Order date" type="date" value={orderForm.orderDate} onChange={(e) => setOrderForm({ ...orderForm, orderDate: e.target.value })} />
           <TextField label="Description" placeholder="Optional" value={orderForm.description} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
           <Field label="File" required full>
-            {(fid) => <input id={fid} type="file" className="input" onChange={(e) => setOrderForm({ ...orderForm, file: e.target.files?.[0] || null })} />}
+            {(fid) => <input id={fid} type="file" accept={DOCUMENT_ACCEPT} className="input" onChange={(e) => setOrderForm({ ...orderForm, file: e.target.files?.[0] || null })} />}
           </Field>
         </div>
       </Modal>

@@ -848,7 +848,7 @@ class DisplayBoardView(APIView):
             # Map the scraper envelope onto the frontend contract.
             payload = {
                 'bench': data.get('court', court),
-                'boardDate': data.get('boardDate', ''),
+                'boardDate': data.get('boardDate') or _board_date_from(data.get('fetchedAt')),
                 'fetchedAt': data.get('fetchedAt', ''),
                 'count': data.get('count', 0),
                 'rows': data.get('rows', []),
@@ -858,6 +858,17 @@ class DisplayBoardView(APIView):
 
         return Response(_with_your_items(request.user, court, payload))
 
+
+
+def _board_date_from(fetched_at):
+    """A display board is always the current day's live sitting, but most courts'
+    board pages don't print a date, so the scraper returns boardDate ''. Use the
+    day it was fetched (dd/mm/yyyy, the courts' own format) so every court shows
+    "Board of <date>" alike. '' when the fetch time is missing or unreadable."""
+    try:
+        return datetime.datetime.fromisoformat(str(fetched_at)).strftime('%d/%m/%Y')
+    except (TypeError, ValueError):
+        return ''
 
 def _with_your_items(advocate, court, payload):
     """Add each row's `yourItem` - where THIS advocate's case sits in that

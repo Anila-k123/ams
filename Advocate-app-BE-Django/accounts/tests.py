@@ -69,3 +69,41 @@ class SignupEnabledTest(TestCase):
     def test_a_duplicate_email_is_refused(self):
         self.assertEqual(post_signup(self.client).status_code, 201)
         self.assertEqual(post_signup(self.client).status_code, 409)
+
+
+class PasswordResetFlowTest(TestCase):
+    """Forgot password: an unregistered email is told so; a registered one gets a
+    code, and resetting with it changes the password used to sign in."""
+
+    def setUp(self):
+        from core.passwords import hash_password
+        self.adv = Advocate.objects.create(email='priya@firm.test', password=hash_password('Old@12345'),
+                                           full_name='Priya', role='ADVOCATE')
+
+    def _post(self, url, body):
+        return self.client.post(url, data=json.dumps(body), content_type='application/json')
+
+    def test_an_unregistered_email_is_told_to_contact_the_admin(self):
+        from core.models import PasswordResetOtp
+        resp = self._post('/api/auth/forgot-password', {'email': 'nobody@nowhere.test'})
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn('not registered', resp.json()['error'])
+        self.assertFalse(PasswordResetOtp.objects.exists())       # nothing created, nothing sent
+
+    def test_reset_changes_the_sign_in_password(self):
+        from unittest import mock
+        from accounts import otp_views
+        with mock.patch.object(otp_views.secrets, 'randbelow', return_value=123456 - 100000):
+            resp = self._post('/api/auth/forgot-password', {'email': '  Priya@FIRM.test '})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._post('/api/auth/verify-otp', {'email': 'priya@firm.test', 'otp': '123456'}).status_code, 200)
+        resp = self._post('/api/auth/reset-password',
+                          {'email': 'priya@firm.test', 'otp': '123456', 'newPassword': 'New@12345'})
+        self.assertTrue(resp.json()['success'])
+        login = lambda pw: self._post('/api/advocates/login', {'email': 'priya@firm.test', 'password': pw})  # noqa: E731
+        self.assertEqual(login('New@12345').status_code, 200)
+        self.assertNotEqual(login('Old@12345').status_code, 200)
+        # A used code can't reset again.
+        again = self._post('/api/auth/reset-password',
+                           {'email': 'priya@firm.test', 'otp': '123456', 'newPassword': 'Other@12345'})
+        self.assertEqual(again.status_code, 400)

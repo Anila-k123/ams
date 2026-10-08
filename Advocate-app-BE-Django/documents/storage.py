@@ -17,6 +17,34 @@ from .models import DocumentVersion
 log = logging.getLogger(__name__)
 
 
+# Documents a practice actually keeps. Anything else (web pages, scripts,
+# programs: .html, .svg, .js, .py, .exe ...) is refused before it is written,
+# for new uploads and new versions alike. A browser can show an uploaded web
+# page as a live page, so those are never stored.
+ALLOWED_EXTENSIONS = {
+    '.pdf', '.doc', '.docx', '.odt', '.rtf', '.txt',          # documents
+    '.xls', '.xlsx', '.ods', '.csv',                           # spreadsheets
+    '.ppt', '.pptx', '.odp',                                   # presentations
+    '.jpg', '.jpeg', '.png', '.webp', '.tif', '.tiff', '.heic',  # scans and photos
+    '.eml', '.msg',                                            # emails
+    '.zip',                                                    # bundles
+}
+ALLOWED_LABEL = 'PDF, Word, Excel, PowerPoint, text, images (JPG, PNG, TIFF), emails (EML, MSG) or ZIP'
+
+
+class UnsupportedFileType(ValueError):
+    pass
+
+
+def check_file_type(f):
+    """Raise UnsupportedFileType unless the file's extension is an allowed one."""
+    ext = os.path.splitext(getattr(f, 'name', '') or '')[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        what = f'{ext} files' if ext else 'Files without an extension'
+        raise UnsupportedFileType(f"{what} can't be uploaded. Use {ALLOWED_LABEL}.")
+    return ext
+
+
 def _write_file(f):
     """Save an uploaded file under DOCUMENT_UPLOAD_DIR/documents with a uuid name."""
     ext = os.path.splitext(f.name)[1]
@@ -27,7 +55,9 @@ def _write_file(f):
     with open(abs_path, 'wb') as out:
         for chunk in f.chunks():
             out.write(chunk)
-    file_type = f.content_type or mimetypes.guess_type(f.name)[0] or 'application/octet-stream'
+    # The type comes from the (allowed) extension, not from what the browser
+    # claims, so a disguised file is never served back as something else.
+    file_type = mimetypes.guess_type(f.name)[0] or 'application/octet-stream'
     return stored_name, abs_path, file_type
 
 
@@ -47,6 +77,7 @@ def _summarize(doc):
 
 def create_document(user, f, *, document_name=None, category=None, description=None,
                     case=None, client=None, external_ref=None):
+    check_file_type(f)
     stored_name, abs_path, file_type = _write_file(f)
     now = datetime.datetime.now()
     doc = Document.objects.create(
@@ -74,6 +105,7 @@ def create_document(user, f, *, document_name=None, category=None, description=N
 
 def add_version(doc, f, user, note=None):
     """Make `f` the current file of `doc`, keeping the previous file as a version."""
+    check_file_type(f)
     # 1) Archive the CURRENT file as a past version (keeps its own note, if any).
     DocumentVersion.objects.get_or_create(
         document_id=doc.id, version=doc.version or 1,

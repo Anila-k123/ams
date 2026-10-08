@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '../../../ui/kit'
 import Icon from '../../../ui/Icon'
-import { draftingApi, type DraftVersion } from '../api/drafting'
+import { draftingApi, type DraftSession, type DraftVersion } from '../api/drafting'
 
 const KIND_LABEL: Record<DraftVersion['kind'], string> = {
   generated: 'AI draft', sent: 'Sent', manual: 'Saved', review: 'Review', returned: 'Sent back',
@@ -16,11 +16,13 @@ interface Props {
   beforeSave: () => Promise<boolean>
   // Open the on-screen compare view: this version against the current draft.
   onCompare?: (versionId: number) => void
+  // The draft after a version was restored (the editor re-seeds from it).
+  onRestored?: (session: DraftSession) => void
 }
 
 // "Versions" button: lists the draft's saved versions and saves a new one.
 // These are what a redline export compares the current draft against.
-export default function DraftVersions({ sessionId, canSave, beforeSave, onCompare }: Props) {
+export default function DraftVersions({ sessionId, canSave, beforeSave, onCompare, onRestored }: Props) {
   const btn = useRef<HTMLButtonElement>(null)
   const pop = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -60,6 +62,24 @@ export default function DraftVersions({ sessionId, canSave, beforeSave, onCompar
     }
   }
 
+  // Put the draft back to this version. Unsaved edits are saved first, and the draft as it is is
+  // kept as a version ("Before restoring vN"), so a restore can itself be undone.
+  const restore = async (v: DraftVersion) => {
+    if (!window.confirm(`Put the draft back to v${v.number}${v.label ? ` (${v.label})` : ''}?\n\n`
+      + 'The draft as it is now is saved as a version first, so you can come back to it.')) return
+    setBusy(true); setError('')
+    try {
+      if (!(await beforeSave())) return
+      const fresh = await draftingApi.restoreVersion(sessionId, v.id)
+      onRestored?.(fresh)
+      setVersions(await draftingApi.getVersions(sessionId))
+    } catch {
+      setError('Could not restore that version.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const r = btn.current?.getBoundingClientRect()
   return <>
     <button ref={btn} type="button" className="btn sm" aria-haspopup="dialog" aria-expanded={open} onClick={toggle}>
@@ -91,6 +111,10 @@ export default function DraftVersions({ sessionId, canSave, beforeSave, onCompar
                   {onCompare && (
                     <button type="button" className="btn ghost sm" title={`Show what changed since v${v.number}`}
                       onClick={() => { setOpen(false); onCompare(v.id) }}>Compare</button>
+                  )}
+                  {canSave && onRestored && (
+                    <button type="button" className="btn ghost sm" disabled={busy}
+                      title={`Put the draft back to v${v.number}`} onClick={() => restore(v)}>Restore</button>
                   )}
                 </li>
               ))}

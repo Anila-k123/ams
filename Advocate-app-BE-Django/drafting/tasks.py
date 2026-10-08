@@ -679,14 +679,24 @@ def _strip_markdown(text: str) -> str:
     return _MD_HEADING.sub('', text)
 
 
-def _styled_html(text: str, body_style: dict) -> str:
+def _styled_html(text: str, body_style: dict, lines=None) -> str:
     """Build content_html for a generated clause: one <p> per line, carrying the
-    template's body paragraph style as inline CSS. [[Label]] tokens are left intact
+    template's body paragraph style as inline CSS. Each line takes the alignment of the
+    template line it matches (a centred title, a right-aligned signature), else the
+    clause's dominant alignment (services/layout.py). [[Label]] tokens are left intact
     (the editor converts them to placeholder nodes on load)."""
-    css = _style_to_css(body_style)
-    attr = f' style="{css}"' if css else ''
+    from .services.layout import align_line
+    base = dict(body_style or {})
+    layout = {'align': base.pop('align', None) or 'left', 'lines': lines or []}
+    css = _style_to_css(base)
     esc = lambda s: s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    paras = [f'<p{attr}>{esc(line)}</p>' for line in (text or '').split('\n') if line.strip()]
+    paras = []
+    for line in (text or '').split('\n'):
+        if not line.strip():
+            continue
+        align = align_line(line, layout)
+        style = ';'.join(x for x in (f'text-align:{align}' if align else '', css) if x)
+        paras.append(f'<p style="{style}">{esc(line)}</p>' if style else f'<p>{esc(line)}</p>')
     return ''.join(paras) or '<p></p>'
 
 
@@ -696,8 +706,8 @@ def _apply_template_style(block, style: dict | None):
     if not style:
         return
     body = style.get('body')
-    if body and _style_to_css(body):
-        block.content_html = _styled_html(block.text, body)
+    if (body and _style_to_css(body)) or style.get('lines'):
+        block.content_html = _styled_html(block.text, body or {}, style.get('lines'))
     heading = style.get('heading')
     if heading:
         block.style_json = {'heading': heading}
@@ -874,9 +884,16 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
     if style_directive:
         system_prompt += f'\n\nPREFERRED DRAFTING STYLE: {style_directive}'
 
-    from .models import DraftBlock
+    from .models import DraftBlock, Sample
+    from .services.layout import document_layout, layout_for, source_paragraphs
+    # The base document's layout: each clause lays out like its own source lines.
+    primary = Sample.objects.filter(id=primary_id).first()
+    paragraphs = source_paragraphs(primary.file.path) if primary and primary.file else []
+    whole = document_layout(paragraphs)
     specs, dividers = [], []
     for position, clause in enumerate(clauses):
+        lay = layout_for(clause.text, paragraphs) or whole
+        clause_style = {'body': {'align': lay['align']}, 'lines': lay['lines']} if lay else None
         # Sample mode keeps the document's OWN heading (from the clause text), not an
         # LLM-invented name — the drafted text already carries the real title/numbering.
         heading = _clause_heading(clause.text)
@@ -893,9 +910,11 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
             or (_single.isupper() and len(_single.split()) <= 8)     # short all-caps ("END OF TERMS")
         )
         if is_divider:
-            dividers.append(DraftBlock(
+            divider = DraftBlock(
                 session=session, position=position, block_type=block_type, heading=_clean_heading(heading or _single),
-                text=clause.text, source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None))
+                text=clause.text, source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None)
+            _apply_template_style(divider, clause_style)
+            dividers.append(divider)
             continue
 
         # References: the most similar clauses from the OTHER documents (if any).
@@ -923,7 +942,7 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
         )
         # Base clause + references are the citation candidates.
         specs.append({'position': position, 'block_type': block_type, 'heading': heading,
-                      'user_prompt': user_prompt, 'source_text': clause.text,
+                      'user_prompt': user_prompt, 'source_text': clause.text, 'style': clause_style,
                       'by_id': {clause.id: clause, **{r.id: r for r in refs}}})
 
     blocks, failures = _generate_blocks(session, llm, system_prompt, specs, verify_citation, structured=True)

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
+import { useToast } from '../../contexts/ToastContext'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Button, Chip, EmptyState, PopMenu } from '../../ui/kit'
+import { Button, Chip, EmptyState } from '../../ui/kit'
 import { Modal } from '../../ui/overlays'
 import { Field } from '../../ui/forms'
 import Icon, { type IconName } from '../../ui/Icon'
@@ -10,6 +11,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import TextAlign from '@tiptap/extension-text-align'
+import { TableKit } from '@tiptap/extension-table'
 import amsApi, { errorMessage } from '../../api/client'
 import AmsCasePicker from './components/AmsCasePicker'
 import { DOMSerializer } from '@tiptap/pm/model'
@@ -32,6 +34,7 @@ import CompareView from './components/CompareView'
 import ReviewRoundView, { roundTitle } from './components/ReviewRoundView'
 import ReviewActivity from './components/ReviewActivity'
 import CaseFilePanel from './components/CaseFilePanel'
+import ImportChangesDialog from './components/ImportChangesDialog'
 import RequestReviewDialog, { POWER } from './components/RequestReviewDialog'
 import ConsistencyPanel from './components/ConsistencyPanel'
 import PlaybookRiskPanel from './components/PlaybookRiskPanel'
@@ -278,6 +281,7 @@ export default function DraftPage() {
   const { hasPermission } = usePermission() as any
   const { sessionId } = useParams<{ sessionId: string }>()
   const navigate = useNavigate()
+  const toast = useToast()
   const [session, setSession] = useState<DraftSession | null>(null)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(false)      // read-only filled-document view
@@ -338,6 +342,8 @@ export default function DraftPage() {
       EditHighlight,
       Underline,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      // Tables from templates, samples and imported files stay tables (not lines of text).
+      TableKit.configure({ table: { resizable: false } }),
       ParagraphStyle,
       Search,
       PlaceholderHighlight,
@@ -411,8 +417,11 @@ export default function DraftPage() {
   // While a review is going on, someone else may change the draft. Check every 30 s and offer a
   // reload; never reload by itself, so nobody loses what they are typing.
   const [staleDraft, setStaleDraft] = useState(false)
+  // A save refused because someone else changed the same clause(s) meanwhile: their headings.
+  const [conflict, setConflict] = useState<string[] | null>(null)
+  const [showImport, setShowImport] = useState(false)   // "Import changes" dialog
   const loadedPrint = useRef('')
-  const blocksPrint = (blocks: { id: number; heading: string; content_html: string }[] = []) =>
+  const blocksPrint = (blocks: { id: number; heading?: string; content_html?: string }[] = []) =>
     JSON.stringify(blocks.map(b => [b.id, b.heading, b.content_html]))
   useEffect(() => { loadedPrint.current = blocksPrint(session?.blocks); setStaleDraft(false) }, [session])
   const reviewGoingOn = rounds.some(r => r.status === 'open') || requests.some(r => r.status === 'open')
@@ -608,14 +617,23 @@ export default function DraftPage() {
       return false
     }
     const updates = collectBlocks()
-    setSaving(true); setError('')
+    const base = Object.fromEntries((session?.blocks ?? []).filter(b => b.rev).map(b => [b.id, b.rev as string]))
+    setSaving(true); setError(''); setConflict(null)
     try {
-      const fresh = await draftingApi.saveBlocks(Number(sessionId), updates)
+      const fresh = await draftingApi.saveBlocks(Number(sessionId), updates, base)
+      // Someone else's changes to other clauses were kept: re-seed the editor so it shows them
+      // (otherwise the next save would send this copy's older wording of those clauses).
+      if (fresh.merged) {
+        loadedRef.current = false
+        toast.info('Saved. Changes a colleague made to other clauses are now shown too.')
+      }
       setSession(fresh)
       setDirty(false)
       return true
-    } catch {
-      setError('Could not save changes — please try again.')
+    } catch (e) {
+      const data = (e as { response?: { status?: number; data?: { conflicts?: string[] } } })?.response
+      if (data?.status === 409) setConflict(data.data?.conflicts ?? [])
+      else setError('Could not save changes — please try again.')
       return false
     } finally {
       setSaving(false)
@@ -878,8 +896,8 @@ export default function DraftPage() {
     setSeenRounds(ids)
     try { localStorage.setItem(seenKey, JSON.stringify(ids)) } catch { /* private window: the badge just stays */ }
   }, [rightTab, rounds, seenRounds, seenKey])
-  const openActivity = () => { setPreview(false); setCompare(null); setReviewRoundId(null); setRefDoc(null); setRightTab('activity') }
   const openComments = () => { setPreview(false); setCompare(null); setReviewRoundId(null); setRefDoc(null); setRightTab('comments') }
+  const openActivity = () => { setPreview(false); setCompare(null); setReviewRoundId(null); setRefDoc(null); setRightTab('activity') }
 
   // Jump to a clause from a review finding: leave Preview, scroll it into view, flash it.
   const scrollToClause = (blockId: number) => {
@@ -1006,7 +1024,7 @@ export default function DraftPage() {
   }
   const reviewBar = barItems.length ? { ...barItems[0], more: barItems.length - 1 } : null
   // Activity tab badge: changes waiting for me, plus my decided rounds not looked at yet.
-  const unseenDone = rounds.filter(r => r.mine && r.status === 'finished' && !seenRounds.includes(r.id))
+  const unseenDone = rounds.filter(r => r.mine && !r.external_from && r.status === 'finished' && !seenRounds.includes(r.id))
   const activityBadge = toDecide.length + unseenDone.length
 
   return (
@@ -1051,7 +1069,8 @@ export default function DraftPage() {
           title="See what changed between two versions, in the document"
           onClick={() => (compare ? setCompare(null) : openCompare())}><Icon name="swap" size="sm" />Compare</button>
         <DraftVersions sessionId={session.id} canSave={!!canEdit}
-          beforeSave={async () => !dirty || !!(await save())} onCompare={id => openCompare(id)} />
+          beforeSave={async () => !dirty || !!(await save())} onCompare={id => openCompare(id)}
+          onRestored={fresh => { loadedRef.current = false; setSession(fresh); setDirty(false); loadRounds() }} />
         {hasPermission('DRAFT_EXPORT') && (
           <Button size="sm" icon="download" aria-haspopup="menu" loading={exporting} disabled={exporting}
             onClick={e => setDlAnchor(dlAnchor ? null : e.currentTarget)}>Download</Button>
@@ -1078,6 +1097,10 @@ export default function DraftPage() {
             title="Send your edits to the owner as suggestions" onClick={sendSuggestions}>Send suggestions</Button>
         ) : canEdit && (
           <Button size="sm" icon="check" loading={saving} disabled={!dirty || saving} onClick={save}>{dirty ? 'Save' : 'Saved'}</Button>
+        )}
+        {access?.isOwner && canEditDirect && (
+          <Button size="sm" icon="upload" title="Upload a Word file you received back (client or other side) to review its changes"
+            onClick={() => setShowImport(true)}>Import changes</Button>
         )}
         {access?.isOwner && !session.ams_task_id && (
           <Button size="sm" icon="users" title="Ask a colleague in your team to review this draft"
@@ -1174,6 +1197,21 @@ export default function DraftPage() {
         </div></div>
       )}
 
+      {conflict && !reviewRoundId && (
+        <div className="callout bad dr-bar" role="alert">
+          <Icon name="warn" size="sm" />
+          <div className="grow">
+            Not saved: someone else changed <strong>{conflict.join(', ') || 'the same clause'}</strong> after you
+            opened the draft. Copy your wording, reload to see theirs, then make your change again.
+          </div>
+          <button type="button" className="btn sm" onClick={() => { setConflict(null); reloadStale() }}>Reload</button>
+        </div>
+      )}
+      <ImportChangesDialog sessionId={session.id} open={showImport} onClose={() => setShowImport(false)}
+        onImported={r => {
+          loadRounds()
+          if (r.round) { setCompare(null); setReviewRoundId(r.round) } else openComments()
+        }} />
       <RequestReviewDialog sessionId={session.id} open={askReview} onClose={() => setAskReview(false)} onSent={loadRounds} />
       {/* At most one review bar: the thing to act on now. The rest is in the Activity tab. */}
       {!reviewRoundId && !taskBar && reviewBar && (

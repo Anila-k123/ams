@@ -25,7 +25,9 @@ function doneLabel(rnd: ReviewRound, d: ChangeDecisionKind) {
   return ACTION[d].done
 }
 
-export function roundTitle(rnd: Pick<ReviewRound, 'kind' | 'binding' | 'author_name'>) {
+export function roundTitle(rnd: Pick<ReviewRound, 'kind' | 'binding' | 'author_name'> & { external_from?: string }) {
+  // A file from outside (drafting/incoming.py) is named after who sent it, not who uploaded it.
+  if (rnd.external_from) return `Changes from ${rnd.external_from}`
   const who = rnd.author_name || 'Someone'
   if (rnd.binding) return `Corrections by ${who}`
   return rnd.kind === 'suggestions' ? `Suggestions from ${who}` : `Changes by ${who}`

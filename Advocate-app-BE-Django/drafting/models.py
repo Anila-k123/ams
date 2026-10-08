@@ -421,6 +421,8 @@ class DraftReviewRound(models.Model):
     decider_id = models.BigIntegerField(db_index=True)   # who accepts / rejects them
     review_request = models.ForeignKey(DraftReviewRequest, on_delete=models.SET_NULL, null=True, blank=True,
                                        related_name='rounds')
+    # Changes from outside (drafting/incoming.py): who sent the file. author_id is then whoever uploaded it.
+    external_from = models.CharField(max_length=120, blank=True)
     note = models.TextField(blank=True)
     base_blocks = models.JSONField(default=list)
     target_blocks = models.JSONField(default=list)

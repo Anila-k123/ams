@@ -6,6 +6,7 @@ from .export.views import DraftDocxExportView, DraftRedlineExportView
 from .filing import DraftAmsTaskView, SendToAmsView
 from .comments import CommentDeleteView, CommentReplyView, CommentResolveView, CommentsView
 from .casefile import CaseFileView
+from .incoming import ImportChangesView
 from .review_requests import (
     ForMyReviewView, MyReviewStatusView, ReviewersView, ReviewRequestCancelView, ReviewRequestDoneView, ReviewRequestsView,
 )
@@ -47,6 +48,7 @@ urlpatterns = [
     path('rounds/<int:pk>/cancel/', RoundCancelView.as_view(), name='draft-round-cancel'),
     # Comments on passages (drafting/comments.py).
     path('draft-sessions/<int:pk>/case-file/', CaseFileView.as_view(), name='draft-case-file'),
+    path('draft-sessions/<int:pk>/import-changes/', ImportChangesView.as_view(), name='draft-import-changes'),
     path('draft-sessions/<int:pk>/comments/', CommentsView.as_view(), name='draft-comments'),
     path('comments/<int:pk>/reply/', CommentReplyView.as_view(), name='draft-comment-reply'),
     path('comments/<int:pk>/resolve/', CommentResolveView.as_view(), name='draft-comment-resolve'),

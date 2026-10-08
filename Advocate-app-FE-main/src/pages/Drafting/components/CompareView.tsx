@@ -84,7 +84,7 @@ export default function CompareView({ sessionId, docTitle, initialFrom, onClose,
           <button type="button" className="btn ghost sm icon" aria-label="Next change" title="Next change"
             disabled={!changes.length} onClick={() => step(1)}><Icon name="chevron" size="sm" /></button>
         </div>
-        <Segmented label="Markup" value={markup} onChange={setMarkup}
+        <Segmented label="Markup" value={markup} onChange={v => setMarkup(v as Markup)}
           options={[{ value: 'all', label: 'All markup' }, { value: 'final', label: 'Final' }]} />
         <span className="grow" />
         <Button size="sm" icon="download" disabled={!data} aria-haspopup="menu"

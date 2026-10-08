@@ -75,6 +75,7 @@ class RoundListView(APIView):
                          'author_name': names.get(rnd.author_id), 'decider_name': names.get(rnd.decider_id),
                          'can_decide': rnd.status == 'open' and rnd.decider_id == request.user.id,
                          'mine': rnd.author_id == request.user.id, 'queries': queries, 'counts': counts,
+                         'external_from': rnd.external_from,
                          'changes': total, 'pending': max(total - decided, 0),
                          'created_at': rnd.created_at, 'finished_at': rnd.finished_at})
         return Response(rows)

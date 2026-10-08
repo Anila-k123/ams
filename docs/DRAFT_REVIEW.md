@@ -246,13 +246,13 @@ to a case show nothing; linking at creation is not done yet.
 
 ## Upgrading an existing install (migrations)
 
-Pulling this work (branch `Developer-1`, and `main` once merged) needs the drafting migrations **0005–0009**
+Pulling this work (branch `Developer-1`, and `main` once merged) needs the drafting migrations **0005–0010**
 on top of 0004 (draft versions). Run them once per database, with the backend stopped or idle:
 
 ```bat
 cd Advocate-app-BE-Django
 venv\Scripts\python.exe manage.py migrate drafting
-venv\Scripts\python.exe manage.py showmigrations drafting   :: 0004 … 0009 all [X]
+venv\Scripts\python.exe manage.py showmigrations drafting   :: 0004 … 0010 all [X]
 ```
 
 | Migration | What it does |
@@ -262,9 +262,47 @@ venv\Scripts\python.exe manage.py showmigrations drafting   :: 0004 … 0009 all
 | `0007_review_notification_types` | Widens the live `notification_queue` / `notification_history` type CHECK constraint with `DRAFT_REVIEW_REQUESTED` and `DRAFT_REVIEW_DONE`. Without it these notifications are silently dropped. |
 | `0008_draft_comment` | Table for comment threads (`drf.draft_comment`). |
 | `0009_comment_notification_type` | Same constraint widening for `DRAFT_COMMENT`. |
+| `0010_round_external_from` | Adds `external_from` to review rounds: who sent a file imported from outside. |
 
 0007 and 0009 read the constraint's current list and add to it, so they are safe on a database that
-already has extra types. No data is changed; nothing else (frontend, `.env`) needs a step beyond
-`npm install` if dependencies changed. Each database (`PactPro_db` for test, `pactpro_db1` for dev,
-production) needs its own `migrate`. Bell notifications are delivered by the scheduler
+already has extra types. No data is changed. Each database (`PactPro_db` for test, `pactpro_db1` for
+dev, production) needs its own `migrate`.
+
+Two more one-time steps after pulling:
+
+```bat
+cd Advocate-app-FE-main
+npm install                    :: new dependency @tiptap/extension-table (tables in the draft editor)
+cd ..\Advocate-app-BE-Django
+venv\Scripts\python.exe manage.py refresh_template_layout   :: existing templates learn their alignment (no AI call)
+``` Bell notifications are delivered by the scheduler
 (`run_scheduler`); on an instance without it, run `manage.py process_notifications`.
+
+## Changes from outside (Import changes)
+
+The draft goes out (Download / redline) to the client or the other side, and comes back by email or
+otherwise as a Word file. The advocate uploads it to the draft: **Import changes** in the top bar (owner,
+while they may edit) → the `.docx`, **From** (who sent it; empty = the names in its tracked changes) and an
+optional note → **Import**.
+
+- **Their version** is read from the file: tracked insertions kept, tracked deletions dropped. A file
+  edited without Track Changes works too: it is compared with the draft as it is.
+- It is lined up with the draft paragraph by paragraph (`drafting/incoming.py`): unchanged paragraphs
+  stay exactly as they are (blanks like `[Court Place]` included), changed and new ones land in the clause
+  they sit in, a changed heading changes the clause heading.
+- The result is a **suggestions round** named *Changes from R. Arun Prakash (tenant counsel)*, decided
+  like a colleague's suggestions: accept, or decline with a reason, then **Finish review**. Nothing in the
+  draft changes until then.
+- Their **Word comments** become comment threads on the matching clause, quoting the words they marked,
+  written as *"<author> (in <file name>): <comment>"*; reply and resolve as usual.
+- After deciding, send the updated draft back with **Download → redline** against the version you sent.
+- Rules: only the owner, only `.docx` (a PDF can't be read: ask for Word), 15 MB at most. A file that
+  reads the same as the draft and has no comments is refused.
+- Kept from their file: paragraph alignment (own or from its Word style), Heading 1–3, bullet and numbered
+  lists with their levels, bold / italic / underline / strike, and tables (a changed cell changes only
+  that cell; the table stays a table, here and when decisions are applied). Not kept, on purpose: fonts,
+  sizes and colours (the firm's formatting wins), merged cells and column widths.
+
+Endpoint: `POST draft-sessions/<id>/import-changes/` (multipart `file`, `from_name`, `note`) → `{round,
+changes, comments, tracked, authors, from_name}`. Demo file: `docs/demo-files/Notice_Returned_By_Tenant_Counsel.docx`
+(draft #126 returned with 3 tracked changes and one comment).

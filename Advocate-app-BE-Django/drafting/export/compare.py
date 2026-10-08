@@ -152,8 +152,12 @@ def _placeholders_as_text(html):
     return _PH_RE.sub(one, html)
 
 
+TABLE_ROW = 'Table Row'
+
+
 def _paras(block):
-    """The clause body as a flat list of Para (table rows become tab-separated lines)."""
+    """The clause body as a flat list of Para. A table row becomes one Para (cells separated by tabs)
+    styled TABLE_ROW, so it compares as one line and htmlwrite can put the table back together."""
     if block is None:
         return []
     body = html_to_blocks(_placeholders_as_text(block['content_html'])) \
@@ -172,7 +176,7 @@ def _paras(block):
                     if j:
                         runs.append((' ', frozenset()))
                     runs += [r for r in p.runs if r[0] != '\n']
-            out.append(Para(runs=runs))
+            out.append(Para(style=TABLE_ROW, runs=runs))
     return out
 
 

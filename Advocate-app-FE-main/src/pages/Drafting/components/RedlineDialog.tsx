@@ -82,7 +82,7 @@ export default function RedlineDialog({ sessionId, visible, onHide, beforeExport
           <SelectField label="Compare to" value={to}
             options={[{ label: 'Current draft (now)', value: CURRENT }, ...options]}
             onChange={e => setTo(Number(e.target.value))} />
-          <Segmented label="Format" value={format} onChange={setFormat}
+          <Segmented label="Format" value={format} onChange={v => setFormat(v as 'pdf' | 'docx')}
             options={[{ value: 'docx', label: 'Word (editable)' }, { value: 'pdf', label: 'PDF (read-only)' }]} />
           <p className="faint small" style={{ margin: 0 }}>
             {format === 'docx'

@@ -73,11 +73,18 @@ class DraftBlockSerializer(serializers.ModelSerializer):
     full text/metadata (read-only) so the client need not fetch it separately.
     """
     source_clause_detail = SourceClauseSerializer(source='source_clause', read_only=True)
+    # The clause's revision (versions.block_rev); a save sends it back so it can't overwrite
+    # someone else's newer change to the same clause.
+    rev = serializers.SerializerMethodField()
+
+    def get_rev(self, obj):
+        from .versions import block_rev
+        return block_rev(obj.heading, obj.content_html)
 
     class Meta:
         model = DraftBlock
         fields = (
-            'id', 'position', 'block_type', 'heading', 'text', 'content_html', 'is_edited',
+            'id', 'rev', 'position', 'block_type', 'heading', 'text', 'content_html', 'is_edited',
             'style_json', 'source', 'source_clause', 'source_clause_detail',
             'verified', 'similarity_score',
         )

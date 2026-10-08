@@ -90,6 +90,7 @@ export interface SourceClauseDetail {
  *  unverified AI output; `verified` and `similarity_score` describe the citation. */
 export interface DraftBlock {
   id: number
+  rev?: string     // the clause's revision; sent back on save so nobody's newer change is overwritten
   position: number // order within the document
   block_type: string
   heading?: string
@@ -262,6 +263,16 @@ export interface CaseFile {
   canSeeDocuments: boolean
 }
 
+/** What an imported file turned into (drafting/incoming.py). */
+export interface ImportResult {
+  round: number | null      // the suggestions round, or null when the file only had comments
+  changes: number
+  comments: number
+  tracked: boolean          // the file had Word tracked changes (else it was compared as edited)
+  authors: string[]
+  from_name: string
+}
+
 /** How far a request has got, as the reviewer sees it (drafts/for-review). */
 export interface ReviewProgress {
   sent: number              // suggestion / correction rounds sent
@@ -293,6 +304,7 @@ export interface ReviewRoundSummary {
   mine: boolean             // the viewer made these changes
   queries: string[]         // queries on a senior's corrections (binding rounds)
   counts: Partial<Record<ChangeDecisionKind, number>>  // decisions so far, by kind
+  external_from?: string    // a file from outside (drafting/incoming.py): who sent it
   note: string
   changes: number
   pending: number
@@ -301,6 +313,7 @@ export interface ReviewRoundSummary {
 }
 export interface ReviewRound extends Omit<DraftComparison, 'from' | 'to'> {
   id: number
+  external_from?: string    // a file from outside: who sent it
   kind: ReviewRoundSummary['kind']
   binding: boolean
   status: ReviewRoundSummary['status']
@@ -494,8 +507,23 @@ export const draftingApi = {
   getSessionStatus: (id: number) =>
     api.get<{ id: number; status: string; risk_status: string }>(`/draft-sessions/${id}/status/`).then(r => r.data),
   // Persist editor changes to a session's blocks (manual save).
-  saveBlocks: (id: number, blocks: { id: number; heading: string; content_html: string; text: string }[]) =>
-    api.post<DraftSession>(`/draft-sessions/${id}/save-blocks/`, blocks).then(r => r.data),
+  // `base` = each clause's revision as the editor loaded it: a clause someone else changed since
+  // is never overwritten (409 with `conflicts`), and `merged` means their other changes were kept.
+  saveBlocks: (id: number, blocks: { id: number; heading: string; content_html: string; text: string }[],
+    base?: Record<number, string>) =>
+    api.post<DraftSession & { merged?: boolean }>(`/draft-sessions/${id}/save-blocks/`, base ? { blocks, base } : blocks)
+      .then(r => r.data),
+  // A Word file received from outside (client / other side): becomes a suggestions round + comments.
+  importChanges: (id: number, file: File, fromName = '', note = '') => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('from_name', fromName)
+    fd.append('note', note)
+    return api.post<ImportResult>(`/draft-sessions/${id}/import-changes/`, fd).then(r => r.data)
+  },
+  // Put the draft back to a saved version (the draft as it was is saved as a version first).
+  restoreVersion: (id: number, versionId: number) =>
+    api.post<DraftSession>(`/draft-sessions/${id}/versions/${versionId}/restore/`).then(r => r.data),
   // Chat-edit: propose a clause rewrite for an instruction (records a pending edit).
   proposeEdit: (id: number, body: { instruction: string; focused_block_id?: number | null; current_text?: string; model?: string }) =>
     api.post<EditProposal>(`/draft-sessions/${id}/edit/`, body).then(r => r.data),

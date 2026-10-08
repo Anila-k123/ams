@@ -335,6 +335,34 @@ suggestions: 1 accepted, 1 declined* → **View** shows each change with ✓ / �
 - **Outdated:** if the owner edits the very paragraph a suggestion touches, that suggestion shows
   **Outdated** and can't be applied blindly; suggestions on other paragraphs are unaffected.
 
+### 7D. The notice comes back from the tenant's counsel (Import changes)
+
+The notice was sent; the tenant's counsel replies by email with the notice marked up in Word. Use
+[`demo-files/Notice_Returned_By_Tenant_Counsel.docx`](demo-files/Notice_Returned_By_Tenant_Counsel.docx)
+(made from the rent-arrears notice; with your own notice, download it, edit it in Word with Track Changes on,
+add a comment, save).
+
+**Window A — Rajesh (owner)**
+
+1. Open the notice → **Import changes** in the top bar.
+2. Choose the file. Leave **From** empty (the file names *R. Arun Prakash (tenant counsel)*), note
+   `Received by email`. → **Import**.
+3. A message: *From R. Arun Prakash (tenant counsel): 3 changes and 1 comment*. The review opens:
+   *Changes from R. Arun Prakash (tenant counsel)*:
+   - **2. The Default**: the arrears Rs. 80,000 → Rs. 40,000, and a new paragraph claiming August was paid
+     in cash;
+   - **5. Demand**: 15 days → 30 days.
+4. **Decline** the amount (`Client's ledger shows both months unpaid`), **Decline** the new paragraph
+   (`No receipt; client denies`), **Accept** 30 days. **Finish review** → confirm.
+5. The **Comments** tab: *R. Arun Prakash (tenant counsel) (in Notice_Returned_By_Tenant_Counsel.docx): My
+   client needs until 30 November 2026…* on *Notice to Vacate* → reply `Client agrees to 15 November.` and
+   edit the date, → **Resolve**.
+6. **Versions** shows *Review: 1 accepted, 2 declined*. **Download → redline** against the version sent, to
+   reply to the counsel.
+
+> Say: *"Whatever comes back by email, every change they made is decided here, with reasons, and their
+> questions sit beside the words they're about."*
+
 ## 8. Optional extras (if time allows)
 
 | Show | How |
@@ -370,3 +398,4 @@ suggestions: 1 accepted, 1 declined* → **View** shows each change with ✓ / �
 
 Cancel or delete the demo task (Tasks → cancel icon) and delete the draft from **Drafting → Drafts**.
 The case and client stay as they were.
+

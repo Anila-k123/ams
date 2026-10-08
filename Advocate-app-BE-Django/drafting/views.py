@@ -211,7 +211,7 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
                    'versions', 'compare'}
     # ...and edit it while the task awaits their review. Re-draft, delete, legal-code
     # rewrite, risk runs and filing stay with the author.
-    REVIEW_WRITE = {'save_blocks', 'edit', 'accept_edit', 'reject_edit'}
+    REVIEW_WRITE = {'save_blocks', 'edit', 'accept_edit', 'reject_edit', 'restore_version'}
 
     def get_queryset(self):
         """The requesting user's sessions (plus, for review actions, drafts submitted
@@ -260,24 +260,66 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='save-blocks')
     def save_blocks(self, request, pk=None):
         """Persist editor changes to this session's blocks. Body: a list of
-        {id, heading, content_html, text}; each block that belongs to this session
-        is updated and flagged is_edited. Returns the refreshed session."""
+        {id, heading, content_html, text}, or {blocks: [...], base: {id: rev}} where `base`
+        holds each clause's revision as the editor loaded it. With `base`, a clause someone
+        else changed in the meantime is never overwritten: if this save changes it too, nothing
+        is saved and the answer is 409 {conflicts: [headings]}; clauses only they changed are
+        left as they are, and `merged` tells the editor to reload. Returns the refreshed session."""
         session = self.get_object()
-        from .models import DraftBlock
-        items = request.data if isinstance(request.data, list) else request.data.get('blocks', [])
-        by_id = {b.id: b for b in session.blocks.all()}
-        to_update = []
-        for item in items:
-            block = by_id.get(item.get('id'))
-            if not block:
-                continue  # ignore ids not in this session
-            block.heading = item.get('heading', block.heading)
-            block.content_html = item.get('content_html', block.content_html)
-            block.text = item.get('text', block.text)
-            block.is_edited = True
-            to_update.append(block)
-        if to_update:
-            DraftBlock.objects.bulk_update(to_update, ['heading', 'content_html', 'text', 'is_edited'])
+        from django.db import transaction
+        from .models import DraftBlock, DraftSession as Session
+        from .versions import block_rev
+        body = request.data
+        items = body if isinstance(body, list) else body.get('blocks', [])
+        base = {} if isinstance(body, list) else {str(k): v for k, v in (body.get('base') or {}).items()}
+        merged = False
+        with transaction.atomic():
+            Session.objects.select_for_update().filter(id=session.id).first()
+            by_id = {b.id: b for b in session.blocks.all()}
+            to_update, conflicts = [], []
+            for item in items:
+                block = by_id.get(item.get('id'))
+                if not block:
+                    continue  # ignore ids not in this session
+                heading = item.get('heading', block.heading)
+                html = item.get('content_html', block.content_html)
+                was = base.get(str(block.id))
+                now, mine = block_rev(block.heading, block.content_html), block_rev(heading, html)
+                if was and now != was:                  # someone else changed this clause
+                    if mine == was or mine == now:
+                        merged = merged or mine == was  # I didn't touch it: keep theirs
+                        continue
+                    conflicts.append(block.heading or f'Clause {block.position + 1}')
+                    continue
+                block.heading, block.content_html = heading, html
+                block.text = item.get('text', block.text)
+                block.is_edited = True
+                to_update.append(block)
+            if conflicts:
+                return Response({'error': 'Someone else changed the same clause after you opened the draft.',
+                                 'conflicts': conflicts}, status=status.HTTP_409_CONFLICT)
+            if to_update:
+                DraftBlock.objects.bulk_update(to_update, ['heading', 'content_html', 'text', 'is_edited'])
+        data = DraftSessionSerializer(session, context={'request': request}).data
+        data['merged'] = merged
+        return Response(data)
+
+    @action(detail=True, methods=['post'], url_path=r'versions/(?P<version_id>[0-9]+)/restore')
+    def restore_version(self, request, pk=None, version_id=None):
+        """Put the draft back to one of its saved versions (versions.restore_version). Same rule
+        as editing; the draft as it was is saved as a version first."""
+        session = self.get_object()
+        from rest_framework.exceptions import PermissionDenied
+        from .access import can_write
+        from .versions import RestoreError, restore_version
+        if not can_write(session, request.user):
+            raise PermissionDenied('This draft can only be changed while it awaits your review.')
+        version = get_object_or_404(session.versions.all(), pk=version_id)
+        try:
+            restore_version(session, version, request.user.id)
+        except RestoreError as e:
+            return Response({'error': str(e)}, status=400)
+        session = self.get_queryset().get(pk=session.pk)     # the clauses changed: drop the prefetched ones
         return Response(DraftSessionSerializer(session, context={'request': request}).data)
 
     @action(detail=True, methods=['get', 'post'])

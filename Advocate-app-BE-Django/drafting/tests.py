@@ -1191,3 +1191,200 @@ class CaseFileTest(TestCase):
         self.linked.save()
         data = self.get(self.linked, self.no_docs).json()
         self.assertEqual((data['canSeeDocuments'], data['documents']), (False, []))
+
+
+class SaveConflictAndRestoreTest(TestCase):
+    """Two people saving the same draft; putting a draft back to a saved version."""
+
+    def setUp(self):
+        from .models import DraftBlock
+        self.owner = make_advocate(permissions=DRAFTER)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.a = DraftBlock.objects.create(session=self.session, position=0, block_type='clause', heading='Rent',
+                                           text='', content_html='<p>Rent 40.</p>', source='generated')
+        self.b = DraftBlock.objects.create(session=self.session, position=1, block_type='clause', heading='Term',
+                                           text='', content_html='<p>11 months.</p>', source='generated')
+        self.url = f'/api/drafting/draft-sessions/{self.session.id}/'
+
+    def loaded(self):
+        data = self.client.get(self.url, **auth(self.owner)).json()
+        return {str(b['id']): b['rev'] for b in data['blocks']}
+
+    def save(self, base, rent, term):
+        blocks = [{'id': self.a.id, 'heading': 'Rent', 'content_html': rent, 'text': ''},
+                  {'id': self.b.id, 'heading': 'Term', 'content_html': term, 'text': ''}]
+        return self.client.post(self.url + 'save-blocks/', {'blocks': blocks, 'base': base},
+                                content_type='application/json', **auth(self.owner))
+
+    def test_different_clauses_merge_same_clause_refused(self):
+        first, second = self.loaded(), self.loaded()
+        self.assertEqual(self.save(first, '<p>Rent 45.</p>', '<p>11 months.</p>').status_code, 200)
+        # The second person changed only the term: both changes stay, and they're told to reload.
+        resp = self.save(second, '<p>Rent 40.</p>', '<p>12 months.</p>')
+        self.assertEqual((resp.status_code, resp.json()['merged']), (200, True))
+        self.a.refresh_from_db(); self.b.refresh_from_db()
+        self.assertEqual((self.a.content_html, self.b.content_html), ('<p>Rent 45.</p>', '<p>12 months.</p>'))
+        # A third, stale copy changing the rent again is refused and nothing is saved.
+        resp = self.save(second, '<p>Rent 50.</p>', '<p>12 months.</p>')
+        self.assertEqual((resp.status_code, resp.json()['conflicts']), (409, ['Rent']))
+        self.a.refresh_from_db()
+        self.assertEqual(self.a.content_html, '<p>Rent 45.</p>')
+
+    def test_restore_version(self):
+        from .versions import save_version
+        v1 = save_version(self.session, label='first', user_id=self.owner.id)
+        self.save(self.loaded(), '<p>Rent 99.</p>', '<p>11 months.</p>')
+        self.b.delete()
+        resp = self.client.post(self.url + f'versions/{v1.id}/restore/', **auth(self.owner))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([b['content_html'] for b in resp.json()['blocks']], ['<p>Rent 40.</p>', '<p>11 months.</p>'])
+        self.assertEqual(resp.json()['blocks'][0]['id'], self.a.id)                 # same clause, anchors kept
+        labels = list(self.session.versions.order_by('number').values_list('label', flat=True))
+        self.assertEqual(labels, ['first', 'Before restoring v1', 'Restored v1'])
+        other = make_advocate(permissions=DRAFTER)
+        self.assertEqual(self.client.post(self.url + f'versions/{v1.id}/restore/', **auth(other)).status_code, 404)
+
+
+class ImportChangesTest(TestCase):
+    """drafting/incoming.py: a Word file from outside becomes a suggestions round + comment threads."""
+
+    def setUp(self):
+        from .models import DraftBlock
+        self.owner = make_advocate(permissions=DRAFTER)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={'document_title': 'Notice'},
+                                                   status='ready')
+        DraftBlock.objects.create(session=self.session, position=0, block_type='clause', heading='Rent', text='',
+                                  content_html='<p>Rent is Rs. <span data-placeholder="Rent" data-value="">[Rent]</span> a month.</p>'
+                                               '<p>Paid monthly.</p>', source='generated')
+        DraftBlock.objects.create(session=self.session, position=1, block_type='clause', heading='Term', text='',
+                                  content_html='<p>Eleven months.</p>', source='generated')
+
+    def upload(self, data, name='back.docx', **extra):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return self.client.post(f'/api/drafting/draft-sessions/{self.session.id}/import-changes/',
+                                {'file': SimpleUploadedFile(name, data), **extra}, **auth(self.owner))
+
+    def test_our_own_export_has_nothing(self):
+        from .export.docx import render_session_docx
+        resp = self.upload(render_session_docx(self.session))
+        self.assertEqual(resp.status_code, 400)                       # reads the same as the draft
+
+    def test_tracked_changes_and_comments(self):
+        import io
+        import zipfile
+        from .export.redline import render_redline_docx
+        from .models import DraftComment, DraftReviewRound
+        from .versions import snapshot_blocks
+        base = snapshot_blocks(self.session)
+        theirs = [dict(b) for b in base]
+        theirs[1]['content_html'] = '<p>Twelve months.</p>'
+        out = render_redline_docx(base, theirs, 'Notice', author='Arun (counsel)')
+        data = out[0] if isinstance(out, tuple) else out
+        # Add a Word comment on "Paid monthly."
+        zin = zipfile.ZipFile(io.BytesIO(data))
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zout:
+            for item in zin.infolist():
+                body = zin.read(item.filename)
+                if item.filename == 'word/document.xml':
+                    xml = body.decode('utf-8')
+                    i = xml.index('Paid monthly.')
+                    start = xml.rindex('<w:r>', 0, i) if '<w:r>' in xml[:i] else xml.rindex('<w:r ', 0, i)
+                    end = xml.index('</w:r>', i) + len('</w:r>')
+                    xml = (xml[:start] + '<w:commentRangeStart w:id="0"/>' + xml[start:end]
+                           + '<w:commentRangeEnd w:id="0"/>' + xml[end:])
+                    body = xml.encode('utf-8')
+                zout.writestr(item, body)
+            zout.writestr('word/comments.xml',
+                          '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                          '<w:comment w:id="0" w:author="Arun (counsel)"><w:p><w:r><w:t>Paid in advance?</w:t></w:r></w:p>'
+                          '</w:comment></w:comments>')
+        resp = self.upload(buf.getvalue(), from_name='')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()
+        self.assertEqual((body['changes'], body['comments'], body['tracked'], body['from_name']),
+                         (1, 1, True, 'Arun (counsel)'))
+        rnd = DraftReviewRound.objects.get(id=body['round'])
+        self.assertEqual((rnd.decider_id, rnd.external_from), (self.owner.id, 'Arun (counsel)'))
+        comment = DraftComment.objects.get(session=self.session)
+        self.assertEqual(comment.quote, 'Paid monthly.')
+        self.assertIn('Paid in advance?', comment.body)
+        self.assertEqual(comment.block_id, base[0]['block_id'])
+
+    def test_not_word(self):
+        self.assertEqual(self.upload(b'%PDF-1.4', name='back.pdf').status_code, 400)
+        self.assertEqual(self.upload(b'not a zip').status_code, 400)
+
+
+class TemplateLayoutTest(TestCase):
+    """services/layout.py: a generated draft lays out like its Word template."""
+
+    def make_docx(self):
+        import tempfile
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        doc = Document()
+        doc.styles['Normal'].paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY   # inherited, not on the paragraph
+        doc.add_paragraph('LEGAL NOTICE').alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_paragraph('From:').alignment = WD_ALIGN_PARAGRAPH.LEFT
+        doc.add_paragraph('Under instructions from and on behalf of my client I serve this notice upon you.')
+        doc.add_paragraph('The tenant has failed to pay the rent for two months despite repeated requests.')
+        doc.add_paragraph('Yours faithfully, Advocate').alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        f = tempfile.NamedTemporaryFile(suffix='.docx', delete=False)
+        doc.save(f.name)
+        f.close()
+        return f.name
+
+    def test_layout_and_generated_html(self):
+        import os
+        from .services.layout import docx_paragraphs, layout_for
+        from .tasks import _styled_html
+        path = self.make_docx()
+        try:
+            paras = docx_paragraphs(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual([a for _, a in paras], ['center', 'left', 'justify', 'justify', 'right'])
+        text = '\n'.join(t for t, _ in paras)
+        lay = layout_for(text, paras)
+        self.assertEqual(lay['align'], 'justify')          # the clause's usual alignment
+        # New wording: lines that match the template keep their own alignment, the rest follow the body.
+        html = _styled_html('LEGAL NOTICE\nFrom:\nUnder instructions from and on behalf of my client Kannan.\n'
+                            'A brand new sentence the model wrote.\nYours faithfully, Advocate',
+                            {'align': lay['align']}, lay['lines'])
+        self.assertEqual(html.count('text-align:center'), 1)
+        self.assertEqual(html.count('text-align:justify'), 2)
+        self.assertEqual(html.count('text-align:right'), 1)
+        self.assertIn('<p>From:</p>', html)                  # left = the editor default
+
+
+class ImportKeepsLayoutTest(TestCase):
+    """Import changes keeps tables, alignment and lists of the received Word file."""
+
+    def test_table_and_alignment(self):
+        from .export.docx import render_session_docx
+        from .incoming import _Reader, their_blocks
+        from .models import DraftBlock
+        owner = make_advocate(permissions=DRAFTER)
+        session = DraftSession.objects.create(created_by_id=owner.id, facts={'document_title': 'Lease'}, status='ready')
+        DraftBlock.objects.create(
+            session=session, position=0, block_type='clause', heading='Schedule', text='',
+            content_html='<p style="text-align:justify">The rent is payable as below.</p>'
+                         '<table><tr><td><p>Month</p></td><td><p>Rent</p></td></tr>'
+                         '<tr><td><p>August</p></td><td><p>40,000</p></td></tr></table>'
+                         '<ul><li><p>Paid by transfer</p></li></ul>', source='generated')
+        ours = render_session_docx(session)
+        self.assertEqual(their_blocks(session, _Reader(ours))[1][0]['content_html'],
+                         session.blocks.get().content_html)          # nothing changed: untouched
+        # Their copy: the rent cell and the opening sentence changed.
+        block = session.blocks.get()
+        block.content_html = block.content_html.replace('40,000', '45,000').replace('as below', 'monthly as below')
+        block.save()
+        theirs = render_session_docx(session)
+        block.content_html = block.content_html.replace('45,000', '40,000').replace('monthly as below', 'as below')
+        block.save()
+        html = their_blocks(session, _Reader(theirs))[1][0]['content_html']
+        self.assertIn('<table>', html)
+        self.assertIn('<td><p>45,000</p></td>', html)
+        self.assertIn('text-align: justify', html)
+        self.assertIn('<ul><li><p>Paid by transfer</p></li></ul>', html)

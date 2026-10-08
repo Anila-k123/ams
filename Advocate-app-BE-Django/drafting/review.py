@@ -142,6 +142,7 @@ def round_json(rnd, user):
     names = advocate_names({rnd.author_id, rnd.decider_id})
     data.update({
         'id': rnd.id, 'kind': rnd.kind, 'binding': rnd.binding, 'status': rnd.status, 'note': rnd.note,
+        'external_from': rnd.external_from,
         'author_id': rnd.author_id, 'decider_id': rnd.decider_id,
         'author_name': names.get(rnd.author_id), 'decider_name': names.get(rnd.decider_id),
         'created_at': rnd.created_at, 'finished_at': rnd.finished_at,

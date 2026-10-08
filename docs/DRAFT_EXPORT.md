@@ -21,6 +21,52 @@ API (`DraftSessionViewSet.versions`):
 
 Helpers: `drafting/versions.py` (`snapshot_blocks`, `save_version`). Numbers are per draft (1, 2, 3…).
 
+### Restore a version
+
+**Versions → Restore** on any row puts the draft back to that version (after a confirm). Unsaved edits are
+saved first, then the draft as it is is saved as *Before restoring vN*, and the result as *Restored vN*, so a
+restore can itself be undone by restoring *Before restoring vN*. Clauses keep their ids where they still
+exist, so comments and review rounds stay anchored; clauses added since are removed, removed ones come back.
+`POST draft-sessions/<id>/versions/<version id>/restore/`, same rule as editing (`can_write`);
+`versions.restore_version`.
+
+### Two people saving the same draft
+
+Every clause carries a revision (`rev`, `versions.block_rev`: a hash of heading + text). The editor sends the
+revisions it loaded with each save (`save-blocks` body `{blocks, base}`):
+
+- a clause nobody else changed is saved as usual;
+- a clause only the *other* person changed is left as they saved it, and the answer has `merged: true`; the
+  editor reloads its content and says *Changes a colleague made to other clauses are now shown too*;
+- a clause **both** changed: nothing is saved, the answer is 409 with the clause headings, and a red bar says
+  *Not saved: someone else changed Rent after you opened the draft…* with **Reload**.
+
+A plain list body (older clients) saves without the check.
+
+## Layout from the template or sample
+
+A generated draft lays out like the template or sample it came from (`drafting/services/layout.py`):
+
+- **Each clause's usual alignment** (justified body, left address block…) is the alignment most of its
+  source lines have, not just the first paragraph's.
+- **Lines that stand out** keep their own: a centred title, a right-aligned date or signature, a left
+  "From: / To:" block inside justified text. A generated line takes it when it starts like that source line.
+- **Word files**: alignment is read the way Word resolves it: the paragraph's own setting, else its style's
+  (e.g. *Normal = Justified*). **PDFs** store none, so it is inferred from where each line sits between the
+  page's text margins (centred, right, edge to edge = justified). Scanned PDFs give nothing.
+- Template drafts take it from the template's slots (captured at upload), sample drafts from the base
+  document at generation time.
+- Templates uploaded before this: `manage.py refresh_template_layout` (or `--id N`) re-reads their layout
+  into the existing slots without re-running the AI naming. It skips a template whose file is missing or
+  now splits into a different number of clauses (re-upload that one). Existing drafts are not changed.
+
+## Tables
+
+The draft editor keeps tables (`@tiptap/extension-table`, ruled grid). The comparison engine reads a table
+row as one line with its cells separated by tabs (style `Table Row`), so a changed cell shows as a change in
+that row; when a clause is rebuilt (accepting some changes, importing a returned file) consecutive rows
+become a table again (`export/htmlwrite.py`). Merged cells and column widths are not kept through a rebuild.
+
 ## Redline (.docx with tracked changes)
 
 Editor: **Download → Redline (tracked changes)…** (`components/RedlineDialog.tsx`): pick "compare from"

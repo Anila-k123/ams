@@ -296,3 +296,10 @@
 .dr-cf { margin-top: 6px; display: grid; gap: 3px; }
 .dr-cf-row { display: grid; grid-template-columns: 64px 1fr; gap: 6px; }
 .dr-cf-row > span:last-child { overflow-wrap: anywhere; }
+
+/* Tables in the draft editor (TipTap TableKit): a plain ruled grid, like the Word export. */
+.pp-editor-paper .ProseMirror table { border-collapse: collapse; width: 100%; margin: 8px 0; table-layout: fixed; }
+.pp-editor-paper .ProseMirror td, .pp-editor-paper .ProseMirror th { border: 1px solid var(--line-strong); padding: 4px 8px; vertical-align: top; }
+.pp-editor-paper .ProseMirror th { background: var(--surface-2); font-weight: 600; }
+.pp-editor-paper .ProseMirror td p, .pp-editor-paper .ProseMirror th p { margin: 0; }
+.pp-editor-paper .ProseMirror .selectedCell { background: var(--info-soft); }

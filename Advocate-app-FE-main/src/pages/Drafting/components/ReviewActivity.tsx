@@ -54,7 +54,8 @@ export default function ReviewActivity({ rounds, requests, isOwner, onOpenRound,
       {finished.map(r => (
         <div key={r.id} className="dr-act-item">
           <div className="grow">
-            <strong>{r.mine ? `${r.decider_name || 'The owner'} decided your ${r.kind === 'suggestions' ? 'suggestions' : 'corrections'}`
+            <strong>{r.mine && !r.external_from
+              ? `${r.decider_name || 'The owner'} decided your ${r.kind === 'suggestions' ? 'suggestions' : 'corrections'}`
               : `${roundTitle(r)}: decided`}</strong>
             <div className="small muted">{countsText(r.counts)} · {when(r.finished_at)}</div>
           </div>

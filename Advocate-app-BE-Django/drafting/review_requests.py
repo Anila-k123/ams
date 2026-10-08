@@ -202,17 +202,20 @@ class MyReviewStatusView(APIView):
         to_decide = {}
         for rnd in DraftReviewRound.objects.filter(session_id__in=sessions, decider_id=request.user.id,
                                                    status=DraftReviewRound.Status.OPEN):
-            to_decide.setdefault(rnd.session_id, set()).add(rnd.author_id)
+            # Changes from outside are named after who sent the file, not who uploaded it.
+            to_decide.setdefault(rnd.session_id, set()).add(rnd.external_from or rnd.author_id)
         latest = {}
         for req in R.objects.filter(session_id__in=sessions).exclude(status=R.Status.CANCELLED).order_by('created_at'):
             if latest.get(req.session_id) is None or latest[req.session_id].status != R.Status.OPEN                     or req.status == R.Status.OPEN:
                 latest[req.session_id] = req
-        names = _names({r.reviewer_id for r in latest.values()} | {a for s in to_decide.values() for a in s})
+        names = _names({r.reviewer_id for r in latest.values()}
+                       | {a for s in to_decide.values() for a in s if isinstance(a, int)})
         out = {}
         for sid in set(latest) | set(to_decide):
             req = latest.get(sid)
             if sid in to_decide:
-                out[sid] = {'state': 'to_decide', 'who': ', '.join(sorted(filter(None, (names.get(a) for a in to_decide[sid]))))}
+                who = (a if isinstance(a, str) else names.get(a) for a in to_decide[sid])
+                out[sid] = {'state': 'to_decide', 'who': ', '.join(sorted(filter(None, who)))}
             elif req.status == R.Status.OPEN:
                 out[sid] = {'state': 'with_reviewer', 'who': names.get(req.reviewer_id), 'at': req.created_at}
             else:

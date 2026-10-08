@@ -1,3 +1,4 @@
+import re
 from rest_framework import serializers
 from .models import (
     Template, Sample, SampleClause, DraftSession, DraftBlock,
@@ -83,6 +84,24 @@ class DraftBlockSerializer(serializers.ModelSerializer):
         )
 
 
+# Fields still to fill in a draft, counted the way the editor counts them
+# (DraftPage.tsx toFill): each distinct empty [[Label]] placeholder once, plus every
+# legacy blank (____, ……, ...., [ ]). A filled placeholder is saved as its value,
+# so only empty ones remain as [[Label]] in the block text.
+_PLACEHOLDER_RE = re.compile(r'\[\[([^\]]+)\]\]')
+_BLANK_RE = re.compile(r'_{2,}|…{2,}|\.{4,}|\[[\s_.•●…]*\]')
+
+
+def unfilled_count(texts):
+    labels = set()
+    blanks = 0
+    for t in texts:
+        t = t or ''
+        labels.update(m.strip().lower() for m in _PLACEHOLDER_RE.findall(t))
+        blanks += len(_BLANK_RE.findall(_PLACEHOLDER_RE.sub('', t)))
+    return len(labels) + blanks
+
+
 class DraftSessionSerializer(serializers.ModelSerializer):
     """Read serializer for a draft session: nests its generated blocks and
     flattens the template name + document names for convenient display."""
@@ -96,6 +115,8 @@ class DraftSessionSerializer(serializers.ModelSerializer):
     # Senior review (drafting/access.py): who wrote it, and the viewer's review role.
     created_by_name = serializers.SerializerMethodField()
     review = serializers.SerializerMethodField()
+    # Empty fields left (drives Incomplete / Complete on the Drafts list).
+    unfilled_count = serializers.SerializerMethodField()
 
     class Meta:
         model = DraftSession
@@ -105,7 +126,7 @@ class DraftSessionSerializer(serializers.ModelSerializer):
             'client', 'project', 'facts', 'mode', 'llm', 'status',
             'playbook', 'risk_status', 'risk_report', 'apply_bns_codes',
             'case_id', 'ams_task_id', 'ams_document_id', 'ams_document_version', 'ams_synced_at',
-            'reference_documents', 'created_at', 'updated_at', 'blocks',
+            'reference_documents', 'unfilled_count', 'created_at', 'updated_at', 'blocks',
         )
         read_only_fields = ('status', 'celery_task_id', 'risk_status', 'risk_report',
                             'ams_document_id', 'ams_document_version', 'ams_synced_at')
@@ -142,6 +163,9 @@ class DraftSessionSerializer(serializers.ModelSerializer):
                 'note': task.review_note, 'reviewedByName': reviewer.full_name if reviewer else None,
                 'isOwner': is_owner, 'canReview': can_review,
                 'canEdit': is_owner or (can_review and task.review_status == 'SUBMITTED')}
+
+    def get_unfilled_count(self, obj):
+        return unfilled_count(b.text for b in obj.blocks.all())
 
     def get_template_name(self, obj):
         """The template's name, or None when the session has no template (Mode 2)."""

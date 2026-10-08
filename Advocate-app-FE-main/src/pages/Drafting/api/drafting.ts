@@ -117,6 +117,7 @@ export interface DraftSession {
   llm?: string // chosen model ('gemini')
   reference_documents?: { kind: 'template' | 'sample'; id: number; name: string; url: string }[]
   status: 'pending' | 'generating' | 'ready' | 'failed'
+  unfilled_count?: number         // empty fields left (placeholders + legacy blanks)
   playbook: number | null
   risk_status: 'idle' | 'analyzing' | 'ready' | 'failed'
   risk_report?: RiskReport | null // document-level synthesis (null until analysed)

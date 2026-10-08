@@ -22,6 +22,7 @@ import { TextField, TextArea, SelectField, Field, Check, Tabs, SearchInput } fro
 import { Modal, confirm } from "../ui/overlays";
 import "../ui/pages/casedetail.css";
 import { copyText } from "../utils/clipboard";
+import DuplicateEventDialog from "../components/DuplicateEventDialog";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -441,6 +442,7 @@ export default function CaseDetail() {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showHearingModal, setShowHearingModal] = useState(false);
+  const [dupEvent, setDupEvent] = useState<any>(null);   // the hearing a new one would repeat (409)
   // "hearing" → the Hearings tab (type locked to HEARING); "event" → the Events
   // tab (Meeting / Payment Due / Document). Controls the shared add/edit modal.
   const [eventModalMode, setEventModalMode] = useState("hearing");
@@ -749,7 +751,7 @@ export default function CaseDetail() {
     }
   };
 
-  const addHearing = async () => {
+  const addHearing = async (allowDuplicate = false) => {
     if (!hearingForm.title.trim() || !hearingForm.date) { error("Title and date are required."); return; }
     setSavingFin(true);
     const payload = {
@@ -771,17 +773,20 @@ export default function CaseDetail() {
       if (editingEventId) {
         await withLoading(api.put(`/api/events/update/${editingEventId}`, payload), "Saving hearing...");
       } else {
-        await withLoading(api.post("/api/events/create", { ...payload, caseEntity: { id: Number(id) } }), "Adding hearing...");
+        await withLoading(api.post("/api/events/create", { ...payload, caseEntity: { id: Number(id) }, ...(allowDuplicate ? { allowDuplicate: true } : {}) }), "Adding hearing...");
       }
       setShowHearingModal(false);
       setEditingEventId(null);
       setHearingForm(EMPTY_HEARING);
+      setDupEvent(null);
       fetchEvents();
       fetchSummary();
       success(eventModalMode === "event"
         ? (editingEventId ? "Event updated." : "Event added to this case.")
         : (editingEventId ? "Hearing updated." : "Hearing added to this case."));
     } catch (err) {
+      // Same hearing already on this case: ask before adding it again.
+      if (err.response?.status === 409 && err.response.data?.duplicate) { setDupEvent(err.response.data.duplicate); return; }
       error(err.response?.data?.error || "Failed to save hearing.");
     } finally {
       setSavingFin(false);
@@ -2259,7 +2264,7 @@ export default function CaseDetail() {
           : (eventModalMode === "event" ? "Add event" : "Add hearing")}
         footer={<>
           <Button variant="ghost" onClick={closeHearingModal}>Cancel</Button>
-          <Button variant="primary" loading={savingFin} onClick={addHearing} disabled={savingFin || !hearingForm.title.trim() || !hearingForm.date}>
+          <Button variant="primary" loading={savingFin} onClick={() => addHearing()} disabled={savingFin || !hearingForm.title.trim() || !hearingForm.date}>
             {savingFin ? "Saving…" : (editingEventId
               ? (eventModalMode === "event" ? "Save event" : "Save hearing")
               : (eventModalMode === "event" ? "Add event" : "Add hearing"))}
@@ -2287,6 +2292,8 @@ export default function CaseDetail() {
             onChange={(e) => setHearingForm({ ...hearingForm, description: e.target.value })} />
         </form>
       </Modal>
+      <DuplicateEventDialog existing={dupEvent} busy={savingFin}
+        onCancel={() => setDupEvent(null)} onAddAnyway={() => addHearing(true)} />
     </div>
   );
 }

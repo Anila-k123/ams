@@ -3,7 +3,7 @@ import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Button, Chip, EmptyState, PopMenu } from '../../ui/kit'
-import { Modal } from '../../ui/overlays'
+import { Modal, confirm } from '../../ui/overlays'
 import { Field } from '../../ui/forms'
 import Icon from '../../ui/Icon'
 import { useEditor, EditorContent } from '@tiptap/react'
@@ -774,6 +774,37 @@ export default function DraftPage() {
   const docTitle = resolveDocTitle()
   // Count still-to-fill: empty placeholder fields + any legacy ______ blanks.
   const toFill = placeholders.filter(p => !p.value.trim()).length + blankCount
+  // Save to case / Submit to task with empty fields asks first: "Go back and fill"
+  // jumps to the first empty field; "Save anyway" files it as it is (a partial
+  // draft can be filed deliberately, e.g. for a senior to finish).
+  const fileOrSubmit = () => (session?.ams_task_id ? submitToTask() : sendToAms())
+  const focusFirstEmpty = () => {
+    setPreview(false)
+    requestAnimationFrame(() => {
+      const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('aside[aria-label="Placeholders and references"] input'))
+      const first = inputs.find(i => !i.value.trim())
+      first?.focus()
+      first?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+  }
+  const saveToCaseClick = () => {
+    if (toFill === 0) { fileOrSubmit(); return }
+    const empty = placeholders.filter(p => !p.value.trim()).map(p => p.display)
+    const named = empty.slice(0, 3).join(', ')
+    const more = toFill - Math.min(empty.length, 3)
+    const toTask = !!session?.ams_task_id
+    confirm({
+      title: `This draft still has ${toFill} empty field${toFill === 1 ? '' : 's'}`,
+      message: <>
+        {named ? <><b>{named}</b>{more > 0 ? ` and ${more} more` : ''} {empty.length + (more > 0 ? more : 0) === 1 ? 'is' : 'are'} still blank. </> : 'Some blanks are still unfilled. '}
+        {toTask ? 'The draft goes to the reviewer as it is.' : 'A draft saved with blanks goes to the case as it is.'}
+      </>,
+      cancelLabel: 'Go back and fill',
+      confirmLabel: toTask ? 'Submit anyway' : 'Save anyway',
+      accept: () => { fileOrSubmit() },
+      reject: focusFirstEmpty,
+    })
+  }
   const canEdit = !isReviewer || review?.canEdit
 
   return (
@@ -826,7 +857,7 @@ export default function DraftPage() {
         {!isReviewer && (
           <Button variant="primary" size="sm" icon="folder" loading={sendingAms} disabled={sendingAms}
             title={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'}
-            onClick={() => (session?.ams_task_id ? submitToTask() : sendToAms())}>
+            onClick={saveToCaseClick}>
             {session?.ams_task_id ? 'Submit to task' : 'Save to case'}
           </Button>
         )}
@@ -1042,8 +1073,8 @@ export default function DraftPage() {
           </aside>
         </div>
       <Modal title="Save to case" sub="This draft isn't linked to a PactPro case yet. Choose the case to file it on." open={pickAmsCase}
-        onClose={() => setPickAmsCase(false)}>
-        <AmsCasePicker onPick={c => sendToAms(c.id)} label="Case" />
+        size="wide" onClose={() => setPickAmsCase(false)}>
+        <AmsCasePicker inline onPick={c => sendToAms(c.id)} label="Case" />
       </Modal>
     </div>
     </RiskContext.Provider>

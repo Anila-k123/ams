@@ -10,13 +10,25 @@ import Icon from '../../ui/Icon'
 import { draftingApi, type DraftSession } from './api/drafting'
 import NewDraftDialog from './components/NewDraftDialog'
 
-// Session status as a Red Tape chip tone.
-const STATUS_TONE: Record<string, string> = {
-  ready: 'ok',
-  generating: 'warn',
-  pending: 'warn',
-  failed: 'bad',
+// What a draft's status means to the user. The stored `status` only tracks the
+// AI generation job ("ready" = the AI finished), so a finished draft is further
+// split by its empty fields and by whether it was filed on the case:
+//   Generating (queued or writing) · Failed · Incomplete (fields left) · Complete · Filed
+type DraftState = 'generating' | 'failed' | 'incomplete' | 'complete' | 'filed'
+const draftState = (s: DraftSession): DraftState => {
+  if (s.status === 'failed') return 'failed'
+  if (s.status !== 'ready') return 'generating'
+  if (s.ams_document_id) return 'filed'
+  return (s.unfilled_count ?? 0) > 0 ? 'incomplete' : 'complete'
 }
+const STATE_LABEL: Record<DraftState, string> = {
+  generating: 'Generating', failed: 'Failed', incomplete: 'Incomplete', complete: 'Complete', filed: 'Filed',
+}
+const STATE_TONE: Record<DraftState, string> = {
+  generating: 'plain', failed: 'bad', incomplete: 'warn', complete: 'ok', filed: 'tape',
+}
+// Order for sorting the Status column: work in progress first, filed last.
+const STATE_ORDER: Record<DraftState, number> = { generating: 0, failed: 1, incomplete: 2, complete: 3, filed: 4 }
 
 const fmtDateTime = (v?: string | null) => v
   ? new Date(v).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -66,9 +78,9 @@ export default function Drafts() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase().replace(/^#/, '')
     return sessions.filter(s =>
-      (!status || s.status === status) && (!q ||
+      (!status || draftState(s) === status) && (!q ||
       String(s.id).includes(q) ||
-      s.status.toLowerCase().includes(q) ||
+      STATE_LABEL[draftState(s)].toLowerCase().includes(q) ||
       (s.template_name || '').toLowerCase().includes(q) ||
       (s.sample_names || []).some(n => n.toLowerCase().includes(q))),
     )
@@ -94,12 +106,22 @@ export default function Drafts() {
       },
     },
     {
-      key: 'status', label: 'Status', sort: true, render: r => (
-        <span className={`chip ${STATUS_TONE[r.status] ?? ''}${r.status === 'generating' ? ' plain' : ''}`}>
-          {r.status === 'generating' && <span className="pp-spin" aria-hidden="true" />}
-          {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
-        </span>
-      ),
+      key: 'status', label: 'Status', sort: r => STATE_ORDER[draftState(r)], render: r => {
+        const st = draftState(r)
+        const left = r.unfilled_count ?? 0
+        return (
+          <div>
+            <span className={`chip ${STATE_TONE[st]}`}>
+              {st === 'generating' && <span className="pp-spin" aria-hidden="true" />}
+              {STATE_LABEL[st]}
+            </span>
+            {/* How much is missing: on Incomplete, and on a Filed draft saved with blanks. */}
+            {(st === 'incomplete' || st === 'filed') && left > 0 && (
+              <div className="cell-sub" style={{ color: 'var(--warn)' }}>{left} field{left === 1 ? '' : 's'} empty</div>
+            )}
+          </div>
+        )
+      },
     },
     {
       key: 'act', label: <span className="sr-only">Actions</span>, align: 'right', render: r => (
@@ -128,10 +150,11 @@ export default function Drafts() {
         <label className="sr-only" htmlFor="dr-status">Status</label>
         <select id="dr-status" className="input" style={{ width: 'auto' }} value={status} onChange={e => setStatus(e.target.value)}>
           <option value="">All statuses</option>
-          <option value="ready">Ready</option>
           <option value="generating">Generating</option>
-          <option value="pending">Pending</option>
           <option value="failed">Failed</option>
+          <option value="incomplete">Incomplete</option>
+          <option value="complete">Complete</option>
+          <option value="filed">Filed</option>
         </select>
       </div>
 

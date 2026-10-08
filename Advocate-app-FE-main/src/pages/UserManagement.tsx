@@ -5,7 +5,7 @@ import rbacService from "../services/rbacService";
 import { usePermission } from "../contexts/PermissionContext";
 import { useToast } from "../contexts/ToastContext";
 import FieldError from "../components/FieldError";
-import { formatErrors } from "../utils/validators";
+import { formatErrors, mobileInput } from "../utils/validators";
 import { PageHead, Button, Chip, Avatar, EmptyState, PopMenu, Icon, type MenuItem } from "../ui/kit";
 import { Field, TextField, SelectField, SearchInput, FilterChip } from "../ui/forms";
 import { Modal, confirm } from "../ui/overlays";
@@ -202,7 +202,7 @@ export default function UserManagement() {
       {(id) => (
         <>
           <input id={id} type={type} className="input" value={form[key]} aria-invalid={!!msgFor(key) || undefined}
-            onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+            onChange={(e) => setForm({ ...form, [key]: key === "phone" ? mobileInput(e.target.value) : e.target.value })}
             onBlur={() => setTouched((t) => ({ ...t, [key]: true }))} {...extra} />
           <FieldError error={msgFor(key)} />
         </>
@@ -309,7 +309,7 @@ export default function UserManagement() {
           <div className="form-grid">
             {text("fullName", "Full name")}
             {text("email", "Work email", "email", { autoComplete: "off" })}
-            {text("phone", "Phone", "tel")}
+            {text("phone", "Mobile", "tel", { inputMode: "numeric", maxLength: 10, placeholder: "98765 43210", title: "10 digits, starting with 6, 7, 8 or 9." })}
             {text("barCouncilId", "Bar Council no.", "text", { placeholder: "Advocates only", className: "input mono" })}
             {text("specialization", "Specialisation")}
             <TextField label="Experience (years)" type="number" min={0} value={form.experience}

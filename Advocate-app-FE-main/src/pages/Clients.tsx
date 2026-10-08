@@ -16,7 +16,7 @@ import FilePreviewModal from "../components/FilePreviewModal";
 import DocumentSummaryModal from "../components/DocumentSummaryModal";
 import { INDIAN_STATES } from "./Drafting/constants/legal";
 import FieldError from "../components/FieldError";
-import { formatErrors, gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+import { formatErrors, gstinError, gstinState, gstinStateMismatch, mobileInput, normaliseCode } from "../utils/validators";
 import { usePageModal } from "../utils/pageModal";
 import { formatCurrency } from "../utils/formatCurrency";
 import { Avatar, Button, Chip, EmptyState, Icon, PageHead, PopMenu, Skel, StatusChip, type MenuItem } from "../ui/kit";
@@ -176,7 +176,8 @@ function Clients() {
   const handleChange = (e: any) => {
     const { name, value } = e.target;
     if (name === "gstin") return setGstin(value);
-    setNewClient({ ...newClient, [name]: value });
+    // Mobile: only what can be valid (10 digits, starting 6-9) gets into the box.
+    setNewClient({ ...newClient, [name]: name === "phone" ? mobileInput(value) : value });
   };
 
   // Format errors show once a field has been left, or after a save attempt,
@@ -338,6 +339,24 @@ function Clients() {
     }
   };
 
+  // Same confirm and endpoint as the Documents page (DELETE /api/documents/{id}).
+  const deleteClientDoc = (doc: any) => confirm({
+    title: "Delete this document?",
+    message: <><b>{doc.documentName}</b> and its version history will be permanently removed{doc.clientVisible ? ", and the client will no longer see it on the portal" : ""}. This can&apos;t be undone.</>,
+    confirmLabel: "Delete document",
+    danger: true,
+    accept: async () => {
+      try {
+        await withLoading(api.delete(`/api/documents/${doc.id}`), "Deleting Document...");
+        setClientDocs((prev) => prev.filter((d) => d.id !== doc.id));
+        if (previewDoc?.id === doc.id) setPreviewDoc(null);
+        success("Document deleted.");
+      } catch (err: any) {
+        error(err.response?.data?.error || "Failed to delete the document.");
+      }
+    },
+  });
+
   const uploadClientDoc = async () => {
     if (!uploadClientDocFile || !openClient) return;
     const formData = new FormData();
@@ -456,7 +475,7 @@ function Clients() {
           {field("description", "Description", "Short description about the client")}
           {field("website", "Website", "Website", { full: true })}
           {field("email", "Email", "name@example.com", { required: true, type: "email" })}
-          {field("phone", "Phone", "+91 98765 43210", { required: true, type: "tel" })}
+          {field("phone", "Mobile", "98765 43210", { required: true, type: "tel", inputMode: "numeric", maxLength: 10, autoComplete: "tel-national", hint: "10 digits, starting with 6, 7, 8 or 9." })}
           {/* Billing currency is always INR for now (set in emptyClient), so no picker. */}
           {field("gstin", "GSTIN", "e.g. 33ABCDE1234F1Z7", { maxLength: 15, hint: "15 characters. Leave blank if none.", className: "input mono" })}
           {canPickHandler && (
@@ -610,7 +629,8 @@ function Clients() {
                     {clientDocs.map((d) => (
                       <DocumentCard key={d.id} doc={d} onPreview={setPreviewDoc} onDownload={handleClientDocDownload}
                         onSummary={setSummaryDoc}
-                        onShareToggle={hasPermission("DOCUMENT_EDIT") ? handleShareToggle : undefined} />
+                        onShareToggle={hasPermission("DOCUMENT_EDIT") ? handleShareToggle : undefined}
+                        onDelete={hasPermission("DOCUMENT_DELETE") ? deleteClientDoc : undefined} />
                     ))}
                   </div>
                 )}

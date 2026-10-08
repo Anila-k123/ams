@@ -208,7 +208,7 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
     # and use these read-only actions (refine / consistency-check only return
     # suggestions)...
     REVIEW_READ = {'retrieve', 'status', 'refine', 'consistency_check', 'list_risks', 'risk_report',
-                   'versions'}
+                   'versions', 'compare'}
     # ...and edit it while the task awaits their review. Re-draft, delete, legal-code
     # rewrite, risk runs and filing stay with the author.
     REVIEW_WRITE = {'save_blocks', 'edit', 'accept_edit', 'reject_edit'}
@@ -298,6 +298,29 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         rows = session.versions.order_by('-number').values(
             'id', 'number', 'label', 'kind', 'created_by_id', 'created_at')
         return Response(list(rows), status=201 if request.method == 'POST' else 200)
+
+    @action(detail=True, methods=['get'])
+    def compare(self, request, pk=None):
+        """The on-screen compare view: ?from=<version id>&to=<version id> (to omitted = the
+        current draft), as data. Same engine and same defaults as the redline download
+        (export/compare.py, versions.pick_pair), so the screen and the file always agree."""
+        session = self.get_object()
+        from .export.compare import compare_blocks
+        from .export.docx import session_title
+        from .versions import NoVersion, pick_pair, snapshot_blocks
+        try:
+            before, after = pick_pair(session, request.query_params)
+        except NoVersion:
+            return Response({'error': 'Save a version of this draft first, to compare against.'}, status=400)
+        result = compare_blocks(before.blocks, after.blocks if after else snapshot_blocks(session),
+                                session_title(session)).as_json()
+
+        def meta(v):
+            return {'id': v.id, 'number': v.number, 'label': v.label, 'kind': v.kind, 'created_at': v.created_at}
+
+        result['from'] = meta(before)
+        result['to'] = meta(after) if after else None   # None = the current draft
+        return Response(result)
 
     @action(detail=True, methods=['post'])
     @_metered_action('draft.edit')

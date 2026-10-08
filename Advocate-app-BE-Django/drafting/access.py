@@ -41,9 +41,25 @@ def reviewable_sessions(user):
     return DraftSession.objects.filter(ams_task_id__in=reviewable_task_ids(user)).exclude(created_by_id=user.id)
 
 
+def requested_sessions(user):
+    """Drafts someone asked this user to review (Request review, docs/DRAFT_REVIEW.md).
+    A cancelled request gives no access; a finished one still lets them read it."""
+    from .models import DraftReviewRequest
+    return DraftSession.objects.filter(
+        review_requests__reviewer_id=user.id,
+        review_requests__status__in=(DraftReviewRequest.Status.OPEN, DraftReviewRequest.Status.DONE),
+    ).exclude(created_by_id=user.id)
+
+
 def viewable_sessions(user):
-    """The advocate's own drafts, plus drafts submitted to them for review."""
-    return own_sessions(user) | reviewable_sessions(user)
+    """The advocate's own drafts, plus drafts submitted or sent to them for review."""
+    return (own_sessions(user) | reviewable_sessions(user) | requested_sessions(user)).distinct()
+
+
+def open_request(session, user):
+    """This user's open review request on the draft, or None."""
+    from .models import DraftReviewRequest
+    return session.review_requests.filter(reviewer_id=user.id, status=DraftReviewRequest.Status.OPEN).first()
 
 
 def review_task(session, user):
@@ -57,8 +73,22 @@ def review_task(session, user):
 
 
 def can_write(session, user):
-    """Owner always; a reviewer only while the task awaits their review."""
+    """Edit the draft directly: the owner always; a task reviewer while the task awaits
+    their review; a requested reviewer with authority (`binding`) while the request is open."""
     if session.created_by_id == user.id:
         return True
     task, reviewer = review_task(session, user)
-    return reviewer and task.review_status == 'SUBMITTED'
+    if reviewer and task.review_status == 'SUBMITTED':
+        return True
+    req = open_request(session, user)
+    return bool(req and req.authority == req.Authority.BINDING)
+
+
+def can_suggest(session, user):
+    """Propose changes for the owner to accept or decline: a colleague asked through Request
+    review, while the request is open. Not a task's reviewer: in a task the senior corrects
+    directly and asks questions as comments (docs/DRAFT_REVIEW.md, "Revision"). The owner
+    edits directly instead."""
+    if session.created_by_id == user.id:
+        return False
+    return open_request(session, user) is not None

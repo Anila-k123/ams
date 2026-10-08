@@ -9,6 +9,19 @@ import PlaceholderNodeView from '../components/PlaceholderNodeView'
  * edits the value live. Serialises to `<span data-placeholder data-value>` so it
  * round-trips through save/reload.
  */
+/** HTML entities in a label back to text. Older saves escaped "&" twice ("&amp;amp;"), so a
+ *  label read from them still holds "&amp;"; decode until nothing changes. */
+export function decodeEntities(text: string): string {
+  let prev = ''
+  let out = text
+  while (out !== prev && /&(amp|lt|gt|quot|#39);/.test(out)) {
+    prev = out
+    out = out.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+  }
+  return out
+}
+
 export const Placeholder = Node.create({
   name: 'placeholder',
   inline: true,
@@ -20,7 +33,7 @@ export const Placeholder = Node.create({
     return {
       label: {
         default: '',
-        parseHTML: el => el.getAttribute('data-placeholder') || '',
+        parseHTML: el => decodeEntities(el.getAttribute('data-placeholder') || ''),
         renderHTML: attrs => ({ 'data-placeholder': attrs.label }),
       },
       value: {

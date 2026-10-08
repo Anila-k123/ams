@@ -5,7 +5,7 @@ import Icon from '../../../ui/Icon'
 import { draftingApi, type DraftVersion } from '../api/drafting'
 
 const KIND_LABEL: Record<DraftVersion['kind'], string> = {
-  generated: 'AI draft', sent: 'Sent', manual: 'Saved',
+  generated: 'AI draft', sent: 'Sent', manual: 'Saved', review: 'Review', returned: 'Sent back',
 }
 const WIDTH = 340
 
@@ -14,11 +14,13 @@ interface Props {
   canSave: boolean
   // Saves unsaved editor changes first; false = that save failed, so don't snapshot.
   beforeSave: () => Promise<boolean>
+  // Open the on-screen compare view: this version against the current draft.
+  onCompare?: (versionId: number) => void
 }
 
 // "Versions" button: lists the draft's saved versions and saves a new one.
 // These are what a redline export compares the current draft against.
-export default function DraftVersions({ sessionId, canSave, beforeSave }: Props) {
+export default function DraftVersions({ sessionId, canSave, beforeSave, onCompare }: Props) {
   const btn = useRef<HTMLButtonElement>(null)
   const pop = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -79,11 +81,17 @@ export default function DraftVersions({ sessionId, canSave, beforeSave }: Props)
           : (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 280, overflowY: 'auto' }}>
               {versions.map(v => (
-                <li key={v.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
-                  <div style={{ fontWeight: 500 }}>v{v.number} · {v.label || KIND_LABEL[v.kind]}</div>
-                  <div className="xs faint">
-                    {KIND_LABEL[v.kind]} · {new Date(v.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                <li key={v.id} className="row" style={{ gap: 8, padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                  <div className="grow">
+                    <div style={{ fontWeight: 500 }}>v{v.number} · {v.label || KIND_LABEL[v.kind]}</div>
+                    <div className="xs faint">
+                      {KIND_LABEL[v.kind]} · {new Date(v.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                    </div>
                   </div>
+                  {onCompare && (
+                    <button type="button" className="btn ghost sm" title={`Show what changed since v${v.number}`}
+                      onClick={() => { setOpen(false); onCompare(v.id) }}>Compare</button>
+                  )}
                 </li>
               ))}
             </ul>

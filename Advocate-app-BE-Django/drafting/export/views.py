@@ -71,26 +71,16 @@ class DraftRedlineExportView(APIView):
 
     def get(self, request, pk):
         from drafting.access import viewable_sessions
-        from drafting.models import DraftVersion
-        from drafting.versions import snapshot_blocks
+        from drafting.versions import NoVersion, pick_pair, snapshot_blocks
         from rest_framework.response import Response
 
         from .redline import render_redline_docx
 
         session = get_object_or_404(viewable_sessions(request.user).select_related('template'), pk=pk)
-        versions = session.versions.all()
-
-        def pick(param):
-            value = request.query_params.get(param) or ''
-            if not value.isdigit():
-                return None
-            return get_object_or_404(versions, pk=int(value))
-
-        before = pick('from') or (versions.filter(kind=DraftVersion.Kind.SENT).order_by('-number').first()
-                                  or versions.order_by('-number').first())
-        if before is None:
+        try:
+            before, after = pick_pair(session, request.query_params)
+        except NoVersion:
             return Response({'error': 'Save a version of this draft first, to compare against.'}, status=400)
-        after = pick('to')
         after_blocks = after.blocks if after else snapshot_blocks(session)
         after_name = f'v{after.number}' if after else 'current'
 

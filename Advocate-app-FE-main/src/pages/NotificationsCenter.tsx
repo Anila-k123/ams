@@ -32,6 +32,9 @@ const EVENT_LABELS: Record<string, string> = {
   TASK_SUBMITTED: "Submitted for Review",
   TASK_APPROVED: "Task Approved",
   TASK_CHANGES_REQUESTED: "Changes Requested",
+  DRAFT_REVIEW_REQUESTED: "Draft Review Requested",
+  DRAFT_REVIEW_DONE: "Draft Review Done",
+  DRAFT_COMMENT: "Draft Comment",
   PASSWORD_RESET: "Password Reset",
 };
 

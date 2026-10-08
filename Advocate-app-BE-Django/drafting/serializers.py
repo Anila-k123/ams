@@ -96,12 +96,14 @@ class DraftSessionSerializer(serializers.ModelSerializer):
     # Senior review (drafting/access.py): who wrote it, and the viewer's review role.
     created_by_name = serializers.SerializerMethodField()
     review = serializers.SerializerMethodField()
+    # What the viewer may do with the draft (docs/DRAFT_REVIEW.md): edit directly, suggest.
+    access = serializers.SerializerMethodField()
 
     class Meta:
         model = DraftSession
         fields = (
             'id', 'template', 'template_name', 'document_type', 'samples', 'sample_names',
-            'created_by_id', 'created_by_name', 'review',
+            'created_by_id', 'created_by_name', 'review', 'access',
             'client', 'project', 'facts', 'mode', 'llm', 'status',
             'playbook', 'risk_status', 'risk_report', 'apply_bns_codes',
             'case_id', 'ams_task_id', 'ams_document_id', 'ams_document_version', 'ams_synced_at',
@@ -142,6 +144,19 @@ class DraftSessionSerializer(serializers.ModelSerializer):
                 'note': task.review_note, 'reviewedByName': reviewer.full_name if reviewer else None,
                 'isOwner': is_owner, 'canReview': can_review,
                 'canEdit': is_owner or (can_review and task.review_status == 'SUBMITTED')}
+
+    def get_access(self, obj):
+        """{isOwner, canWrite, canSuggest, request}: the editor shows Edit, Suggest or both from
+        this (drafting/access.py), whether the viewer came through a task or a review request."""
+        request = self.context.get('request')
+        if request is None:
+            return None
+        from .access import can_suggest, can_write, open_request
+        user = request.user
+        req = open_request(obj, user)
+        return {'isOwner': obj.created_by_id == user.id, 'canWrite': can_write(obj, user),
+                'canSuggest': can_suggest(obj, user),
+                'request': {'id': req.id, 'authority': req.authority, 'note': req.note} if req else None}
 
     def get_template_name(self, obj):
         """The template's name, or None when the session has no template (Mode 2)."""

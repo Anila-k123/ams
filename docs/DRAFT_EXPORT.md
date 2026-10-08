@@ -1,6 +1,6 @@
 # Draft export: versions, Word, PDF, redline
 
-Status: **versions, Word redline and server PDF done**; house style is next.
+Status: **versions, Word / PDF redline, server PDF and on-screen compare done**; accept / reject inside AMS and Request review are done too ([DRAFT_REVIEW.md](DRAFT_REVIEW.md)).
 
 ## Versions (`drafting.DraftVersion`, table `drf.draft_version`)
 
@@ -33,15 +33,42 @@ and "compare to" (a version or "Current draft (now)": the editor as it is, unsav
 - File name `<title>_redline_v<from>-<to|current>_<date>.docx`. Word counts in `X-Redline-Inserted` /
   `X-Redline-Deleted` (exposed through `CORS_EXPOSE_HEADERS`).
 
-How it compares (`drafting/export/redline.py`):
+How it compares (`drafting/export/compare.py`, shared with the on-screen view):
 - Clauses are paired by block id; a block with a new id (re-draft) pairs with an unclaimed old clause of the
   same heading. Unpaired clauses are wholly inserted / deleted (the paragraph mark too, so Accept removes it).
 - Paragraphs inside a clause are aligned with `difflib`; paired paragraphs are compared word by word
   (punctuation and spaces are their own tokens), written as `<w:ins>` / `<w:del>` runs with the advocate's
   name and the time. Accept / Reject works in Word and LibreOffice.
+- **Storage differences are not changes.** A never-edited draft (the AI's plain text) and an edited one (editor HTML)
+  store some things differently; both sides are normalised first (`export/compare.py`): an empty placeholder field
+  counts as `[[Label]]` and a filled one as its value; a first line that only repeats the document title or the
+  clause heading is ignored (the editor shows those above the text); a doubly escaped `&` in a placeholder name
+  (`&amp;amp;`, from older saves) reads as `&`.
 - Formatting-only changes (bold, alignment) are not marked. Tables are compared row by row as
   tab-separated text, so a changed table comes out as paragraphs, not a grid.
 - Layout (A4, fonts, title, letterhead) is the plain export's (`export/docx.py::_setup`, `_branding`).
+
+## On-screen compare (no download)
+
+Editor: **Compare** in the top bar (or **Compare** on a row of **Versions**, or **Show in document** /
+**See what … changed** in the review banners) replaces the document with the compare view
+(`components/CompareView.tsx`). Read-only.
+- **From / To** pickers: same defaults as the redline (last version sent out → current draft).
+  Unsaved edits are saved first.
+- **Change list** (left): every changed paragraph, named after the nearest section heading above it
+  ("8. TERMINATION"), tagged Changed / Added / Removed, with a snippet. **◀ ▶** steps through them.
+- **All markup** (additions underlined green, removals struck red, a bar beside changed paragraphs) or
+  **Final** (clean text, bars only).
+- **Download** → the Word or PDF redline of exactly what's on screen.
+
+`GET /api/drafting/draft-sessions/<id>/compare/?from=<version id>&to=<version id>` (`DraftSessionViewSet.compare`,
+`DRAFT_VIEW`; reviewers of a submitted draft can call it). Returns `{from, to (null = current), inserted,
+deleted, changes, clauses: [{block_id, status, label, heading, body}]}`; each paragraph has `kind`
+(same / changed / ins / del), `change_id` (1..n) and `segs` `[{op, text, fmt}]`.
+
+**One engine:** `drafting/export/compare.py` decides what changed; `export/redline.py` only writes it as Word
+XML and the endpoint returns it as data, so the screen, the Word redline and the PDF always agree (a test
+checks the counts match). Version defaults live in `versions.pick_pair`, shared by both.
 
 ## PDF (plain draft and redline)
 
@@ -58,6 +85,27 @@ redline PDF shows insertions underlined and deletions struck through, in colour,
 - Each conversion runs with its own temporary LibreOffice profile (safe for parallel requests and a
   LibreOffice the user has open), so it takes ~7 s (~30 s the very first time on a machine). Later
   speed-up if needed: a long-running LibreOffice listener (unoserver).
+
+## Roadmap: review changes inside AMS
+
+The detailed plan for step 2, and for **Request review** on common (non-task) drafts, is in
+[DRAFT_REVIEW.md](DRAFT_REVIEW.md).
+
+Agreed order (each step builds on the one before):
+
+1. **On-screen compare** (done, see above): see the redline in the editor, no download. Compare toggle
+   + "Compare" on each version, change list, next / previous, All markup / Final display.
+2. **Accept / reject inside AMS: Option B (senior has the final word)** (done).
+   - The senior's **corrections are binding**: applied to the draft, shown as changes.
+   - The senior can also make **suggestions** (optional advice). The junior accepts a suggestion,
+     or declines it **with a reason**.
+   - On every resubmission the **senior** accepts or rejects the junior's changes and resolves any
+     declined suggestions before **Approve**. Between equals (no task review) the author decides.
+   - Not chosen: A (corrections only, no suggestions); C (author accepts / rejects everything,
+     as in Word / Google Docs, wrong inside a chambers hierarchy).
+3. **Incoming documents:** upload the client's / opposite counsel's edited file (their Word
+   tracked changes read with their names), compare it with our draft, accept / reject into it.
+   The advocate handling the matter decides; a junior's result goes through the task review.
 
 ## Planned
 - **House style** in `drafting/export/docx.py`: fonts, spacing, margins, page numbers.

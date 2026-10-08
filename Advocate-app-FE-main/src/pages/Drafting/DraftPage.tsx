@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Button, Chip, EmptyState, PopMenu } from '../../ui/kit'
 import { Modal } from '../../ui/overlays'
 import { Field } from '../../ui/forms'
-import Icon from '../../ui/Icon'
+import Icon, { type IconName } from '../../ui/Icon'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
@@ -15,22 +15,29 @@ import AmsCasePicker from './components/AmsCasePicker'
 import { DOMSerializer } from '@tiptap/pm/model'
 import { diffWords } from 'diff'
 import { ClauseDocument, Clause, type Citation } from './editor/clause'
-import { Placeholder } from './editor/placeholderNode'
+import { Placeholder, decodeEntities } from './editor/placeholderNode'
 import { EditHighlight } from './editor/editHighlight'
 import { ParagraphStyle } from './editor/paragraphStyle'
 import { Search } from './editor/search'
 import { PlaceholderHighlight } from './editor/placeholder'
 import { RiskHighlight } from './editor/riskHighlight'
+import { CommentHighlight } from './editor/commentHighlight'
+import CommentsPanel, { type PendingComment } from './components/CommentsPanel'
 import EditorToolbar from './components/EditorToolbar'
 import DraftChat from './components/DraftChat'
 import DraftVersions from './components/DraftVersions'
 import RedlineDialog from './components/RedlineDialog'
 import DownloadPanel from './components/DownloadPanel'
+import CompareView from './components/CompareView'
+import ReviewRoundView, { roundTitle } from './components/ReviewRoundView'
+import ReviewActivity from './components/ReviewActivity'
+import CaseFilePanel from './components/CaseFilePanel'
+import RequestReviewDialog, { POWER } from './components/RequestReviewDialog'
 import ConsistencyPanel from './components/ConsistencyPanel'
 import PlaybookRiskPanel from './components/PlaybookRiskPanel'
 import InlineDocViewer from './components/InlineDocViewer'
 import DocumentPlaceholders from './components/DocumentPlaceholders'
-import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview } from './api/drafting'
+import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview, type ReviewRoundSummary, type DraftReviewRequest, type DraftComments, type DraftCommentThread } from './api/drafting'
 import DraftChanges, { changeSummary } from '../../components/DraftChanges'
 import { RiskContext, type RiskMap } from './context/RiskContext'
 
@@ -39,7 +46,7 @@ const BLANK_SRC = '_{2,}|…{2,}|\\.{4,}|\\[[\\s_.•●…]*\\]'
 const humanize = (s: string) => s.replace(/[^a-zA-Z0-9]+/g, ' ').trim().replace(/\b\w/g, c => c.toUpperCase())
 // Convert [[Label]] tokens into placeholder-node spans on load / insert.
 const convertTokens = (html: string) =>
-  html.replace(/\[\[([^\]]+)\]\]/g, (_, l: string) => `<span data-placeholder="${escAttr(l.trim())}"></span>`)
+  html.replace(/\[\[([^\]]+)\]\]/g, (_, l: string) => `<span data-placeholder="${escAttr(decodeEntities(l.trim()))}"></span>`)
 // Plain-text projection of a placeholder node (its value, or [[Label]] if empty).
 const phLeafText = (node: { type?: { name?: string }; attrs?: { value?: string; label?: string } }) =>
   // Empty placeholders serialize as [[Label]] (NOT single-bracket) so they survive a
@@ -68,7 +75,7 @@ function highlightedHtml(before: string, after: string): string {
   const html = paras.map(segs => {
     if (!segs.length) return ''
     const inner = segs.map(({ text, added }) => {
-      const h = escText(text).replace(/\[\[([^\]]+)\]\]/g, (_m, l: string) => `<span data-placeholder="${escAttr(l.trim())}"></span>`)
+      const h = escText(text).replace(/\[\[([^\]]+)\]\]/g, (_m, l: string) => `<span data-placeholder="${escAttr(decodeEntities(l.trim()))}"></span>`)
       return added ? `<span data-edit-hl>${h}</span>` : h
     }).join('')
     return `<p>${inner}</p>`
@@ -274,6 +281,18 @@ export default function DraftPage() {
   const [session, setSession] = useState<DraftSession | null>(null)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(false)      // read-only filled-document view
+  // On-screen compare (components/CompareView.tsx): null = off; `from` = a version picked in the
+  // Versions list, else the server's default (last version sent out).
+  const [compare, setCompare] = useState<{ from?: number } | null>(null)
+  // Review rounds (docs/DRAFT_REVIEW.md): the draft's rounds, the one open on screen, and whether
+  // a reviewer who may also edit directly is typing suggestions instead (Suggest toggle).
+  const [rounds, setRounds] = useState<ReviewRoundSummary[]>([])
+  const [reviewRoundId, setReviewRoundId] = useState<number | null>(null)
+  const [suggestMode, setSuggestMode] = useState(false)
+  // Request review on drafts without a task (drafting/review_requests.py).
+  const [requests, setRequests] = useState<DraftReviewRequest[]>([])
+  const [askReview, setAskReview] = useState(false)
+  const [reviewDone, setReviewDone] = useState(false)
   // Senior review mode: a reviewer (not the author) opens the draft from the task.
   // Read-only by default; Edit only while the task awaits their review.
   const [askChanges, setAskChanges] = useState(false)
@@ -285,8 +304,13 @@ export default function DraftPage() {
   const [focusedId, setFocusedId] = useState<number | null>(null)  // clause under the cursor (for provenance)
   const [blankCount, setBlankCount] = useState(0)    // unfilled placeholders in the live doc
   const [placeholders, setPlaceholders] = useState<{ label: string; display: string; value: string }[]>([])  // placeholder-node fields
-  const [refDoc, setRefDoc] = useState<{ name: string; url: string } | null>(null)  // reference doc open in the right pane
-  const [rightTab, setRightTab] = useState<'chat' | 'review'>('chat')  // right-pane tab (Chat | Review)
+  const [refDoc, setRefDoc] = useState<{ name: string; url: string; amsDocId?: number; fileName?: string } | null>(null)  // reference doc open in the right pane
+  const [rightTab, setRightTab] = useState<'chat' | 'review' | 'comments' | 'activity'>('chat')  // right-pane tab
+  // Decided rounds of mine already looked at in the Activity tab (per draft, this browser only).
+  const [seenRounds, setSeenRounds] = useState<number[]>([])
+  // Comments on passages (drafting/comments.py), and a passage picked with Comment, waiting for text.
+  const [comments, setComments] = useState<DraftComments | null>(null)
+  const [pendingComment, setPendingComment] = useState<PendingComment | null>(null)
   const [reviewTopH, setReviewTopH] = useState(220)  // px height of Consistency panel in Review tab
   const [riskMap, setRiskMap] = useState<RiskMap>({})
   const [confirmRedraft, setConfirmRedraft] = useState(false)  // inline confirm toggle
@@ -318,6 +342,7 @@ export default function DraftPage() {
       Search,
       PlaceholderHighlight,
       RiskHighlight,
+      CommentHighlight,
     ],
     content: '',
     onUpdate: ({ editor }) => {
@@ -375,6 +400,39 @@ export default function DraftPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
+  const loadRounds = useCallback(() => {
+    if (!sessionId) return
+    draftingApi.getRounds(Number(sessionId)).then(setRounds).catch(() => setRounds([]))
+    draftingApi.getReviewRequests(Number(sessionId)).then(setRequests).catch(() => setRequests([]))
+    draftingApi.getComments(Number(sessionId)).then(setComments).catch(() => setComments(null))
+  }, [sessionId])
+  useEffect(() => { loadRounds() }, [loadRounds])
+
+  // While a review is going on, someone else may change the draft. Check every 30 s and offer a
+  // reload; never reload by itself, so nobody loses what they are typing.
+  const [staleDraft, setStaleDraft] = useState(false)
+  const loadedPrint = useRef('')
+  const blocksPrint = (blocks: { id: number; heading: string; content_html: string }[] = []) =>
+    JSON.stringify(blocks.map(b => [b.id, b.heading, b.content_html]))
+  useEffect(() => { loadedPrint.current = blocksPrint(session?.blocks); setStaleDraft(false) }, [session])
+  const reviewGoingOn = rounds.some(r => r.status === 'open') || requests.some(r => r.status === 'open')
+    || !!session?.access?.request
+  useEffect(() => {
+    if (!sessionId || !reviewGoingOn) return
+    const t = setInterval(() => {
+      if (document.hidden) return
+      draftingApi.getSession(Number(sessionId)).then(fresh => {
+        if (blocksPrint(fresh.blocks) !== loadedPrint.current) setStaleDraft(true)
+      }).catch(() => {})
+      loadRounds()
+    }, 30000)
+    return () => clearInterval(t)
+  }, [sessionId, reviewGoingOn, loadRounds])
+  const reloadStale = () => {
+    if (dirty && !window.confirm('Reloading drops the edits you have not saved or sent. Reload anyway?')) return
+    reloadDraft()
+  }
+
   // Seed the editor once the draft is ready (don't clobber edits on later polls).
   useEffect(() => {
     if (editor && session?.status === 'ready' && !loadedRef.current && (session.blocks?.length ?? 0) > 0) {
@@ -398,6 +456,12 @@ export default function DraftPage() {
       .filter(q => q && q.trim().length >= 4)
     editor.commands.setRiskQuotes(quotes)
   }, [editor, riskMap])
+
+  // Mark the passages open comments are about.
+  useEffect(() => {
+    if (!editor) return
+    editor.commands.setCommentQuotes((comments?.threads ?? []).filter(t => !t.resolved && t.quote).map(t => t.quote))
+  }, [editor, comments])
 
   // Warn before leaving with unsaved changes.
   useEffect(() => {
@@ -454,9 +518,9 @@ export default function DraftPage() {
     window.addEventListener('mouseup', up)
   }
 
-  // Returns false if the save failed (so an export can stop instead of using stale content).
-  const save = async (): Promise<boolean> => {
-    if (!editor || !sessionId) return false
+  // The editor's clauses as {id, heading, content_html, text}, for saving or suggesting.
+  const collectBlocks = () => {
+    if (!editor) return []
     // Edit highlights persist through Save (they round-trip via <span data-edit-hl>);
     // they're only stripped from the downloaded PDF/Word.
     const serializer = DOMSerializer.fromSchema(editor.schema)
@@ -479,6 +543,71 @@ export default function DraftPage() {
         text: node.textBetween(0, node.content.size, '\n', phLeafText),
       })
     })
+    return updates
+  }
+
+  // Who may do what (drafting/access.py via session.access); older servers send no access block.
+  const access = session?.access ?? null
+  const canEditDirect = access ? access.canWrite : (!session?.review || session.review.isOwner || session.review.canEdit)
+  const canSuggest = !!access?.canSuggest
+  // A suggest-only reviewer always suggests; one who may also edit chooses with the toggle.
+  const suggesting = canSuggest && (!canEditDirect || suggestMode)
+
+  // Reload the draft from the server and re-seed the editor (after suggestions or a finished review).
+  const reloadDraft = async () => {
+    if (!sessionId) return
+    const fresh = await draftingApi.getSession(Number(sessionId))
+    loadedRef.current = false
+    setSession(fresh)
+    setDirty(false)
+  }
+
+  // Suggest mode: the edits go to the owner as suggestions; the draft itself is not changed.
+  const sendSuggestions = async () => {
+    if (!editor || !sessionId) return
+    setSaving(true); setError('')
+    try {
+      await draftingApi.suggest(Number(sessionId), collectBlocks())
+      await reloadDraft()
+      loadRounds()
+    } catch (e) {
+      setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error
+        || 'Could not send the suggestions. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // The requested reviewer hands the draft back (their direct corrections reach the owner as a round).
+  const finishRequestedReview = async () => {
+    const req = session?.access?.request
+    if (!req) return
+    if (dirty && !suggesting && !(await save())) return
+    if (dirty && suggesting) { setError('Send your suggestions first, then click Done reviewing.'); return }
+    setReviewDone(true); setError('')
+    try {
+      await draftingApi.reviewRequestDone(req.id)
+      await reloadDraft()
+      loadRounds()
+    } catch (e) {
+      setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Could not finish the review.')
+    } finally {
+      setReviewDone(false)
+    }
+  }
+  const cancelRequest = async (id: number) => {
+    try { await draftingApi.cancelReviewRequest(id); loadRounds() } catch { setError('Could not cancel the request.') }
+  }
+
+  // Returns false if the save failed (so an export can stop instead of using stale content).
+  const save = async (): Promise<boolean> => {
+    if (!editor || !sessionId) return false
+    if (suggesting) {
+      // Not saved as the draft: unsent suggestions stay in the editor until sent.
+      setError('Send your suggestions first (or discard them by reloading the page).')
+      return false
+    }
+    const updates = collectBlocks()
     setSaving(true); setError('')
     try {
       const fresh = await draftingApi.saveBlocks(Number(sessionId), updates)
@@ -541,7 +670,8 @@ export default function DraftPage() {
   const [amsTask, setAmsTask] = useState<AmsTaskReview | null>(null)
   const hasAmsTask = !!session?.ams_task_id
   const review = session?.review ?? null
-  const isReviewer = !!review && !review.isOwner
+  // Anyone but the owner: a task's reviewer, or a colleague who was asked to review (access.request).
+  const isReviewer = (!!review && !review.isOwner) || (!!session?.access && !session.access.isOwner)
   // Approve / request changes from the editor (backend: workspace/review.py).
   const submitReview = async (action: 'approve' | 'request_changes', note = '') => {
     if (!review) return
@@ -551,6 +681,7 @@ export default function DraftPage() {
       setAskChanges(false)
       setPreview(true)
       await fetchSession()
+      loadRounds()
     } catch (e) {
       setError(errorMessage(e, 'Could not record the review.'))
     } finally {
@@ -587,6 +718,7 @@ export default function DraftPage() {
         ams_document_version: r.version, ams_synced_at: r.syncedAt,
       }))
       if (r.reviewStatus) setAmsTask(prev => prev && ({ ...prev, reviewStatus: r.reviewStatus }))
+      loadRounds()
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } }).response?.data?.error
       setError(msg || 'Could not save to PactPro — your draft is safe here; please try again.')
@@ -621,6 +753,27 @@ export default function DraftPage() {
       else setError(`Could not create the ${format === 'pdf' ? 'PDF' : 'Word file'} — please try again.`)
     } finally {
       setExporting(false)
+    }
+  }
+
+  // Compare against the current draft: save unsaved edits first, so "now" is what's on screen.
+  const openCompare = async (from?: number) => {
+    if (dirty && !(await save())) return
+    setCompare({ from })
+  }
+  // The redline of what the compare view shows, as Word or PDF.
+  const downloadRedline = async (from: number, to: number | undefined, format: 'docx' | 'pdf') => {
+    if (!sessionId) return
+    setError('')
+    try {
+      const r = await draftingApi.exportRedline(Number(sessionId), from, to, false, format)
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(r.blob); a.download = r.filename
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href)
+    } catch (e) {
+      setError((e as { response?: { status?: number } })?.response?.status === 503
+        ? 'PDF is not available on this server. Download the Word redline instead.'
+        : 'Could not create the redline. Please try again.')
     }
   }
 
@@ -699,6 +852,34 @@ export default function DraftPage() {
     })
     return out
   }
+
+  // Comment button: the selected words (in Edit or Preview) and their clause become the new comment's anchor.
+  const startComment = () => {
+    const sel = window.getSelection()
+    const quote = (sel?.toString() || '').replace(/\s+/g, ' ').trim().slice(0, 2000)
+    const node = sel?.anchorNode || null
+    const el = node ? (node.nodeType === 3 ? node.parentElement : node as HTMLElement) : null
+    const fromSel = el?.closest('[data-block-id]')?.getAttribute('data-block-id')
+    const blockId = fromSel ? Number(fromSel) : focusedId
+    setPreview(false); setCompare(null); setReviewRoundId(null); setRefDoc(null)
+    setPendingComment({ blockId: blockId ?? null, quote })
+    setRightTab('comments')
+  }
+  const jumpToComment = (t: DraftCommentThread) => { if (t.block_id) scrollToClause(t.block_id) }
+  const seenKey = `pp_seen_rounds_${sessionId}`
+  useEffect(() => {
+    try { setSeenRounds(JSON.parse(localStorage.getItem(seenKey) || '[]')) } catch { setSeenRounds([]) }
+  }, [seenKey])
+  // Opening the tab marks every decided round as seen.
+  useEffect(() => {
+    if (rightTab !== 'activity') return
+    const ids = rounds.filter(r => r.status === 'finished').map(r => r.id)
+    if (ids.every(id => seenRounds.includes(id))) return
+    setSeenRounds(ids)
+    try { localStorage.setItem(seenKey, JSON.stringify(ids)) } catch { /* private window: the badge just stays */ }
+  }, [rightTab, rounds, seenRounds, seenKey])
+  const openActivity = () => { setPreview(false); setCompare(null); setReviewRoundId(null); setRefDoc(null); setRightTab('activity') }
+  const openComments = () => { setPreview(false); setCompare(null); setReviewRoundId(null); setRefDoc(null); setRightTab('comments') }
 
   // Jump to a clause from a review finding: leave Preview, scroll it into view, flash it.
   const scrollToClause = (blockId: number) => {
@@ -794,7 +975,39 @@ export default function DraftPage() {
   const docTitle = resolveDocTitle()
   // Count still-to-fill: empty placeholder fields + any legacy ______ blanks.
   const toFill = placeholders.filter(p => !p.value.trim()).length + blankCount
-  const canEdit = !isReviewer || review?.canEdit
+  const canEdit = canEditDirect
+  // Review rounds that hold up the task loop (drafting/task_review.py enforces the same).
+  const openRounds = rounds.filter(r => r.status === 'open')
+  const suggestionsToDecide = openRounds.some(r => r.can_decide && r.kind === 'suggestions' && !r.binding)
+  const approveBlocked = openRounds.some(r => !r.binding && (r.can_decide || r.mine)) || (comments?.open ?? 0) > 0
+
+  // Task review notices for the author already take the bar's place.
+  const taskBar = !isReviewer && !!amsTask?.needsReview && ['CHANGES_REQUESTED', 'APPROVED'].includes(amsTask.reviewStatus || '')
+  const toDecide = openRounds.filter(r => r.can_decide)
+  const myOpenRequests = access?.isOwner ? requests.filter(r => r.status === 'open') : []
+  const barItems: { tone: string; icon: IconName; text: ReactNode; hint?: string; action: ReactNode }[] = []
+  for (const r of toDecide) {
+    barItems.push({ tone: 'info', icon: 'chat', hint: r.note || undefined,
+      text: <><strong>{roundTitle(r)}</strong> · {r.binding ? `${r.pending} of ${r.changes} to acknowledge or query` : `${r.pending} of ${r.changes} to decide`}</>,
+      action: <button type="button" className="btn sm primary" onClick={() => { setCompare(null); setReviewRoundId(r.id) }}>Review</button> })
+  }
+  if (access?.request) {
+    barItems.push({ tone: 'info', icon: 'users', hint: access.request.note || undefined,
+      text: <><strong>{session?.created_by_name || 'A colleague'}</strong> asked you to review
+        {access.request.authority === 'binding' ? ` · you ${POWER.binding}` : ''}
+        {access.request.note && <span className="muted"> · "{access.request.note}"</span>}</>,
+      action: <Button size="sm" variant="primary" icon="check" loading={reviewDone} disabled={reviewDone}
+        title="Hand the draft back to its author" onClick={finishRequestedReview}>Done reviewing</Button> })
+  }
+  for (const r of myOpenRequests) {
+    barItems.push({ tone: '', icon: 'users', hint: r.note || undefined,
+      text: <>With <strong>{r.reviewer_name || 'a colleague'}</strong> for review{r.authority === 'binding' ? ' (can correct)' : ''}</>,
+      action: <button type="button" className="btn ghost sm" onClick={() => cancelRequest(r.id)}>Cancel request</button> })
+  }
+  const reviewBar = barItems.length ? { ...barItems[0], more: barItems.length - 1 } : null
+  // Activity tab badge: changes waiting for me, plus my decided rounds not looked at yet.
+  const unseenDone = rounds.filter(r => r.mine && r.status === 'finished' && !seenRounds.includes(r.id))
+  const activityBadge = toDecide.length + unseenDone.length
 
   return (
     <RiskContext.Provider value={riskMap}>
@@ -809,18 +1022,36 @@ export default function DraftPage() {
         {toFill > 0
           ? <span title="Values left blank. Fill these in before use."><Chip tone="warn">{toFill} to fill</Chip></span>
           : placeholders.length > 0 && <Chip tone="ok">All filled</Chip>}
+        {suggesting && (
+          <span className="chip info" title={`Your edits go to ${session.created_by_name || 'the owner'} to accept or decline; the draft stays as it is until then. Click Send suggestions when done.`}>
+            <Icon name="chat" size="sm" />Suggesting</span>
+        )}
+        {staleDraft && !reviewRoundId && (
+          <button type="button" className="chip warn dr-chip-btn" title="Someone has updated this draft since you opened it" onClick={reloadStale}>
+            <Icon name="refresh" size="sm" />Updated · Reload</button>
+        )}
         {/* File on the AMS case / task (drafting/filing.py). Author only. */}
         {!isReviewer && amsSyncedLabel && (
           <span className="chip ok" title="Last copy filed in PactPro"><Icon name="check" size="sm" />{amsSyncedLabel}</span>
         )}
-        {canEdit && (
+        {(canEdit || canSuggest) && (
           <div className="seg" role="group" aria-label="Mode">
             <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}><Icon name="edit" size="sm" />Edit</button>
             <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}><Icon name="eye" size="sm" />Preview</button>
           </div>
         )}
+        {canSuggest && canEditDirect && (
+          <button type="button" className="btn sm" aria-pressed={suggestMode} disabled={dirty}
+            title={dirty ? 'Save or send your edits first' : 'Type suggestions for the owner to accept or decline, instead of changing the draft'}
+            onClick={() => setSuggestMode(m => !m)}><Icon name="chat" size="sm" />Suggest</button>
+        )}
+        <button type="button" className="btn sm" title="Select some words, then comment on them (a question or a note)"
+          onMouseDown={e => e.preventDefault()} onClick={startComment}><Icon name="chat" size="sm" />Comment</button>
+        <button type="button" className="btn sm" aria-pressed={!!compare}
+          title="See what changed between two versions, in the document"
+          onClick={() => (compare ? setCompare(null) : openCompare())}><Icon name="swap" size="sm" />Compare</button>
         <DraftVersions sessionId={session.id} canSave={!!canEdit}
-          beforeSave={async () => !dirty || !!(await save())} />
+          beforeSave={async () => !dirty || !!(await save())} onCompare={id => openCompare(id)} />
         {hasPermission('DRAFT_EXPORT') && (
           <Button size="sm" icon="download" aria-haspopup="menu" loading={exporting} disabled={exporting}
             onClick={e => setDlAnchor(dlAnchor ? null : e.currentTarget)}>Download</Button>
@@ -842,12 +1073,20 @@ export default function DraftPage() {
           <Button size="sm" icon="refresh" title="Wipe this draft and regenerate with the same inputs"
             onClick={() => setConfirmRedraft(true)}>Re-draft</Button>
         )}
-        {canEdit && (
+        {suggesting ? (
+          <Button size="sm" variant="primary" icon="send" loading={saving} disabled={!dirty || saving}
+            title="Send your edits to the owner as suggestions" onClick={sendSuggestions}>Send suggestions</Button>
+        ) : canEdit && (
           <Button size="sm" icon="check" loading={saving} disabled={!dirty || saving} onClick={save}>{dirty ? 'Save' : 'Saved'}</Button>
         )}
+        {access?.isOwner && !session.ams_task_id && (
+          <Button size="sm" icon="users" title="Ask a colleague in your team to review this draft"
+            onClick={() => setAskReview(true)}>Request review</Button>
+        )}
         {!isReviewer && (
-          <Button variant="primary" size="sm" icon="folder" loading={sendingAms} disabled={sendingAms}
-            title={session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'}
+          <Button variant="primary" size="sm" icon="folder" loading={sendingAms} disabled={sendingAms || suggestionsToDecide}
+            title={suggestionsToDecide ? 'Accept or decline the suggestions first (Review)'
+              : session?.case_id ? undefined : 'Pick the PactPro case to file this draft on'}
             onClick={() => (session?.ams_task_id ? submitToTask() : sendToAms())}>
             {session?.ams_task_id ? 'Submit to task' : 'Save to case'}
           </Button>
@@ -871,9 +1110,10 @@ export default function DraftPage() {
                   ? <>Changed since the last version: <strong>{changeSummary(review.lastChanges)}</strong></>
                   : 'No text changes since the last version.'}
                 {review.lastNote && <div className="muted pp-review-changes-note">"{review.lastNote}"</div>}
-                {review.lastChanges.length > 0 && (
+                {review.lastChanges.length > 0 && <>
                   <button type="button" className="btn ghost sm" onClick={() => setShowChanges(true)}><Icon name="eye" size="sm" />What changed</button>
-                )}
+                  <button type="button" className="btn ghost sm" onClick={() => openCompare()}><Icon name="swap" size="sm" />Show in document</button>
+                </>}
               </div>
             )}
           </div>
@@ -881,8 +1121,9 @@ export default function DraftPage() {
             <div className="row" style={{ gap: 6 }}>
               <Button size="sm" icon="restore" disabled={reviewing || dirty} title={dirty ? 'Save your edits first' : undefined}
                 onClick={() => { setReviewNote(''); setAskChanges(true) }}>Request changes</Button>
-              <Button variant="primary" size="sm" icon="check" loading={reviewing} disabled={dirty || reviewing}
-                title={dirty ? 'Save your edits first' : undefined} onClick={() => submitReview('approve')}>Approve</Button>
+              <Button variant="primary" size="sm" icon="check" loading={reviewing} disabled={dirty || reviewing || approveBlocked}
+                title={dirty ? 'Save your edits first' : approveBlocked ? 'Decide on every change first (Review) and resolve every comment' : undefined}
+                onClick={() => submitReview('approve')}>Approve</Button>
             </div>
           )}
         </div>
@@ -923,6 +1164,8 @@ export default function DraftPage() {
       {!isReviewer && amsTask?.needsReview && amsTask.reviewStatus === 'CHANGES_REQUESTED' && (
         <div className="callout warn" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>
           {`${amsTask.reviewedByName || 'Your senior'} asked for changes: ${amsTask.reviewNote || ''}`} Edit the draft and choose <b>Submit to task</b> again.
+          {' '}<button type="button" className="btn ghost sm" onClick={() => openCompare()}>
+            <Icon name="swap" size="sm" />See what {amsTask.reviewedByName || 'your senior'} changed</button>
         </div></div>
       )}
       {!isReviewer && amsTask?.needsReview && amsTask.reviewStatus === 'APPROVED' && (
@@ -931,7 +1174,28 @@ export default function DraftPage() {
         </div></div>
       )}
 
-      {preview && (
+      <RequestReviewDialog sessionId={session.id} open={askReview} onClose={() => setAskReview(false)} onSent={loadRounds} />
+      {/* At most one review bar: the thing to act on now. The rest is in the Activity tab. */}
+      {!reviewRoundId && !taskBar && reviewBar && (
+        <div className={`callout dr-bar ${reviewBar.tone}`}>
+          <Icon name={reviewBar.icon} size="sm" />
+          <div className="grow ellipsis" title={reviewBar.hint}>{reviewBar.text}</div>
+          {reviewBar.more > 0 && (
+            <button type="button" className="btn ghost sm" onClick={openActivity}>+{reviewBar.more} more</button>
+          )}
+          {reviewBar.action}
+        </div>
+      )}
+      {reviewRoundId && (
+        <ReviewRoundView key={reviewRoundId} roundId={reviewRoundId} docTitle={docTitle}
+          onClose={() => setReviewRoundId(null)}
+          onDone={async () => { setReviewRoundId(null); await reloadDraft(); loadRounds() }} />
+      )}
+      {compare && !reviewRoundId && (
+        <CompareView key={compare.from ?? 'default'} sessionId={session.id} docTitle={docTitle}
+          initialFrom={compare.from} onClose={() => setCompare(null)} onDownload={downloadRedline} />
+      )}
+      {preview && !compare && !reviewRoundId && (
         /* Read-only filled document */
         <div className="ed-mid dr-preview">
           <article className="paper-sheet preview" aria-label="Draft preview">
@@ -944,7 +1208,7 @@ export default function DraftPage() {
           review panels and their state survive the Preview → Edit toggle. Pane widths
           are user-resizable (drag handles) and fed in as CSS variables. */}
       <div className="editor-shell dr-ed-shell"
-        style={{ display: preview ? 'none' : undefined, ['--dr-l' as string]: `${leftW}px`, ['--dr-r' as string]: `${rightW}px` }}>
+        style={{ display: preview || compare || reviewRoundId ? 'none' : undefined, ['--dr-l' as string]: `${leftW}px`, ['--dr-r' as string]: `${rightW}px` }}>
           {/* Left — document placeholders + reference documents */}
           <aside className="ed-pane ed-side dr-ed-pane" aria-label="Placeholders and references">
             <div className="ed-sec">
@@ -952,6 +1216,10 @@ export default function DraftPage() {
               <DocumentPlaceholders items={placeholders} onChange={setPlaceholderValue}
                 onFocus={focusPlaceholder} onBlur={blurPlaceholder} />
             </div>
+
+            <CaseFilePanel sessionId={session.id} onOpen={d => {
+              setRefDoc({ name: d.name, url: '', amsDocId: d.id, fileName: d.fileName }); setRightW(w => Math.max(w, 440))
+            }} />
 
             {(session.reference_documents?.length ?? 0) > 0 && (
               <div className="ed-sec">
@@ -992,7 +1260,7 @@ export default function DraftPage() {
                   <button type="button" className="btn ghost sm icon" aria-label="Close reference document" title="Close"
                     onClick={() => setRefDoc(null)}><Icon name="x" size="sm" /></button>
                 </div>
-                <div className="pp-refview-body"><InlineDocViewer fileUrl={refDoc.url} name={refDoc.name} /></div>
+                <div className="pp-refview-body"><InlineDocViewer fileUrl={refDoc.url} name={refDoc.name} amsDocId={refDoc.amsDocId} fileName={refDoc.fileName} /></div>
               </div>
             ) : (
               <div className="pp-rpane">
@@ -1003,6 +1271,20 @@ export default function DraftPage() {
                   <button type="button" role="tab" aria-selected={rightTab === 'review'} onClick={() => setRightTab('review')}>
                     <Icon name="shield" size="sm" /> Review
                   </button>
+                  <button type="button" role="tab" aria-selected={rightTab === 'activity'} onClick={() => setRightTab('activity')}>
+                    <Icon name="history" size="sm" /> Activity{activityBadge > 0 && <span className="dr-badge">{activityBadge}</span>}
+                  </button>
+                  <button type="button" role="tab" aria-selected={rightTab === 'comments'} onClick={() => setRightTab('comments')}>
+                    <Icon name="chat" size="sm" /> Comments{(comments?.open ?? 0) > 0 ? ` (${comments!.open})` : ''}
+                  </button>
+                </div>
+                <div className={`pp-rtab-slot ${rightTab === 'activity' ? '' : 'pp-hidden'}`}>
+                  <ReviewActivity rounds={rounds} requests={requests} isOwner={!!access?.isOwner}
+                    onOpenRound={id => { setCompare(null); setReviewRoundId(id) }} onCancelRequest={cancelRequest} />
+                </div>
+                <div className={`pp-rtab-slot ${rightTab === 'comments' ? '' : 'pp-hidden'}`}>
+                  <CommentsPanel sessionId={session.id} data={comments} onChange={setComments}
+                    pending={pendingComment} onCancelPending={() => setPendingComment(null)} onJump={jumpToComment} />
                 </div>
                 {/* Both mounted; inactive one is hidden so its state (chat thread / findings) persists. */}
                 <div className={`pp-rtab-slot ${rightTab === 'chat' ? '' : 'pp-hidden'}`}>

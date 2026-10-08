@@ -573,3 +573,621 @@ class PdfExportTest(TestCase):
         resp = self.client.get(self.base + f'redline/?from={v.id}&output=pdf', **auth(self.owner))
         self.assertEqual(resp['Content-Type'], 'application/pdf')
         self.assertIn('X-Redline-Inserted', resp)
+
+
+class CompareEngineTest(TestCase):
+    """export/compare.py: the data behind the on-screen compare view and the redline."""
+
+    def test_changes_numbered_and_marked(self):
+        from .export.compare import compare_blocks
+        before = [_block(1, 'Rent', '<p>Rent is Rs. 40,000.</p><p>Paid monthly.</p>'),
+                  _block(2, 'Sub-letting', '<p>The Lessee may sub-let.</p>')]
+        after = [_block(1, 'Rent', '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>'),
+                 _block(3, 'Lock-in', '<p>Six months lock-in.</p>')]
+        data = compare_blocks(before, after).as_json()
+        self.assertEqual([c['status'] for c in data['clauses']], ['changed', 'removed', 'added'])
+        rent = data['clauses'][0]['body']
+        self.assertEqual(rent[0]['kind'], 'changed')
+        self.assertEqual([(s['op'], s['text']) for s in rent[0]['segs'] if s['op'] != 'same'],
+                         [('del', '40'), ('ins', '45')])
+        self.assertEqual(rent[1]['kind'], 'same')
+        self.assertIsNone(rent[1]['change_id'])
+        # Every changed paragraph is numbered in order: rent, removed heading + body, added heading + body.
+        ids = [p['change_id'] for c in data['clauses'] for p in c['heading'] + c['body'] if p['change_id']]
+        self.assertEqual(ids, [1, 2, 3, 4, 5])
+        self.assertEqual(data['changes'], 5)
+
+    def test_screen_and_word_count_the_same(self):
+        from .export.compare import compare_blocks
+        before = [_block(1, 'Term', '<p>The term is three years from today.</p>')]
+        after = [_block(1, 'Term', '<p>The term is five years from the start date.</p>')]
+        data = compare_blocks(before, after).as_json()
+        _, stats = _redline_xml(before, after)
+        self.assertEqual((data['inserted'], data['deleted']), (stats['inserted'], stats['deleted']))
+
+
+@mock.patch('drafting.views._dispatch')
+class CompareViewTest(TestCase):
+    databases = {'default'}
+
+    def setUp(self):
+        from .models import DraftBlock
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(session=self.session, position=0, block_type='clause',
+                                               heading='Rent', text='Rent is Rs. 40,000.', source='generated')
+        self.url = f'/api/drafting/draft-sessions/{self.session.id}/compare/'
+
+    def test_needs_a_version(self, dispatch):
+        self.assertEqual(self.client.get(self.url, **auth(self.owner)).status_code, 400)
+
+    def test_version_against_current(self, dispatch):
+        from .versions import save_version
+        v1 = save_version(self.session)
+        self.block.text = 'Rent is Rs. 45,000.'
+        self.block.save()
+        body = self.client.get(self.url, **auth(self.owner)).json()
+        self.assertEqual(body['from']['id'], v1.id)
+        self.assertIsNone(body['to'])
+        self.assertEqual((body['inserted'], body['deleted'], body['changes']), (1, 1, 1))   # 40 -> 45; ',000' unchanged
+
+    def test_outsider_refused(self, dispatch):
+        from .versions import save_version
+        save_version(self.session)
+        outsider = make_advocate(permissions=ALL_PERMISSIONS)
+        self.assertEqual(self.client.get(self.url, **auth(outsider)).status_code, 404)
+
+
+DRAFTER = ('DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_EXPORT')
+
+
+class AuthorityTest(TestCase):
+    """drafting/authority.py: who is senior over whose drafts."""
+
+    def test_rule(self):
+        from .authority import is_senior_over
+        head = make_advocate(permissions=DRAFTER)
+        junior = make_advocate(permissions=DRAFTER, parent_advocate_id=head.id)
+        peer = make_advocate(permissions=DRAFTER, parent_advocate_id=head.id)
+        assigner = make_advocate(permissions=DRAFTER + ('TASK_ASSIGN',), parent_advocate_id=head.id)
+        outsider = make_advocate(permissions=DRAFTER + ('TASK_ASSIGN',))
+        self.assertTrue(is_senior_over(head, junior))          # team head
+        self.assertTrue(is_senior_over(assigner, junior))      # can assign tasks in the team
+        self.assertFalse(is_senior_over(peer, junior))         # a peer
+        self.assertFalse(is_senior_over(junior, head))         # nobody is over the team head
+        self.assertFalse(is_senior_over(assigner, head))
+        self.assertFalse(is_senior_over(outsider, junior))     # another team
+        self.assertFalse(is_senior_over(head, head))
+
+
+class HtmlWriteTest(TestCase):
+    """export/htmlwrite.py turns paragraphs back into the HTML the editor reads."""
+
+    def test_round_trip(self):
+        from .export.docx import html_to_blocks
+        from .export.htmlwrite import paras_to_html
+        src = ('<h2>Rent</h2><p style="text-align: justify">Rent is <strong>Rs. 40,000</strong>, <em>monthly</em>.</p>'
+               '<ul><li><p>One</p><ul><li><p>One a</p></li></ul></li><li><p>Two</p></li></ul>'
+               '<ol><li><p>First</p></li></ol><p>Line<br>break &amp; more</p>')
+        paras = html_to_blocks(src)
+        again = html_to_blocks(paras_to_html(paras))
+        self.assertEqual([(p.style, p.align, p.runs) for p in again], [(p.style, p.align, p.runs) for p in paras])
+
+
+@mock.patch('drafting.views._dispatch')
+class ReviewRoundTest(TestCase):
+    """drafting/review.py through the API: suggest, decide, finish (docs/DRAFT_REVIEW.md)."""
+    databases = {'default'}
+
+    def setUp(self):
+        from .models import DraftBlock, DraftReviewRequest
+        self.head = make_advocate(permissions=DRAFTER)
+        self.junior = make_advocate(permissions=DRAFTER, parent_advocate_id=self.head.id)
+        self.outsider = make_advocate(permissions=DRAFTER)
+        # The senior's own draft; the junior is asked to proofread it (suggestions only).
+        self.session = DraftSession.objects.create(created_by_id=self.head.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(
+            session=self.session, position=0, block_type='clause', heading='Rent', text='',
+            content_html='<p>Rent is Rs. 40,000.</p><p>Paid monthly.</p>', source='generated')
+        self.request = DraftReviewRequest.objects.create(
+            session=self.session, requested_by_id=self.head.id, reviewer_id=self.junior.id,
+            authority=DraftReviewRequest.Authority.SUGGEST)
+        self.base = '/api/drafting/'
+
+    def suggest(self, who, html):
+        return self.client.post(f'{self.base}draft-sessions/{self.session.id}/suggest/',
+                                {'blocks': [{'id': self.block.id, 'heading': 'Rent', 'content_html': html, 'text': ''}],
+                                 'note': 'Please check'}, content_type='application/json', **auth(who))
+
+    def decide(self, rid, who, change, decision, reason=''):
+        return self.client.post(f'{self.base}rounds/{rid}/decide/',
+                                {'change': change, 'decision': decision, 'reason': reason},
+                                content_type='application/json', **auth(who))
+
+    def finish(self, rid, who):
+        return self.client.post(f'{self.base}rounds/{rid}/finish/', **auth(who))
+
+    def test_requested_reviewer_sees_but_cannot_edit_directly(self, dispatch):
+        url = f'{self.base}draft-sessions/{self.session.id}/'
+        self.assertEqual(self.client.get(url, **auth(self.junior)).status_code, 200)
+        resp = self.client.post(url + 'save-blocks/', [{'id': self.block.id, 'text': 'x'}],
+                                content_type='application/json', **auth(self.junior))
+        self.assertEqual(resp.status_code, 403)                     # suggest-only
+        self.assertEqual(self.client.get(url, **auth(self.outsider)).status_code, 404)
+
+    def test_binding_reviewer_may_edit(self, dispatch):
+        from .models import DraftReviewRequest
+        junior_draft = DraftSession.objects.create(created_by_id=self.junior.id, facts={}, status='ready')
+        DraftReviewRequest.objects.create(session=junior_draft, requested_by_id=self.junior.id,
+                                          reviewer_id=self.head.id, authority=DraftReviewRequest.Authority.BINDING)
+        resp = self.client.post(f'{self.base}draft-sessions/{junior_draft.id}/save-blocks/', [],
+                                content_type='application/json', **auth(self.head))
+        self.assertEqual(resp.status_code, 200)
+
+    def test_mixed_decisions_in_one_clause(self, dispatch):
+        resp = self.suggest(self.junior, '<p>Rent is Rs. 45,000.</p><p>Paid monthly in advance.</p>')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        rnd = resp.json()
+        self.assertEqual((rnd['kind'], rnd['pending'], rnd['can_decide']), ('suggestions', 2, False))
+        self.block.refresh_from_db()
+        self.assertIn('40,000', self.block.content_html)            # nothing applied yet
+        rid = rnd['id']
+        self.assertEqual(self.decide(rid, self.junior, 1, 'accepted').status_code, 400)   # not the decider
+        self.assertEqual(self.decide(rid, self.head, 2, 'declined').status_code, 400)     # reason needed
+        self.assertEqual(self.decide(rid, self.head, 1, 'rejected').status_code, 400)     # wrong kind
+        self.assertEqual(self.decide(rid, self.head, 1, 'accepted').status_code, 200)
+        self.assertEqual(self.finish(rid, self.head).status_code, 400)                    # one still pending
+        self.assertEqual(self.decide(rid, self.head, 2, 'declined', 'Advance is in 2.2').status_code, 200)
+        resp = self.finish(rid, self.head)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.block.refresh_from_db()
+        self.assertIn('45,000', self.block.content_html)            # accepted
+        self.assertNotIn('in advance', self.block.content_html)     # declined
+        self.assertEqual(self.block.text, 'Rent is Rs. 45,000.\nPaid monthly.')
+        version = self.session.versions.order_by('-number').first()
+        self.assertEqual((version.kind, version.label), ('review', 'Review: 1 accepted, 1 declined'))
+
+    def test_accept_all_keeps_the_html_exactly(self, dispatch):
+        html = '<p>Rent is Rs. 45,000.</p><p>Paid <strong>monthly</strong>.</p>'
+        rid = self.suggest(self.junior, html).json()['id']
+        self.assertEqual(self.decide(rid, self.head, 'all', 'accepted').status_code, 200)
+        self.finish(rid, self.head)
+        self.block.refresh_from_db()
+        self.assertEqual(self.block.content_html, html)
+
+    def test_outdated_suggestion_is_not_applied(self, dispatch):
+        rid = self.suggest(self.junior, '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>').json()['id']
+        self.block.content_html = '<p>Rent is Rs. 50,000.</p><p>Paid monthly.</p>'   # the owner moved on
+        self.block.save()
+        body = self.client.get(f'{self.base}rounds/{rid}/', **auth(self.head)).json()
+        self.assertTrue(body['clauses'][0]['body'][0]['outdated'])
+        resp = self.finish(rid, self.head)                         # outdated changes need no decision
+        self.assertEqual(resp.json()['result']['outdated'], [1])   # change 1: its paragraph changed
+        self.block.refresh_from_db()
+        self.assertIn('50,000', self.block.content_html)
+
+    def test_edit_elsewhere_in_the_clause_keeps_suggestion_valid(self, dispatch):
+        # A whole deed often sits in one clause: an edit to another paragraph must not outdate it.
+        rid = self.suggest(self.junior, '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>').json()['id']
+        self.block.content_html = '<p>Rent is Rs. 40,000.</p><p>Paid quarterly.</p>'   # owner edits paragraph 2
+        self.block.save()
+        body = self.client.get(f'{self.base}rounds/{rid}/', **auth(self.head)).json()
+        self.assertFalse(body['clauses'][0]['body'][0]['outdated'])
+        self.decide(rid, self.head, 1, 'accepted')
+        self.assertEqual(self.finish(rid, self.head).status_code, 200)
+        self.block.refresh_from_db()
+        self.assertEqual(self.block.text, 'Rent is Rs. 45,000.\nPaid quarterly.')   # both edits kept
+
+    def test_only_formatting_is_refused(self, dispatch):
+        resp = self.suggest(self.junior, '<p>Rent is <strong>Rs. 40,000.</strong></p><p>Paid monthly.</p>')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_owner_cannot_suggest_and_outsider_cannot_see(self, dispatch):
+        self.assertEqual(self.suggest(self.head, '<p>x</p>').status_code, 403)
+        rid = self.suggest(self.junior, '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>').json()['id']
+        self.assertEqual(self.client.get(f'{self.base}rounds/{rid}/', **auth(self.outsider)).status_code, 404)
+
+    def test_author_withdraws(self, dispatch):
+        rid = self.suggest(self.junior, '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>').json()['id']
+        self.assertEqual(self.client.post(f'{self.base}rounds/{rid}/cancel/', **auth(self.head)).status_code, 400)
+        resp = self.client.post(f'{self.base}rounds/{rid}/cancel/', **auth(self.junior))
+        self.assertEqual(resp.json()['status'], 'cancelled')
+
+    def test_changes_round_reject_puts_old_text_back(self, dispatch):
+        from . import review
+        from .versions import snapshot_blocks
+        base = snapshot_blocks(self.session)
+        self.block.content_html = '<p>Rent is Rs. 45,000.</p><p>Paid weekly.</p>'
+        self.block.save()
+        rnd = review.create_changes_round(self.session, base, author_id=self.junior.id, decider_id=self.head.id)
+        review.decide(rnd, self.head, 1, 'accepted')
+        review.decide(rnd, self.head, 2, 'rejected')
+        review.finish(rnd, self.head)
+        self.block.refresh_from_db()
+        self.assertEqual(self.block.text, 'Rent is Rs. 45,000.\nPaid monthly.')
+
+    def test_binding_round_is_only_acknowledged(self, dispatch):
+        from . import review
+        from .versions import snapshot_blocks
+        base = snapshot_blocks(self.session)
+        self.block.content_html = '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>'
+        self.block.save()
+        rnd = review.create_changes_round(self.session, base, author_id=self.head.id,
+                                          decider_id=self.junior.id, binding=True)
+        with self.assertRaises(review.ReviewError):
+            review.decide(rnd, self.junior, 1, 'rejected')
+        review.decide(rnd, self.junior, 1, 'queried', 'Client agreed 40,000?')
+        review.finish(rnd, self.junior)
+        self.block.refresh_from_db()
+        self.assertIn('45,000', self.block.content_html)          # a query never undoes a correction
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+@mock.patch('drafting.views._dispatch')
+class TaskReviewLoopTest(TestCase):
+    """drafting/task_review.py: the whole task loop with review rounds (docs/DRAFT_REVIEW.md, situation 1)."""
+    databases = {'default'}
+
+    def setUp(self):
+        from core.testing import make_case
+        from drafting.ams_cases import link_case
+        from drafting.models import DraftBlock
+        from workspace.models import CaseTask
+        self.senior = make_advocate(permissions=ALL_PERMISSIONS)
+        drafting = ('CASE_VIEW', 'DOCUMENT_VIEW', 'TASK_VIEW', 'DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_EXPORT')
+        self.junior = make_advocate(permissions=drafting, parent_advocate_id=self.senior.id)
+        self.case = make_case(self.senior)
+        client, project = link_case(self.case)
+        self.task = CaseTask.objects.create(advocate_id=self.senior.id, case_id=self.case.id, title='Draft lease',
+                                            assigned_to_id=self.junior.id, assigned_by_id=self.senior.id)
+        self.session = DraftSession.objects.create(client=client, project=project, created_by_id=self.junior.id,
+                                                   ams_task_id=self.task.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(
+            session=self.session, position=0, block_type='clause', heading='Rent', text='',
+            content_html='<p>Rent is Rs. 40,000.</p><p>Notice is one month.</p><p>Paid monthly.</p>', source='generated')
+        self.s = f'/api/drafting/draft-sessions/{self.session.id}/'
+
+    def post(self, path, who, body=None):
+        return self.client.post(path, body or {}, content_type='application/json', **auth(who))
+
+    def save(self, who, html):
+        return self.post(self.s + 'save-blocks/', who, [{'id': self.block.id, 'heading': 'Rent', 'content_html': html, 'text': ''}])
+
+    def submit(self, note=''):
+        return self.post(f'/api/drafting/drafts/{self.session.id}/send-to-ams/', self.junior, {'note': note} if note else {})
+
+    def review(self, action, note=''):
+        return self.post(f'/api/workspace/tasks/{self.task.id}/review', self.senior, {'action': action, 'note': note})
+
+    def rounds(self, who):
+        return self.client.get(self.s + 'rounds/', **auth(who)).json()
+
+    def test_full_loop(self, dispatch):
+        from . import review
+        from .models import DraftComment, DraftReviewRound
+        self.assertEqual(self.submit().status_code, 200)
+
+        # Senior: no suggestions in a task review (docs/DRAFT_REVIEW.md, "Revision") ...
+        resp = self.post(self.s + 'suggest/', self.senior, {'blocks': [{'id': self.block.id, 'heading': 'Rent',
+            'content_html': '<p>x</p>', 'text': ''}]})
+        self.assertEqual(resp.status_code, 403)
+        # ... he corrects directly, and asks a question as a comment.
+        self.assertEqual(self.save(self.senior,
+                                   '<p>Rent is Rs. 45,000.</p><p>Notice is one month.</p><p>Paid monthly.</p>').status_code, 200)
+        resp = self.post(self.s + 'comments/', self.senior, {'block_id': self.block.id, 'quote': 'Paid monthly.',
+                                                             'body': 'Did the client agree to rent in advance?'})
+        question = resp.json()['threads'][0]['id']
+        self.assertEqual(self.review('approve').status_code, 400)          # an open question
+        self.assertEqual(self.review('request_changes', 'Fix the notice period.').status_code, 200)
+
+        # Junior: the correction arrives as a binding round (OK / Query only).
+        binding = DraftReviewRound.objects.get(session=self.session, binding=True)
+        self.assertEqual((binding.decider_id, binding.author_id), (self.junior.id, self.senior.id))
+        with self.assertRaises(review.ReviewError):
+            review.decide(binding, self.junior, 1, 'rejected')
+        # Her query opens a comment thread on the corrected words, for the senior.
+        review.decide(binding, self.junior, 1, 'queried', 'Client agreed 40,000?')
+        query = DraftComment.objects.get(session=self.session, author_id=self.junior.id, parent=None)
+        self.assertEqual((query.body, query.block_id), ('Client agreed 40,000?', self.block.id))
+        self.assertIn('45,000', query.quote)
+        # She answers his question, fixes what was asked and resubmits (comments don't block a resubmit).
+        self.post(f'/api/drafting/comments/{question}/reply/', self.junior, {'body': 'Arrears, as agreed.'})
+        self.block.refresh_from_db()
+        self.assertEqual(self.save(self.junior, self.block.content_html.replace('one month', 'two months')).status_code, 200)
+        self.assertEqual(self.submit('Fixed notice').status_code, 200)
+        binding.refresh_from_db()
+        self.assertEqual(binding.status, 'finished')                       # closed, query kept
+
+        # Senior: a Keep / Reject round of her change since "Sent back", and two open threads.
+        changes = DraftReviewRound.objects.get(session=self.session, kind='changes', binding=False, status='open')
+        self.assertEqual((changes.decider_id, review.comparison(changes).changes), (self.senior.id, 1))
+        threads = self.client.get(self.s + 'comments/', **auth(self.senior)).json()
+        self.assertEqual((threads['open'], threads['answered']), (2, 1))
+        review.decide(changes, self.senior, 'all', 'accepted')
+        review.finish(changes, self.senior)
+        self.assertEqual(self.review('approve').status_code, 400)          # threads still open
+        for t in threads['threads']:
+            self.assertEqual(self.post(f'/api/drafting/comments/{t["id"]}/resolve/', self.senior).status_code, 200)
+        self.assertEqual(self.review('approve').status_code, 200)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.review_status, 'APPROVED')
+        kinds = list(self.session.versions.order_by('number').values_list('kind', flat=True))
+        self.assertIn('returned', kinds)
+
+
+@mock.patch('drafting.views._dispatch')
+class ReviewRequestTest(TestCase):
+    """drafting/review_requests.py: Request review on drafts without a task (situations 2-4)."""
+    databases = {'default'}
+
+    def setUp(self):
+        from .models import DraftBlock
+        self.head = make_advocate(permissions=DRAFTER)
+        self.junior = make_advocate(permissions=DRAFTER, parent_advocate_id=self.head.id)
+        self.peer = make_advocate(permissions=DRAFTER, parent_advocate_id=self.head.id)
+        self.outsider = make_advocate(permissions=DRAFTER)
+        self.session = DraftSession.objects.create(created_by_id=self.junior.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(
+            session=self.session, position=0, block_type='clause', heading='Rent', text='',
+            content_html='<p>Rent is Rs. 40,000.</p><p>Paid monthly.</p>', source='generated')
+        self.s = f'/api/drafting/draft-sessions/{self.session.id}/'
+
+    def post(self, path, who, body=None):
+        return self.client.post(path, body or {}, content_type='application/json', **auth(who))
+
+    def ask(self, reviewer, note='Please check the rent'):
+        return self.post(self.s + 'review-requests/', self.junior, {'reviewer': reviewer.id, 'note': note})
+
+    def test_reviewers_and_their_power(self, dispatch):
+        rows = {r['id']: r['authority'] for r in self.client.get(self.s + 'reviewers/', **auth(self.junior)).json()}
+        self.assertEqual(rows, {self.head.id: 'binding', self.peer.id: 'suggest'})   # never the outsider
+
+    def test_request_rules(self, dispatch):
+        self.assertEqual(self.ask(self.outsider).status_code, 400)                    # not in the team
+        self.assertEqual(self.post(self.s + 'review-requests/', self.peer, {'reviewer': self.head.id}).status_code, 404)
+        resp = self.ask(self.head)
+        self.assertEqual((resp.status_code, resp.json()['authority']), (201, 'binding'))
+        self.assertEqual(self.ask(self.head).status_code, 400)                        # already reviewing
+        self.assertEqual(self.session.versions.get().label, f'Sent for review to {self.head.full_name}')
+        from core.models import NotificationQueue
+        self.assertTrue(NotificationQueue.objects.filter(type='DRAFT_REVIEW_REQUESTED').exists())
+        task_draft = DraftSession.objects.create(created_by_id=self.junior.id, facts={}, status='ready', ams_task_id=99)
+        resp = self.post(f'/api/drafting/draft-sessions/{task_draft.id}/review-requests/', self.junior, {'reviewer': self.head.id})
+        self.assertEqual(resp.status_code, 400)                                        # tasks use their own review
+
+    def test_senior_corrects_then_owner_acknowledges(self, dispatch):
+        rid = self.ask(self.head).json()['id']
+        self.assertEqual([r['id'] for r in self.client.get('/api/drafting/drafts/for-review/', **auth(self.head)).json()], [rid])
+        session = self.client.get(self.s, **auth(self.head)).json()
+        self.assertEqual((session['access']['canWrite'], session['access']['canSuggest']), (True, True))
+        resp = self.post(self.s + 'save-blocks/', self.head, [{'id': self.block.id, 'heading': 'Rent',
+                         'content_html': '<p>Rent is Rs. 45,000.</p><p>Paid monthly.</p>', 'text': ''}])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.post(f'/api/drafting/review-requests/{rid}/done/', self.head).status_code, 200)
+        self.assertEqual(self.client.get('/api/drafting/drafts/for-review/', **auth(self.head)).json(), [])
+        rounds = self.client.get(self.s + 'rounds/', **auth(self.junior)).json()
+        self.assertEqual([(r['binding'], r['changes'], r['can_decide']) for r in rounds], [(True, 1, True)])
+        # After Done the senior can still read the draft but no longer edit it.
+        self.assertEqual(self.client.get(self.s, **auth(self.head)).status_code, 200)
+        self.assertEqual(self.post(self.s + 'save-blocks/', self.head, []).status_code, 403)
+
+    def test_peer_suggests_owner_decides(self, dispatch):
+        rid = self.ask(self.peer).json()['id']
+        session = self.client.get(self.s, **auth(self.peer)).json()
+        self.assertEqual((session['access']['canWrite'], session['access']['canSuggest']), (False, True))
+        resp = self.post(self.s + 'suggest/', self.peer, {'blocks': [{'id': self.block.id, 'heading': 'Rent',
+                         'content_html': '<p>Rent is Rs. 40,000.</p><p>Paid monthly in advance.</p>', 'text': ''}]})
+        self.assertEqual(resp.status_code, 201)
+        self.post(f'/api/drafting/review-requests/{rid}/done/', self.peer)
+        rounds = self.client.get(self.s + 'rounds/', **auth(self.junior)).json()
+        self.assertEqual([(r['kind'], r['binding'], r['can_decide']) for r in rounds], [('suggestions', False, True)])
+
+    def test_owner_cancels(self, dispatch):
+        rid = self.ask(self.peer).json()['id']
+        sug = self.post(self.s + 'suggest/', self.peer, {'blocks': [{'id': self.block.id, 'heading': 'Rent',
+                        'content_html': '<p>Rent is Rs. 41,000.</p><p>Paid monthly.</p>', 'text': ''}]}).json()['id']
+        self.assertEqual(self.post(f'/api/drafting/review-requests/{rid}/cancel/', self.peer).status_code, 404)
+        self.assertEqual(self.post(f'/api/drafting/review-requests/{rid}/cancel/', self.junior).json()['status'], 'cancelled')
+        self.assertEqual(self.client.get(self.s, **auth(self.peer)).status_code, 404)      # access gone
+        from .models import DraftReviewRound
+        self.assertEqual(DraftReviewRound.objects.get(id=sug).status, 'cancelled')
+
+
+    def test_progress_shown_to_both_sides(self, dispatch):
+        from . import review
+        from core.models import NotificationQueue
+        from .models import DraftReviewRound
+        status = lambda: self.client.get('/api/drafting/drafts/review-status/', **auth(self.junior)).json()
+        progress = lambda: self.client.get('/api/drafting/drafts/for-review/', **auth(self.peer)).json()[0]['progress']
+        self.assertEqual(status(), {})                                                   # never reviewed
+        rid = self.ask(self.peer).json()['id']
+        self.assertEqual(status()[str(self.session.id)]['state'], 'with_reviewer')
+        self.post(self.s + 'suggest/', self.peer, {'blocks': [{'id': self.block.id, 'heading': 'Rent',
+                  'content_html': '<p>Rent is Rs. 40,000.</p><p>Paid monthly in advance.</p>', 'text': ''}]})
+        self.assertEqual(status()[str(self.session.id)], {'state': 'to_decide', 'who': self.peer.full_name})
+        self.assertEqual((progress()['sent'], progress()['waiting']), (1, 1))
+        rnd = DraftReviewRound.objects.get(session=self.session)
+        review.decide(rnd, self.junior, 'all', 'accepted')
+        review.finish(rnd, self.junior)
+        self.assertEqual((progress()['waiting'], progress()['accepted']), (0, 1))
+        told = NotificationQueue.objects.filter(type='DRAFT_REVIEW_DONE', advocate_id=self.peer.id)
+        self.assertTrue(told.exists())
+        self.assertEqual(status()[str(self.session.id)]['state'], 'with_reviewer')
+        self.post(f'/api/drafting/review-requests/{rid}/done/', self.peer)
+        self.assertEqual(status()[str(self.session.id)]['state'], 'reviewed')
+
+
+class DecideAllTest(TestCase):
+    """'all' only fills in undecided changes."""
+
+    def test_all_keeps_earlier_decisions(self):
+        from . import review
+        from .models import DraftBlock
+        from .versions import snapshot_blocks
+        owner = make_advocate(permissions=DRAFTER)
+        senior = make_advocate(permissions=DRAFTER)
+        session = DraftSession.objects.create(created_by_id=owner.id, facts={}, status='ready')
+        block = DraftBlock.objects.create(session=session, position=0, block_type='clause', heading='Rent', text='',
+                                          content_html='<p>Rent 40.</p><p>Notice 1.</p>', source='generated')
+        base = snapshot_blocks(session)
+        block.content_html = '<p>Rent 45.</p><p>Notice 2.</p>'
+        block.save()
+        rnd = review.create_changes_round(session, base, author_id=senior.id, decider_id=owner.id, binding=True)
+        review.decide(rnd, owner, 1, 'queried', 'Why 45?')
+        review.decide(rnd, owner, 'all', 'acknowledged')
+        self.assertEqual(dict(rnd.decisions.values_list('change_id', 'decision')), {1: 'queried', 2: 'acknowledged'})
+
+
+class CompareStorageNoiseTest(TestCase):
+    """The AI draft (plain text) and an edited draft (editor HTML) store the same things differently;
+    comparing them must show only real edits (draft #121: 11 reported changes, 2 real)."""
+
+    def compare(self, before, after, title='Residential Lease Deed'):
+        from .export.compare import compare_blocks
+        return compare_blocks(before, after, title)
+
+    def block(self, heading, text='', html=''):
+        return {'block_id': 1, 'position': 0, 'block_type': 'clause', 'heading': heading,
+                'text': text, 'content_html': html, 'style_json': {}}
+
+    def test_empty_placeholder_and_title_line_are_not_changes(self):
+        ai = self.block('', text='Residential Lease Deed\nCommencing from [[Lease Start Date]].')
+        edited = self.block('', html='<p>Commencing from <span data-placeholder="Lease Start Date" '
+                                     'data-value="">[Lease Start Date]</span>.</p>')
+        self.assertEqual(self.compare([ai], [edited]).changes, 0)
+
+    def test_filled_placeholder_is_one_change(self):
+        ai = self.block('', text='Executed on [[Date of Execution]].')
+        edited = self.block('', html='<p>Executed on <span data-placeholder="Date of Execution" '
+                                     'data-value="22/03/2026">22/03/2026</span>.</p>')
+        comp = self.compare([ai], [edited])
+        self.assertEqual(comp.changes, 1)
+        segs = [(s.op, s.text) for s in comp.clauses[0].body[0].segs if s.op != 'same']
+        self.assertIn(('ins', '22/03/2026'), segs)
+
+    def test_repeated_clause_heading_line_is_not_a_change(self):
+        ai = self.block('SCHEDULE OF PROPERTY', text='SCHEDULE OF PROPERTY\nAll that flat.')
+        edited = self.block('SCHEDULE OF PROPERTY', html='<p>All that flat.</p>')
+        self.assertEqual(self.compare([ai], [edited]).changes, 0)
+
+    def test_double_escaped_ampersand_in_placeholder_name(self):
+        ai = self.block('', text='Witness: [[Witness 2 Name & Address]]')
+        edited = self.block('', html='<p>Witness: <span data-placeholder="Witness 2 Name &amp;amp; Address" '
+                                     'data-value="">[Witness 2 Name &amp;amp; Address]</span></p>')
+        self.assertEqual(self.compare([ai], [edited]).changes, 0)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+@mock.patch('drafting.views._dispatch')
+class DraftCommentTest(TestCase):
+    """drafting/comments.py: questions on a passage, replies, resolving; Approve waits for them."""
+    databases = {'default'}
+
+    def setUp(self):
+        from core.testing import make_case
+        from drafting.ams_cases import link_case
+        from drafting.models import DraftBlock
+        from workspace.models import CaseTask
+        self.senior = make_advocate(permissions=ALL_PERMISSIONS)
+        drafting = ('CASE_VIEW', 'DOCUMENT_VIEW', 'TASK_VIEW', 'DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_EXPORT')
+        self.junior = make_advocate(permissions=drafting, parent_advocate_id=self.senior.id)
+        self.peer = make_advocate(permissions=drafting, parent_advocate_id=self.senior.id)
+        self.outsider = make_advocate(permissions=ALL_PERMISSIONS)
+        case = make_case(self.senior)
+        client, project = link_case(case)
+        self.task = CaseTask.objects.create(advocate_id=self.senior.id, case_id=case.id, title='Draft lease',
+                                            assigned_to_id=self.junior.id, assigned_by_id=self.senior.id)
+        self.session = DraftSession.objects.create(client=client, project=project, created_by_id=self.junior.id,
+                                                   ams_task_id=self.task.id, facts={}, status='ready')
+        self.block = DraftBlock.objects.create(session=self.session, position=0, block_type='clause', heading='Rent',
+                                               text='', content_html='<p>Rent is paid monthly.</p>', source='generated')
+        self.s = f'/api/drafting/draft-sessions/{self.session.id}/'
+
+    def post(self, path, who, body=None):
+        return self.client.post(path, body or {}, content_type='application/json', **auth(who))
+
+    def comment(self, who, body='Did the client agree to rent in advance?'):
+        return self.post(self.s + 'comments/', who, {'block_id': self.block.id, 'quote': 'paid monthly', 'body': body})
+
+    def test_task_loop_with_a_question(self, dispatch):
+        self.assertEqual(self.post(f'/api/drafting/drafts/{self.session.id}/send-to-ams/', self.junior).status_code, 200)
+        resp = self.comment(self.senior)
+        self.assertEqual(resp.status_code, 201)
+        thread = resp.json()['threads'][0]
+        self.assertEqual((thread['quote'], thread['author_name'], thread['resolved']), ('paid monthly', self.senior.full_name, False))
+        from core.models import NotificationQueue
+        self.assertTrue(NotificationQueue.objects.filter(type='DRAFT_COMMENT', advocate_id=self.junior.id).exists())
+        # The junior answers; she can't close the senior's question herself.
+        body = self.post(f'/api/drafting/comments/{thread["id"]}/reply/', self.junior,
+                         {'body': 'Client agreed arrears, see meeting note.'}).json()
+        self.assertEqual((body['open'], body['answered']), (1, 1))
+        self.assertEqual(self.post(f'/api/drafting/comments/{thread["id"]}/resolve/', self.junior).status_code, 403)
+        # Approve waits for the question to be resolved.
+        review = lambda: self.post(f'/api/workspace/tasks/{self.task.id}/review', self.senior, {'action': 'approve'})  # noqa: E731
+        resp = review()
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('comment', resp.json()['error'])
+        self.assertEqual(self.post(f'/api/drafting/comments/{thread["id"]}/resolve/', self.senior).json()['open'], 0)
+        self.assertEqual(review().status_code, 200)
+
+    def test_who_resolves(self, dispatch):
+        from .models import DraftReviewRequest
+        # A peer's question on the junior's draft: the junior (author) may resolve it.
+        DraftReviewRequest.objects.create(session=self.session, requested_by_id=self.junior.id,
+                                          reviewer_id=self.peer.id, authority='suggest')
+        tid = self.comment(self.peer, 'Typo in clause 2?').json()['threads'][0]['id']
+        rows = self.client.get(self.s + 'comments/', **auth(self.junior)).json()['threads']
+        self.assertTrue(rows[0]['can_resolve'])
+        self.assertEqual(self.post(f'/api/drafting/comments/{tid}/resolve/', self.junior).status_code, 200)
+        self.assertEqual(self.post(f'/api/drafting/comments/{tid}/reopen/', self.peer).json()['open'], 1)
+
+    def test_delete_and_outsider(self, dispatch):
+        tid = self.comment(self.junior, 'Note to self').json()['threads'][0]['id']
+        self.assertEqual(self.client.get(self.s + 'comments/', **auth(self.outsider)).status_code, 404)
+        self.assertEqual(self.client.delete(f'/api/drafting/comments/{tid}/', **auth(self.outsider)).status_code, 404)
+        self.assertEqual(self.client.delete(f'/api/drafting/comments/{tid}/', **auth(self.junior)).json()['threads'], [])
+        tid = self.comment(self.junior, 'Check dates').json()['threads'][0]['id']
+        self.post(f'/api/drafting/comments/{tid}/reply/', self.junior, {'body': 'Done'})
+        self.assertEqual(self.client.delete(f'/api/drafting/comments/{tid}/', **auth(self.junior)).status_code, 400)
+
+    def test_empty_and_foreign_passage_refused(self, dispatch):
+        self.assertEqual(self.comment(self.junior, '   ').status_code, 400)
+        resp = self.post(self.s + 'comments/', self.junior, {'block_id': 999999, 'body': 'x'})
+        self.assertEqual(resp.status_code, 400)
+
+
+class CaseFileTest(TestCase):
+    """drafting/casefile.py: the linked case's summary and documents, never beyond the viewer's rights."""
+
+    def setUp(self):
+        from django.utils import timezone
+        from core.models import Case, Client as AmsClient, Document
+        self.owner = make_advocate(permissions=DRAFTER + ('CASE_VIEW', 'DOCUMENT_VIEW'))
+        self.no_docs = make_advocate(permissions=DRAFTER + ('CASE_VIEW',), parent_advocate_id=self.owner.id)
+        self.outsider = make_advocate(permissions=ALL_PERMISSIONS)
+        client = AmsClient.objects.create(name='K. Kannan', address='12 Anna Salai', advocate=self.owner)
+        self.case = Case.objects.create(case_number='RC 12/2026', case_title='Kannan v Arun', advocate=self.owner,
+                                        client=client)
+        now = timezone.now()
+        for name, case in (('Lease deed.pdf', self.case), ('Aadhaar.pdf', None)):
+            Document.objects.create(document_name=name, original_name=name, stored_name=name, file_path=name,
+                                    upload_date=now, advocate=self.owner, case=case, client=client)
+        project = Project.objects.create(name='p', client=Client.objects.create(name='c'), case_id=self.case.id)
+        self.linked = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready', project=project)
+        self.unlinked = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+
+    def get(self, session, who):
+        return self.client.get(f'/api/drafting/draft-sessions/{session.id}/case-file/', **auth(who))
+
+    def test_linked_case(self):
+        data = self.get(self.linked, self.owner).json()
+        self.assertEqual((data['case']['caseNumber'], data['case']['client']['address']), ('RC 12/2026', '12 Anna Salai'))
+        self.assertEqual(sorted(d['name'] for d in data['documents']), ['Aadhaar.pdf', 'Lease deed.pdf'])
+
+    def test_no_case_and_rights(self):
+        self.assertIsNone(self.get(self.unlinked, self.owner).json()['case'])
+        self.assertEqual(self.get(self.linked, self.outsider).status_code, 404)     # not their draft
+        self.linked.created_by_id = self.no_docs.id
+        self.linked.save()
+        data = self.get(self.linked, self.no_docs).json()
+        self.assertEqual((data['canSeeDocuments'], data['documents']), (False, []))

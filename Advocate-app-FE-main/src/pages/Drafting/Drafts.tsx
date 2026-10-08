@@ -7,7 +7,7 @@ import { SearchInput } from '../../ui/forms'
 import { DataTable, type Column } from '../../ui/DataTable'
 import { confirm } from '../../ui/overlays'
 import Icon from '../../ui/Icon'
-import { draftingApi, type DraftSession } from './api/drafting'
+import { draftingApi, type DraftReviewRequest, type DraftSession, type MyReviewStatus, type ReviewProgress } from './api/drafting'
 import NewDraftDialog from './components/NewDraftDialog'
 
 // Session status as a Red Tape chip tone.
@@ -32,12 +32,16 @@ export default function Drafts() {
   const [query, setQuery] = useState('')                        // free-text filter (id / status)
   const [status, setStatus] = useState('')                      // status filter
   const [showBegin, setShowBegin] = useState(false)             // "How would you like to begin?" chooser
+  const [forReview, setForReview] = useState<DraftReviewRequest[]>([])  // colleagues' drafts waiting for my review
+  const [reviewState, setReviewState] = useState<Record<string, MyReviewStatus>>({})  // my drafts' review state
 
   const load = () => draftingApi.getSessions().then(setSessions)
 
-  // Load every draft once on mount.
+  // Load every draft once on mount, and the drafts colleagues asked me to review.
   useEffect(() => {
     load().finally(() => setLoading(false))
+    draftingApi.forMyReview().then(setForReview).catch(() => setForReview([]))
+    draftingApi.myReviewStatus().then(setReviewState).catch(() => setReviewState({}))
   }, [])
 
   // Confirm, then delete the draft session (its blocks cascade) and reload.
@@ -94,12 +98,13 @@ export default function Drafts() {
       },
     },
     {
-      key: 'status', label: 'Status', sort: true, render: r => (
+      key: 'status', label: 'Status', sort: true, render: r => (<>
         <span className={`chip ${STATUS_TONE[r.status] ?? ''}${r.status === 'generating' ? ' plain' : ''}`}>
           {r.status === 'generating' && <span className="pp-spin" aria-hidden="true" />}
           {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
         </span>
-      ),
+        <ReviewChip s={reviewState[String(r.id)]} />
+      </>),
     },
     {
       key: 'act', label: <span className="sr-only">Actions</span>, align: 'right', render: r => (
@@ -122,6 +127,28 @@ export default function Drafts() {
         </>} />
 
       <NewDraftDialog visible={showBegin} onHide={() => setShowBegin(false)} />
+
+      {forReview.length > 0 && (
+        <section className="panel" style={{ marginBottom: 16 }} aria-label="For my review">
+          <div className="panel-head"><h3><Icon name="chat" size="sm" /> For my review</h3></div>
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+            {forReview.map(r => (
+              <li key={r.id} className="row" style={{ gap: 10, padding: '10px 16px', borderTop: '1px solid var(--line)' }}>
+                <div className="grow">
+                  <div><strong>{r.title}</strong> <span className="faint xs mono">#{r.session}</span></div>
+                  <div className="small muted">
+                    {r.requested_by_name || 'A colleague'} asked {fmtDateTime(r.created_at)}
+                    {r.authority === 'binding' && ' · you can correct it'}
+                    {r.note && <> · "{r.note}"</>}
+                  </div>
+                  {r.progress && <div className="small"><ProgressLine p={r.progress} author={r.requested_by_name} /></div>}
+                </div>
+                <button type="button" className="btn sm primary" onClick={() => navigate(DRAFTING.draft(r.session))}>Review</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="toolbar">
         <SearchInput value={query} onChange={setQuery} placeholder="Search drafts by template or document" />
@@ -154,5 +181,28 @@ export default function Drafts() {
         }}
       />
     </div>
+  )
+}
+
+// My own draft's review state, beside its status (drafting/review_requests.py MyReviewStatusView).
+function ReviewChip({ s }: { s?: MyReviewStatus }) {
+  if (!s) return null
+  if (s.state === 'to_decide') return <span className="chip warn" style={{ marginLeft: 6 }}>{s.who ? `${s.who}'s changes to decide` : 'Changes to decide'}</span>
+  if (s.state === 'with_reviewer') return <span className="chip info" style={{ marginLeft: 6 }}>With {s.who || 'a colleague'} for review</span>
+  return <span className="chip ok" style={{ marginLeft: 6 }} title={s.at ? fmtDateTime(s.at) : undefined}>Reviewed by {s.who || 'a colleague'}</span>
+}
+
+// Where a review I was asked for stands: nothing sent yet, waiting for the author, or what they decided.
+function ProgressLine({ p, author }: { p: ReviewProgress; author: string | null }) {
+  const who = author || 'the author'
+  if (!p.sent) return <span className="faint">Not started</span>
+  const decided = [p.accepted && `${p.accepted} accepted`, p.declined && `${p.declined} declined`, p.queried && `${p.queried} queried`]
+    .filter(Boolean).join(', ')
+  return (
+    <span>
+      {p.waiting > 0 && <span className="chip warn" style={{ marginRight: 6 }}>Waiting for {who}</span>}
+      {decided && <span className="chip ok" style={{ marginRight: 6 }}>{who} decided: {decided}</span>}
+      <span className="faint">{p.sent} {p.sent === 1 ? 'set' : 'sets'} of changes sent</span>
+    </span>
   )
 }

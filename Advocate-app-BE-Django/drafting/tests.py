@@ -1388,3 +1388,21 @@ class ImportKeepsLayoutTest(TestCase):
         self.assertIn('<td><p>45,000</p></td>', html)
         self.assertIn('text-align: justify', html)
         self.assertIn('<ul><li><p>Paid by transfer</p></li></ul>', html)
+
+
+class PdfTableTextTest(TestCase):
+    """A PDF's tables reach the draft as Markdown rows; they must come out as a grid."""
+
+    def test_markdown_rows_become_a_table(self):
+        from types import SimpleNamespace
+        from .tasks import _styled_html, _tables_to_html
+        text = ('Fees are payable as below.\n| Tier | Fee |\n|------|-----|\n| Up to 10,000 | Rs. 5 |\n'
+                '| Above 10,000 | Rs. 4 |\nPayment within 30 days.')
+        html = _styled_html(text, {'align': 'justify'}, [])
+        self.assertIn('<table><tbody><tr><th><p>Tier</p></th><th><p>Fee</p></th></tr>', html)
+        self.assertIn('<td><p>Rs. 4</p></td>', html)
+        self.assertNotIn('---', html)
+        self.assertEqual(html.count('text-align:justify'), 2)          # the sentences around it
+        block = SimpleNamespace(text=text, content_html='')
+        _tables_to_html([block])                                        # unstyled block: still a grid
+        self.assertIn('<table>', block.content_html)

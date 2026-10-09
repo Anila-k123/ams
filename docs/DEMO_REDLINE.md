@@ -19,8 +19,9 @@ comments and approves, all inside AMS. Finally the draft goes to the other side'
 > are already in it: the redline is a *"what changed"* report, and **Compare** (on screen) is the
 > right one; a **PDF (read-only)** download is for keeping a copy. **Word (editable)**, where each
 > change can be accepted or rejected, is for people **outside AMS** who will work on the document
-> in Word: opposite counsel, the client. Inside the firm, accept / reject happens in AMS (Review);
-> AMS can't yet read an outside party's Word file back in (planned: "Import changes from Word").
+> in Word: opposite counsel, the client. Inside the firm, accept / reject happens in AMS (Review).
+> When their marked-up Word file comes back, **Import changes** turns it into the same accept / decline
+> review (sections 7D and 8A).
 
 ---
 
@@ -245,10 +246,19 @@ once: **Drafting → Firm Templates → Upload template** → **Template name** 
 Demand, Notice to Vacate, Costs). Blanks like `[[Arrears Amount]]` become fields to fill.
 
 **Making a notice** (used in 7A and 7B): **Drafting → Drafts → New draft → Type the facts directly** →
-**Agreement type** `Legal Notice` (the template is used by default) → **Continue** → **Document title**
-`Legal Notice – Rent Arrears`, **Parties**: `K. Kannan` (landlord) and `R. Arun Prakash` (tenant), and in the
-instructions `Rent unpaid for August and September 2026, Rs. 80,000 arrears; pay within 15 days or vacate by
-31 October 2026.` → **Generate draft**. Fill a few fields (e.g. *Date of Notice*, *Arrears Amount*) so the
+**Agreement type** `Legal Notice` (the template is used by default) → **Continue**, then fill the brief:
+
+| Field | Enter |
+|---|---|
+| **Document title** | `Legal Notice – Rent Arrears` |
+| **Parties** (party 1) | Name `K. Kannan` · Role `Landlord` · Address `No. 12, Anna Salai, Chennai 600002` |
+| **Parties** (party 2, **+ Add party**) | Name `R. Arun Prakash` · Role `Tenant` · Address `Flat 3B, Lakshmi Apartments, T. Nagar, Chennai 600017` |
+| **Purpose** (required) | `Demand payment of Rs. 80,000 rent arrears for August and September 2026 from the tenant, and give notice to vacate the premises by 31 October 2026 if the arrears are not paid within 15 days.` |
+| **Extra instructions** (optional) | `Rent is Rs. 40,000 a month under the lease deed dated 1 April 2026. Send by registered post with acknowledgement due. Formal tone; refer to the Rent Authority and the competent court at Chennai.` |
+
+**Purpose** tells the AI what the notice must achieve (the demand, the deadline, the consequence); every clause
+is drafted towards it. **Extra instructions** add the specifics (lease date, monthly rent, mode of service).
+→ **Generate draft**. Then fill a few blanks in the left panel (e.g. *Date of Notice*, *Arrears Amount*) so the
 reviewer has dates and amounts to check.
 
 ### 7A. The senior asks the junior to proofread his notice
@@ -338,9 +348,9 @@ suggestions: 1 accepted, 1 declined* → **View** shows each change with ✓ / �
 ### 7D. The notice comes back from the tenant's counsel (Import changes)
 
 The notice was sent; the tenant's counsel replies by email with the notice marked up in Word. Use
-[`demo-files/Notice_Returned_By_Tenant_Counsel.docx`](demo-files/Notice_Returned_By_Tenant_Counsel.docx)
-(made from the rent-arrears notice; with your own notice, download it, edit it in Word with Track Changes on,
-add a comment, save).
+[`demo-files/Notice_Returned_By_Tenant_Counsel.docx`](demo-files/Notice_Returned_By_Tenant_Counsel.docx).
+It was made from **draft #126** on the dev data, so the numbers below are exact there. On any other notice,
+make your own returned file instead (8A.2 below): the import works the same, only the changes differ.
 
 **Window A — Rajesh (owner)**
 
@@ -363,7 +373,241 @@ add a comment, save).
 > Say: *"Whatever comes back by email, every change they made is decided here, with reasons, and their
 > questions sit beside the words they're about."*
 
-## 8. Optional extras (if time allows)
+## 8. New in this round: test guide (Import, Restore, two people saving, layout, tables)
+
+Each part says what to do and what you should see. Run them on the dev instance (http://localhost:5174)
+after the one-time setup.
+
+### 8.0 One-time setup (already done on dev; do it on any other install after pulling)
+
+```bat
+cd Advocate-app-FE-main
+npm install                                                     :: new package @tiptap/extension-table
+cd ..\Advocate-app-BE-Django
+venv\Scripts\python.exe manage.py migrate drafting              :: up to 0010_round_external_from
+venv\Scripts\python.exe manage.py refresh_template_layout       :: existing templates learn their alignment
+```
+
+The last command prints one line per template, e.g. *#70 Notice: layout refreshed for 8 slots*, then
+*N template(s) refreshed, M skipped*. A template is skipped when its file isn't on that machine, or when it
+now splits into a different number of clauses (re-upload that one). Restart the backend after `migrate`, and
+hard-refresh the browser (Ctrl+F5) so the new screens load.
+
+Logins: **Rajesh Kumar** (senior, owner of the notice) and **Priya Nair** (junior), as in sections 1–7. Use
+two browsers (or one normal + one private window) when a step needs both.
+
+---
+
+### 8A. Import changes: the draft comes back from outside
+
+**What it is.** The client or the other side sends your draft back by email as a Word file: with Track
+Changes, with Word comments, or just edited. You upload it, and every change they made becomes a suggestion
+you accept or decline; their comments become comment threads. Nothing in the draft changes until you
+finish deciding.
+
+**8A.1 With the demo file (draft #126)** follow section 7D above. Check in particular:
+
+| Step | Expected |
+|---|---|
+| Top bar of the draft | **Import changes** (upload icon) is there for Rajesh, the owner. Log in as Priya and open the same draft: no Import changes button. |
+| Import with **From** empty | Message *From R. Arun Prakash (tenant counsel): 3 changes and 1 comment*; the review opens by itself. |
+| Review title | *Changes from R. Arun Prakash (tenant counsel)*, not "Suggestions from Rajesh" (he only uploaded it). |
+| Blanks such as `[Court Place]` | Not listed as changes: untouched blanks stay as they are. |
+| Decline | Asks for a reason; the reason shows on the change afterwards. |
+| Finish review | Confirm dialog with the counts; then the accepted change (30 days) is in the text, the declined ones are not. |
+| Activity tab (right panel) | *History*: *Changes from R. Arun Prakash (tenant counsel): decided* with the counts (1 accepted, 2 declined) → **View** shows each decision and reason. |
+| Comments tab | The counsel's comment, quoting the *Notice to Vacate* sentence, with Reply / Resolve. |
+| Drafts list (sidebar → Drafting → Drafts) | Before you finish: the notice shows the chip *R. Arun Prakash (tenant counsel)'s changes to decide*. |
+
+**8A.1b The client's reply (draft #126)**: clients rarely use Track Changes; they edit the text and add
+comments. Use [`demo-files/Draft126_Returned_By_Client.docx`](demo-files/Draft126_Returned_By_Client.docx)
+(from *K. Kannan (client)*):
+
+1. **Import changes** → choose the file → **From**: `K. Kannan (client)` (the file has no tracked changes,
+   so no name is read from it) → note `Client's corrections by email` → **Import**.
+2. Expected message: *From K. Kannan (client): 3 changes and 2 comments (no tracked changes; compared with
+   the draft)*. The review *Changes from K. Kannan (client)* lists:
+   - **The Default**: Rs. 80,000 → Rs. 90,000, and a new paragraph *The tenant has also not paid the
+     electricity charges for the same period.*;
+   - **Demand**: 15 days → 7 days.
+3. **Comments** tab, two threads: on *The Default* (*Please check this part. The tenant paid Rs. 10,000 in
+   August by UPI; I have the screenshot.*) and on *Interest and Charges* (*Can we also ask for interest on the
+   late payment?*).
+4. A realistic decision: **Decline** 90,000 (`Client's UPI payment of 10,000 to be checked first`), **Accept**
+   the electricity paragraph, **Decline** 7 days (`Statutory notice needs 15 days`). Reply to both comments.
+
+**A returned file for any other draft** (the demo files above only line up with draft #126): make one with
+
+```bat
+cd Advocate-app-BE-Django
+venv\Scripts\python.exe manage.py make_returned_file --draft <id> --sender counsel   :: Track Changes + a comment
+venv\Scripts\python.exe manage.py make_returned_file --draft <id> --sender client    :: plain edits + 2 comments
+```
+
+It writes `docs/demo-files/Draft<id>_Returned_By_Counsel.docx` (or `_Client`) and prints exactly what it
+changed: the first amount, the first "N days", a new paragraph, and where the comments are. Use those lines
+as the expected result when you import it. The draft itself is not touched.
+
+**8A.2 With your own file (any draft)**
+
+1. On the draft: **Download → Word (.docx)** (plain draft). Open the file in Word.
+2. **Review → Track Changes** on. Change a number, delete a sentence, add a new paragraph. Select a few words
+   → **New Comment** → type a question. Save. (Word puts your name on the changes.)
+3. Back in AMS: **Import changes** → choose the file → leave **From** empty → **Import**.
+4. Expected: the message names your Word user name; the review lists exactly your edits, each under the
+   clause it belongs to; the comment is in the Comments tab on that clause.
+
+**8A.3 A file edited without Track Changes**
+
+Same as 8A.2 but with Track Changes **off**. Expected: the edits are still found (the file is compared with
+the draft); the message ends with *(no tracked changes; compared with the draft)*.
+
+**8A.4 What is refused (each shows a clear message in the dialog)**
+
+| Try | Message |
+|---|---|
+| Upload a PDF | *Only Word .docx files can be read. Ask for a .docx, or save the file as .docx.* |
+| Upload the draft's own download, unchanged | *No changes or comments found: the file reads the same as the draft.* |
+| Upload a renamed non-Word file as .docx | *That is not a Word (.docx) file.* |
+
+**8A.5 Formatting they used is kept** (in the paragraphs they changed or added)
+
+In 8A.2, also: centre one new paragraph, make two new lines a bulleted list, put a word in bold. After
+accepting them: the paragraph is centred, the list is a list, the word is bold. Font, size and colour they
+chose are dropped on purpose (the firm's formatting stays).
+
+---
+
+### 8B. Restore an older version
+
+**What it is.** Put the draft back to any saved version, e.g. *"go back to Tuesday's wording"*. It can be
+undone.
+
+1. Open a draft you own → **Versions** (clock icon in the top bar). Note the latest version number, e.g. v5.
+2. Change a sentence in the editor → **Save**.
+3. **Versions** → on an older row (e.g. *v2 · AI draft*) click **Restore**.
+4. Expected: a confirm box *Put the draft back to v2 …? The draft as it is now is saved as a version first,
+   so you can come back to it.* → **OK**.
+5. Expected: the editor shows v2's text; your sentence from step 2 is gone. **Versions** has two new rows on
+   top: *Before restoring v2* and *Restored v2*.
+6. Undo it: **Versions** → **Restore** on *Before restoring v2*. Expected: your sentence from step 2 is back.
+7. With unsaved edits: type something, don't save, click **Restore** on any row. Expected: your edit is saved
+   first (it's in *Before restoring …*), then the restore happens.
+8. Rights: log in as Priya on a draft she was only asked to **suggest** on: the **Restore** buttons are not
+   shown (only **Compare**). The owner, a task reviewer while the task is submitted, or a senior asked to
+   review see them.
+9. Comments and open suggestions on a clause that still exists stay attached to it after a restore.
+
+---
+
+### 8C. Two people saving the same draft
+
+**What it is.** Two people have the same draft open. If they changed **different** clauses, both changes are
+kept. If they changed the **same** clause, the later save is refused instead of silently wiping the other's
+work.
+
+Set-up: one draft that both can edit. Easiest: Priya's task draft while the task is **submitted** to Rajesh
+(he may edit it then), or open the same draft as Rajesh in two browser windows.
+
+**8C.1 Different clauses: both kept**
+
+1. Window A and Window B: open the same draft (both load it now).
+2. Window A: change a word in clause **1** → **Save**.
+3. Window B (still showing the old text): change a word in clause **3** → **Save**.
+4. Expected in Window B: a message *Saved. Changes a colleague made to other clauses are now shown
+   too.*; clause 1 now shows A's change, clause 3 shows B's.
+5. Reload Window A: both changes are there.
+
+**8C.2 Same clause: refused, nothing lost**
+
+1. Both windows: reload the draft.
+2. Window A: change clause **2** → **Save**.
+3. Window B: change clause **2** differently → **Save**.
+4. Expected in Window B: a red bar *Not saved: someone else changed **<clause 2 heading>** after you opened the
+   draft. Copy your wording, reload to see theirs, then make your change again.* with **Reload**. Your text is
+   still in the editor (copy it now).
+5. **Reload** → it asks before dropping your unsaved edits → OK → you see A's version of clause 2. Make your
+   change again → **Save** → saved.
+
+**8C.3 The "Updated" chip** (from the review features, still applies)
+
+While a review is open on the draft, the window that did *not* save gets an **Updated · Reload** chip in the
+top bar within about 30 seconds.
+
+---
+
+### 8D. Drafts follow the template's alignment
+
+**What it is.** A new draft lays out like its template: each clause's usual alignment (e.g. justified body),
+plus lines that stand out (a centred title, a left "From:/To:" block, a right-aligned date or signature).
+Before this fix, everything came out left-aligned, or all one way.
+
+Template used: **Notice** (#70, the rent-arrears notice uploaded from
+`demo-files/Template_Legal_Notice_Rent_Arrears.docx`). Its layout: title centred, *From/To* block left,
+clause bodies justified, closing lines left.
+
+1. Make sure 8.0's `refresh_template_layout` ran (or upload the template again: new uploads get it
+   automatically).
+2. **Drafting → Drafts → New draft → Type the facts directly → Agreement type `Legal Notice`** → fill the
+   parties and instructions as in section 7 → **Generate draft**.
+3. Expected in the editor:
+   - *LEGAL NOTICE* line: centred;
+   - *BY REGISTERED POST…*, *From:*, the advocate lines, *To:*, the tenant lines: left;
+   - *Sub: …*, *Sir / Madam,*, *Under instructions…*: justified;
+   - every numbered clause's body (*The Tenancy*, *The Default*, …): justified;
+   - *Yours faithfully*, the advocate's name, *Enrolment No.*: left.
+   Click into a justified paragraph: the **Justify** button in the editor toolbar is highlighted.
+4. **Download → Word (.docx)** and **Download → PDF**: the same alignment as in the editor.
+5. Old drafts (made before this fix) do not change; only new drafts follow the template.
+
+**With a PDF template** (NDA, MSA, Vakalathnama on the test instance): a PDF stores no alignment, so it is
+worked out from where each line sits on the page (centred title, edge-to-edge = justified, right-aligned
+date). Generate a draft from one and compare with the PDF. A scanned PDF gives nothing (editor default).
+
+### 8E. Drafts made from a sample follow the sample's alignment
+
+1. **New draft → Start from reference documents** → pick a Word sample whose body is justified with a
+   centred title (or upload one: any agreement .docx with justified text) → generate.
+2. Expected: the title centred, the body justified, the signature block as in the sample. Before this fix,
+   sample drafts had no alignment at all.
+
+---
+
+### 8F. Tables stay tables
+
+**What it is.** The editor now keeps tables (a ruled grid). Before, any table in a template, sample or
+draft turned into plain lines on the first save.
+
+1. Use a template or sample that has a table (e.g. a lease with a rent schedule: *Month | Rent*). Generate a
+   draft. Expected: the table shows as a grid in the editor.
+2. **Save**, reload the page. Expected: still a grid (before: lines of text).
+3. Edit a cell (e.g. 40,000 → 45,000) → Save → **Compare** with the previous version. Expected: the change is
+   shown in that table row.
+4. **Download → Word (.docx)**: the table is a Word table.
+5. Suggestions keep it: as a reviewer in suggest mode, change one cell → **Send suggestions**; as the owner,
+   **Accept** it → **Finish review**. Expected: still a grid, with only that cell changed.
+6. Import keeps it: in a downloaded Word copy change one cell (8A.2), import, accept. Expected: still a grid.
+7. Known limits: merged cells and column widths are not kept when a clause is rebuilt; there is no
+   "insert table" button yet (tables come from the template, sample or an imported file).
+
+---
+
+### 8G. Quick checklist
+
+| # | Feature | Pass when |
+|---|---|---|
+| 1 | Import with tracked changes | Exact changes listed, sender's name on the review |
+| 2 | Import with comments | Comment thread on the right clause, quoting their words |
+| 3 | Import without tracked changes | Edits still found, "(no tracked changes…)" note |
+| 4 | Import refused | PDF / unchanged / non-Word each show their message |
+| 5 | Restore | Old text back; *Before restoring* + *Restored* versions; undo works |
+| 6 | Save, different clauses | Both changes kept, "colleague's changes" message |
+| 7 | Save, same clause | Red "Not saved" bar, nothing overwritten |
+| 8 | Template alignment | Notice: title centred, From/To left, bodies justified |
+| 9 | Sample alignment | Draft follows the sample's alignment |
+| 10 | Tables | Grid survives save, compare, suggestions, import, Word download |
+
+## 9. Optional extras (if time allows)
 
 | Show | How |
 |---|---|

@@ -305,4 +305,6 @@ optional note → **Import**.
 
 Endpoint: `POST draft-sessions/<id>/import-changes/` (multipart `file`, `from_name`, `note`) → `{round,
 changes, comments, tracked, authors, from_name}`. Demo file: `docs/demo-files/Notice_Returned_By_Tenant_Counsel.docx`
-(draft #126 returned with 3 tracked changes and one comment).
+(draft #126 returned with 3 tracked changes and one comment). Client version (plain edits, two comments):
+`docs/demo-files/Draft126_Returned_By_Client.docx`. For any other draft, `manage.py make_returned_file --draft
+<id> --sender counsel|client` writes a returned file that lines up with it and prints what it changed.

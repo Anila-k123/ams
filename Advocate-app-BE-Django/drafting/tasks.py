@@ -691,13 +691,51 @@ def _styled_html(text: str, body_style: dict, lines=None) -> str:
     css = _style_to_css(base)
     esc = lambda s: s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     paras = []
-    for line in (text or '').split('\n'):
+    lines_ = (text or '').split('\n')
+    i = 0
+    while i < len(lines_):
+        rows = []
+        while i < len(lines_) and _TABLE_LINE.match(lines_[i]):
+            rows.append(lines_[i])
+            i += 1
+        if rows:
+            paras.append(_table_html(rows, esc))
+            continue
+        line = lines_[i]
+        i += 1
         if not line.strip():
             continue
         align = align_line(line, layout)
         style = ';'.join(x for x in (f'text-align:{align}' if align else '', css) if x)
         paras.append(f'<p style="{style}">{esc(line)}</p>' if style else f'<p>{esc(line)}</p>')
     return ''.join(paras) or '<p></p>'
+
+
+_TABLE_LINE = re.compile(r'^\s*\|.*\|\s*$')
+_TABLE_RULE_LINE = re.compile(r'^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$')
+
+
+def _table_html(rows, esc) -> str:
+    """Markdown table lines (as a PDF's tables reach the draft) as an HTML table; the |---| rule line
+    after the header row marks it as a header."""
+    cells = [[c.strip() for c in r.strip().strip('|').split('|')] for r in rows if not _TABLE_RULE_LINE.match(r)]
+    header = len(rows) > 1 and bool(_TABLE_RULE_LINE.match(rows[1]))
+    cols = max(len(r) for r in cells) if cells else 0
+    out = ['<table><tbody>']
+    for n, row in enumerate(cells):
+        tag = 'th' if header and n == 0 else 'td'
+        row = row + [''] * (cols - len(row))
+        out.append('<tr>' + ''.join(f'<{tag}><p>{esc(c)}</p></{tag}>' for c in row) + '</tr>')
+    out.append('</tbody></table>')
+    return ''.join(out)
+
+
+def _tables_to_html(blocks) -> None:
+    """A clause whose text holds table rows but got no styled HTML: build its HTML so the table
+    shows as a grid, not as lines of | text |."""
+    for b in blocks:
+        if not (b.content_html or '').strip() and any(_TABLE_LINE.match(x) for x in (b.text or '').split('\n')):
+            b.content_html = _styled_html(b.text, {}, None)
 
 
 def _apply_template_style(block, style: dict | None):
@@ -774,6 +812,7 @@ def _draft_template_mode(session, llm, emb, facts_text, sample_ids, style_direct
         "obligation, or numbered item — never merge separate paragraphs into one run-on block.\n"
         "8a. Write the clause as PLAIN TEXT — do NOT use Markdown formatting: no **bold**, "
         "*italics*, backticks, or # headings.\n"
+        "8b. TABLES: if the source has a table (lines like | a | b |), keep it as a table: one row per line, cells separated by |, the same columns; change only the cell values the facts govern.\n"
         "8. Return ONLY a JSON object, no markdown and no prose: "
         "{\"text\": \"<the clause body text>\", \"source_clause_id\": <id or null>}."
     )
@@ -878,6 +917,7 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
         "obligation, or numbered item — never merge separate paragraphs into one run-on block.\n"
         "7a. Write the clause as PLAIN TEXT — do NOT use Markdown formatting: no **bold**, "
         "*italics*, backticks, or # headings.\n"
+        "7b. TABLES: if the source has a table (lines like | a | b |), keep it as a table: one row per line, cells separated by |, the same columns; change only the cell values the facts govern.\n"
         "7. Return ONLY a JSON object, no markdown and no prose: "
         "{\"text\": \"<the clause body text>\", \"source_clause_id\": <id or null>}."
     )
@@ -991,7 +1031,8 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
         "clause. Use a newline (\\n) to separate each paragraph, power, obligation, or numbered "
         "item — never merge separate paragraphs into one run-on block.\n"
         "6. Draft ONLY the clause body text — no heading and no commentary.\n"
-        "7. Write PLAIN TEXT only — do NOT use Markdown: no **bold**, *italics*, backticks, or # headings."
+        "7. Write PLAIN TEXT only — do NOT use Markdown: no **bold**, *italics*, backticks, or # headings.\n"
+        "7b. TABLES: if the source has a table (lines like | a | b |), keep it as a table: one row per line, cells separated by |, the same columns; change only the cell values the facts govern."
     )
     if style_directive:
         system_prompt += f'\n\nPREFERRED DRAFTING STYLE: {style_directive}'
@@ -1153,6 +1194,8 @@ def generate_draft(self, session_id: int):
         # Deterministic backstop to rule 6: the local model leaves some blanks as raw
         # underscores — turn every leftover blank into a labelled [[…]] placeholder.
         _fill_blank_placeholders(blocks)
+        # Tables from a PDF template / sample arrive as | a | b | lines: make them real tables.
+        _tables_to_html(blocks)
 
         # Persist all blocks at once.
         DraftBlock.objects.bulk_create(blocks)

@@ -17,3 +17,12 @@
 .rs-filters { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end; margin-bottom: var(--s4); }
 .rs-filters .field { min-width: 150px; margin: 0; }
 @media (max-width: 640px) { .rs-filters .field { min-width: 0; flex: 1 1 140px; } .rs-list { max-height: 40vh; } }
+
+/* Bare Acts filter bar: year range, department, ministry, sort; wraps on small screens. */
+.rs-filters { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end; margin-bottom: var(--s2); }
+.rs-filter { display: flex; flex-direction: column; gap: 4px; }
+.rs-filter .label { font-size: var(--t-xs); color: var(--ink-3); font-weight: 500; }
+.rs-filter .input { width: 112px; }
+.rs-filter select.input { width: 170px; }
+.rs-filter-wide select.input { width: 260px; max-width: 100%; }
+@media (max-width: 768px) { .rs-filter, .rs-filter-wide { flex: 1 1 140px; } .rs-filter .input, .rs-filter select.input, .rs-filter-wide select.input { width: 100%; } }

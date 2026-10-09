@@ -6,6 +6,7 @@ import { Modal } from "../ui/overlays";
 import { Button, Chip, Icon, type Tone } from "../ui/kit";
 import { Field } from "../ui/forms";
 import "../ui/pages/clients.css";
+import { copyText } from "../utils/clipboard";
 
 const STATUS: Record<string, [string, Tone]> = {
   ACTIVE: ["Active", "ok"],
@@ -63,8 +64,8 @@ export default function ClientPortalAccess({ client, isOpen, onClose, toast, onC
   };
 
   const copy = async () => {
-    try { await navigator.clipboard.writeText(lastLink.url); toast?.success("Link copied."); }
-    catch { toast?.error("Could not copy — select the link and copy it."); }
+    if (await copyText(lastLink.url)) toast?.success("Link copied.");
+    else toast?.error("Could not copy — select the link and copy it.");
   };
 
   if (!client) return null;

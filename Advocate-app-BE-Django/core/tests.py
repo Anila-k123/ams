@@ -535,10 +535,24 @@ class FormatValidatorsTest(TestCase):
         self.assertEqual(v.clean_pincode('600 004'), '600004')
         self.assertEqual(v.clean_email(' Kannan@Clients.Demo '), 'kannan@clients.demo')
         self.assertEqual(v.clean_ifsc('sbin0001234'), 'SBIN0001234')
-        for ok in ('+91 90030 11900', '9003011900', '044-24981234', '+1 415 555 0100'):
-            v.clean_phone(ok)
+        # A person's phone is an Indian mobile, saved as its 10 digits.
+        for ok in ('+91 90030 11900', '9003011900', '09003011900', '90030-11900'):
+            self.assertEqual(v.clean_phone(ok), '9003011900')
+        # Names: real legal names pass (tidied), symbols and bare numbers don't.
+        for ok, out in (('K. M. Anand Joshi', 'K. M. Anand Joshi'), ('M/s. Akshayam Traders', 'M/s. Akshayam Traders'),
+                        ("D'Souza & Ors.", "D'Souza & Ors."), ('  Ravi   Kumar ', 'Ravi Kumar'),
+                        ('ABC Pvt. Ltd. (in liquidation)', 'ABC Pvt. Ltd. (in liquidation)'), ('கண்ணன்', 'கண்ணன்')):
+            self.assertEqual(v.clean_name(ok), out)
+        for bad in ('@@@###', '<script>', '12345', 'A', 'x' * 151, 'John_Doe', 'Smith!'):
+            with self.assertRaises(ValueError, msg=bad):
+                v.clean_name(bad)
+        # An office phone may also be a landline or an international number.
+        for ok in ('044-24981234', '+1 415 555 0100', '+91 90030 11900'):
+            v.clean_landline(ok)
         for fn, bad in ((v.clean_pan, 'ABCD1234F'), (v.clean_pincode, '060004'),
                         (v.clean_phone, '12345'), (v.clean_phone, 'call me'),
+                        (v.clean_phone, '4876543210'), (v.clean_phone, '98765432101'),
+                        (v.clean_phone, '044-24981234'), (v.clean_landline, '12345'),
                         (v.clean_email, 'kannan@'), (v.clean_ifsc, 'SBIN1001234')):
             with self.assertRaises(ValueError, msg=bad):
                 fn(bad)

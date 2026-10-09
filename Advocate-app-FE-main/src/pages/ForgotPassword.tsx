@@ -10,16 +10,22 @@ function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [emailError, setEmailError] = useState('');   // e.g. not registered: shown under the field
   const { error } = useToast() as any;
 
   async function handleSubmit(e: any) {
     e.preventDefault();
     setLoading(true);
+    setEmailError('');
     try {
-      await api.post('/api/auth/forgot-password', { email });
+      await api.post('/api/auth/forgot-password', { email: email.trim() });
       setSent(true);
-    } catch {
-      error('Something went wrong. Please try again.');
+    } catch (err: any) {
+      const res = err?.response;
+      // Not registered (404), too many requests (429), or a missing email (400):
+      // the server's message belongs next to the email field.
+      if (res && [400, 404, 429].includes(res.status) && res.data?.error) setEmailError(res.data.error);
+      else error('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -31,7 +37,7 @@ function ForgotPassword() {
         <div role="status">
           <div className="pp-success-ic"><Icon name="mail" size="lg" /></div>
           <h1>Check your email</h1>
-          <p className="muted auth-lead">If an account exists with <b className="mono">{email}</b>, a 6-digit verification code has been sent. Check spam if it isn't in your inbox.</p>
+          <p className="muted auth-lead">We've sent a 6-digit verification code to <b className="mono">{email.trim()}</b>. It expires in a few minutes; check spam if it isn't in your inbox.</p>
           <button type="button" className="btn primary pp-full" onClick={() => navigate('/verify-otp', { state: { email } })}>Enter the code</button>
           <p className="small muted auth-foot">Wrong email? <button type="button" className="link auth-linkbtn" onClick={() => setSent(false)}>Use a different one</button></p>
         </div>
@@ -47,7 +53,10 @@ function ForgotPassword() {
       <form onSubmit={handleSubmit} className="stack">
         <div className="field">
           <label htmlFor="f-email">Email <span className="req" aria-hidden="true">*</span></label>
-          <input id="f-email" className="input" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <input id="f-email" className="input" type="email" autoComplete="email" value={email}
+            onChange={(e) => { setEmail(e.target.value); setEmailError(''); }} required
+            aria-invalid={!!emailError || undefined} aria-describedby={emailError ? 'f-email-err' : undefined} />
+          {emailError && <span id="f-email-err" className="field-error" role="alert">{emailError}</span>}
         </div>
         <button type="submit" className={`btn primary pp-full${loading ? ' loading' : ''}`} disabled={loading}>
           {loading ? 'Sending…' : 'Send verification code'}

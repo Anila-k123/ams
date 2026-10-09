@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { usePermission } from '../../contexts/PermissionContext'
 import { useToast } from '../../contexts/ToastContext'
 import { Button, EmptyState, PageHead, Skel } from '../../ui/kit'
-import { SearchInput, TextField, TextArea } from '../../ui/forms'
+import { FilterChip, SearchInput, TextField, TextArea } from '../../ui/forms'
 import { Drawer, Modal, confirm } from '../../ui/overlays'
 import Icon from '../../ui/Icon'
 import { playbookApi, type PlaybookListItem, type Playbook, type PlaybookClause, type PlaybookLLMProvider } from './api/drafting'
@@ -270,7 +270,8 @@ export default function Playbooks() {
   const playbooksRef = useRef<PlaybookListItem[]>([])
   playbooksRef.current = playbooks
 
-  const load = () => playbookApi.list().then(setPlaybooks)
+  const [showArchived, setShowArchived] = useState(false)   // archived playbooks view (restore)
+  const load = () => playbookApi.list(showArchived).then(setPlaybooks)
 
   // Playbooks whose name or category contains the query (case-insensitive).
   const filteredPlaybooks = playbooks.filter(pb => {
@@ -284,7 +285,8 @@ export default function Playbooks() {
       if (playbooksRef.current.some(p => p.status === 'pending' || p.status === 'processing')) load()
     }, 3000)
     return () => clearInterval(id)
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when switching to/from the archived view
+  }, [showArchived])
 
   async function handleViewPlaybook(pb: PlaybookListItem) {
     setDetailLoading(pb.id)
@@ -345,23 +347,37 @@ export default function Playbooks() {
     }
   }
 
+  // "Delete" archives: hidden, not offered for new drafts, restorable by the
+  // creator or a Super Admin (only they see the button; the server enforces it).
   function handleDelete(pb: PlaybookListItem) {
     confirm({
-      title: 'Delete this playbook?',
-      message: `${pb.name} will be deleted. Drafts already checked against it keep their findings. This cannot be undone.`,
-      confirmLabel: 'Delete playbook',
+      title: 'Archive this playbook?',
+      message: `${pb.name} will be hidden and can't be used to check new drafts. Drafts already checked against it keep their findings. You or a Super Admin can restore it from Show archived.`,
+      confirmLabel: 'Archive playbook',
       danger: true,
       accept: async () => {
         try {
           await playbookApi.delete(pb.id)
           setPlaybooks(prev => prev.filter(p => p.id !== pb.id))
-          toast.success(`${pb.name} deleted`)
-        } catch {
-          toast.error('Delete failed')
+          toast.success(`${pb.name} archived`)
+        } catch (e) {
+          const status = (e as { response?: { status?: number } }).response?.status
+          toast.error(status === 403 ? 'Only the person who created it or a Super Admin can archive it.' : 'Archive failed')
         }
       },
     })
   }
+
+  async function handleRestore(pb: PlaybookListItem) {
+    try {
+      await playbookApi.restore(pb.id)
+      setPlaybooks(prev => prev.filter(p => p.id !== pb.id))
+      toast.success(`${pb.name} restored`)
+    } catch {
+      toast.error('Restore failed')
+    }
+  }
+
 
   async function handleReprocess(pb: PlaybookListItem) {
     try {
@@ -388,6 +404,7 @@ export default function Playbooks() {
 
       <div className="toolbar">
         <SearchInput value={query} onChange={setQuery} placeholder="Search playbooks" />
+        <FilterChip on={showArchived} onClick={() => setShowArchived(v => !v)}><Icon name="archive" size="sm" />Show archived</FilterChip>
       </div>
 
       <div className="doc-grid dr-card-grid">
@@ -419,6 +436,7 @@ export default function Playbooks() {
                     ? `${pb.document_count} source document${pb.document_count !== 1 ? 's' : ''}`
                     : 'Written from scratch'}
                   {', '}{fmtDate(pb.created_at)}
+                  {pb.created_by_name && <>{' · by '}{pb.created_by_name}</>}
                 </div>
                 <span className="grow" />
                 <div className="row wrap" style={{ gap: 6 }}>
@@ -430,10 +448,10 @@ export default function Playbooks() {
                     <Button size="sm" icon="refresh" onClick={() => handleReprocess(pb)}>{pb.status === 'failed' ? 'Retry' : 'Reprocess'}</Button>
                   )}
                   <span className="grow" />
-                  {canManage && (
-                    <button type="button" className="btn ghost sm icon" aria-label={`Delete ${pb.name}`} title="Delete"
-                      onClick={() => handleDelete(pb)}><Icon name="trash" size="sm" /></button>
-                  )}
+                  {pb.can_archive && (showArchived
+                    ? <Button size="sm" icon="restore" onClick={() => handleRestore(pb)}>Restore</Button>
+                    : <button type="button" className="btn ghost sm icon" aria-label={`Archive ${pb.name}`} title="Archive"
+                        onClick={() => handleDelete(pb)}><Icon name="archive" size="sm" /></button>)}
                 </div>
               </div>
             </div>

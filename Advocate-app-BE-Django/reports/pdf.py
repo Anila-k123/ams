@@ -135,20 +135,54 @@ def money(v):
         return "Rs. 0.00"
 
 
+_CELL = ParagraphStyle('cellx', parent=_styles['Normal'], fontSize=9, leading=11.5)
+_HEAD_CELL = ParagraphStyle('headcellx', parent=_CELL, fontName='Helvetica-Bold', textColor=colors.white)
+# A4 width less the 16 mm side margins build_pdf uses.
+_PAGE_W = A4[0] - 32 * mm
+
+
+def _auto_widths(headers, rows):
+    """Share the page width between columns. Each column first gets room for its
+    longest word (so "Status" or "Supreme" never splits mid-word); what's left is
+    shared by how much text each column holds, so a long column (a description)
+    gets the space and short ones (a date, an amount) stay narrow."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    n = len(headers)
+    pad = 12 + 2                                   # left + right padding, and a little air
+    mins, weight = [], []
+    for c in range(n):
+        cells = [str(headers[c])] + [str(r[c]) for r in rows if c < len(r)]
+        word = max((stringWidth(w, 'Helvetica-Bold' if k == 0 else 'Helvetica', 9)
+                    for k, cell in enumerate(cells) for w in (cell.split() or [''])), default=0)
+        mins.append(min(word + pad, 50 * mm))
+        weight.append(min(max(len(x) for x in cells), 60) or 1)
+    spare = _PAGE_W - sum(mins)
+    if spare <= 0:                                 # too many columns: shrink in proportion
+        return [m * _PAGE_W / sum(mins) for m in mins]
+    total = float(sum(weight))
+    return [m + spare * w / total for m, w in zip(mins, weight)]
+
+
 def _table(headers, rows, col_widths=None):
-    data = [headers] + (rows if rows else [['—'] * len(headers)])
-    t = Table(data, colWidths=col_widths, repeatRows=1)
+    """A report table whose cells WRAP inside their column. Plain strings in a
+    reportlab Table never wrap, so a long description used to run off the page;
+    every cell is a Paragraph now, and the columns always fit the page."""
+    from xml.sax.saxutils import escape
+    body = rows if rows else [['—'] * len(headers)]
+    widths = col_widths or _auto_widths(headers, body)
+    def cell(v, st):
+        return Paragraph(escape(str(v if v is not None else '')).replace('\n', '<br/>'), st)
+    data = [[cell(h, _HEAD_CELL) for h in headers]] + [[cell(v, _CELL) for v in r] for r in body]
+    t = Table(data, colWidths=widths, repeatRows=1)
     style = [
         ('BACKGROUND', (0, 0), (-1, 0), HEADER_BG),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, ROW_ALT]),
         ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ]
     t.setStyle(TableStyle(style))
     return t

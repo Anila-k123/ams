@@ -9,14 +9,15 @@ import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
 import { useAuth } from "../context/AuthContext";
 import FieldError from "../components/FieldError";
-import { formatErrors, gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+import { formatErrors, gstinError, gstinState, gstinStateMismatch, mobileInput, normaliseCode } from "../utils/validators";
 import { PageHead, Button, Avatar, Icon, Skel, type IconName } from "../ui/kit";
 import { Field, TextField, TextArea, SelectField, Switch } from "../ui/forms";
 import "../ui/pages/firm.css";
+import { confirm } from "../ui/overlays";
 
 // Checked as you leave a field, and again on the server (core/validators.py).
 const GEN_FORMATS = { phone: "phone" } as const;
-const OFF_FORMATS = { officePhone: "phone", officeEmail: "email", pinCode: "pincode", gstNumber: "gstin", panNumber: "pan" } as const;
+const OFF_FORMATS = { officePhone: "landline", officeEmail: "email", pinCode: "pincode", gstNumber: "gstin", panNumber: "pan" } as const;
 
 const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d@#$%^&*!?_+=-]{8,32}$/;
 
@@ -274,6 +275,8 @@ export default function ProfilePage() {
       else if (target === "signature") setBranding((p: any) => ({ ...p, signatureUrl: res.data.signatureUrl }));
       else if (target === "seal") setBranding((p: any) => ({ ...p, officeSealUrl: res.data.officeSealUrl }));
       toast.success(`${target} uploaded`);
+      // The top bar shows the photo too; tell the shell to refresh it now.
+      window.dispatchEvent(new Event("profile-updated"));
     } catch {
       toast.error("Upload failed");
     } finally {
@@ -282,6 +285,28 @@ export default function ProfilePage() {
       e.target.value = "";
     }
   };
+
+  // Remove an uploaded photo / logo / signature / seal (DELETE /api/profile/branding/{type}).
+  const BRAND_URL: Record<string, string> = { photo: "profilePhotoUrl", logo: "officeLogoUrl", signature: "signatureUrl", seal: "officeSealUrl" };
+  const BRAND_NAME: Record<string, string> = { photo: "your profile photo", logo: "the office logo", signature: "the advocate signature", seal: "the office seal" };
+  const removeBranding = (target: string) => confirm({
+    title: `Remove ${BRAND_NAME[target]}?`,
+    message: target === "photo"
+      ? "Your initials will show instead. You can upload a new photo at any time."
+      : "It will no longer appear on new invoices, letters and reports. You can upload it again at any time.",
+    confirmLabel: "Remove",
+    danger: true,
+    accept: async () => {
+      try {
+        await withLoading(api.delete(`/api/profile/branding/${target}`), "Removing...");
+        setBranding((p: any) => ({ ...p, [BRAND_URL[target]]: "" }));
+        window.dispatchEvent(new Event("profile-updated"));
+        toast.success(target === "photo" ? "Profile photo removed." : "Removed.");
+      } catch {
+        toast.error("Could not remove it. Please try again.");
+      }
+    },
+  });
 
   const setColor = (field: string, value: string) => setBranding((p: any) => ({ ...p, [field]: value }));
 
@@ -329,7 +354,7 @@ export default function ProfilePage() {
     <Field label={label}>
       {(id) => (
         <>
-          <input id={id} className="input" value={general[name] ?? ""} onChange={(e) => setGen(name, e.target.value)}
+          <input id={id} className="input" value={general[name] ?? ""} onChange={(e) => setGen(name, name === "phone" ? mobileInput(e.target.value) : e.target.value)}
             onBlur={() => setTouched((t) => ({ ...t, [name]: true }))} aria-invalid={!!errFor("general", name) || undefined} {...extra} />
           <FieldError error={errFor("general", name)} />
         </>
@@ -369,13 +394,20 @@ export default function ProfilePage() {
           <div className="row" style={{ gap: 16, marginBottom: 20 }}>
             <Avatar name={general.fullName} src={branding.profilePhotoUrl || undefined} size="lg" />
             <div className="stack" style={{ gap: 6 }}>
-              <Button size="sm" icon="upload" loading={uploading.photo} disabled={uploading.photo} onClick={() => triggerUpload("photo")}>Upload photo</Button>
+              <div className="row" style={{ gap: 6 }}>
+                <Button size="sm" icon="upload" loading={uploading.photo} disabled={uploading.photo} onClick={() => triggerUpload("photo")}>
+                  {branding.profilePhotoUrl ? "Change photo" : "Upload photo"}
+                </Button>
+                {branding.profilePhotoUrl && (
+                  <Button size="sm" variant="danger" icon="trash" disabled={uploading.photo} onClick={() => removeBranding("photo")}>Remove photo</Button>
+                )}
+              </div>
               <span className="faint xs">Square JPG or PNG, at least 200 px.</span>
             </div>
           </div>
           <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); handleSaveGeneral(); }}>
             {genText("fullName", "Full name")}
-            {genText("phone", "Phone", { type: "tel" })}
+            {genText("phone", "Mobile", { type: "tel", inputMode: "numeric", maxLength: 10, placeholder: "98765 43210", title: "10 digits, starting with 6, 7, 8 or 9." })}
             <TextField label="Date of birth" type="date" value={(general.dateOfBirth || "").slice(0, 10)} onChange={(e) => setGen("dateOfBirth", e.target.value)} />
             <SelectField label="Gender" value={general.gender} placeholder="Select" options={GENDERS} onChange={(e) => setGen("gender", e.target.value)} />
             <TextField label="Bar Council no." className="mono" value={general.barCouncilId ?? ""} disabled hint="Ask a Super Admin to change this." />
@@ -444,8 +476,14 @@ export default function ProfilePage() {
                 <div className="bd">
                   <b className="small">{item.label}</b>
                   <span className="faint xs">{item.hint}</span>
-                  <Button size="sm" icon="upload" loading={item.uploading} disabled={item.uploading} onClick={() => triggerUpload(item.key)}
-                    aria-label={`Upload ${item.label.toLowerCase()}`}>Upload</Button>
+                  <div className="row" style={{ gap: 6 }}>
+                    <Button size="sm" icon="upload" loading={item.uploading} disabled={item.uploading} onClick={() => triggerUpload(item.key)}
+                      aria-label={`${item.url ? "Replace" : "Upload"} ${item.label.toLowerCase()}`}>{item.url ? "Replace" : "Upload"}</Button>
+                    {item.url && (
+                      <Button size="sm" variant="ghost" icon="trash" disabled={item.uploading} onClick={() => removeBranding(item.key)}
+                        aria-label={`Remove ${item.label.toLowerCase()}`}>Remove</Button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

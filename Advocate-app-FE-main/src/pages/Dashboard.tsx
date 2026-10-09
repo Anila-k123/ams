@@ -149,6 +149,13 @@ function AppShell() {
 
   // Profile sync: full profile so the sidebar can show the firm name and photo.
   const { updateProfile } = auth;
+  const [profileTick, setProfileTick] = useState(0);
+  // Settings fires "profile-updated" after a photo upload or removal.
+  useEffect(() => {
+    const on = () => setProfileTick((n) => n + 1);
+    window.addEventListener('profile-updated', on);
+    return () => window.removeEventListener('profile-updated', on);
+  }, []);
   useEffect(() => {
     api.get('/api/profile')
       .then((res) => {
@@ -160,7 +167,7 @@ function AppShell() {
         setBranding({ profilePhotoUrl: d.profilePhotoUrl || '', officeName: d.officeName || '' });
       })
       .catch(() => {});
-  }, [auth.token, updateProfile]);
+  }, [auth.token, updateProfile, profileTick]);
 
   const handleToggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';

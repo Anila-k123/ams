@@ -4,12 +4,13 @@ import { useToast } from "../contexts/ToastContext";
 import { PageHead, EmptyState, Icon, Skel, Button, Spinner } from "../ui/kit";
 import { FilterChip, Segmented } from "../ui/forms";
 import "../ui/pages/research.css";
+import { copyText } from "../utils/clipboard";
 
 // Starting points while the box is empty (the API needs 2+ letters, so no A-Z browse).
 const COMMON_TERMS = ["affidavit", "bail", "res judicata", "ex parte", "mesne profits", "caveat", "injunction", "tort"];
 
 export default function LegalDictionary() {
-  const { success } = useToast() as any;
+  const { success, error } = useToast() as any;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [selected, setSelected] = useState<any>(null);
@@ -54,9 +55,9 @@ export default function LegalDictionary() {
     }
   };
 
-  const copyDefinition = () => {
-    try { navigator.clipboard?.writeText(`${selected.term}: ${selected.definition || ""}`); } catch { /* clipboard blocked */ }
-    success(`Copied the definition of ${selected.term}`);
+  const copyDefinition = async () => {
+    if (await copyText(`${selected.term}: ${selected.definition || ""}`)) success(`Copied the definition of ${selected.term}`);
+    else error("Couldn't copy to clipboard.");
   };
 
   const q = query.trim();

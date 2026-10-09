@@ -1,3 +1,4 @@
+import re
 from rest_framework import serializers
 from .models import (
     Template, Sample, SampleClause, DraftSession, DraftBlock,
@@ -7,7 +8,31 @@ from .models import (
 
 from .files import FileUrlSerializerMixin, file_url
 
-class TemplateSerializer(FileUrlSerializerMixin, serializers.ModelSerializer):
+class OwnedSetupFields(serializers.Serializer):
+    """Who created a template / playbook, whether it is archived, and whether the
+    viewer may archive or restore it (the creator or a Super Admin)."""
+    created_by_name = serializers.SerializerMethodField()
+    archived = serializers.SerializerMethodField()
+    can_archive = serializers.SerializerMethodField()
+
+    def get_created_by_name(self, obj):
+        from core.models import Advocate
+        if not obj.created_by_id:
+            return None
+        return Advocate.objects.filter(id=obj.created_by_id).values_list('full_name', flat=True).first()
+
+    def get_archived(self, obj):
+        return obj.archived_at is not None
+
+    def get_can_archive(self, obj):
+        request = self.context.get('request')
+        if request is None:
+            return False
+        from .access import can_archive
+        return can_archive(obj, request.user)
+
+
+class TemplateSerializer(OwnedSetupFields, FileUrlSerializerMixin, serializers.ModelSerializer):
     file_basename = 'template'
 
     """Read/representation of a Template.
@@ -17,8 +42,9 @@ class TemplateSerializer(FileUrlSerializerMixin, serializers.ModelSerializer):
     """
     class Meta:
         model = Template
-        fields = ('id', 'name', 'language', 'document_type', 'file', 'slot_schema', 'body_json', 'status', 'created_at')
-        read_only_fields = ('slot_schema', 'body_json', 'status')
+        fields = ('id', 'name', 'language', 'document_type', 'file', 'slot_schema', 'body_json', 'status', 'created_at',
+                  'created_by_id', 'created_by_name', 'archived', 'can_archive')
+        read_only_fields = ('slot_schema', 'body_json', 'status', 'created_by_id')
 
 
 class TemplateUploadSerializer(serializers.ModelSerializer):
@@ -90,6 +116,24 @@ class DraftBlockSerializer(serializers.ModelSerializer):
         )
 
 
+# Fields still to fill in a draft, counted the way the editor counts them
+# (DraftPage.tsx toFill): each distinct empty [[Label]] placeholder once, plus every
+# legacy blank (____, ……, ...., [ ]). A filled placeholder is saved as its value,
+# so only empty ones remain as [[Label]] in the block text.
+_PLACEHOLDER_RE = re.compile(r'\[\[([^\]]+)\]\]')
+_BLANK_RE = re.compile(r'_{2,}|…{2,}|\.{4,}|\[[\s_.•●…]*\]')
+
+
+def unfilled_count(texts):
+    labels = set()
+    blanks = 0
+    for t in texts:
+        t = t or ''
+        labels.update(m.strip().lower() for m in _PLACEHOLDER_RE.findall(t))
+        blanks += len(_BLANK_RE.findall(_PLACEHOLDER_RE.sub('', t)))
+    return len(labels) + blanks
+
+
 class DraftSessionSerializer(serializers.ModelSerializer):
     """Read serializer for a draft session: nests its generated blocks and
     flattens the template name + document names for convenient display."""
@@ -105,6 +149,8 @@ class DraftSessionSerializer(serializers.ModelSerializer):
     review = serializers.SerializerMethodField()
     # What the viewer may do with the draft (docs/DRAFT_REVIEW.md): edit directly, suggest.
     access = serializers.SerializerMethodField()
+    # Empty fields left (drives Incomplete / Complete on the Drafts list).
+    unfilled_count = serializers.SerializerMethodField()
 
     class Meta:
         model = DraftSession
@@ -114,7 +160,7 @@ class DraftSessionSerializer(serializers.ModelSerializer):
             'client', 'project', 'facts', 'mode', 'llm', 'status',
             'playbook', 'risk_status', 'risk_report', 'apply_bns_codes',
             'case_id', 'ams_task_id', 'ams_document_id', 'ams_document_version', 'ams_synced_at',
-            'reference_documents', 'created_at', 'updated_at', 'blocks',
+            'reference_documents', 'unfilled_count', 'created_at', 'updated_at', 'blocks',
         )
         read_only_fields = ('status', 'celery_task_id', 'risk_status', 'risk_report',
                             'ams_document_id', 'ams_document_version', 'ams_synced_at')
@@ -164,6 +210,9 @@ class DraftSessionSerializer(serializers.ModelSerializer):
         return {'isOwner': obj.created_by_id == user.id, 'canWrite': can_write(obj, user),
                 'canSuggest': can_suggest(obj, user),
                 'request': {'id': req.id, 'authority': req.authority, 'note': req.note} if req else None}
+
+    def get_unfilled_count(self, obj):
+        return unfilled_count(b.text for b in obj.blocks.all())
 
     def get_template_name(self, obj):
         """The template's name, or None when the session has no template (Mode 2)."""
@@ -225,6 +274,12 @@ class DraftSessionCreateSerializer(serializers.ModelSerializer):
                 id__in=[s.id for s in attrs['samples']]).values_list('id', flat=True))
             if any(s.id not in allowed for s in attrs['samples']):
                 raise serializers.ValidationError({'samples': 'One or more documents are not available to you.'})
+        # A template must be one of the firm's own and not archived (drafting/access.py).
+        if request is not None and attrs.get('template'):
+            from .access import firm_setup
+            if not firm_setup(Template.objects, request.user).filter(
+                    id=attrs['template'].id, archived_at__isnull=True).exists():
+                raise serializers.ValidationError({'template': 'This template is not available.'})
         # An AMS task only makes sense on a draft linked to an AMS case.
         project = attrs.get('project')
         attrs['client'] = project.client if project is not None else None
@@ -337,7 +392,7 @@ class PlaybookRiskSerializer(serializers.ModelSerializer):
         return obj.playbook_clause.clause_type if obj.playbook_clause_id else None
 
 
-class PlaybookSerializer(serializers.ModelSerializer):
+class PlaybookSerializer(OwnedSetupFields, serializers.ModelSerializer):
     """Full read representation of a Playbook — includes its clauses."""
     clauses = PlaybookClauseSerializer(many=True, read_only=True)
     document_count = serializers.SerializerMethodField()
@@ -347,14 +402,15 @@ class PlaybookSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'category', 'description', 'method', 'llm_provider', 'status',
             'document_count', 'clauses', 'created_at', 'updated_at',
+            'created_by_id', 'created_by_name', 'archived', 'can_archive',
         )
-        read_only_fields = ('status',)
+        read_only_fields = ('status', 'created_by_id')
 
     def get_document_count(self, obj):
         return obj.documents.count()
 
 
-class PlaybookListSerializer(serializers.ModelSerializer):
+class PlaybookListSerializer(OwnedSetupFields, serializers.ModelSerializer):
     """Lightweight list view — no clauses embedded."""
     document_count = serializers.SerializerMethodField()
 
@@ -363,6 +419,7 @@ class PlaybookListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'category', 'description', 'method', 'llm_provider', 'status',
             'document_count', 'created_at', 'updated_at',
+            'created_by_id', 'created_by_name', 'archived', 'can_archive',
         )
 
     def get_document_count(self, obj):

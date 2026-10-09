@@ -76,7 +76,44 @@ export function pincodeError(value: unknown): string {
   return PIN_RE.test(p) ? "" : "A PIN code is 6 digits and does not start with 0.";
 }
 
+// A person's or organisation's name (Client Name): letters in any script (with
+// the vowel signs Indian scripts use), digits, spaces and . , & / - ' ( ).
+// 2-150 characters, at least one letter (core/validators.clean_name).
+const NAME_OK = /^[\p{L}\p{M}\p{N} .,&/\-'()]+$/u;
+export function nameError(value: unknown): string {
+  const n = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!n) return "";
+  if (!NAME_OK.test(n)) return "Names can use letters, numbers, spaces and . , & / - ' ( ) only.";
+  if (!/\p{L}/u.test(n)) return "A name must contain at least one letter.";
+  if (n.length < 2) return "A name must be at least 2 characters.";
+  if (n.length > 150) return "A name can be at most 150 characters.";
+  return "";
+}
+
+// A person's phone: an Indian mobile, exactly 10 digits starting with 6-9. AMS is
+// used in India only, so there is no country code (core/validators.clean_phone).
 export function phoneError(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (/[^0-9+\s()-]/.test(raw)) return "A mobile number can only contain digits.";
+  let digits = raw.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) digits = digits.slice(2);
+  else if (digits.length === 11 && digits.startsWith("0")) digits = digits.slice(1);
+  if (digits.length !== 10) return "A mobile number has 10 digits.";
+  return /^[6-9]/.test(digits) ? "" : "A mobile number starts with 6, 7, 8 or 9.";
+}
+
+/** Keep a mobile-number box to what can be valid while typing or pasting:
+ *  digits only, "+91" / "0" prefixes removed, starting 6-9, at most 10 digits. */
+export function mobileInput(value: string): string {
+  let d = String(value ?? "").replace(/\D/g, "");
+  if (d.length > 10 && d.startsWith("91")) d = d.slice(2);
+  d = d.replace(/^0+/, "").replace(/^[^6-9]+/, "");
+  return d.slice(0, 10);
+}
+
+// An office phone: a mobile or a landline with STD code, or an international number.
+export function landlineError(value: unknown): string {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
   if (/[^0-9+\s()-]/.test(raw)) return "A phone number can only contain digits, spaces, +, - and brackets.";
@@ -100,9 +137,9 @@ export function ifscError(value: unknown): string {
   return IFSC_RE.test(i) ? "" : "An IFSC is 11 characters: 4 letters, 0, then 6 letters or digits (e.g. SBIN0001234).";
 }
 
-export type FieldKind = "gstin" | "pan" | "pincode" | "phone" | "email" | "ifsc";
+export type FieldKind = "gstin" | "pan" | "pincode" | "phone" | "landline" | "name" | "email" | "ifsc";
 const CHECKS: Record<FieldKind, (v: unknown) => string> = {
-  gstin: gstinError, pan: panError, pincode: pincodeError, phone: phoneError, email: emailError, ifsc: ifscError,
+  gstin: gstinError, pan: panError, pincode: pincodeError, phone: phoneError, landline: landlineError, name: nameError, email: emailError, ifsc: ifscError,
 };
 
 /** {field: message} for every field in `spec` whose value is malformed. */

@@ -5,6 +5,7 @@ import { TextField } from "../ui/forms";
 import documentService from "../services/DocumentService";
 import { formatBytes } from "./DocumentCard";
 import "../ui/pages/clients.css";
+import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 
 export default function DocumentVersionsModal({ doc, onClose, canUpload = false, onUpdated }: {
   doc: any; onClose: () => void; canUpload?: boolean; onUpdated?: () => void;
@@ -81,7 +82,7 @@ export default function DocumentVersionsModal({ doc, onClose, canUpload = false,
                 {busy ? "Uploading…" : "Choose file and upload new version"}
               </Button>
             </div>
-            <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-label="New version file" />
+            <input ref={fileRef} type="file" accept={DOCUMENT_ACCEPT} hidden onChange={onPickFile} aria-label="New version file" />
           </div></div>
         )}
 

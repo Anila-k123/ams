@@ -94,9 +94,34 @@ def clean_pincode(value):
     return p
 
 
+_MOBILE_RE = re.compile(r'^[6-9]\d{9}$')
+
+
 def clean_phone(value):
-    """Indian mobile/landline, or an international number with a country code.
-    Kept as typed (spacing is the user's), only checked."""
+    """An Indian mobile number: exactly 10 digits starting with 6, 7, 8 or 9.
+    AMS is used in India only, so no country code is kept: "+91 98765 43210",
+    "098765 43210" and "98765-43210" are all saved as "9876543210" (older
+    records in those formats still save, tidied)."""
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    if re.search(r'[^0-9+\s()-]', raw):
+        raise ValueError('A mobile number can only contain digits.')
+    digits = re.sub(r'\D', '', raw)
+    if len(digits) == 12 and digits.startswith('91'):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith('0'):
+        digits = digits[1:]
+    if len(digits) != 10:
+        raise ValueError('A mobile number has 10 digits.')
+    if not _MOBILE_RE.match(digits):
+        raise ValueError('A mobile number starts with 6, 7, 8 or 9.')
+    return digits
+
+
+def clean_landline(value):
+    """An office phone: an Indian mobile or landline (STD code allowed), or an
+    international number with a country code. Kept as typed, only checked."""
     raw = str(value or '').strip()
     if not raw:
         return ''
@@ -131,9 +156,37 @@ def clean_ifsc(value):
     return i
 
 
+# A person's or organisation's name (Client Name): letters in any script,
+# digits, spaces and the punctuation real legal names use - initials "K. M.",
+# "M/s.", "& Ors.", "D'Souza", "Pillai-Nair", "(in liquidation)", "Ward 15(1)".
+# No symbols such as @ # $ % < > or emoji. 2-150 characters, at least one letter.
+# Spaces are tidied; capitals are kept as typed. (src/utils/validators.ts nameError)
+_NAME_PUNCT = set(" .,&/-'()")
+
+
+def clean_name(value):
+    import unicodedata
+    name = ' '.join(str(value or '').split())
+    if not name:
+        return ''
+    for ch in name:
+        # Letters and digits in any script, plus the vowel signs / marks that
+        # Indian scripts (Tamil, Hindi ...) attach to letters.
+        if ch.isalpha() or ch.isdigit() or ch in _NAME_PUNCT or unicodedata.category(ch) in ('Mn', 'Mc'):
+            continue
+        raise ValueError("Names can use letters, numbers, spaces and . , & / - ' ( ) only.")
+    if not any(ch.isalpha() for ch in name):
+        raise ValueError('A name must contain at least one letter.')
+    if len(name) < 2:
+        raise ValueError('A name must be at least 2 characters.')
+    if len(name) > 150:
+        raise ValueError('A name can be at most 150 characters.')
+    return name
+
+
 # name -> cleaner, for checking a payload's fields in one call.
 CLEANERS = {'gstin': clean_gstin, 'pan': clean_pan, 'pincode': clean_pincode,
-            'phone': clean_phone, 'email': clean_email, 'ifsc': clean_ifsc}
+            'phone': clean_phone, 'landline': clean_landline, 'name': clean_name, 'email': clean_email, 'ifsc': clean_ifsc}
 
 
 def error_response(errors):
@@ -148,7 +201,7 @@ def error_response(errors):
 def clean_fields(data, spec):
     """Check several fields of a request payload.
 
-    `spec` maps payload key -> kind ('gstin', 'pan', 'pincode', 'phone',
+    `spec` maps payload key -> kind ('gstin', 'pan', 'pincode', 'phone' (mobile), 'landline',
     'email'). Returns (cleaned, errors): cleaned values for the keys present,
     and {key: message} for the ones that failed. Keys not in `data` are skipped.
     """

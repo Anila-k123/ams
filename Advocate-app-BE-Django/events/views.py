@@ -16,6 +16,24 @@ from workspace.models import HearingDetail
 EVENT_TYPES = {'HEARING', 'MEETING', 'PAYMENT_DUE', 'DOCUMENT'}
 
 
+def _same_title(a, b):
+    return ' '.join(str(a or '').lower().split()) == ' '.join(str(b or '').lower().split())
+
+
+def _find_duplicate(case, data):
+    """An event already on this case that the new one would repeat: same date,
+    same type and the same title (case and spacing ignored). When both carry a
+    time, the times must match too. Returns the existing event, or None."""
+    time = data.get('time') or None
+    for ev in CaseEvent.objects.filter(case=case, date=data.get('date'), event_type=data.get('eventType')):
+        if not _same_title(ev.title, data.get('title')):
+            continue
+        if time and ev.time and str(ev.time)[:5] != str(time)[:5]:
+            continue
+        return ev
+    return None
+
+
 def _validate_event(data):
     """Return an error string for a bad create/update payload, or None."""
     if not (data.get('title') or '').strip():
@@ -100,6 +118,15 @@ class CreateEventView(APIView):
         case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_400_BAD_REQUEST)
+        # The same event twice would also notify the client and the team twice.
+        # A repeat is refused with the existing event (409), unless the user chose
+        # "Add anyway" (allowDuplicate). Callers that create events in bulk (a court
+        # record import) treat the 409 as "already there" and move on.
+        if not data.get('allowDuplicate'):
+            existing = _find_duplicate(case, data)
+            if existing is not None:
+                return Response({'error': 'This event already exists.', 'duplicate': CaseEventSerializer(existing).data},
+                                status=status.HTTP_409_CONFLICT)
         event = CaseEvent.objects.create(
             title=data.get('title'),
             event_type=data.get('eventType'),

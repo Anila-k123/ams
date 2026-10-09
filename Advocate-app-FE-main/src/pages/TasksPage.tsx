@@ -13,6 +13,7 @@ import { TextField, SelectField, SearchInput, FilterChip, Field } from "../ui/fo
 import { Modal, Drawer, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/court.css";
+import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 
 const FILTERS = [
   { value: "inprogress", label: "In progress" },
@@ -494,7 +495,7 @@ export default function TasksPage() {
               {(id) => (
                 <label className="btn court-file" htmlFor={id}>
                   <Icon name="upload" size="sm" />{files.length ? `${files.length} file(s)` : "Attach files"}
-                  <input id={id} type="file" multiple className="sr-only" onChange={(e) => setFiles(Array.from(e.target.files || []))} />
+                  <input id={id} type="file" accept={DOCUMENT_ACCEPT} multiple className="sr-only" onChange={(e) => setFiles(Array.from(e.target.files || []))} />
                 </label>
               )}
             </Field>

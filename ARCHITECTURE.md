@@ -25,7 +25,12 @@ live state, so it is fetched on demand and never stored.
   in-process; it is not any more.)
 - **Endpoint:** `GET /api/workspace/display-board?bench=chennai`
 - **Cache:** server-side, **1 hour** per bench (`BOARD_CACHE_TTL`).
-- **Frontend:** `src/pages/DisplayBoard.jsx` → "Cases → Display Board". 26 courts
+- **Board date:** only some courts print a date on their board page (Madras, Madurai,
+  Kerala, Jharkhand, Punjab & Haryana, Rajasthan); for the rest the scraper returns
+  `boardDate: ''`. A board is always the current day's sitting, so the backend fills
+  an empty `boardDate` with the date of `fetchedAt` (`_board_date_from`), and every
+  court shows "Board of dd/mm/yyyy" alike. A court's own printed date always wins.
+- **Frontend:** `src/pages/DisplayBoard.tsx` → "Court Work → Court Display Board". 26 courts
   in a lazy accordion; each panel scrapes on first open. Has a Refresh button.
 - **Columns are data-driven.** `FIELD_CATALOG` lists every field the shared row
   shape can carry, and a column renders only when some row on the *currently

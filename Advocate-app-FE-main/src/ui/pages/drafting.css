@@ -30,6 +30,8 @@
 /* Case search combobox */
 .dr-combo { position: relative; }
 .dr-combo-list { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); max-height: 260px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: var(--e-3); }
+/* In a dialog: part of the flow, so the dialog grows to show it. */
+.dr-combo-list.inline { position: static; margin-top: 8px; max-height: min(360px, 50vh); box-shadow: none; }
 .dr-combo-list li { padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; }
 .dr-combo-list li:hover, .dr-combo-list li.active { background: var(--surface-3); }
 

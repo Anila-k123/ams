@@ -1,22 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import api, { errorMessage } from "../api/client";
 import useDebouncedValue from "../hooks/useDebouncedValue";
 import usePagination from "../hooks/usePagination";
 import { PageHead, Chip, EmptyState, Skel, Icon } from "../ui/kit";
-import { SearchInput, FilterChip, Segmented } from "../ui/forms";
+import { SearchInput, Segmented } from "../ui/forms";
 import "../ui/pages/research.css";
-
-const FIELD_CHIPS: [string, string][] = [
-  ["all", "All"],
-  ["short_title", "Short title"],
-  ["long_title", "Long title"],
-  ["department", "Department"],
-  ["section_title", "Section title"],
-  ["section_contents", "Section contents"],
-  ["act_number", "Act number"],
-  ["act_year", "Act year"],
-];
 
 // Only what's actually been imported so far (Central + Tamil Nadu).
 const JURISDICTIONS = [
@@ -25,28 +14,17 @@ const JURISDICTIONS = [
   { value: "Tamil Nadu", label: "Tamil Nadu" },
 ];
 
-// What the search box should ask for, per chip.
-const FIELD_PLACEHOLDERS: Record<string, string> = {
-  all: "Search Bare Acts",
-  short_title: "Search the short title, e.g. Anna University Act",
-  long_title: "Search the long title",
-  department: "Search the department, e.g. Higher Education",
-  section_title: "Search section headings, e.g. Definitions",
-  section_contents: "Search inside section text, e.g. vice-chancellor",
-  act_number: "Search the act number, e.g. 26",
-  act_year: "Year (2015) or range (2010-2015)",
-};
+const SORTS = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "title", label: "Title A–Z" },
+  { value: "sections", label: "Most sections" },
+];
 
-// Mirrors the backend's year parsing so the page can explain an unusable year itself.
-const YEAR_RE = /^\d{4}$/;
-const YEAR_RANGE_RE = /^(\d{4})\s*(?:-|–|to)\s*(\d{4})$/i;
-
-function yearQueryProblem(raw: string) {
-  const v = (raw || "").trim();
-  if (!v) return null;
-  if (YEAR_RE.test(v) || YEAR_RANGE_RE.test(v)) return null;
-  return /^\d+$/.test(v) ? `"${v}" is not a four-digit year.` : `"${v}" is not a year.`;
-}
+// Filters live in the page address, so reload, Back and a shared link keep them.
+const FILTER_KEYS = ["q", "jurisdiction", "year_from", "year_to", "department", "ministry", "sort"] as const;
+type Filters = Record<(typeof FILTER_KEYS)[number], string>;
+const fourDigits = (v: string) => v.replace(/\D/g, "").slice(0, 4);
 
 function formatDate(iso: string) {
   if (!iso) return null;
@@ -67,26 +45,42 @@ const isCentral = (j: string) => String(j || "").toUpperCase() === "CENTRAL";
 
 export default function Acts() {
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
-  const debouncedQuery = useDebouncedValue(query, 300) as string;
-  const [field, setField] = useState("all");
-  const [jurisdiction, setJurisdiction] = useState("");
+  const [params, setParams] = useSearchParams();
+  const f: Filters = Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) || ""])) as Filters;
+  const sort = f.sort || "newest";
+  const [query, setQuery] = useState(f.q);
+  const debouncedQuery = (useDebouncedValue(query, 300) as string).trim();
   const [acts, setActs] = useState<any[]>([]);
   const [totalElements, setTotalElements] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const yearProblem = field === "act_year" ? yearQueryProblem(query) : null;
-  const { page, setPage, size, setSize } = usePagination({
-    defaultSize: 20, resetOn: [debouncedQuery, field, jurisdiction],
-  }) as any;
+  const [facets, setFacets] = useState<{ departments: { name: string; count: number }[]; ministries: { name: string; count: number }[] }>({ departments: [], ministries: [] });
+
+  // One place that changes the URL; the list and the drop-downs follow it.
+  const setFilter = useCallback((patch: Partial<Filters>) => {
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      Object.entries(patch).forEach(([k, v]) => (v ? next.set(k, v) : next.delete(k)));
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+
+  // The search box writes to the URL once typing pauses.
+  useEffect(() => { if (debouncedQuery !== f.q) setFilter({ q: debouncedQuery }); }, [debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps -- only on a new search
+
+  const filterKey = FILTER_KEYS.map((k) => f[k]).join("|");
+  const { page, setPage, size, setSize } = usePagination({ defaultSize: 20, resetOn: [filterKey] }) as any;
+
+  const apiParams = useCallback(() => {
+    const out: Record<string, string> = {};
+    FILTER_KEYS.forEach((k) => { if (f[k]) out[k] = f[k]; });
+    return out;
+  }, [filterKey]); // eslint-disable-line react-hooks/exhaustive-deps -- filterKey stands for f
 
   const fetchActs = useCallback(async () => {
     setLoading(true);
     try {
-      const params: any = { page, size, field };
-      if (debouncedQuery.trim()) params.q = debouncedQuery.trim();
-      if (jurisdiction) params.jurisdiction = jurisdiction;
-      const res = await api.get("/api/acts", { params });
+      const res = await api.get("/api/acts", { params: { ...apiParams(), sort, page, size } });
       setActs(res.data.content || []);
       setTotalElements(res.data.totalElements || 0);
       setError("");
@@ -95,54 +89,100 @@ export default function Acts() {
     } finally {
       setLoading(false);
     }
-  }, [page, size, debouncedQuery, field, jurisdiction]);
+  }, [apiParams, sort, page, size]);
 
   useEffect(() => { fetchActs(); }, [fetchActs]);
 
+  // Department and ministry choices, counted within the other filters.
+  useEffect(() => {
+    api.get("/api/acts/facets", { params: apiParams() })
+      .then((r) => setFacets({ departments: r.data.departments || [], ministries: r.data.ministries || [] }))
+      .catch(() => {});
+  }, [apiParams]);
+
+  const active = [
+    f.q && { key: "q", label: `“${f.q}”` },
+    f.jurisdiction && { key: "jurisdiction", label: JURISDICTIONS.find((j) => j.value === f.jurisdiction)?.label || f.jurisdiction },
+    (f.year_from || f.year_to) && { key: "year", label: f.year_from && f.year_to ? `${f.year_from}–${f.year_to}` : f.year_from ? `From ${f.year_from}` : `Up to ${f.year_to}` },
+    f.department && { key: "department", label: f.department },
+    f.ministry && { key: "ministry", label: f.ministry },
+  ].filter(Boolean) as { key: string; label: string }[];
+  const clear = (key: string) => {
+    if (key === "q") setQuery("");
+    setFilter(key === "year" ? { year_from: "", year_to: "" } : { [key]: "" } as Partial<Filters>);
+  };
+  const clearAll = () => { setQuery(""); setFilter({ q: "", jurisdiction: "", year_from: "", year_to: "", department: "", ministry: "" }); };
+
   const pages = Math.max(1, Math.ceil(totalElements / size));
-  const fieldLabel = (FIELD_CHIPS.find(([v]) => v === field) || ["", "All"])[1];
 
   return (
     <div>
       <PageHead title="Bare Acts" sub="Central and Tamil Nadu bare acts with sections, act papers and the cases you have linked to them." />
 
       <div className="toolbar">
-        <SearchInput value={query} onChange={setQuery} style={{ width: "min(420px, 100%)" }}
-          placeholder={FIELD_PLACEHOLDERS[field] || "Search Bare Acts"}
-          aria-label={`Search acts by ${fieldLabel.toLowerCase()}`}
-          inputMode={field === "act_number" || field === "act_year" ? "numeric" : "text"}
-          aria-invalid={!!yearProblem || undefined} />
-        <Segmented label="Jurisdiction" value={jurisdiction} onChange={setJurisdiction} options={JURISDICTIONS} />
+        <SearchInput value={query} onChange={setQuery} style={{ width: "min(460px, 100%)" }}
+          placeholder="Search act name, number or section text"
+          aria-label="Search acts" />
+        <Segmented label="Jurisdiction" value={f.jurisdiction} onChange={(v) => setFilter({ jurisdiction: v, department: "", ministry: "" })} options={JURISDICTIONS} />
       </div>
 
-      <div className="row wrap" role="group" aria-label="Search in" style={{ marginBottom: 8 }}>
-        {FIELD_CHIPS.map(([v, l]) => <FilterChip key={v} on={field === v} onClick={() => setField(v)}>{l}</FilterChip>)}
+      <div className="rs-filters" role="group" aria-label="Filters">
+        <label className="rs-filter">
+          <span className="label">Year from</span>
+          <input className="input" inputMode="numeric" placeholder="e.g. 1950" value={f.year_from} maxLength={4}
+            onChange={(e) => setFilter({ year_from: fourDigits(e.target.value) })} />
+        </label>
+        <label className="rs-filter">
+          <span className="label">to</span>
+          <input className="input" inputMode="numeric" placeholder="e.g. 2025" value={f.year_to} maxLength={4}
+            onChange={(e) => setFilter({ year_to: fourDigits(e.target.value) })} />
+        </label>
+        <label className="rs-filter rs-filter-wide">
+          <span className="label">Department</span>
+          <select className="input" value={f.department} onChange={(e) => setFilter({ department: e.target.value })}>
+            <option value="">Any department</option>
+            {f.department && !facets.departments.some((d) => d.name === f.department) && <option value={f.department}>{f.department}</option>}
+            {facets.departments.map((d) => <option key={d.name} value={d.name}>{d.name} ({d.count})</option>)}
+          </select>
+        </label>
+        <label className="rs-filter rs-filter-wide">
+          <span className="label">Ministry</span>
+          <select className="input" value={f.ministry} onChange={(e) => setFilter({ ministry: e.target.value })}>
+            <option value="">Any ministry</option>
+            {f.ministry && !facets.ministries.some((d) => d.name === f.ministry) && <option value={f.ministry}>{f.ministry}</option>}
+            {facets.ministries.map((d) => <option key={d.name} value={d.name}>{d.name} ({d.count})</option>)}
+          </select>
+        </label>
+        <label className="rs-filter">
+          <span className="label">Sort</span>
+          <select className="input" value={sort} onChange={(e) => setFilter({ sort: e.target.value === "newest" ? "" : e.target.value })}>
+            {SORTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
       </div>
 
-      {yearProblem && (
-        <div className="field invalid" style={{ marginBottom: 12 }}>
-          <span className="err" role="alert"><Icon name="warn" size="sm" />{yearProblem} Enter a year like 2015 or a range like 2010-2015.</span>
-        </div>
-      )}
+      <div className="row wrap" style={{ gap: 8, margin: "4px 0 12px", minHeight: 28 }}>
+        <span className="small muted">{loading ? "Searching…" : `${totalElements.toLocaleString("en-IN")} ${totalElements === 1 ? "act" : "acts"}`}</span>
+        {active.map((a) => (
+          <span key={a.key} className="tag">{a.label}
+            <button type="button" onClick={() => clear(a.key)} aria-label={`Remove filter ${a.label}`}><Icon name="x" size="sm" /></button>
+          </span>
+        ))}
+        {active.length > 1 && <button type="button" className="link small" style={{ border: 0, background: "none", padding: 0 }} onClick={clearAll}>Clear all</button>}
+      </div>
 
       {error && <div className="callout bad" style={{ marginBottom: 12 }}><Icon name="warn" size="sm" /><div>{error}</div></div>}
 
-      {!loading && !error && acts.length > 0 && (
-        <div className="faint small" style={{ margin: "8px 0 10px" }}>{totalElements.toLocaleString("en-IN")} {totalElements === 1 ? "act" : "acts"}</div>
-      )}
 
       <div className="stack">
         {loading ? (
           [1, 2, 3, 4, 5].map((i) => <div key={i} className="panel"><div className="panel-body stack"><Skel h={12} w="30%" /><Skel h={18} w="70%" /><Skel h={12} /></div></div>)
         ) : acts.length === 0 ? (
           <div className="panel">
-            {yearProblem ? (
-              <EmptyState icon="book" title={yearProblem}
-                text="The Act year filter takes a four-digit year such as 2015, or a range such as 2010-2015. To search text instead, pick another filter above." />
-            ) : debouncedQuery.trim() ? (
-              <EmptyState icon="book" title="No acts match"
-                text={<>Nothing matches &ldquo;{debouncedQuery.trim()}&rdquo; in {fieldLabel}{jurisdiction ? ` (${jurisdiction})` : ""}. Try a different filter{jurisdiction ? ", or set the jurisdiction back to All" : ""}.</>}
-                action={<button type="button" className="btn sm" onClick={() => setQuery("")}>Clear search</button>} />
+            {active.length ? (
+              <EmptyState icon="book" title="No acts match these filters"
+                text="Try a wider year range, another department or ministry, or remove a filter."
+                action={<button type="button" className="btn sm" onClick={clearAll}>Clear all filters</button>} />
             ) : (
               <EmptyState icon="book" title="No acts found" />
             )}

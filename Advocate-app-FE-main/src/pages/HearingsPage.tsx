@@ -14,6 +14,7 @@ import { Icon, Chip, PageHead, EmptyState } from "../ui/kit";
 import { TextField, TextArea, SelectField, Segmented, FilterChip } from "../ui/forms";
 import { Modal, Drawer, confirm } from "../ui/overlays";
 import "../ui/pages/court.css";
+import DuplicateEventDialog from "../components/DuplicateEventDialog";
 
 const PURPOSE_OPTIONS = [
   "Arguments", "Evidence", "Framing of Issues", "For Counter / Reply",
@@ -76,6 +77,7 @@ function HearingsPage() {
   const [resched, setResched] = useState<{ date: string; time: string } | null>(null);
   const location = useLocation();
   const [newEvent, setNewEvent] = useState(emptyEvent);
+  const [duplicate, setDuplicate] = useState<any>(null);   // existing event the new one repeats
 
   const { withLoading } = useLoading();
   const { success, error } = useToast();
@@ -179,10 +181,17 @@ function HearingsPage() {
     if (!newEvent.eventType) { setFormError("Please choose an event type."); return; }
     if (!newEvent.date) { setFormError("Date is required."); return; }
     if (!newEvent.caseId) { setFormError("Please select the case this event belongs to."); return; }
+    await createEvent(false);
+  };
+
+  // Create the event; a 409 means the same event is already there (same case,
+  // date, type and title), so ask before adding it again (DuplicateEventDialog).
+  const createEvent = async (allowDuplicate: boolean) => {
     setSaving(true);
     try {
       await withLoading(
         api.post("/api/events/create", {
+          ...(allowDuplicate ? { allowDuplicate: true } : {}),
           title: newEvent.title.trim(),
           eventType: newEvent.eventType,
           description: newEvent.description.trim(),
@@ -202,9 +211,14 @@ function HearingsPage() {
       );
       setShowModal(false);
       setNewEvent(emptyEvent);
+      setDuplicate(null);
       fetchEvents();
       success("Event created successfully!");
     } catch (err: any) {
+      if (err.response?.status === 409 && err.response.data?.duplicate) {
+        setDuplicate(err.response.data.duplicate);
+        return;
+      }
       console.error("Error adding event:", err);
       setFormError(err.response?.data?.message || err.response?.data?.error || err.message || "Failed to create event. Please try again.");
     } finally {
@@ -418,6 +432,17 @@ function HearingsPage() {
       </Modal>
 
       {/* Event details */}
+      <DuplicateEventDialog existing={duplicate} busy={saving}
+        onCancel={() => setDuplicate(null)}
+        onAddAnyway={() => createEvent(true)}
+        onOpen={(e) => {
+          const at = parseYmd(e.date);
+          const t = e.time ? String(e.time).slice(0, 5) : "";
+          if (t) { const [h, m] = t.split(":").map(Number); at.setHours(h, m); } else at.setHours(9, 0);
+          setDuplicate(null);
+          setShowModal(false);
+          setOpen({ id: e.id, kind: "event", title: e.title, at, hasTime: !!t, eventType: e.eventType, raw: e, caseNumber: e.caseEntity?.caseNumber } as Item);
+        }} />
       <Drawer open={!!open} onClose={() => { setOpen(null); setResched(null); }} title={open?.title || ""}
         sub={open && <span className="small muted">{openType?.label || open.eventType}, {longDate(open.at)}{open.hasTime ? `, ${ftime(open.at)}` : ""}</span>}
         footer={open && <>

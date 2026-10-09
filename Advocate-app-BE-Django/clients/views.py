@@ -101,7 +101,7 @@ def _find_practice_duplicate(user, name, email, phone_digits):
 
 
 # Format-checked before anything is saved (core/validators.py).
-CLIENT_FORMATS = {'email': 'email', 'phone': 'phone', 'gstin': 'gstin', 'pincode': 'pincode'}
+CLIENT_FORMATS = {'name': 'name', 'email': 'email', 'phone': 'phone', 'gstin': 'gstin', 'pincode': 'pincode'}
 
 
 def _save_profile(data, client):

@@ -161,7 +161,7 @@ class FullProfileView(APIView):
 
     def put(self, request):
         data, bad = check_payload(request.data, {
-            'phone': 'phone', 'officePhone': 'phone', 'officeEmail': 'email',
+            'phone': 'phone', 'officePhone': 'landline', 'officeEmail': 'email',
             'pinCode': 'pincode', 'gstNumber': 'gstin', 'panNumber': 'pan'})
         if bad is not None:
             return bad
@@ -217,6 +217,26 @@ class BrandingUploadView(APIView):
         advocate = request.user
         setattr(advocate, field, f"branding/{stored}")
         advocate.save(update_fields=[field])
+        return Response(FullProfileSerializer(advocate, context={'request': request}).data)
+
+    def delete(self, request, type):
+        """DELETE /api/profile/branding/{type} — remove the photo/logo/signature/seal:
+        clear the field (initials / no image show again) and delete the stored file."""
+        import os
+        from django.conf import settings
+        field = BRANDING_FIELD.get(type)
+        if field is None:
+            return Response({'error': 'Invalid branding type'}, status=status.HTTP_400_BAD_REQUEST)
+        advocate = request.user
+        old = getattr(advocate, field, None)
+        setattr(advocate, field, None)
+        advocate.save(update_fields=[field])
+        # Only a file this endpoint stored (branding/<name>); never a path outside it.
+        if old and str(old).startswith('branding/') and '..' not in str(old):
+            try:
+                os.remove(os.path.join(settings.DOCUMENT_UPLOAD_DIR, *str(old).split('/')))
+            except OSError:
+                pass  # already gone: the profile is cleared either way
         return Response(FullProfileSerializer(advocate, context={'request': request}).data)
 
 

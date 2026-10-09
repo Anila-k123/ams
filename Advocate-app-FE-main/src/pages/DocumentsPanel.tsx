@@ -19,6 +19,7 @@ import { FilterChip, SearchInput, Segmented, SelectField, TextArea, TextField } 
 import { Modal, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/clients.css";
+import { DOCUMENT_ACCEPT, DOCUMENT_TYPES_LABEL, isAllowedDocument } from "../utils/fileTypes";
 
 const CATEGORIES = [
   "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
@@ -26,13 +27,30 @@ const CATEGORIES = [
   "Identity Proof", "Address Proof", "Other"
 ];
 
+// Filter by kind of file, not one exact MIME type: the same kind arrives under
+// several (a ZIP from Windows is "application/x-zip-compressed"). The backend
+// (documents/views.py FILE_KINDS) and matchesKind below use the same rules.
 const FILE_TYPE_OPTIONS = [
-  { value: "application/pdf", label: "PDF" },
-  { value: "image/", label: "Images" },
-  { value: "application/msword", label: "DOC" },
-  { value: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", label: "DOCX" },
-  { value: "application/zip", label: "ZIP" },
+  { value: "pdf", label: "PDF" },
+  { value: "image", label: "Images" },
+  { value: "doc", label: "DOC" },
+  { value: "docx", label: "DOCX" },
+  { value: "zip", label: "ZIP" },
 ];
+const FILE_KINDS: Record<string, { mimes: string[]; exts: string[] }> = {
+  pdf: { mimes: ["application/pdf"], exts: [".pdf"] },
+  image: { mimes: ["image/"], exts: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"] },
+  doc: { mimes: ["application/msword"], exts: [".doc"] },
+  docx: { mimes: ["application/vnd.openxmlformats-officedocument.wordprocessingml"], exts: [".docx"] },
+  zip: { mimes: ["application/zip", "application/x-zip", "application/x-zip-compressed", "multipart/x-zip"], exts: [".zip"] },
+};
+const matchesKind = (d: any, kind: string) => {
+  const k = FILE_KINDS[kind];
+  if (!k) return true;
+  const type = String(d.fileType || "").toLowerCase();
+  const name = String(d.originalName || d.documentName || "").toLowerCase();
+  return k.mimes.some((m) => type.startsWith(m)) || k.exts.some((e) => name.endsWith(e));
+};
 
 const PAGE_SIZE = 20;
 const emptyUploadOptions = { category: "", caseId: "", clientId: "", documentName: "", description: "" };
@@ -94,7 +112,7 @@ export default function DocumentsPanel() {
           (!kw || `${d.documentName} ${d.originalName || ""} ${d.category || ""} ${d.description || ""}`.toLowerCase().includes(kw))
           && (!selectedCategory || d.category === selectedCategory)
           && (!selectedStatus || (d.status || "ACTIVE") === selectedStatus)
-          && (!selectedFileType || String(d.fileType || "").startsWith(selectedFileType)));
+          && (!selectedFileType || matchesKind(d, selectedFileType)));
         setTotalElements(rows.length);
         setDocuments(rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE));
         return;
@@ -196,16 +214,25 @@ export default function DocumentsPanel() {
 
   const hasFilters = !!(searchText || selectedCategory || selectedStatus || selectedFileType || selectedCase || sharedOnly);
 
+  // Only allowed document types join the upload list (utils/fileTypes); a dropped
+  // web page or script is left out with a message. The server refuses them too.
+  const addFiles = (files: File[]) => {
+    const ok = files.filter((f) => isAllowedDocument(f.name));
+    const refused = files.filter((f) => !isAllowedDocument(f.name));
+    if (refused.length) {
+      toast.error(`${refused.map((f) => f.name).join(", ")} can't be uploaded. Use ${DOCUMENT_TYPES_LABEL}.`);
+    }
+    if (ok.length) setUploadFiles((prev) => [...prev, ...ok]);
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
-    setUploadFiles((prev) => [...prev, ...files]);
+    addFiles(Array.from(e.dataTransfer.files));
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    setUploadFiles((prev) => [...prev, ...files]);
+    addFiles(Array.from(e.target.files || []));
     e.target.value = "";
   };
 
@@ -257,7 +284,8 @@ export default function DocumentsPanel() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Download error:", err);
-      setError("Failed to download file");
+      // Action errors are toasts (they clear themselves); the banner is for page-load failures.
+      toast.error("Failed to download file. It may be missing on the server.");
     }
   };
 
@@ -273,7 +301,7 @@ export default function DocumentsPanel() {
         fetchStats();
       } catch (err) {
         console.error("Delete error:", err);
-        setError("Failed to delete document");
+        toast.error("Failed to delete document.");
       }
     },
   });
@@ -293,7 +321,7 @@ export default function DocumentsPanel() {
       fetchDocuments();
     } catch (err) {
       console.error("Update error:", err);
-      setError("Failed to update document");
+      toast.error("Failed to update document.");
     }
   };
 
@@ -422,7 +450,7 @@ export default function DocumentsPanel() {
       )}
 
       {/* Upload */}
-      <Modal open={showUploadModal} title="Upload documents" sub="PDF, DOC, DOCX, PNG, JPG or ZIP, up to 25 MB each."
+      <Modal open={showUploadModal} title="Upload documents" sub={`${DOCUMENT_TYPES_LABEL}, up to 25 MB each.`}
         onClose={() => { if (!uploading) setShowUploadModal(false); }} dismissable={!uploading}
         footer={<>
           <Button variant="ghost" onClick={() => setShowUploadModal(false)} disabled={uploading}>Cancel</Button>
@@ -440,7 +468,7 @@ export default function DocumentsPanel() {
             <div style={{ marginTop: 8 }}><b>Drop files here</b> or click to browse</div>
             <div className="faint xs" style={{ marginTop: 4 }}>You can add several files at once.</div>
           </button>
-          <input ref={fileInputRef} type="file" multiple hidden onChange={handleFileSelect} aria-label="Choose files" />
+          <input ref={fileInputRef} type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={handleFileSelect} aria-label="Choose files" />
 
           {uploadFiles.length > 0 && (
             <div className="dc-files">

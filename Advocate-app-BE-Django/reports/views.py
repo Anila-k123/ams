@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from core.models import (Case, Client, Document, Invoice, Expense, ClientPayment,
                          CaseEvent, Advocate)
 from core.permissions import RequirePermission
+from reportlab.lib.units import mm
 from .pdf import build_pdf, build_invoice_pdf, money, letterhead_from_advocate
 from core.finance import invoice_balance, invoice_paid_amounts
 from core.practice import practice_ids, practice_root
@@ -104,8 +105,10 @@ def _expense_pdf(qs, subtitle, branding=None):
     blocks = [
         {'type': 'kv', 'rows': [('Total Expenses', money(total)), ('Count', len(rows))]},
         {'type': 'heading', 'text': 'Expenses'},
+        # Description gets the room; it wraps inside its column (reports/pdf.py _table).
         {'type': 'table',
-         'headers': ['Date', 'Title', 'Category', 'Amount', 'Description'], 'rows': rows},
+         'headers': ['Date', 'Title', 'Category', 'Amount', 'Description'], 'rows': rows,
+         'widths': [24 * mm, 38 * mm, 28 * mm, 26 * mm, 62 * mm]},
     ]
     return build_pdf('Expense Report', blocks, subtitle=subtitle, branding=branding)
 

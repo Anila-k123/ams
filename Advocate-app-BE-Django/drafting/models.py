@@ -61,6 +61,11 @@ class Template(models.Model):
     slot_schema = models.JSONField(default=list)
     # JSON list of clause-skeleton blocks the generation engine iterates over
     body_json = models.JSONField(default=list)
+    # Firm set-up, like playbooks: seen only within the creator's firm, archived
+    # (not deleted) by its creator or a Super Admin (drafting/access.py).
+    created_by_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -542,6 +547,10 @@ class Playbook(models.Model):
     # convention for tables that point at the Spring-owned schema (workspace/models.py).
     # Same column name (created_by_id) as the InstaDraft foreign key it replaces.
     created_by_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    # "Delete" archives: hidden and not offered for new drafts, restorable by the
+    # creator or a Super Admin. Drafts already checked keep their findings.
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

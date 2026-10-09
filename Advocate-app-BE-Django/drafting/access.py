@@ -92,3 +92,41 @@ def can_suggest(session, user):
     if session.created_by_id == user.id:
         return False
     return open_request(session, user) is not None
+
+
+# ── Firm set-up: templates and playbooks ─────────────────────────────────────
+# Shared within one firm (every team of it), never across firms. Anyone in the
+# firm with DRAFT_MANAGE may edit them; only the creator or a Super Admin may
+# archive ("delete") or restore one.
+
+def firm_member_ids(user):
+    """Every advocate id in this user's firm: all its teams, roots and members."""
+    from core.models import Advocate
+    from core.practice import firm_team_roots
+    roots = firm_team_roots(user)
+    ids = set(roots) | {user.id}
+    ids.update(Advocate.objects.filter(parent_advocate_id__in=roots).values_list('id', flat=True))
+    return sorted(ids)
+
+
+def is_super_admin(user):
+    from core.practice import SUPER_ADMIN_ROLE
+    try:
+        return SUPER_ADMIN_ROLE in user.role_names()
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def firm_setup(qs, user):
+    """Templates / playbooks of this user's firm. Unowned rows (made before
+    owners were recorded and not assignable) are left to Super Admins."""
+    from django.db.models import Q
+    scope = Q(created_by_id__in=firm_member_ids(user))
+    if is_super_admin(user):
+        scope |= Q(created_by_id__isnull=True)
+    return qs.filter(scope)
+
+
+def can_archive(obj, user):
+    """The creator or a Super Admin (of the same firm: the queryset ensures it)."""
+    return obj.created_by_id == user.id or is_super_admin(user)

@@ -184,6 +184,30 @@ def clean_name(value):
     return name
 
 
+def due_date_error(value, label='Due date', not_before=None, not_before_label=None):
+    """Message when a due date / deadline being set is in the past (or before
+    `not_before`, e.g. the invoice date), else None. Empty is allowed; today is
+    allowed. Only for dates being set now: existing overdue records are left alone.
+    Mirrors dueDateError() in src/utils/validators.ts."""
+    import datetime
+    if not value:
+        return None
+    try:
+        day = value if isinstance(value, datetime.date) else datetime.date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return f'{label} is not a valid date.'
+    if day < datetime.date.today():
+        return f"{label} can't be in the past."
+    if not_before:
+        try:
+            floor = not_before if isinstance(not_before, datetime.date) else datetime.date.fromisoformat(str(not_before)[:10])
+        except ValueError:
+            floor = None
+        if floor and day < floor:
+            return f"{label} can't be before the {not_before_label or 'start date'}."
+    return None
+
+
 # name -> cleaner, for checking a payload's fields in one call.
 CLEANERS = {'gstin': clean_gstin, 'pan': clean_pan, 'pincode': clean_pincode,
             'phone': clean_phone, 'landline': clean_landline, 'name': clean_name, 'email': clean_email, 'ifsc': clean_ifsc}

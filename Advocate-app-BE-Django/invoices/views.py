@@ -18,7 +18,7 @@ from .models import (InvoiceItem, InvoiceTaxDetail, FirmBillingProfile, InvoiceR
 from core.practice import practice_ids, practice_root
 from core.finance import invoice_paid_amounts, recalc_case_totals
 from notifications import client_events, internal_events
-from core.validators import check_payload
+from core.validators import check_payload, due_date_error, error_response
 
 SORT_MAP = {'invoiceDate': 'invoice_date', 'dueDate': 'due_date', 'amount': 'amount', 'id': 'id'}
 
@@ -288,6 +288,9 @@ class CreateInvoiceView(APIView):
         case, bad = _billable_case(request.user, request.data)
         if bad is not None:
             return bad
+        bad = _due_date_bad(request.data)
+        if bad is not None:
+            return bad
         invoice, bad = _create_invoice(request.user, request.data, case)
         if bad is not None:
             return bad
@@ -499,9 +502,20 @@ def _clean_payload(data, case_id):
     return body
 
 
+def _due_date_bad(data):
+    """400 when the due date is in the past or before the invoice date. Checked
+    when an invoice is created or a request raised / edited, not when accounts
+    issue a request later (its due date may have passed while it waited)."""
+    msg = due_date_error(data.get('dueDate'), 'Due date', data.get('invoiceDate'), 'invoice date')
+    return error_response({'dueDate': msg}) if msg else None
+
+
 def _check_request_body(data):
     """(taxable, None) if the body can become an invoice, else (None, 400)."""
     _, bad = check_payload(data, {'recipientGstin': 'gstin'})
+    if bad is not None:
+        return None, bad
+    bad = _due_date_bad(data)
     if bad is not None:
         return None, bad
     _, taxable = _taxable(data)

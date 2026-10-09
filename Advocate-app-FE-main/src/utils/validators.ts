@@ -151,3 +151,19 @@ export function formatErrors(values: Record<string, unknown>, spec: Record<strin
   }
   return out;
 }
+
+/** Today as YYYY-MM-DD in local time, for a date input's `min`. */
+export function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** A due date / deadline being set may be today or later, and not before
+ *  `notBefore` (e.g. the invoice date). Empty is allowed. Mirrors
+ *  due_date_error() in core/validators.py. */
+export function dueDateError(value: string, label = "Due date", notBefore?: string, notBeforeLabel = "start date"): string | null {
+  if (!value) return null;
+  if (value < todayISO()) return `${label} can't be in the past.`;
+  if (notBefore && value < notBefore) return `${label} can't be before the ${notBeforeLabel}.`;
+  return null;
+}

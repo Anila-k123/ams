@@ -14,6 +14,7 @@ import { Modal, Drawer, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/court.css";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
+import { dueDateError, todayISO } from "../utils/validators";
 
 const FILTERS = [
   { value: "inprogress", label: "In progress" },
@@ -167,9 +168,13 @@ export default function TasksPage() {
     return ids;
   };
 
+  // A deadline being set may be today or later; the server checks the same.
+  const deadlineError = dueDateError(deadline, "Deadline");
+
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) { setTitleError(true); return; }
+    if (deadlineError) { error(deadlineError); return; }
     try {
       await withLoading((async () => {
         const caseId = linkedCase ? Number(linkedCase) : null;
@@ -483,7 +488,7 @@ export default function TasksPage() {
             error={titleError && "Say what needs to be done."}
             onChange={(e) => { setTitle(e.target.value); setTitleError(false); }} />
           <SelectField label="Priority" value={priority} options={PRIORITY_OPTIONS} onChange={(e) => setPriority(e.target.value)} />
-          <TextField label="Deadline" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          <TextField label="Deadline" type="date" min={todayISO()} error={deadlineError} value={deadline} onChange={(e) => setDeadline(e.target.value)} />
           <SelectField full label="Link case" value={linkedCase} placeholder="No case (general task)" options={caseOptions}
             onChange={(e) => setLinkedCase(e.target.value)} />
           {canAssign && (

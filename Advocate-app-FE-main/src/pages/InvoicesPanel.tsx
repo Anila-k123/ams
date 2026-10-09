@@ -11,7 +11,7 @@ import { formatCurrency } from "../utils/formatCurrency";
 import { PAYMENT_MODES } from "../constants/payments";
 import usePagination from "../hooks/usePagination";
 import { usePageModal } from "../utils/pageModal";
-import { gstinError, gstinState, gstinStateMismatch, normaliseCode } from "../utils/validators";
+import { dueDateError, gstinError, gstinState, gstinStateMismatch, normaliseCode, todayISO } from "../utils/validators";
 import { Button, Chip, Icon, PageHead, Panel, PopMenu, Skel, type MenuItem, type Tone } from "../ui/kit";
 import { Field, SearchInput, SelectField, TextArea, TextField } from "../ui/forms";
 import { Modal, Drawer, confirm } from "../ui/overlays";
@@ -345,8 +345,18 @@ export default function InvoicesPanel() {
   const gstAmount = isForward ? Math.round(invoiceTotal * gstRateNum) / 100 : 0;
   const grandTotal = invoiceTotal + gstAmount;
 
+  // The due date may be today or later, and not before the invoice date. Not
+  // checked when accounts issue a waiting request (its date may have passed meanwhile).
+  const checkDue = mode.kind !== "review";
+  const dueMin = checkDue ? [todayISO(), newInvoice.invoiceDate || ""].sort().pop() : undefined;
+  const dueError = checkDue ? dueDateError(newInvoice.dueDate, "Due date", newInvoice.invoiceDate, "invoice date") : null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (dueError) {
+      error(dueError);
+      return;
+    }
     if (recipientGstinError) {
       setGstinTouched(true);
       error("Fix the recipient GSTIN first: " + recipientGstinError);
@@ -746,7 +756,7 @@ export default function InvoicesPanel() {
 
           <div className="form-grid">
             <TextField label="Invoice date" type="date" name="invoiceDate" required value={newInvoice.invoiceDate} onChange={handleChange} />
-            <TextField label="Due date" type="date" name="dueDate" required value={newInvoice.dueDate} onChange={handleChange} />
+            <TextField label="Due date" type="date" name="dueDate" required min={dueMin} error={dueError} value={newInvoice.dueDate} onChange={handleChange} />
           </div>
 
           <fieldset className="fin-fieldset">

@@ -1,6 +1,7 @@
 import datetime
 import logging
 
+from core.validators import due_date_error, error_response
 from django.core.cache import cache
 
 from rest_framework.views import APIView
@@ -246,6 +247,9 @@ class CaseTasksView(APIView):
         title = (request.data.get('title') or '').strip()
         if not title:
             return Response({'error': 'title is required'}, status=status.HTTP_400_BAD_REQUEST)
+        msg = due_date_error(request.data.get('deadline'), 'Deadline')
+        if msg:
+            return error_response({'deadline': msg})
         assignee_id, err = _resolve_assignee(request)
         if err is not None:
             return err
@@ -282,6 +286,9 @@ class CreateTaskView(APIView):
         case_id = request.data.get('caseId') or None
         if case_id and not _owns_case(request, case_id):
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
+        msg = due_date_error(request.data.get('deadline'), 'Deadline')
+        if msg:
+            return error_response({'deadline': msg})
         assignee_id, err = _resolve_assignee(request)
         if err is not None:
             return err

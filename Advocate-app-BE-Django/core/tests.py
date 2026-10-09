@@ -703,3 +703,21 @@ class MakeTeamCommandTest(TestCase):
         self.assertNotIn(self.case.advocate_id, practice.practice_ids(
             Advocate.objects.get(id=self.junior.id)))
         self.assertIn('nothing to do', self._run('--yes'))
+
+
+class DueDateRuleTest(TestCase):
+    """Due dates / deadlines being set: today or later, not before a floor date."""
+
+    def test_rule(self):
+        import datetime
+        from core.validators import due_date_error
+        today = datetime.date.today()
+        day = datetime.timedelta(days=1)
+        self.assertIsNone(due_date_error(''))
+        self.assertIsNone(due_date_error(today.isoformat()))
+        self.assertIsNone(due_date_error((today + day).isoformat()))
+        self.assertEqual(due_date_error((today - day).isoformat(), 'Deadline'), "Deadline can't be in the past.")
+        self.assertEqual(
+            due_date_error((today + day).isoformat(), 'Due date', (today + 5 * day).isoformat(), 'invoice date'),
+            "Due date can't be before the invoice date.")
+        self.assertEqual(due_date_error('not-a-date'), 'Due date is not a valid date.')

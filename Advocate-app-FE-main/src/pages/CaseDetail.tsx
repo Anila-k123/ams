@@ -24,6 +24,7 @@ import "../ui/pages/casedetail.css";
 import { copyText } from "../utils/clipboard";
 import DuplicateEventDialog from "../components/DuplicateEventDialog";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
+import { dueDateError, todayISO } from "../utils/validators";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -719,7 +720,14 @@ export default function CaseDetail() {
     });
   };
 
+  // Due dates and deadlines being set may be today or later (and an invoice's
+  // not before its invoice date); the server checks the same.
+  const invDueError = dueDateError(invoiceForm.dueDate, "Due date", invoiceForm.invoiceDate, "invoice date");
+  const invDueMin = [todayISO(), invoiceForm.invoiceDate || ""].sort().pop();
+  const taskDeadlineError = dueDateError(newTask.deadline, "Deadline");
+
   const addInvoice = async () => {
+    if (invDueError) { error(invDueError); return; }
     const particulars = invoiceForm.particulars
       .map((p) => ({ description: (p.description || "").trim(), amount: parseFloat(p.amount) || 0 }))
       .filter((p) => p.description || p.amount);
@@ -1070,6 +1078,7 @@ export default function CaseDetail() {
   const addTask = async () => {
     const title = newTask.title.trim();
     if (!title) return;
+    if (taskDeadlineError) { error(taskDeadlineError); return; }
     try {
       await withLoading((async () => {
         const res = await api.post(`/api/workspace/cases/${id}/tasks`, {
@@ -1765,7 +1774,7 @@ export default function CaseDetail() {
                       onChange={(e) => setNewTask({ ...newTask, title: e.target.value })} />
                     <SelectField label="Priority" options={PRIORITIES} value={newTask.priority}
                       onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })} />
-                    <TextField label="Deadline" type="date" value={newTask.deadline}
+                    <TextField label="Deadline" type="date" min={todayISO()} error={taskDeadlineError} value={newTask.deadline}
                       onChange={(e) => setNewTask({ ...newTask, deadline: e.target.value })} />
                     {can("TASK_ASSIGN") && (
                       <SelectField label="Assign to" options={[{ value: "", label: "Myself" }, ...assignees.map((a) => ({ value: String(a.id), label: a.fullName || a.email }))]}
@@ -2227,7 +2236,7 @@ export default function CaseDetail() {
           )}
           <div className="form-grid">
             <TextField label="Invoice date" type="date" value={invoiceForm.invoiceDate} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoiceDate: e.target.value })} />
-            <TextField label="Due date" type="date" value={invoiceForm.dueDate} onChange={(e) => setInvoiceForm({ ...invoiceForm, dueDate: e.target.value })} />
+            <TextField label="Due date" type="date" min={invDueMin} error={invDueError} value={invoiceForm.dueDate} onChange={(e) => setInvoiceForm({ ...invoiceForm, dueDate: e.target.value })} />
           </div>
           <div className="row between"><span className="label">Particulars</span><Button size="sm" variant="ghost" icon="plus" onClick={addInvParticular}>Add line</Button></div>
           {invoiceForm.particulars.map((p, i) => (

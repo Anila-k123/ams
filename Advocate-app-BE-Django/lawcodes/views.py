@@ -1,6 +1,7 @@
 import re
 
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models.functions import Length
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
@@ -51,12 +52,16 @@ class LawCodeSearchView(APIView):
         qs = _pair_filter(LegalCodeMapping.objects.all(), pair)
         if q:
             qn = re.sub(r'\s+', '', q).lower()
-            if direction == 'new-old':
-                qs = qs.filter(Q(new_section_norm__startswith=qn) |
-                               Q(description__icontains=q))
-            else:
-                qs = qs.filter(Q(old_section_norm__startswith=qn) |
-                               Q(description__icontains=q))
+            sec = 'new_section_norm' if direction == 'new-old' else 'old_section_norm'
+            qs = qs.filter(Q(**{f'{sec}__startswith': qn}) | Q(description__icontains=q))
+            # The section asked for first, then sections starting with it (88A, 880),
+            # then description matches ("...388..."); sections in numeric order
+            # (shorter first, so 9 before 10). Unordered, the exact hit could sink.
+            qs = qs.annotate(rank=Case(
+                When(**{sec: qn}, then=Value(0)),
+                When(**{f'{sec}__startswith': qn}, then=Value(1)),
+                default=Value(2), output_field=IntegerField(),
+            )).order_by('rank', Length(sec), sec, 'id')
         return Response([_row(m) for m in qs[:limit]])
 
 

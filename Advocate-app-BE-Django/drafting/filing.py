@@ -38,6 +38,9 @@ from workspace.models import CaseTask, CaseTaskDocument
 
 from .access import own_sessions, viewable_sessions
 from .ams_cases import link_case
+from .models import DraftVersion
+from .versions import save_version
+from . import task_review
 
 DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
@@ -103,6 +106,11 @@ class SendToAmsView(APIView):
         own_task = task is not None and review.is_assignee(task, user)
         if 'DOCUMENT_UPLOAD' not in request._advocate_permissions and not own_task:
             return Response({'error': 'You do not have permission to upload documents.'}, status=403)
+        # Review rounds (task_review.py): the reviewer's suggestions must be decided first.
+        if own_task:
+            blocker = task_review.submit_blocker(session)
+            if blocker:
+                return Response({'error': blocker}, status=400)
 
         data = render_session_docx(session, branding_for(user))
         upload = SimpleUploadedFile(export_filename(session), data, content_type=DOCX_TYPE)
@@ -123,6 +131,8 @@ class SendToAmsView(APIView):
                     doc.document_name = name
                     doc.save(update_fields=['document_name'])
             if task is not None:
+                if own_task:
+                    task_review.before_submit(session, user)
                 CaseTaskDocument.objects.get_or_create(
                     task_id=task.id, document_id=doc.id, defaults={'advocate_id': user.id})
                 # Snapshot the draft, and compare it with the last one submitted,
@@ -138,6 +148,14 @@ class SendToAmsView(APIView):
             session.ams_document_version = doc.version
             session.ams_synced_at = timezone.now()
             session.save(update_fields=['ams_document_id', 'ams_document_version', 'ams_synced_at'])
+            # Name the AMS document version in words: a bare "(v2)" next to the draft's own
+            # "v3" read as a second draft number.
+            save_version(session, DraftVersion.Kind.SENT,
+                         '{} · filed as document v{}'.format(
+                             'Submitted for review' if task is not None else 'Saved to PactPro', doc.version),
+                         user.id)
+            if task is not None and own_task:
+                task_review.after_submit(session, task, user)
         if task is not None:
             task.refresh_from_db()
         return Response({'documentId': doc.id, 'version': doc.version, 'taskLinked': task is not None,

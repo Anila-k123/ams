@@ -340,6 +340,150 @@ class DraftBlock(models.Model):
         ordering = ['position']
 
 
+class DraftVersion(models.Model):
+    """A frozen copy of a whole draft at one moment, the "before" side of a redline.
+
+    Blocks are copied into `blocks` (not referenced) because DraftBlock rows are
+    edited in place and replaced on regenerate; a version must never change after it
+    is saved. Taken automatically when the AI finishes a draft and when it is sent to
+    AMS / for review, and by hand ("Save version")."""
+    class Kind(models.TextChoices):
+        GENERATED = 'generated', 'AI draft'
+        SENT = 'sent', 'Sent to AMS / review'
+        MANUAL = 'manual', 'Saved by user'
+        REVIEW = 'review', 'After a review round'
+        RETURNED = 'returned', 'Sent back for changes'
+
+    session = models.ForeignKey(DraftSession, on_delete=models.CASCADE, related_name='versions')
+    number = models.PositiveIntegerField()  # 1, 2, 3… per session
+    label = models.CharField(max_length=255, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.MANUAL)
+    # [{block_id, position, block_type, heading, text, content_html, style_json}] in document order.
+    blocks = models.JSONField(default=list)
+    created_by_id = models.BigIntegerField(null=True, blank=True)  # AMS advocate id (plain id, see above)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = '"drf"."draft_version"'
+        ordering = ['number']
+        constraints = [models.UniqueConstraint(fields=['session', 'number'], name='draft_version_unique_number')]
+
+
+class DraftReviewRequest(models.Model):
+    """"Please review my draft", for drafts not started from a task (a task's own
+    submit / review covers those). docs/DRAFT_REVIEW.md, situations 2-4.
+
+    `authority` is fixed when the request is made (drafting/authority.py): `binding` when
+    the reviewer is senior over the author (may edit directly and suggest), else `suggest`
+    (suggestions only)."""
+    class Authority(models.TextChoices):
+        BINDING = 'binding', 'May correct and suggest'
+        SUGGEST = 'suggest', 'Suggestions only'
+
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Open'
+        DONE = 'done', 'Done'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    session = models.ForeignKey(DraftSession, on_delete=models.CASCADE, related_name='review_requests')
+    requested_by_id = models.BigIntegerField()          # AMS advocate ids (plain ids, see above)
+    reviewer_id = models.BigIntegerField(db_index=True)
+    note = models.TextField(blank=True)
+    authority = models.CharField(max_length=20, choices=Authority.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = '"drf"."draft_review_request"'
+        ordering = ['-created_at']
+
+
+class DraftReviewRound(models.Model):
+    """One set of changes waiting for someone's decisions (docs/DRAFT_REVIEW.md).
+
+    - `suggestions`: proposed by a reviewer, NOT applied yet. Accept applies a change;
+      decline keeps the draft's text (a reason is required).
+    - `changes`: already in the draft (e.g. a junior's resubmission). Accept keeps a
+      change; reject puts the old text back. `binding` rounds (a senior's corrections
+      shown to the junior) can only be acknowledged or queried, never rejected.
+
+    `base_blocks` / `target_blocks` are frozen snapshots (versions.snapshot_blocks), so a
+    change's number (its change_id in the comparison) stays the same while the round is open."""
+    class Kind(models.TextChoices):
+        SUGGESTIONS = 'suggestions', 'Suggestions'
+        CHANGES = 'changes', 'Changes to review'
+
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Open'
+        FINISHED = 'finished', 'Finished'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    session = models.ForeignKey(DraftSession, on_delete=models.CASCADE, related_name='review_rounds')
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    binding = models.BooleanField(default=False)
+    author_id = models.BigIntegerField()                 # who made the changes
+    decider_id = models.BigIntegerField(db_index=True)   # who accepts / rejects them
+    review_request = models.ForeignKey(DraftReviewRequest, on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='rounds')
+    # Changes from outside (drafting/incoming.py): who sent the file. author_id is then whoever uploaded it.
+    external_from = models.CharField(max_length=120, blank=True)
+    note = models.TextField(blank=True)
+    base_blocks = models.JSONField(default=list)
+    target_blocks = models.JSONField(default=list)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = '"drf"."draft_review_round"'
+        ordering = ['-created_at']
+
+
+class DraftChangeDecision(models.Model):
+    """The decision on one change of a round (change_id = its number in the round's comparison)."""
+    class Decision(models.TextChoices):
+        ACCEPTED = 'accepted', 'Accepted / kept'
+        DECLINED = 'declined', 'Declined (suggestion)'
+        REJECTED = 'rejected', 'Rejected (change undone)'
+        QUERIED = 'queried', 'Queried (binding correction)'
+        ACKNOWLEDGED = 'acknowledged', 'Acknowledged (binding correction)'
+
+    round = models.ForeignKey(DraftReviewRound, on_delete=models.CASCADE, related_name='decisions')
+    change_id = models.PositiveIntegerField()
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    reason = models.TextField(blank=True)
+    decided_by_id = models.BigIntegerField()
+    decided_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = '"drf"."draft_change_decision"'
+        constraints = [models.UniqueConstraint(fields=['round', 'change_id'], name='draft_change_decision_once')]
+
+
+class DraftComment(models.Model):
+    """A comment on a passage of a draft, and its replies (docs/DRAFT_REVIEW.md, comments).
+
+    In a task review the senior corrects directly and asks questions here ("Did the client agree to
+    rent in advance?"); the junior replies or fixes the text; the senior resolves. The junior's
+    queries on corrections are comments too. A thread is a top comment (`parent` NULL) and its
+    replies; `block_id` + `quote` anchor it to the words it is about (they may change later: the
+    quote is kept as written)."""
+    session = models.ForeignKey(DraftSession, on_delete=models.CASCADE, related_name='comments')
+    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')
+    block_id = models.BigIntegerField(null=True, blank=True)   # the clause (plain id: blocks are replaced on re-draft)
+    quote = models.TextField(blank=True)                       # the words commented on, as they were
+    body = models.TextField()
+    author_id = models.BigIntegerField(db_index=True)          # AMS advocate ids (plain ids, see above)
+    resolved_by_id = models.BigIntegerField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = '"drf"."draft_comment"'
+        ordering = ['created_at']
+
+
 class DraftEdit(models.Model):
     """One turn of the chat-edit loop: an instruction, the AI's proposed rewrite
     of a clause (before/after), and whether the lawyer accepted it. Kept as the

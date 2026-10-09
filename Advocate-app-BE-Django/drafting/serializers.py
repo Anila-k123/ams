@@ -99,11 +99,18 @@ class DraftBlockSerializer(serializers.ModelSerializer):
     full text/metadata (read-only) so the client need not fetch it separately.
     """
     source_clause_detail = SourceClauseSerializer(source='source_clause', read_only=True)
+    # The clause's revision (versions.block_rev); a save sends it back so it can't overwrite
+    # someone else's newer change to the same clause.
+    rev = serializers.SerializerMethodField()
+
+    def get_rev(self, obj):
+        from .versions import block_rev
+        return block_rev(obj.heading, obj.content_html)
 
     class Meta:
         model = DraftBlock
         fields = (
-            'id', 'position', 'block_type', 'heading', 'text', 'content_html', 'is_edited',
+            'id', 'rev', 'position', 'block_type', 'heading', 'text', 'content_html', 'is_edited',
             'style_json', 'source', 'source_clause', 'source_clause_detail',
             'verified', 'similarity_score',
         )
@@ -140,6 +147,8 @@ class DraftSessionSerializer(serializers.ModelSerializer):
     # Senior review (drafting/access.py): who wrote it, and the viewer's review role.
     created_by_name = serializers.SerializerMethodField()
     review = serializers.SerializerMethodField()
+    # What the viewer may do with the draft (docs/DRAFT_REVIEW.md): edit directly, suggest.
+    access = serializers.SerializerMethodField()
     # Empty fields left (drives Incomplete / Complete on the Drafts list).
     unfilled_count = serializers.SerializerMethodField()
 
@@ -147,7 +156,7 @@ class DraftSessionSerializer(serializers.ModelSerializer):
         model = DraftSession
         fields = (
             'id', 'template', 'template_name', 'document_type', 'samples', 'sample_names',
-            'created_by_id', 'created_by_name', 'review',
+            'created_by_id', 'created_by_name', 'review', 'access',
             'client', 'project', 'facts', 'mode', 'llm', 'status',
             'playbook', 'risk_status', 'risk_report', 'apply_bns_codes',
             'case_id', 'ams_task_id', 'ams_document_id', 'ams_document_version', 'ams_synced_at',
@@ -188,6 +197,19 @@ class DraftSessionSerializer(serializers.ModelSerializer):
                 'note': task.review_note, 'reviewedByName': reviewer.full_name if reviewer else None,
                 'isOwner': is_owner, 'canReview': can_review,
                 'canEdit': is_owner or (can_review and task.review_status == 'SUBMITTED')}
+
+    def get_access(self, obj):
+        """{isOwner, canWrite, canSuggest, request}: the editor shows Edit, Suggest or both from
+        this (drafting/access.py), whether the viewer came through a task or a review request."""
+        request = self.context.get('request')
+        if request is None:
+            return None
+        from .access import can_suggest, can_write, open_request
+        user = request.user
+        req = open_request(obj, user)
+        return {'isOwner': obj.created_by_id == user.id, 'canWrite': can_write(obj, user),
+                'canSuggest': can_suggest(obj, user),
+                'request': {'id': req.id, 'authority': req.authority, 'note': req.note} if req else None}
 
     def get_unfilled_count(self, obj):
         return unfilled_count(b.text for b in obj.blocks.all())

@@ -41,6 +41,7 @@ forwards `/api/` to the backend.
 | Git | any | git-scm.com | `apt install git` |
 | Tesseract OCR | any | UB-Mannheim build (scraper host only) | `apt install tesseract-ocr` |
 | Redis | 6+ | Memurai, or Redis in WSL/Docker | `apt install redis-server` |
+| LibreOffice | 7.6+ | `winget install TheDocumentFoundation.LibreOffice` (draft PDF export; set `LIBREOFFICE_PATH` if not in Program Files) | `apt install libreoffice-writer` |
 | Web server | — | IIS + URL Rewrite + ARR modules | `apt install nginx` |
 | Service wrapper | — | [NSSM](https://nssm.cc) | systemd (built in) |
 

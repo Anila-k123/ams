@@ -98,6 +98,7 @@ export interface SourceClauseDetail {
  *  unverified AI output; `verified` and `similarity_score` describe the citation. */
 export interface DraftBlock {
   id: number
+  rev?: string     // the clause's revision; sent back on save so nobody's newer change is overwritten
   position: number // order within the document
   block_type: string
   heading?: string
@@ -141,7 +142,17 @@ export interface DraftSession {
   created_by_id?: number | null
   created_by_name?: string | null
   review?: DraftReview | null
+  // What the viewer may do (drafting/access.py): edit directly, or only suggest.
+  access?: DraftAccess | null
   created_at: string
+}
+
+/** The viewer's rights on a draft (docs/DRAFT_REVIEW.md). */
+export interface DraftAccess {
+  isOwner: boolean
+  canWrite: boolean      // edit directly
+  canSuggest: boolean    // propose changes for the owner to accept / decline
+  request: { id: number; authority: 'binding' | 'suggest'; note: string } | null
 }
 
 /** The draft's AMS task as seen by the current viewer (author or reviewer). */
@@ -161,6 +172,185 @@ export interface DraftReview {
 
 /** Senior review of a delegated AMS task (AMS workspace/review.py). */
 export type AmsReviewStatus = 'SUBMITTED' | 'CHANGES_REQUESTED' | 'APPROVED'
+// A frozen copy of a draft (drafting.DraftVersion), listed without its content.
+export interface DraftVersion {
+  id: number
+  number: number
+  label: string
+  kind: 'generated' | 'sent' | 'manual' | 'review' | 'returned'
+  created_by_id: number | null
+  created_at: string
+}
+
+/** One run of text in a compared paragraph: unchanged, added or removed. */
+export interface CompareSeg { op: 'same' | 'ins' | 'del'; text: string; fmt: string[] }
+/** A paragraph of the comparison: unchanged, changed word by word, or wholly added / removed. */
+export interface CompareParagraph {
+  kind: 'same' | 'changed' | 'ins' | 'del'
+  style: string
+  align: string | null
+  change_id: number | null   // 1..n in document order, for next / previous
+  segs: CompareSeg[]
+  decision?: ChangeDecision | null   // review rounds only
+  outdated?: boolean                 // review rounds: the draft moved on since
+}
+export interface CompareClause {
+  block_id: number
+  status: 'same' | 'changed' | 'added' | 'removed'
+  label: string
+  heading: CompareParagraph[]
+  body: CompareParagraph[]
+}
+/** A decision on one change of a review round. */
+export type ChangeDecisionKind = 'accepted' | 'declined' | 'rejected' | 'queried' | 'acknowledged'
+export interface ChangeDecision { decision: ChangeDecisionKind; reason: string; by: number; at: string }
+
+/** A comment thread on a passage of a draft (drafting/comments.py). */
+export interface DraftCommentReply { id: number; body: string; author_id: number; author_name: string | null; created_at: string; can_delete: boolean }
+export interface DraftCommentThread {
+  id: number
+  block_id: number | null
+  quote: string
+  body: string
+  author_id: number
+  author_name: string | null
+  created_at: string
+  resolved: boolean
+  resolved_by_name: string | null
+  resolved_at: string | null
+  can_resolve: boolean
+  can_delete: boolean
+  replies: DraftCommentReply[]
+}
+export interface DraftComments { threads: DraftCommentThread[]; open: number; answered: number }
+
+/** A colleague who could review a draft, and what they could do (drafting/authority.py). */
+export interface DraftReviewer { id: number; name: string; authority: 'binding' | 'suggest' }
+/** "Please review my draft", for drafts without a task (drafting/review_requests.py). */
+export interface DraftReviewRequest {
+  id: number
+  session: number
+  reviewer_id: number
+  reviewer_name: string | null
+  requested_by_id: number
+  requested_by_name: string | null
+  note: string
+  authority: 'binding' | 'suggest'
+  status: 'open' | 'done' | 'cancelled'
+  created_at: string
+  closed_at: string | null
+  title?: string            // drafts/for-review only
+  progress?: ReviewProgress // drafts/for-review only
+}
+
+/** The draft's linked case and its papers (drafting/casefile.py). */
+export interface CaseFileDocument {
+  id: number
+  name: string
+  fileName: string
+  fileType: string | null
+  category: string | null
+  uploadedAt: string
+  onCase: boolean           // false = the client's own document, not filed on this case
+}
+export interface CaseFile {
+  case: null | {
+    id: number
+    caseNumber: string
+    caseTitle?: string | null
+    caseType?: string | null
+    status?: string | null
+    court?: string
+    cnr?: string
+    judge?: string
+    client?: { id: number; name: string; phone: string | null; email: string | null; address: string | null } | null
+    parties?: { name: string; role: string | null; counsel: string | null; opponent: boolean }[]
+    nextHearing?: { date: string; title: string } | null
+  }
+  documents: CaseFileDocument[]
+  canSeeCase: boolean
+  canSeeDocuments: boolean
+}
+
+/** What an imported file turned into (drafting/incoming.py). */
+export interface ImportResult {
+  round: number | null      // the suggestions round, or null when the file only had comments
+  changes: number
+  comments: number
+  tracked: boolean          // the file had Word tracked changes (else it was compared as edited)
+  authors: string[]
+  from_name: string
+}
+
+/** How far a request has got, as the reviewer sees it (drafts/for-review). */
+export interface ReviewProgress {
+  sent: number              // suggestion / correction rounds sent
+  waiting: number           // of those, still waiting for the author
+  accepted: number
+  declined: number
+  queried: number
+  decided_at: string | null
+}
+
+/** The review state of one of my own drafts (drafts/review-status), keyed by draft id. */
+export interface MyReviewStatus {
+  state: 'to_decide' | 'with_reviewer' | 'reviewed'
+  who: string | null
+  at?: string | null
+}
+
+/** A review round: suggestions (not applied) or changes (applied) waiting for decisions. */
+export interface ReviewRoundSummary {
+  id: number
+  kind: 'suggestions' | 'changes'
+  binding: boolean
+  status: 'open' | 'finished' | 'cancelled'
+  author_id: number
+  decider_id: number
+  author_name: string | null
+  decider_name: string | null
+  can_decide: boolean
+  mine: boolean             // the viewer made these changes
+  queries: string[]         // queries on a senior's corrections (binding rounds)
+  counts: Partial<Record<ChangeDecisionKind, number>>  // decisions so far, by kind
+  external_from?: string    // a file from outside (drafting/incoming.py): who sent it
+  note: string
+  changes: number
+  pending: number
+  created_at: string
+  finished_at: string | null
+}
+export interface ReviewRound extends Omit<DraftComparison, 'from' | 'to'> {
+  id: number
+  external_from?: string    // a file from outside: who sent it
+  kind: ReviewRoundSummary['kind']
+  binding: boolean
+  status: ReviewRoundSummary['status']
+  note: string
+  author_id: number
+  decider_id: number
+  author_name: string | null
+  decider_name: string | null
+  created_at: string
+  finished_at: string | null
+  allowed: ChangeDecisionKind[]
+  needs_reason: ChangeDecisionKind[]
+  decided: number
+  pending: number
+  can_decide: boolean
+  can_cancel: boolean
+  result?: { applied: number; outdated: number[] }
+}
+
+export interface DraftComparison {
+  from: DraftVersion
+  to: DraftVersion | null    // null = the current draft
+  inserted: number           // words
+  deleted: number
+  changes: number            // changed paragraphs
+  clauses: CompareClause[]
+}
+
 export interface AmsTaskReview {
   id: number
   title: string
@@ -238,12 +428,78 @@ export const draftingApi = {
     ams_task_id?: number | null // the AMS task this draft was started from
   }) => api.post<DraftSession>('/draft-sessions/', data).then(r => r.data),
   // Server-rendered Word file of the SAVED draft; `branding` puts it on the AMS letterhead.
-  exportDocx: (id: number, branding = false) =>
-    api.get<Blob>(`/drafts/${id}/export/docx/`, { params: branding ? { branding: 1 } : {}, responseType: 'blob' })
-      .then(r => {
+  // `format: 'pdf'` = the same file converted on the server (LibreOffice); 503 when it isn't installed.
+  exportDocx: (id: number, branding = false, format: 'docx' | 'pdf' = 'docx') =>
+    api.get<Blob>(`/drafts/${id}/export/docx/`, {
+      params: { ...(branding ? { branding: 1 } : {}), ...(format === 'pdf' ? { output: 'pdf' } : {}) }, responseType: 'blob',
+    }).then(r => {
         const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
-        return { blob: r.data, filename: m ? m[1] : `draft_${id}.docx` }
+        return { blob: r.data, filename: m ? m[1] : `draft_${id}.${format}` }
       }),
+  // Tracked changes from version `from` to version `to` (omitted = the current draft), as Word or PDF.
+  exportRedline: (id: number, from: number, to?: number, branding = false, format: 'docx' | 'pdf' = 'docx') =>
+    api.get<Blob>(`/drafts/${id}/export/redline/`, {
+      params: { from, ...(to ? { to } : {}), ...(branding ? { branding: 1 } : {}), ...(format === 'pdf' ? { output: 'pdf' } : {}) },
+      responseType: 'blob',
+    }).then(r => {
+      const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
+      return {
+        blob: r.data, filename: m ? m[1] : `draft_${id}_redline.docx`,
+        inserted: Number(r.headers['x-redline-inserted'] || 0), deleted: Number(r.headers['x-redline-deleted'] || 0),
+      }
+    }),
+  // Saved versions of the draft (newest first): the "before" side of a redline.
+  // Comments on passages (drafting/comments.py).
+  getCaseFile: (id: number) =>
+    api.get<CaseFile>(`/draft-sessions/${id}/case-file/`).then(r => r.data),
+  getComments: (id: number) =>
+    api.get<DraftComments>(`/draft-sessions/${id}/comments/`).then(r => r.data),
+  addComment: (id: number, body: string, blockId: number | null, quote: string) =>
+    api.post<DraftComments>(`/draft-sessions/${id}/comments/`, { body, block_id: blockId, quote }).then(r => r.data),
+  replyComment: (commentId: number, body: string) =>
+    api.post<DraftComments>(`/comments/${commentId}/reply/`, { body }).then(r => r.data),
+  resolveComment: (commentId: number, reopen = false) =>
+    api.post<DraftComments>(`/comments/${commentId}/${reopen ? 'reopen' : 'resolve'}/`).then(r => r.data),
+  deleteComment: (commentId: number) =>
+    api.delete<DraftComments>(`/comments/${commentId}/`).then(r => r.data),
+  // Request review (drafting/review_requests.py).
+  getReviewers: (id: number) =>
+    api.get<DraftReviewer[]>(`/draft-sessions/${id}/reviewers/`).then(r => r.data),
+  getReviewRequests: (id: number) =>
+    api.get<DraftReviewRequest[]>(`/draft-sessions/${id}/review-requests/`).then(r => r.data),
+  requestReview: (id: number, reviewer: number, note = '') =>
+    api.post<DraftReviewRequest>(`/draft-sessions/${id}/review-requests/`, { reviewer, note }).then(r => r.data),
+  reviewRequestDone: (requestId: number, note = '') =>
+    api.post<DraftReviewRequest>(`/review-requests/${requestId}/done/`, { note }).then(r => r.data),
+  cancelReviewRequest: (requestId: number) =>
+    api.post<DraftReviewRequest>(`/review-requests/${requestId}/cancel/`).then(r => r.data),
+  forMyReview: () =>
+    api.get<DraftReviewRequest[]>('/drafts/for-review/').then(r => r.data),
+  myReviewStatus: () =>
+    api.get<Record<string, MyReviewStatus>>('/drafts/review-status/').then(r => r.data),
+  // Review rounds (drafting/review.py, docs/DRAFT_REVIEW.md).
+  suggest: (id: number, blocks: { id: number; heading: string; content_html: string; text: string }[], note = '') =>
+    api.post<ReviewRound>(`/draft-sessions/${id}/suggest/`, { blocks, note }).then(r => r.data),
+  getRounds: (id: number) =>
+    api.get<ReviewRoundSummary[]>(`/draft-sessions/${id}/rounds/`).then(r => r.data),
+  getRound: (roundId: number) =>
+    api.get<ReviewRound>(`/rounds/${roundId}/`).then(r => r.data),
+  decideChange: (roundId: number, change: number | 'all', decision: ChangeDecisionKind, reason = '') =>
+    api.post<ReviewRound>(`/rounds/${roundId}/decide/`, { change, decision, reason }).then(r => r.data),
+  finishRound: (roundId: number) =>
+    api.post<ReviewRound>(`/rounds/${roundId}/finish/`).then(r => r.data),
+  cancelRound: (roundId: number) =>
+    api.post<ReviewRound>(`/rounds/${roundId}/cancel/`).then(r => r.data),
+  // On-screen compare (drafting/export/compare.py): `from` omitted = the server's default
+  // (last version sent out, else the latest); `to` omitted = the current draft.
+  compare: (id: number, from?: number, to?: number) =>
+    api.get<DraftComparison>(`/draft-sessions/${id}/compare/`, {
+      params: { ...(from ? { from } : {}), ...(to ? { to } : {}) },
+    }).then(r => r.data),
+  getVersions: (id: number) =>
+    api.get<DraftVersion[]>(`/draft-sessions/${id}/versions/`).then(r => r.data),
+  saveVersion: (id: number, label = '') =>
+    api.post<DraftVersion[]>(`/draft-sessions/${id}/versions/`, { label }).then(r => r.data),
   // File the saved draft on its AMS case (+ task). `caseId` links an unlinked draft first.
   // `note`: what the author changed, when resubmitting after changes were requested.
   sendToAms: (id: number, caseId?: number, note?: string) =>
@@ -261,8 +517,23 @@ export const draftingApi = {
   getSessionStatus: (id: number) =>
     api.get<{ id: number; status: string; risk_status: string }>(`/draft-sessions/${id}/status/`).then(r => r.data),
   // Persist editor changes to a session's blocks (manual save).
-  saveBlocks: (id: number, blocks: { id: number; heading: string; content_html: string; text: string }[]) =>
-    api.post<DraftSession>(`/draft-sessions/${id}/save-blocks/`, blocks).then(r => r.data),
+  // `base` = each clause's revision as the editor loaded it: a clause someone else changed since
+  // is never overwritten (409 with `conflicts`), and `merged` means their other changes were kept.
+  saveBlocks: (id: number, blocks: { id: number; heading: string; content_html: string; text: string }[],
+    base?: Record<number, string>) =>
+    api.post<DraftSession & { merged?: boolean }>(`/draft-sessions/${id}/save-blocks/`, base ? { blocks, base } : blocks)
+      .then(r => r.data),
+  // A Word file received from outside (client / other side): becomes a suggestions round + comments.
+  importChanges: (id: number, file: File, fromName = '', note = '') => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('from_name', fromName)
+    fd.append('note', note)
+    return api.post<ImportResult>(`/draft-sessions/${id}/import-changes/`, fd).then(r => r.data)
+  },
+  // Put the draft back to a saved version (the draft as it was is saved as a version first).
+  restoreVersion: (id: number, versionId: number) =>
+    api.post<DraftSession>(`/draft-sessions/${id}/versions/${versionId}/restore/`).then(r => r.data),
   // Chat-edit: propose a clause rewrite for an instruction (records a pending edit).
   proposeEdit: (id: number, body: { instruction: string; focused_block_id?: number | null; current_text?: string; model?: string }) =>
     api.post<EditProposal>(`/draft-sessions/${id}/edit/`, body).then(r => r.data),

@@ -44,7 +44,9 @@ def extract_template_slots(file_path: str) -> list[dict]:
     heading + dominant body paragraph) so the generated draft can reproduce the
     template's look (alignment, font, size, colour, emphasis).
     """
+    from .layout import layout_for, source_paragraphs
     clauses = extract_clauses(file_path)
+    paragraphs = source_paragraphs(file_path)      # Word: as set; PDF: inferred from position
     slots = []
     for c in clauses:
         # A signature/execution block has no section title — keep its label empty (never
@@ -58,8 +60,22 @@ def extract_template_slots(file_path: str) -> list[dict]:
         }
         if c.get('style'):
             slot['style'] = c['style']
+        merge_layout(slot, layout_for(c['text'], paragraphs))
         slots.append(slot)
     return slots
+
+
+def merge_layout(slot, layout):
+    """Put a clause's layout (services/layout.py) into its slot style: the dominant body alignment
+    replaces the first-paragraph guess, stand-out lines keep their own, and a heading line that is
+    centred / right-aligned in the template stays so."""
+    if not layout:
+        return
+    style = slot.setdefault('style', {})
+    style.setdefault('body', {})['align'] = layout['align']
+    style['lines'] = layout['lines']
+    if slot.get('label') and layout.get('first') not in (None, 'left'):
+        style.setdefault('heading', {})['align'] = layout['first']
 
 
 def _para_style(para) -> dict:

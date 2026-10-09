@@ -50,6 +50,8 @@ EVENT_TYPES = {
     'PAYMENT_RECEIVED', 'EXPENSE_UPDATED',
     'OVERDUE_PAYMENT_REMINDER', 'TASK_DEADLINE_REMINDER', 'TASK_ASSIGNED',
     'TASK_SUBMITTED', 'TASK_APPROVED', 'TASK_CHANGES_REQUESTED',
+    'DRAFT_REVIEW_REQUESTED', 'DRAFT_REVIEW_DONE',   # drafting/review_requests.py
+    'DRAFT_COMMENT',                                 # drafting/comments.py
     'PASSWORD_RESET',
 }
 

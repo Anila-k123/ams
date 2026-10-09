@@ -447,12 +447,18 @@ class ReviewTaskView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         action = (request.data.get('action') or '').strip()
         note = (request.data.get('note') or '').strip()
+        # The draft's review rounds (drafting/task_review.py, docs/DRAFT_REVIEW.md).
+        from drafting import task_review
         if action == 'approve':
+            blockers = task_review.approve_blockers(task)
+            if blockers:
+                return Response({'error': ' '.join(blockers)}, status=status.HTTP_400_BAD_REQUEST)
             review.approve(task, request.user, note)
         elif action == 'request_changes':
             if not note:
                 return Response({'error': 'Say what needs to change.'}, status=status.HTTP_400_BAD_REQUEST)
             review.request_changes(task, request.user, note)
+            task_review.on_changes_requested(task, request.user, note)
         else:
             return Response({'error': 'action must be approve or request_changes'},
                             status=status.HTTP_400_BAD_REQUEST)

@@ -701,15 +701,63 @@ def _strip_markdown(text: str) -> str:
     return _MD_HEADING.sub('', text)
 
 
-def _styled_html(text: str, body_style: dict) -> str:
+def _styled_html(text: str, body_style: dict, lines=None) -> str:
     """Build content_html for a generated clause: one <p> per line, carrying the
-    template's body paragraph style as inline CSS. [[Label]] tokens are left intact
+    template's body paragraph style as inline CSS. Each line takes the alignment of the
+    template line it matches (a centred title, a right-aligned signature), else the
+    clause's dominant alignment (services/layout.py). [[Label]] tokens are left intact
     (the editor converts them to placeholder nodes on load)."""
-    css = _style_to_css(body_style)
-    attr = f' style="{css}"' if css else ''
+    from .services.layout import align_line
+    base = dict(body_style or {})
+    layout = {'align': base.pop('align', None) or 'left', 'lines': lines or []}
+    css = _style_to_css(base)
     esc = lambda s: s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    paras = [f'<p{attr}>{esc(line)}</p>' for line in (text or '').split('\n') if line.strip()]
+    paras = []
+    lines_ = (text or '').split('\n')
+    i = 0
+    while i < len(lines_):
+        rows = []
+        while i < len(lines_) and _TABLE_LINE.match(lines_[i]):
+            rows.append(lines_[i])
+            i += 1
+        if rows:
+            paras.append(_table_html(rows, esc))
+            continue
+        line = lines_[i]
+        i += 1
+        if not line.strip():
+            continue
+        align = align_line(line, layout)
+        style = ';'.join(x for x in (f'text-align:{align}' if align else '', css) if x)
+        paras.append(f'<p style="{style}">{esc(line)}</p>' if style else f'<p>{esc(line)}</p>')
     return ''.join(paras) or '<p></p>'
+
+
+_TABLE_LINE = re.compile(r'^\s*\|.*\|\s*$')
+_TABLE_RULE_LINE = re.compile(r'^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$')
+
+
+def _table_html(rows, esc) -> str:
+    """Markdown table lines (as a PDF's tables reach the draft) as an HTML table; the |---| rule line
+    after the header row marks it as a header."""
+    cells = [[c.strip() for c in r.strip().strip('|').split('|')] for r in rows if not _TABLE_RULE_LINE.match(r)]
+    header = len(rows) > 1 and bool(_TABLE_RULE_LINE.match(rows[1]))
+    cols = max(len(r) for r in cells) if cells else 0
+    out = ['<table><tbody>']
+    for n, row in enumerate(cells):
+        tag = 'th' if header and n == 0 else 'td'
+        row = row + [''] * (cols - len(row))
+        out.append('<tr>' + ''.join(f'<{tag}><p>{esc(c)}</p></{tag}>' for c in row) + '</tr>')
+    out.append('</tbody></table>')
+    return ''.join(out)
+
+
+def _tables_to_html(blocks) -> None:
+    """A clause whose text holds table rows but got no styled HTML: build its HTML so the table
+    shows as a grid, not as lines of | text |."""
+    for b in blocks:
+        if not (b.content_html or '').strip() and any(_TABLE_LINE.match(x) for x in (b.text or '').split('\n')):
+            b.content_html = _styled_html(b.text, {}, None)
 
 
 def _apply_template_style(block, style: dict | None):
@@ -718,8 +766,8 @@ def _apply_template_style(block, style: dict | None):
     if not style:
         return
     body = style.get('body')
-    if body and _style_to_css(body):
-        block.content_html = _styled_html(block.text, body)
+    if (body and _style_to_css(body)) or style.get('lines'):
+        block.content_html = _styled_html(block.text, body or {}, style.get('lines'))
     heading = style.get('heading')
     if heading:
         block.style_json = {'heading': heading}
@@ -786,6 +834,7 @@ def _draft_template_mode(session, llm, emb, facts_text, sample_ids, style_direct
         "obligation, or numbered item — never merge separate paragraphs into one run-on block.\n"
         "8a. Write the clause as PLAIN TEXT — do NOT use Markdown formatting: no **bold**, "
         "*italics*, backticks, or # headings.\n"
+        "8b. TABLES: if the source has a table (lines like | a | b |), keep it as a table: one row per line, cells separated by |, the same columns; change only the cell values the facts govern.\n"
         "8. Return ONLY a JSON object, no markdown and no prose: "
         "{\"text\": \"<the clause body text>\", \"source_clause_id\": <id or null>}."
     )
@@ -890,15 +939,23 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
         "obligation, or numbered item — never merge separate paragraphs into one run-on block.\n"
         "7a. Write the clause as PLAIN TEXT — do NOT use Markdown formatting: no **bold**, "
         "*italics*, backticks, or # headings.\n"
+        "7b. TABLES: if the source has a table (lines like | a | b |), keep it as a table: one row per line, cells separated by |, the same columns; change only the cell values the facts govern.\n"
         "7. Return ONLY a JSON object, no markdown and no prose: "
         "{\"text\": \"<the clause body text>\", \"source_clause_id\": <id or null>}."
     )
     if style_directive:
         system_prompt += f'\n\nPREFERRED DRAFTING STYLE: {style_directive}'
 
-    from .models import DraftBlock
+    from .models import DraftBlock, Sample
+    from .services.layout import document_layout, layout_for, source_paragraphs
+    # The base document's layout: each clause lays out like its own source lines.
+    primary = Sample.objects.filter(id=primary_id).first()
+    paragraphs = source_paragraphs(primary.file.path) if primary and primary.file else []
+    whole = document_layout(paragraphs)
     specs, dividers = [], []
     for position, clause in enumerate(clauses):
+        lay = layout_for(clause.text, paragraphs) or whole
+        clause_style = {'body': {'align': lay['align']}, 'lines': lay['lines']} if lay else None
         # Sample mode keeps the document's OWN heading (from the clause text), not an
         # LLM-invented name — the drafted text already carries the real title/numbering.
         heading = _clause_heading(clause.text)
@@ -915,9 +972,11 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
             or (_single.isupper() and len(_single.split()) <= 8)     # short all-caps ("END OF TERMS")
         )
         if is_divider:
-            dividers.append(DraftBlock(
+            divider = DraftBlock(
                 session=session, position=position, block_type=block_type, heading=_clean_heading(heading or _single),
-                text=clause.text, source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None))
+                text=clause.text, source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None)
+            _apply_template_style(divider, clause_style)
+            dividers.append(divider)
             continue
 
         # References: the most similar clauses from the OTHER documents (if any).
@@ -945,7 +1004,7 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
         )
         # Base clause + references are the citation candidates.
         specs.append({'position': position, 'block_type': block_type, 'heading': heading,
-                      'user_prompt': user_prompt, 'source_text': clause.text,
+                      'user_prompt': user_prompt, 'source_text': clause.text, 'style': clause_style,
                       'by_id': {clause.id: clause, **{r.id: r for r in refs}}})
 
     blocks, failures = _generate_blocks(session, llm, system_prompt, specs, verify_citation, structured=True)
@@ -994,7 +1053,8 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
         "clause. Use a newline (\\n) to separate each paragraph, power, obligation, or numbered "
         "item — never merge separate paragraphs into one run-on block.\n"
         "6. Draft ONLY the clause body text — no heading and no commentary.\n"
-        "7. Write PLAIN TEXT only — do NOT use Markdown: no **bold**, *italics*, backticks, or # headings."
+        "7. Write PLAIN TEXT only — do NOT use Markdown: no **bold**, *italics*, backticks, or # headings.\n"
+        "7b. TABLES: if the source has a table (lines like | a | b |), keep it as a table: one row per line, cells separated by |, the same columns; change only the cell values the facts govern."
     )
     if style_directive:
         system_prompt += f'\n\nPREFERRED DRAFTING STYLE: {style_directive}'
@@ -1156,6 +1216,8 @@ def generate_draft(self, session_id: int):
         # Deterministic backstop to rule 6: the local model leaves some blanks as raw
         # underscores — turn every leftover blank into a labelled [[…]] placeholder.
         _fill_blank_placeholders(blocks)
+        # Tables from a PDF template / sample arrive as | a | b | lines: make them real tables.
+        _tables_to_html(blocks)
 
         # Persist all blocks at once.
         DraftBlock.objects.bulk_create(blocks)
@@ -1168,6 +1230,11 @@ def generate_draft(self, session_id: int):
 
         session.status = DraftSession.Status.READY
         session.save(update_fields=['status'])
+
+        # Keep the AI's draft as a version, so later redlines can compare against it.
+        from .versions import save_version
+        from .models import DraftVersion
+        save_version(session, DraftVersion.Kind.GENERATED, 'AI draft', session.created_by_id)
 
     except Exception as exc:
         from .models import DraftSession

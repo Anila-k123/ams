@@ -32,6 +32,8 @@ def _route(n):
         return '/dashboard/tasks'
     if entity in ('appealdetection', 'appeal_detection', 'appeal'):
         return '/dashboard/appeal-alert'
+    if entity == 'draftsession' and n.entity_id:
+        return '/draft/{}'.format(n.entity_id)
     # A notification that names a case but nothing more specific still has a
     # useful destination.
     if n.case_id:

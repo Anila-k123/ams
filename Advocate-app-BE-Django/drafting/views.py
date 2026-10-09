@@ -249,10 +249,11 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
     # Senior review (drafting/access.py): a reviewer may open a junior's submitted draft
     # and use these read-only actions (refine / consistency-check only return
     # suggestions)...
-    REVIEW_READ = {'retrieve', 'status', 'refine', 'consistency_check', 'list_risks', 'risk_report'}
+    REVIEW_READ = {'retrieve', 'status', 'refine', 'consistency_check', 'list_risks', 'risk_report',
+                   'versions', 'compare'}
     # ...and edit it while the task awaits their review. Re-draft, delete, legal-code
     # rewrite, risk runs and filing stay with the author.
-    REVIEW_WRITE = {'save_blocks', 'edit', 'accept_edit', 'reject_edit'}
+    REVIEW_WRITE = {'save_blocks', 'edit', 'accept_edit', 'reject_edit', 'restore_version'}
 
     def get_queryset(self):
         """The requesting user's sessions (plus, for review actions, drafts submitted
@@ -301,25 +302,109 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='save-blocks')
     def save_blocks(self, request, pk=None):
         """Persist editor changes to this session's blocks. Body: a list of
-        {id, heading, content_html, text}; each block that belongs to this session
-        is updated and flagged is_edited. Returns the refreshed session."""
+        {id, heading, content_html, text}, or {blocks: [...], base: {id: rev}} where `base`
+        holds each clause's revision as the editor loaded it. With `base`, a clause someone
+        else changed in the meantime is never overwritten: if this save changes it too, nothing
+        is saved and the answer is 409 {conflicts: [headings]}; clauses only they changed are
+        left as they are, and `merged` tells the editor to reload. Returns the refreshed session."""
         session = self.get_object()
-        from .models import DraftBlock
-        items = request.data if isinstance(request.data, list) else request.data.get('blocks', [])
-        by_id = {b.id: b for b in session.blocks.all()}
-        to_update = []
-        for item in items:
-            block = by_id.get(item.get('id'))
-            if not block:
-                continue  # ignore ids not in this session
-            block.heading = item.get('heading', block.heading)
-            block.content_html = item.get('content_html', block.content_html)
-            block.text = item.get('text', block.text)
-            block.is_edited = True
-            to_update.append(block)
-        if to_update:
-            DraftBlock.objects.bulk_update(to_update, ['heading', 'content_html', 'text', 'is_edited'])
+        from django.db import transaction
+        from .models import DraftBlock, DraftSession as Session
+        from .versions import block_rev
+        body = request.data
+        items = body if isinstance(body, list) else body.get('blocks', [])
+        base = {} if isinstance(body, list) else {str(k): v for k, v in (body.get('base') or {}).items()}
+        merged = False
+        with transaction.atomic():
+            Session.objects.select_for_update().filter(id=session.id).first()
+            by_id = {b.id: b for b in session.blocks.all()}
+            to_update, conflicts = [], []
+            for item in items:
+                block = by_id.get(item.get('id'))
+                if not block:
+                    continue  # ignore ids not in this session
+                heading = item.get('heading', block.heading)
+                html = item.get('content_html', block.content_html)
+                was = base.get(str(block.id))
+                now, mine = block_rev(block.heading, block.content_html), block_rev(heading, html)
+                if was and now != was:                  # someone else changed this clause
+                    if mine == was or mine == now:
+                        merged = merged or mine == was  # I didn't touch it: keep theirs
+                        continue
+                    conflicts.append(block.heading or f'Clause {block.position + 1}')
+                    continue
+                block.heading, block.content_html = heading, html
+                block.text = item.get('text', block.text)
+                block.is_edited = True
+                to_update.append(block)
+            if conflicts:
+                return Response({'error': 'Someone else changed the same clause after you opened the draft.',
+                                 'conflicts': conflicts}, status=status.HTTP_409_CONFLICT)
+            if to_update:
+                DraftBlock.objects.bulk_update(to_update, ['heading', 'content_html', 'text', 'is_edited'])
+        data = DraftSessionSerializer(session, context={'request': request}).data
+        data['merged'] = merged
+        return Response(data)
+
+    @action(detail=True, methods=['post'], url_path=r'versions/(?P<version_id>[0-9]+)/restore')
+    def restore_version(self, request, pk=None, version_id=None):
+        """Put the draft back to one of its saved versions (versions.restore_version). Same rule
+        as editing; the draft as it was is saved as a version first."""
+        session = self.get_object()
+        from rest_framework.exceptions import PermissionDenied
+        from .access import can_write
+        from .versions import RestoreError, restore_version
+        if not can_write(session, request.user):
+            raise PermissionDenied('This draft can only be changed while it awaits your review.')
+        version = get_object_or_404(session.versions.all(), pk=version_id)
+        try:
+            restore_version(session, version, request.user.id)
+        except RestoreError as e:
+            return Response({'error': str(e)}, status=400)
+        session = self.get_queryset().get(pk=session.pk)     # the clauses changed: drop the prefetched ones
         return Response(DraftSessionSerializer(session, context={'request': request}).data)
+
+    @action(detail=True, methods=['get', 'post'])
+    def versions(self, request, pk=None):
+        """GET: the draft's saved versions (newest first, without their content).
+        POST {label}: save the draft as it is now. Saving follows the same rule as
+        editing (drafting/access.py::can_write)."""
+        session = self.get_object()
+        if request.method == 'POST':
+            from rest_framework.exceptions import PermissionDenied
+            from .access import can_write
+            from .versions import save_version
+            if not can_write(session, request.user):
+                raise PermissionDenied('This draft can only be changed while it awaits your review.')
+            label = (request.data.get('label') or '').strip()
+            if save_version(session, label=label, user_id=request.user.id) is None:
+                return Response({'error': 'The draft is empty.'}, status=400)
+        rows = session.versions.order_by('-number').values(
+            'id', 'number', 'label', 'kind', 'created_by_id', 'created_at')
+        return Response(list(rows), status=201 if request.method == 'POST' else 200)
+
+    @action(detail=True, methods=['get'])
+    def compare(self, request, pk=None):
+        """The on-screen compare view: ?from=<version id>&to=<version id> (to omitted = the
+        current draft), as data. Same engine and same defaults as the redline download
+        (export/compare.py, versions.pick_pair), so the screen and the file always agree."""
+        session = self.get_object()
+        from .export.compare import compare_blocks
+        from .export.docx import session_title
+        from .versions import NoVersion, pick_pair, snapshot_blocks
+        try:
+            before, after = pick_pair(session, request.query_params)
+        except NoVersion:
+            return Response({'error': 'Save a version of this draft first, to compare against.'}, status=400)
+        result = compare_blocks(before.blocks, after.blocks if after else snapshot_blocks(session),
+                                session_title(session)).as_json()
+
+        def meta(v):
+            return {'id': v.id, 'number': v.number, 'label': v.label, 'kind': v.kind, 'created_at': v.created_at}
+
+        result['from'] = meta(before)
+        result['to'] = meta(after) if after else None   # None = the current draft
+        return Response(result)
 
     @action(detail=True, methods=['post'])
     @_metered_action('draft.edit')

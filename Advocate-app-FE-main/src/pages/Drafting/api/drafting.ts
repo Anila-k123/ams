@@ -7,7 +7,10 @@ export interface SlotField {
   label: string
   required: boolean
   hint?: string // optional helper text shown beside the field
-  type?: 'text' | 'date' | 'select' // widget to render (default 'text')
+  type?: 'text' | 'date' | 'select' | 'duration' // widget to render (default 'text')
+  // duration: a number + a unit, stored as one phrase ("2 years", "11 months").
+  units?: string[]        // plural unit names, first is the default ('years', 'months')
+  open_ended?: string     // optional "no fixed end" choice label; stored as "until terminated"
   option_set?: 'states' | 'entity_types' // named option list for a select
   options?: string[] // explicit options for a select (overrides option_set)
 }

@@ -185,6 +185,25 @@ _BRIEF_LABELS = {
 }
 _BRIEF_ORDER = ('document_title', 'parties', 'purpose', 'instructions')
 
+# Duration facts (New draft form) → an unambiguous prompt line. The form stores a
+# phrase ("2 years", "11 months", "until terminated"); a bare number from older
+# drafts is read in the field's own unit. Keys kept for saved drafts.
+_DURATION_FACTS = {
+    'term_years': ('Agreement duration', 'years', ' from the Effective Date'),
+    'termination_notice_days': ('Notice needed to end the agreement early', 'days', ''),
+    'survival_years': ('Confidentiality continues after the agreement ends for', 'years', ''),
+}
+
+
+def _duration_line(key, value):
+    label, unit, suffix = _DURATION_FACTS[key]
+    v = str(value).strip()
+    if v.lower() == 'until terminated':
+        return f'{label}: no fixed end; it continues until terminated by notice'
+    if v.isdigit():
+        v = f'{int(v)} {unit[:-1] if int(v) == 1 else unit}'
+    return f'{label}: {v}{suffix}'
+
 # Preferred draft style → a directive appended to the system prompt.
 _STYLE_DIRECTIVES = {
     'Detailed': 'Draft thoroughly, with fuller clause detail and sub-clauses where appropriate.',
@@ -215,6 +234,9 @@ def _facts_brief(facts: dict) -> str:
             seen.add(key)
     for k, v in facts.items():
         if k in seen or k == 'draft_style' or not (v and str(v).strip()):
+            continue
+        if k in _DURATION_FACTS:
+            lines.append(_duration_line(k, v))
             continue
         lines.append(f'{k.replace("_", " ").strip().capitalize()}: {str(v).strip()}')
     return '\n'.join(lines) or 'None provided.'

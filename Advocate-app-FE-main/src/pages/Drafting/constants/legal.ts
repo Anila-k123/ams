@@ -76,10 +76,13 @@ export const BASELINE_PARTY_FIELDS: SlotField[] = [
 export const AGREEMENT_TERMS_FIELDS: SlotField[] = [
   { key: 'effective_date', label: 'Effective Date', required: false, type: 'date',
     hint: 'The date this document takes effect' },
-  { key: 'term_years', label: 'Term (years)', required: false, type: 'text',
-    hint: 'Duration of the agreement, e.g. 2' },
-  { key: 'termination_notice_days', label: 'Termination notice period (days)', required: false,
-    type: 'text', hint: 'Notice required to terminate early, e.g. 30' },
+  // Keys kept for drafts already saved; the values are now phrases ("2 years").
+  { key: 'term_years', label: 'How long will the agreement last?', required: false, type: 'duration',
+    units: ['years', 'months'], open_ended: 'No fixed end (until terminated)',
+    hint: "Counted from the Effective Date. Leave empty if the draft shouldn't state a duration." },
+  { key: 'termination_notice_days', label: 'Notice needed to end it early', required: false,
+    type: 'duration', units: ['days', 'weeks', 'months'],
+    hint: 'How much notice either party must give to end the agreement before it runs out.' },
   { key: 'governing_state', label: 'Governing State', required: false, type: 'select',
     option_set: 'states', hint: 'Whose state law governs this document' },
 ]
@@ -97,8 +100,9 @@ export const COURT_TERMS_FIELDS: SlotField[] = [
 // type-specific — e.g. confidentiality survival belongs only to an NDA.
 export const TYPE_EXTRA_FIELDS: Record<string, SlotField[]> = {
   nda: [
-    { key: 'survival_years', label: 'Confidentiality survives for (years after termination)',
-      required: false, type: 'text', hint: 'How long confidentiality lasts after the NDA ends, e.g. 3' },
+    { key: 'survival_years', label: 'Confidentiality continues after the agreement ends for',
+      required: false, type: 'duration', units: ['years', 'months'],
+      hint: 'How long the parties must keep information confidential once the NDA has ended.' },
   ],
 }
 

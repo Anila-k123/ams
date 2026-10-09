@@ -472,3 +472,19 @@ class FirmSetupOwnershipTest(TestCase):
         self.assertFalse(rows[self.pb.id]['can_archive'])
         rows = {r['id']: r for r in self.client.get('/api/drafting/playbooks/', **auth(self.rajesh)).json()['results']}
         self.assertTrue(rows[self.pb.id]['can_archive'])
+
+
+class DurationFactsBriefTest(TestCase):
+    """Duration facts reach the drafting prompt as plain sentences, whether saved as
+    the form's phrase or as an older bare number."""
+
+    def test_phrases_bare_numbers_and_open_ended(self):
+        from drafting.tasks import _facts_brief
+        brief = _facts_brief({'term_years': '11 months', 'termination_notice_days': '30',
+                              'survival_years': '1'})
+        self.assertIn('Agreement duration: 11 months from the Effective Date', brief)
+        self.assertIn('Notice needed to end the agreement early: 30 days', brief)
+        self.assertIn('Confidentiality continues after the agreement ends for: 1 year', brief)
+        self.assertIn('no fixed end; it continues until terminated by notice',
+                      _facts_brief({'term_years': 'until terminated'}))
+        self.assertNotIn('Term years', _facts_brief({'term_years': '2'}))

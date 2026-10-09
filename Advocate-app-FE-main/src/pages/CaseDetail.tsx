@@ -24,7 +24,7 @@ import "../ui/pages/casedetail.css";
 import { copyText } from "../utils/clipboard";
 import DuplicateEventDialog from "../components/DuplicateEventDialog";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
-import { dueDateError, todayISO } from "../utils/validators";
+import { amountError, blockSignKeys, dueDateError, todayISO } from "../utils/validators";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -670,6 +670,8 @@ export default function CaseDetail() {
 
   const addExpense = async () => {
     if (!expenseForm.title.trim()) { error("Expense title is required."); return; }
+    if (!expenseForm.amount) { error("Enter the expense amount."); return; }
+    if (amountError(expenseForm.amount)) { error(amountError(expenseForm.amount) as string); return; }
     setSavingFin(true);
     try {
       await withLoading(
@@ -2207,7 +2209,8 @@ export default function CaseDetail() {
         </>}>
         <form className="form-grid" noValidate onSubmit={(e) => { e.preventDefault(); addExpense(); }}>
           <TextField label="Title" required full value={expenseForm.title} onChange={(e) => setExpenseForm({ ...expenseForm, title: e.target.value })} />
-          <TextField label="Amount (₹)" type="number" min={0} step="0.01" value={expenseForm.amount}
+          <TextField label="Amount (₹)" type="number" required min="0.01" step="0.01" value={expenseForm.amount}
+            error={amountError(expenseForm.amount)} onKeyDown={blockSignKeys}
             onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} />
           <TextField label="Category" value={expenseForm.category} onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })} />
           <TextField label="Payment date" type="date" value={expenseForm.paymentDate} onChange={(e) => setExpenseForm({ ...expenseForm, paymentDate: e.target.value })} />

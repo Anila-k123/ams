@@ -167,3 +167,18 @@ export function dueDateError(value: string, label = "Due date", notBefore?: stri
   if (notBefore && value < notBefore) return `${label} can't be before the ${notBeforeLabel}.`;
   return null;
 }
+
+/** An expense or payment amount must be above zero. Mirrors amount_error() in
+ *  core/validators.py. Empty is left to the form's "required" message. */
+export function amountError(value: string | number, label = "Amount"): string | null {
+  if (value === "" || value === null || value === undefined) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `Enter the ${label.toLowerCase()}.`;
+  if (n <= 0) return `${label} must be more than zero.`;
+  return null;
+}
+
+/** onKeyDown for a money box: a number input otherwise lets "-", "+" and "e" in. */
+export const blockSignKeys = (e: { key: string; preventDefault: () => void }) => {
+  if (e.key === "-" || e.key === "+" || e.key === "e" || e.key === "E") e.preventDefault();
+};

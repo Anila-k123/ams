@@ -6,6 +6,7 @@ from rest_framework import status
 
 from core.models import ClientPayment, Case, Invoice
 from core.permissions import RequirePermission
+from core.validators import amount_error, error_response
 from core.pagination import SpringStylePagination
 from .serializers import ClientPaymentSerializer
 from core.practice import practice_ids
@@ -79,6 +80,9 @@ class CreatePaymentView(APIView):
 
     def post(self, request):
         data = request.data
+        msg = amount_error(data.get('amount'))
+        if msg:
+            return error_response({'amount': msg})
         # Paying an invoice: the payment is linked to it, and the invoice
         # moves to PARTIAL / PAID from its linked payments. The case and
         # client are the invoice's.

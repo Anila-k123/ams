@@ -721,3 +721,17 @@ class DueDateRuleTest(TestCase):
             due_date_error((today + day).isoformat(), 'Due date', (today + 5 * day).isoformat(), 'invoice date'),
             "Due date can't be before the invoice date.")
         self.assertEqual(due_date_error('not-a-date'), 'Due date is not a valid date.')
+
+
+class AmountRuleTest(TestCase):
+    """Expenses and payments: an amount above zero."""
+
+    def test_rule(self):
+        from core.validators import amount_error
+        self.assertIsNone(amount_error(1900))
+        self.assertIsNone(amount_error('0.50'))
+        self.assertEqual(amount_error(-1900), 'Amount must be more than zero.')
+        self.assertEqual(amount_error(0), 'Amount must be more than zero.')
+        self.assertEqual(amount_error(''), 'Enter the amount.')
+        self.assertEqual(amount_error('abc'), 'Enter the amount.')
+        self.assertEqual(amount_error('nan'), 'Enter the amount.')

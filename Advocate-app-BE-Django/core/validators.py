@@ -208,6 +208,20 @@ def due_date_error(value, label='Due date', not_before=None, not_before_label=No
     return None
 
 
+def amount_error(value, label='Amount'):
+    """Message unless `value` is a money amount above zero (an expense or a payment
+    is never negative or nil). Mirrors amountError() in src/utils/validators.ts."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return f'Enter the {label.lower()}.'
+    if amount != amount or amount in (float('inf'), float('-inf')):
+        return f'Enter the {label.lower()}.'
+    if amount <= 0:
+        return f'{label} must be more than zero.'
+    return None
+
+
 # name -> cleaner, for checking a payload's fields in one call.
 CLEANERS = {'gstin': clean_gstin, 'pan': clean_pan, 'pincode': clean_pincode,
             'phone': clean_phone, 'landline': clean_landline, 'name': clean_name, 'email': clean_email, 'ifsc': clean_ifsc}

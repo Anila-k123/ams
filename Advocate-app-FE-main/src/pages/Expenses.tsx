@@ -17,6 +17,7 @@ import { SearchInput, SelectField, TextArea, TextField } from "../ui/forms";
 import { Modal, Drawer, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/finance.css";
+import { amountError, blockSignKeys } from "../utils/validators";
 
 const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"];
 
@@ -230,6 +231,10 @@ function Expenses() {
       setFormError("Title and amount are required.");
       return;
     }
+    if (amountError(newExpense.amount)) {
+      setFormError(amountError(newExpense.amount) as string);
+      return;
+    }
     if (pickCase && !newExpense.caseId) {
       setFormError("Choose the case this expense belongs to.");
       return;
@@ -345,6 +350,10 @@ function Expenses() {
     setFormError("");
     if (!newPayment.amount) {
       setFormError("Amount is required for payment.");
+      return;
+    }
+    if (amountError(newPayment.amount)) {
+      setFormError(amountError(newPayment.amount) as string);
       return;
     }
     try {
@@ -565,7 +574,8 @@ function Expenses() {
           )}
           <TextField label="Title" name="title" required value={newExpense.title} onChange={handleChange} />
           <div className="form-grid">
-            <TextField label="Amount (₹)" name="amount" type="number" required className="mono" value={newExpense.amount} onChange={handleChange} />
+            <TextField label="Amount (₹)" name="amount" type="number" required min="0.01" step="0.01" className="mono" value={newExpense.amount}
+              error={amountError(newExpense.amount)} onKeyDown={blockSignKeys} onChange={handleChange} />
             <TextField label="Date" name="paymentDate" type="date" value={newExpense.paymentDate} onChange={handleChange} />
           </div>
           <SelectField label="Category" required value={newExpense.category} options={CATEGORIES} placeholder="Select category"
@@ -588,7 +598,8 @@ function Expenses() {
               onChange={(e) => selectPaymentInvoice(e.target.value ? Number(e.target.value) : null)} />
           )}
           <div className="form-grid">
-            <TextField label="Amount (₹)" name="amount" type="number" required className="mono" value={newPayment.amount} onChange={handlePaymentChange} />
+            <TextField label="Amount (₹)" name="amount" type="number" required min="0.01" step="0.01" className="mono" value={newPayment.amount}
+              error={amountError(newPayment.amount)} onKeyDown={blockSignKeys} onChange={handlePaymentChange} />
             <TextField label="Date" name="paymentDate" type="date" value={newPayment.paymentDate} onChange={handlePaymentChange} />
             <SelectField label="Mode" value={newPayment.paymentMode} options={PAYMENT_MODES} placeholder="Payment mode"
               onChange={(e) => setNewPayment({ ...newPayment, paymentMode: e.target.value })} />

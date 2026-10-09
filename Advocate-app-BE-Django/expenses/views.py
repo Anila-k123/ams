@@ -7,6 +7,7 @@ from rest_framework import status
 
 from core.models import Expense, Case
 from core.permissions import RequirePermission
+from core.validators import amount_error, error_response
 from core.pagination import SpringStylePagination
 from .serializers import ExpenseSerializer
 from core.practice import practice_ids
@@ -125,6 +126,9 @@ class CreateExpenseView(APIView):
         data = request.data
         if not data.get('title'):
             return Response({'error': 'title is required'}, status=status.HTTP_400_BAD_REQUEST)
+        msg = amount_error(data.get('amount'))
+        if msg:
+            return error_response({'amount': msg})
         expense = Expense(advocate_id=request.user.id)
         _apply(expense, data, request)
         expense.save()
@@ -139,6 +143,10 @@ class UpdateExpenseView(APIView):
         expense = _base(request).filter(id=pk).first()
         if expense is None:
             return Response({'error': 'Expense not found'}, status=status.HTTP_404_NOT_FOUND)
+        if 'amount' in request.data:
+            msg = amount_error(request.data.get('amount'))
+            if msg:
+                return error_response({'amount': msg})
         old_case_id = expense.case_id
         _apply(expense, request.data, request)
         expense.save()

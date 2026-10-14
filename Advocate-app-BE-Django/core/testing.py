@@ -101,3 +101,24 @@ ALL_PERMISSIONS = (
     'USER_MANAGE', 'ROLE_MANAGE',
     'DRAFT_VIEW', 'DRAFT_CREATE', 'DRAFT_MANAGE', 'DRAFT_EXPORT',
 )
+
+
+def make_firm(key, status='ACTIVE'):
+    """A firm (tenant) with its settings row."""
+    from firms.models import Firm, FirmSettings
+    firm = Firm.objects.create(name=f'Firm {key}', slug=f'firm-{key.lower()}-{next(_counter)}', status=status)
+    FirmSettings.objects.create(firm=firm, display_name=firm.name)
+    return firm
+
+
+def make_firm_member(firm, permissions=ALL_PERMISSIONS, parent=None, status='ACTIVE', **extra):
+    """An advocate with a STAFF membership of `firm`; its test role belongs to
+    that firm, so it counts in firm mode (firm-level RBAC)."""
+    import datetime as _dt
+    from firms.models import FirmMembership
+    adv = make_advocate(permissions=permissions, parent_advocate_id=parent.id if parent else None, **extra)
+    FirmMembership.objects.create(firm=firm, advocate_id=adv.id, kind=FirmMembership.STAFF,
+                                  status=status, joined_at=_dt.datetime.now())
+    Role.objects.filter(id__in=AdvocateRole.objects.filter(advocate_id=adv.id).values('role_id')) \
+        .update(firm_id=firm.id)
+    return adv

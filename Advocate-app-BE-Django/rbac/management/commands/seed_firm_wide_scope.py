@@ -13,6 +13,7 @@ via a migration - hence a command. Idempotent: safe to re-run on every deploy.
 """
 
 from django.core.management.base import BaseCommand
+from rbac.seeding import seed_roles, template_roles
 from core.models import Permission, Role, RolePermission
 
 PERMISSION = ('FIRM_WIDE_SCOPE', 'ADMIN',
@@ -35,17 +36,18 @@ class Command(BaseCommand):
 
         granted = 0
         for role_name in FIRM_WIDE_ROLES:
-            role = Role.objects.filter(name=role_name).first()
-            if role is None:
+            targets = seed_roles(role_name)
+            if not targets:
                 self.stdout.write(self.style.WARNING(
                     f"  role {role_name!r} not found - skipped"))
                 continue
-            _, made = RolePermission.objects.get_or_create(
-                role_id=role.id, permission_id=perm.id)
-            if made:
-                granted += 1
-            self.stdout.write(
-                f"  {role_name}: {'granted' if made else 'already had'} {name}")
+            for role in targets:
+                _, made = RolePermission.objects.get_or_create(
+                    role_id=role.id, permission_id=perm.id)
+                if made:
+                    granted += 1
+                self.stdout.write(
+                    f"  {role_name}: {'granted' if made else 'already had'} {name}")
 
         self.stdout.write(self.style.SUCCESS(
             f"Done: permission {'created' if created else 'present'}, "

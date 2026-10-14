@@ -117,7 +117,8 @@ class DraftingPermissionTest(TestCase):
 
 
 # Merge phase 04: AMS cases/documents in-process, and files behind the login.
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'),
+                   DOCUMENT_UPLOAD_DIR=tempfile.mkdtemp(prefix='drafting-test-uploads-'))
 @mock.patch('drafting.views._dispatch')
 class DraftingAmsInProcessTest(TestCase):
     databases = {'default'}
@@ -135,10 +136,14 @@ class DraftingAmsInProcessTest(TestCase):
         import datetime, os
         from core.models import Document
         from django.conf import settings
-        path = os.path.join(settings.MEDIA_ROOT, f'ams-{owner.id}-{name}')
+        # Uploaded AMS files live in DOCUMENT_UPLOAD_DIR/documents (documents/storage.py).
+        folder = os.path.join(settings.DOCUMENT_UPLOAD_DIR, 'documents')
+        os.makedirs(folder, exist_ok=True)
+        stored = f'ams-{owner.id}-{name}'
+        path = os.path.join(folder, stored)
         with open(path, 'wb') as fh:
             fh.write(body)
-        return Document.objects.create(document_name=name.rsplit('.', 1)[0], original_name=name, stored_name=name,
+        return Document.objects.create(document_name=name.rsplit('.', 1)[0], original_name=name, stored_name=stored,
                                        file_path=path, version=1, upload_date=datetime.datetime.now(),
                                        advocate_id=owner.id, case=self.case if owner == self.senior else None)
 

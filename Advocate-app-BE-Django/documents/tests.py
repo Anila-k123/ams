@@ -19,7 +19,9 @@ from core.testing import ALL_PERMISSIONS, auth, make_advocate, make_case
 
 
 def make_document(owner, case, directory, name='Plaint'):
-    path = os.path.join(directory, f'{name}-{owner.id}.docx')
+    # Uploaded files live in <DOCUMENT_UPLOAD_DIR>/documents (documents/storage.py).
+    os.makedirs(os.path.join(directory, 'documents'), exist_ok=True)
+    path = os.path.join(directory, 'documents', f'{name}-{owner.id}.docx')
     with open(path, 'wb') as fh:
         fh.write(b'PK ' + name.encode())
     now = datetime.datetime.now()
@@ -71,8 +73,13 @@ class DocumentReadScopeTest(TestCase):
         resp = self.client.get(f'/api/documents/download/{self.junior_doc.id}', **auth(self.senior))
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(b''.join(resp.streaming_content), b'PK JuniorDraft')
+        # A login token in the URL is no longer accepted (it leaks into logs and
+        # history); a short-lived signed link is.
         token = generate_token(self.senior)
-        self.assertEqual(self.client.get(f'/api/documents/preview/{self.junior_doc.id}?token={token}').status_code, 200)
+        self.assertEqual(self.client.get(f'/api/documents/preview/{self.junior_doc.id}?token={token}').status_code, 401)
+        link = self.client.post(f'/api/documents/{self.junior_doc.id}/link', {'purpose': 'preview'},
+                                content_type='application/json', **auth(self.senior)).json()['url']
+        self.assertEqual(self.client.get(link).status_code, 200)
         self.assertEqual(self.client.get(f'/api/documents/{self.junior_doc.id}/versions/1/download',
                                          **auth(self.senior)).status_code, 200)
 

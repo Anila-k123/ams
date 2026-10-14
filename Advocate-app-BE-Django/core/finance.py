@@ -7,15 +7,17 @@ never did, so every case showed Rs. 0 in the Expenses list, the case
 workspace, the client portal and the dashboard's outstanding total, however
 much had been recorded. recalc_case_totals() recomputes them from the real
 rows; call it after anything that adds, changes or removes money on a case.
+
+All arithmetic is Decimal (core/money.py); the legacy columns are double
+precision, so results are rounded to paise before they are stored or returned.
 """
 
-from django.db.models import Sum
-
 from core.models import Case, ClientPayment, Expense, Invoice
+from core.money import ZERO, to_decimal, total
 
 
-def _sum(qs):
-    return round(float(qs.aggregate(t=Sum('amount'))['t'] or 0), 2)
+def _sum(qs) -> float:
+    return float(total(qs.values_list('amount', flat=True)))
 
 
 def recalc_case_totals(case_id):
@@ -35,23 +37,45 @@ def recalc_case_totals(case_id):
     case = Case.objects.filter(id=case_id).first()
     if case is None:
         return None
-    paid = _sum(ClientPayment.objects.filter(case_id=case_id))
-    expenses = _sum(Expense.objects.filter(case_id=case_id))
-    agreed = float(case.total_client_agreed_amount or 0) or float(case.amount or 0)
-    owed = agreed or _sum(Invoice.objects.billable().filter(case_id=case_id))
-    case.total_paid_by_client = paid
-    case.total_expenses_so_far = expenses
-    case.balance_in_account = round(paid - expenses, 2)
-    case.pending_from_client = round(max(owed - paid, 0.0), 2)
+    paid = total(ClientPayment.objects.filter(case_id=case_id).values_list('amount', flat=True))
+    expenses = total(Expense.objects.filter(case_id=case_id).values_list('amount', flat=True))
+    agreed = to_decimal(case.total_client_agreed_amount) or to_decimal(case.amount)
+    owed = agreed or total(Invoice.objects.billable().filter(case_id=case_id).values_list('amount', flat=True))
+    case.total_paid_by_client = float(paid)
+    case.total_expenses_so_far = float(expenses)
+    case.balance_in_account = float(paid - expenses)
+    case.pending_from_client = float(max(owed - paid, ZERO))
     case.save(update_fields=['total_paid_by_client', 'total_expenses_so_far',
                              'balance_in_account', 'pending_from_client'])
     return case
 
 
+# --- invoice status ----------------------------------------------------------
+# UNPAID -> PARTIAL -> PAID follow from linked payments (recalc_invoice_status);
+# PAID by hand is for money recorded before payments were linked; CANCELLED
+# only while nothing has been received. Nothing leaves PAID or CANCELLED: a
+# finalised invoice is corrected by cancelling it and raising a new one.
+INVOICE_TRANSITIONS = {
+    'UNPAID': {'PARTIAL', 'PAID', 'CANCELLED'},
+    'PARTIAL': {'PAID'},
+    'PAID': set(),
+    'CANCELLED': set(),
+}
+
+
+class TransitionError(ValueError):
+    pass
+
+
+def check_invoice_transition(current, new):
+    cur, new = (current or 'UNPAID').upper(), (new or '').upper()
+    if cur == new:
+        return
+    if new not in INVOICE_TRANSITIONS.get(cur, set()):
+        raise TransitionError('An invoice that is {} cannot become {}.'.format(cur.lower(), new.lower()))
+
+
 # --- per-invoice settlement --------------------------------------------------
-
-_CENT = 0.005
-
 
 def invoice_paid_amounts(invoice_ids):
     """{invoice id: amount received} from the payments linked to each invoice
@@ -64,8 +88,8 @@ def invoice_paid_amounts(invoice_ids):
                  .values_list('payment_id', 'invoice_id'))
     out = {}
     for pid, amount in ClientPayment.objects.filter(id__in=list(links)).values_list('id', 'amount'):
-        out[links[pid]] = round(out.get(links[pid], 0.0) + float(amount or 0), 2)
-    return out
+        out[links[pid]] = out.get(links[pid], ZERO) + to_decimal(amount)
+    return {k: float(v) for k, v in out.items()}
 
 
 def invoice_balance(invoice, paid=None):
@@ -77,7 +101,7 @@ def invoice_balance(invoice, paid=None):
         return 0.0
     if paid is None:
         paid = invoice_paid_amounts([invoice.id]).get(invoice.id, 0.0)
-    return round(max(float(invoice.amount or 0) - paid, 0.0), 2)
+    return float(max(to_decimal(invoice.amount) - to_decimal(paid), ZERO))
 
 
 def recalc_invoice_status(invoice_id):
@@ -91,10 +115,11 @@ def recalc_invoice_status(invoice_id):
     inv = Invoice.objects.filter(id=invoice_id).first()
     if inv is None or (inv.status or '').upper() in ('PAID', 'CANCELLED'):
         return inv
-    paid = invoice_paid_amounts([inv.id]).get(inv.id, 0.0)
-    status = ('PAID' if paid >= float(inv.amount or 0) - _CENT
-              else 'PARTIAL' if paid > _CENT else 'UNPAID')
+    paid = to_decimal(invoice_paid_amounts([inv.id]).get(inv.id, 0))
+    amount = to_decimal(inv.amount)
+    status = 'PAID' if paid >= amount else 'PARTIAL' if paid > ZERO else 'UNPAID'
     if status != (inv.status or '').upper():
+        check_invoice_transition(inv.status, status)
         inv.status = status
         inv.save(update_fields=['status'])
     return inv

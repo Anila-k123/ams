@@ -15,6 +15,7 @@ from core.models import Case
 from core.pagination import SpringStylePagination
 from core.permissions import RequirePermission
 from core.practice import practice_ids
+from core.tenant import owned
 from workspace.models import CaseParty, CaseTask
 
 from .models import Client, Project
@@ -88,8 +89,8 @@ class AmsLinkCaseView(APIView):
             return Response({'error': 'Case not found.'}, status=404)
         task = None
         if task_id is not None:
-            task = CaseTask.objects.filter(id=task_id, case_id=case.id,
-                                           advocate_id__in=practice_ids(request.user)).first()
+            task = owned(CaseTask.objects.filter(id=task_id, case_id=case.id,
+                                           advocate_id__in=practice_ids(request.user)), request.user).first()
             if task is None:
                 return Response({'error': 'Task not found on this case.'}, status=404)
         client, project = link_case(case)

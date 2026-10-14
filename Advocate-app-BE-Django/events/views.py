@@ -8,6 +8,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseEventSerializer
 from core.practice import practice_ids
+from core.tenant import owned
 from notifications import client_events, internal_events
 from workspace.models import HearingDetail
 
@@ -64,7 +65,7 @@ def _upsert_hearing_detail(event_id, advocate_id, d):
 
 
 def _base(request):
-    return CaseEvent.objects.select_related('case').filter(advocate_id__in=practice_ids(request.user))
+    return owned(CaseEvent.objects.select_related('case').filter(advocate_id__in=practice_ids(request.user)), request.user)
 
 
 class EventListView(APIView):
@@ -115,7 +116,7 @@ class CreateEventView(APIView):
         if isinstance(ce, dict):
             case_id = ce.get('id')
         case_id = case_id or data.get('caseId')
-        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
+        case = owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_400_BAD_REQUEST)
         # The same event twice would also notify the client and the team twice.
@@ -149,7 +150,7 @@ class UpdateEventView(APIView):
     permission_classes = [RequirePermission('EVENT_CREATE')]
 
     def put(self, request, pk):
-        event = CaseEvent.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        event = owned(CaseEvent.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if event is None:
             return Response({'error': 'Event not found'}, status=status.HTTP_404_NOT_FOUND)
         d = request.data
@@ -171,7 +172,7 @@ class DeleteEventView(APIView):
     permission_classes = [RequirePermission('EVENT_DELETE')]
 
     def delete(self, request, pk):
-        event = CaseEvent.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        event = owned(CaseEvent.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if event is None:
             return Response({'error': 'Event not found'}, status=status.HTTP_404_NOT_FOUND)
         HearingDetail.objects.filter(event_id=event.id).delete()

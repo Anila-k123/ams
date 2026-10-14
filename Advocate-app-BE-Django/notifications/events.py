@@ -23,7 +23,11 @@ import logging
 from decouple import config
 from django.utils import timezone
 
+from django.db import IntegrityError, transaction
+
 from core.audit import record_system_action
+from core.jobs import job_run
+from core.tenant import can_receive, firm_active, firm_id_of_advocate
 from core.models import (Advocate, Case, CaseEvent, Invoice,
                          NotificationHistory, NotificationQueue)
 from workspace.models import CaseTask
@@ -67,6 +71,27 @@ def _already_notified(advocate_id, event_type, entity_id, since):
     return False
 
 
+def claim(recipient_id, event_type, entity, entity_id, period, firm_id=None):
+    """Reserve one reminder for one person and period. False if it was already
+    raised - by this scan, a parallel one, or a retried one (unique index on
+    notification_key). `period` is the window the reminder belongs to: the day
+    for daily reminders, the ISO week for weekly ones."""
+    from notifications.models import NotificationKey
+    key = '{}:{}:{}:{}:{}'.format(event_type, entity, entity_id, recipient_id, period)[:200]
+    try:
+        with transaction.atomic():
+            NotificationKey.objects.create(key=key, firm_id=firm_id)
+        return True
+    except IntegrityError:
+        return False
+
+
+def _deliverable(people, firm_id):
+    """Only people who may hear about this firm's work now (core/tenant.can_receive):
+    not left, active membership of that active firm."""
+    return [p for p in people if can_receive(p.id, firm_id)]
+
+
 def _channels(advocate):
     """Where this advocate wants to hear about things.
 
@@ -82,7 +107,7 @@ def _channels(advocate):
 
 
 def fanout(owner, event_type, subject, body, since, *, entity, entity_id,
-           require_permission=None, include_firm_wide=False, **kw):
+           require_permission=None, include_firm_wide=False, period=None, firm_id=None, **kw):
     """Queue one reminder to everyone it's relevant to, deduped per recipient.
 
     Puts a senior and their team in the same loop: a case belongs to the whole
@@ -107,8 +132,10 @@ def fanout(owner, event_type, subject, body, since, *, entity, entity_id,
                 recipients.append(member)
 
     queued = []
-    for member in recipients:
+    for member in _deliverable(recipients, firm_id):
         if _already_notified(member.id, event_type, entity_id, since):
+            continue
+        if period and not claim(member.id, event_type, entity, entity_id, period, firm_id):
             continue
         queued += service.notify(
             member.id, event_type, subject, body,
@@ -124,11 +151,13 @@ def _task_people(task):
 
 
 def _notify_people(people, event_type, subject, body, since, *, entity,
-                   entity_id, **kw):
+                   entity_id, period=None, firm_id=None, **kw):
     """Queue one reminder to each of `people`, deduped per recipient."""
     queued = []
-    for member in people:
+    for member in _deliverable(people, firm_id):
         if _already_notified(member.id, event_type, entity_id, since):
+            continue
+        if period and not claim(member.id, event_type, entity, entity_id, period, firm_id):
             continue
         queued += service.notify(
             member.id, event_type, subject, body,
@@ -159,7 +188,8 @@ def upcoming_hearings(advocate, today=None):
         queued += fanout(
             advocate, 'HEARING_REMINDER', subject, body, since,
             entity='CaseEvent', entity_id=ev.id, case_id=ev.case_id,
-            require_permission=case_alert_permission(), triggered_by='SCHEDULED')
+            require_permission=case_alert_permission(), triggered_by='SCHEDULED',
+            period=today.isoformat(), firm_id=getattr(ev, 'firm_id', None))
     return queued
 
 
@@ -182,7 +212,8 @@ def overdue_invoices(advocate, today=None):
             advocate, 'OVERDUE_PAYMENT_REMINDER', subject, body, since,
             entity='Invoice', entity_id=inv.id, client_id=inv.client_id,
             require_permission='INVOICE_VIEW', include_firm_wide=True,
-            triggered_by='SCHEDULED')
+            triggered_by='SCHEDULED', period='W{}-{:02d}'.format(*today.isocalendar()[:2]),
+            firm_id=getattr(inv, 'firm_id', None))
     return queued
 
 
@@ -204,11 +235,13 @@ def task_deadlines(advocate, today=None):
             # since the window opened), so it isn't repeated the next day.
             since = now - datetime.timedelta(days=TASK_REMINDER_DAYS + 1)
             when = 'due in {} day(s)'.format(-overdue) if overdue < -1 else 'due tomorrow'
+            period = 'advance:{}'.format(t.deadline)
         else:
             # Due date and overdue: daily. 20h, so the advance warning sent
             # days earlier never suppresses the due-date one.
             since = now - datetime.timedelta(hours=20)
             when = 'due today' if overdue == 0 else '{} day(s) overdue'.format(overdue)
+            period = today.isoformat()
         case_no = None
         if t.case_id:
             c = Case.objects.filter(id=t.case_id).only('case_number').first()
@@ -222,7 +255,7 @@ def task_deadlines(advocate, today=None):
         queued += _notify_people(
             _task_people(t), 'TASK_DEADLINE_REMINDER', subject, body, since,
             entity='CaseTask', entity_id=t.id, case_id=t.case_id,
-            triggered_by='SCHEDULED')
+            triggered_by='SCHEDULED', period=period, firm_id=getattr(t, 'firm_id', None))
     return queued
 
 
@@ -230,31 +263,50 @@ PRODUCERS = (upcoming_hearings, overdue_invoices, task_deadlines)
 
 
 def scan_due_notifications(advocate_id=None):
-    """Run every producer for one advocate, or for all of them."""
+    """Run every producer for one advocate, or for all of them.
+
+    Each owner's reminders run in the context of the firm their work belongs
+    to (resolved here, explicitly - there is no request). Work of a suspended
+    or closed firm raises nothing. An owner who has LEFT is still scanned: the
+    cases stay with the firm and their team must still hear about hearings;
+    who is told is decided per recipient (_deliverable), never by the owner.
+    """
     from clientaccess.gate import client_advocate_ids
     advocates = (Advocate.objects.filter(id=advocate_id) if advocate_id
                  else Advocate.objects.all()).exclude(id__in=client_advocate_ids())
     queued = []
-    for advocate in advocates:
-        before = len(queued)
-        for producer in PRODUCERS:
-            try:
-                queued += producer(advocate)
-            except Exception as exc:                        # noqa: BLE001
-                # One broken producer must not stop the others.
-                log.exception('notifications: %s failed for advocate %s',
-                              producer.__name__, advocate.id)
-                # A producer that silently stops working is how reminders go
-                # missing without anyone noticing, so put it on the record.
+    with job_run('scan_notifications') as run:
+        skipped = failures = 0
+        for advocate in advocates:
+            firm_id = firm_id_of_advocate(advocate.id)
+            if not firm_active(firm_id):
+                skipped += 1
+                continue
+            before = len(queued)
+            for producer in PRODUCERS:
+                try:
+                    queued += producer(advocate)
+                except Exception as exc:                        # noqa: BLE001
+                    failures += 1
+                    # One broken producer must not stop the others.
+                    log.exception('notifications: %s failed for advocate %s (firm %s)',
+                                  producer.__name__, advocate.id, firm_id)
+                    # A producer that silently stops working is how reminders go
+                    # missing without anyone noticing, so put it on the record.
+                    record_system_action(
+                        advocate.id, 'NOTIFICATIONS', 'SCAN',
+                        'Reminder check failed ({})'.format(producer.__name__),
+                        description=type(exc).__name__, ok=False, in_feed=False)
+            raised = len(queued) - before
+            if raised:
                 record_system_action(
                     advocate.id, 'NOTIFICATIONS', 'SCAN',
-                    'Reminder check failed ({})'.format(producer.__name__),
-                    description=str(exc)[:200], ok=False, in_feed=False)
-        raised = len(queued) - before
-        if raised:
-            record_system_action(
-                advocate.id, 'NOTIFICATIONS', 'SCAN',
-                'Queued {} reminder(s)'.format(raised),
-                description='scheduled reminder check',
-                entity_type='NOTIFICATION_QUEUE', in_feed=False)
+                    'Queued {} reminder(s)'.format(raised),
+                    description='scheduled reminder check',
+                    entity_type='NOTIFICATION_QUEUE', in_feed=False)
+        run.counts.update({'queued': len(queued), 'suspendedFirmOwnersSkipped': skipped,
+                           'producerFailures': failures})
+        if failures:
+            run.counts['_status'] = 'FAILED'
+            run.counts['_error'] = '{} producer run(s) failed; see the log'.format(failures)
     return queued

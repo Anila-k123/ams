@@ -18,9 +18,12 @@ def _metered_action(operation):
         @functools.wraps(fn)
         def wrapper(self, request, pk=None, *args, **kwargs):
             from metering.usage import metering
+            from .models import DraftSession
+            from .providers.privacy import fact_names, names_for_masking
             ref = int(pk) if str(pk or '').isdigit() else None
+            facts = DraftSession.objects.filter(id=ref).values_list('facts', flat=True).first() if ref else None
             with metering('draft', operation, getattr(request.user, 'id', None),
-                          ref_type='draft', ref_id=ref):
+                          ref_type='draft', ref_id=ref), names_for_masking(fact_names(facts)):
                 return fn(self, request, pk, *args, **kwargs)
         return wrapper
     return deco
@@ -560,16 +563,17 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         Returns 409 if already generating. Client should poll /status/ until
         status transitions back to 'ready' or 'failed'.
         """
-        from .models import DraftBlock
         from .tasks import generate_draft
         session = self.get_object()
-        if session.status in (DraftSession.Status.PENDING, DraftSession.Status.GENERATING):
+        # One conditional UPDATE, so two clicks (or two tabs) start one run.
+        # The current blocks stay until the new draft is complete (tasks.generate_draft).
+        claimed = DraftSession.objects.filter(id=session.id).exclude(
+            status__in=(DraftSession.Status.PENDING, DraftSession.Status.GENERATING)).update(
+            status=DraftSession.Status.PENDING)
+        if not claimed:
             return Response({'detail': 'Already generating.'}, status=status.HTTP_409_CONFLICT)
-        DraftBlock.objects.filter(session=session).delete()
-        session.status = DraftSession.Status.PENDING
-        session.save(update_fields=['status'])
         _dispatch(generate_draft, session.id)
-        return Response({'id': session.id, 'status': session.status})
+        return Response({'id': session.id, 'status': DraftSession.Status.PENDING})
 
     @action(detail=True, methods=['post'], url_path='update-legal-codes')
     def update_legal_codes(self, request, pk=None):

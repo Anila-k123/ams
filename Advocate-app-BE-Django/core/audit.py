@@ -77,3 +77,41 @@ def record_system_action(advocate_id, module, verb, title, description='',
             )
     except Exception:                                        # noqa: BLE001
         log.exception('audit: failed to record system action %s', action)
+
+
+# Keys that must never reach an audit row, whatever a caller passes.
+_SECRET_KEYS = {'password', 'otp', 'token', 'secret', 'authorization'}
+
+
+def business_event(actor, module, verb, title, entity_type=None, entity_id=None, detail=None,
+                   ok=True, firm_id=None):
+    """One audit row for a sensitive business change (invoice issued, payment
+    recorded, invoice cancelled...), with the structured facts in `metadata`.
+
+    The request middleware already logs every mutating request; this adds the
+    business meaning (which number, which amount, status before -> after) that
+    a request line can't carry. The row's firm comes from `firm_id`, else is
+    stamped from the actor (core/tenant.stamp_firm), so firm administrators see
+    only their own firm's events. Never put document text, notes typed by
+    clients or credentials in `detail`.
+    """
+    import json
+    actor_id = getattr(actor, 'id', actor)
+    if not actor_id:
+        return
+    module = (module or 'SYSTEM').upper()
+    clean = {k: v for k, v in (detail or {}).items() if k.lower() not in _SECRET_KEYS}
+    try:
+        row = AuditLog(
+            action_type='{}_{}'.format(module, (verb or 'UPDATE').upper()),
+            title=title[:255], description=title[:255], module=module,
+            entity_type=(entity_type or module)[:255], entity_id=entity_id,
+            status='SUCCESS' if ok else 'FAILED',
+            user_name=(getattr(actor, 'email', None) or getattr(actor, 'full_name', None) or str(actor_id))[:255],
+            ip_address='', device='', browser='', operating_system='', request_method='', request_uri='',
+            metadata=json.dumps(clean, default=str)[:4000], created_at=timezone.now(), advocate_id=actor_id)
+        if firm_id and hasattr(row, 'firm_id'):
+            row.firm_id = firm_id
+        row.save()
+    except Exception:                                        # noqa: BLE001
+        log.exception('audit: failed to record business event %s_%s', module, verb)

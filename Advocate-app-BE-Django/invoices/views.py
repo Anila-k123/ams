@@ -1,5 +1,5 @@
 import datetime
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
@@ -7,16 +7,21 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status as http
 
-import re
+from decimal import Decimal
 
 from core.models import Invoice, Case, Advocate
+from core.audit import business_event
+from core.money import MoneyError, ZERO, check_currency, parse_amount, to_decimal
+from . import numbering
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import InvoiceSerializer, FirmBillingProfileSerializer, invoice_context
 from .models import (InvoiceItem, InvoiceTaxDetail, FirmBillingProfile, InvoiceRequest,
                      InvoiceHandling, PaymentInvoice)
 from core.practice import practice_ids, practice_root
-from core.finance import invoice_paid_amounts, recalc_case_totals
+from core.tenant import owned
+from core.finance import (TransitionError, check_invoice_transition, invoice_paid_amounts,
+                          recalc_case_totals)
 from notifications import client_events, internal_events
 from core.validators import check_payload, due_date_error, error_response
 
@@ -24,7 +29,7 @@ SORT_MAP = {'invoiceDate': 'invoice_date', 'dueDate': 'due_date', 'amount': 'amo
 
 
 def _base(request):
-    return Invoice.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(request.user))
+    return owned(Invoice.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(request.user)), request.user)
 
 
 def _as_date(value, default=None):
@@ -54,20 +59,27 @@ def _parse_particulars(data):
 
     Blank rows (no description and no amount) are dropped, so a stray empty row
     the user left in the form does not become a zero line on the invoice.
+    Amounts are Decimal paise; a non-number, negative or 3-decimal amount
+    raises MoneyError (it used to become 0 silently, or a negative line).
     """
     items = []
     for i, row in enumerate(data.get('particulars') or []):
         if not isinstance(row, dict):
             continue
         desc = (row.get('description') or '').strip()
-        try:
-            amt = round(float(row.get('amount') or 0), 2)
-        except (TypeError, ValueError):
-            amt = 0
-        if not desc and not amt:
+        raw = row.get('amount')
+        if not desc and (raw in (None, '') or to_decimal_or_none(raw) == ZERO):
             continue
+        amt = parse_amount(raw, label='Line amount', allow_zero=False)
         items.append({'description': desc[:500], 'amount': amt, 'position': i})
     return items
+
+
+def to_decimal_or_none(value):
+    try:
+        return to_decimal(value)
+    except MoneyError:
+        return None
 
 
 def _parse_tax(data):
@@ -125,8 +137,8 @@ class RecipientDefaultsView(APIView):
     permission_classes = [RequirePermission('INVOICE_CREATE')]
 
     def get(self, request):
-        case = Case.objects.filter(id=request.query_params.get('caseId') or 0,
-                                   advocate_id__in=practice_ids(request.user)).first()
+        case = owned(Case.objects.filter(id=request.query_params.get('caseId') or 0,
+                                   advocate_id__in=practice_ids(request.user)), request.user).first()
         if case is None or case.client_id is None:
             return Response({'error': 'Case not found'}, status=http.HTTP_404_NOT_FOUND)
         d = _recipient_defaults(case.client_id)
@@ -142,39 +154,23 @@ def _norm_state(s):
 
 
 def _compute_gst(taxable, tax_mode, gst_rate, interstate):
-    """Return (cgst, sgst, igst, total). RCM adds no tax (recipient pays under
-    reverse charge); forward charge splits into CGST+SGST intra-state or IGST
-    inter-state at the given rate."""
-    cgst = sgst = igst = 0.0
-    if tax_mode == 'forward' and gst_rate > 0 and taxable > 0:
-        tax_amt = round(taxable * gst_rate / 100.0, 2)
+    """Return (cgst, sgst, igst, total) as Decimal paise. RCM adds no tax
+    (recipient pays under reverse charge); forward charge splits into
+    CGST+SGST intra-state or IGST inter-state at the given rate."""
+    taxable, rate = to_decimal(taxable), Decimal(str(gst_rate))
+    cgst = sgst = igst = ZERO
+    if tax_mode == 'forward' and rate > 0 and taxable > 0:
+        tax_amt = to_decimal(taxable * rate / Decimal(100))
         if interstate:
             igst = tax_amt
         else:
-            cgst = round(tax_amt / 2, 2)
-            sgst = round(tax_amt - cgst, 2)
-    total = round(taxable + cgst + sgst + igst, 2)
-    return cgst, sgst, igst, total
+            cgst = to_decimal(tax_amt / 2)
+            sgst = tax_amt - cgst
+    return cgst, sgst, igst, taxable + cgst + sgst + igst
 
 
-def _next_invoice_number():
-    """A unique, sequential invoice number ("INV-000123").
-
-    Derived from the highest numeric suffix already in use, then bumped until it
-    is free - so the user never has to type or track a number, matching the
-    Provakil flow. A user-supplied number still wins when one is sent.
-    """
-    highest = 0
-    for existing in Invoice.objects.values_list('invoice_number', flat=True):
-        m = re.search(r'(\d+)\s*$', existing or '')
-        if m:
-            highest = max(highest, int(m.group(1)))
-    nxt = highest + 1
-    number = 'INV-{:06d}'.format(nxt)
-    while Invoice.objects.filter(invoice_number=number).exists():
-        nxt += 1
-        number = 'INV-{:06d}'.format(nxt)
-    return number
+# GST rates a legal-services invoice may carry.
+GST_RATES = (0, 5, 12, 18, 28)
 
 
 class InvoiceListView(APIView):
@@ -258,7 +254,7 @@ class InvoiceSummaryView(APIView):
 def _billable_case(user, data):
     """The case an invoice is for, if `user` may bill it; else (None, 400)."""
     cid = _case_id(data)
-    case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(user)).first() if cid else None
+    case = owned(Case.objects.filter(id=cid, advocate_id__in=practice_ids(user)), user).first() if cid else None
     if case is None:
         return None, Response({'error': 'Valid caseId is required'}, status=http.HTTP_400_BAD_REQUEST)
     if case.client_id is None:
@@ -269,14 +265,16 @@ def _billable_case(user, data):
 
 def _taxable(data):
     """Taxable value = sum of the particulars; falls back to a flat `amount`
-    for older callers that don't send a breakdown. Returns (particulars, total)."""
+    for older callers that don't send a breakdown. Returns (particulars, total)
+    as Decimal; raises MoneyError for a bad amount or a nil invoice."""
     particulars = _parse_particulars(data)
     if particulars:
-        return particulars, round(sum(p['amount'] for p in particulars), 2)
-    try:
-        return particulars, round(float(data.get('amount') or 0), 2)
-    except (TypeError, ValueError):
-        return particulars, 0.0
+        taxable = sum((p['amount'] for p in particulars), ZERO)
+    else:
+        taxable = parse_amount(data.get('amount'), label='Invoice amount')
+    if taxable <= ZERO:
+        raise MoneyError('An invoice must be for more than zero.')
+    return particulars, taxable
 
 
 class CreateInvoiceView(APIView):
@@ -297,6 +295,18 @@ class CreateInvoiceView(APIView):
         return Response(InvoiceSerializer(invoice).data, status=http.HTTP_201_CREATED)
 
 
+def _money_error(exc):
+    return Response({'error': str(exc), 'errors': {'amount': str(exc)}}, status=http.HTTP_400_BAD_REQUEST)
+
+
+def _firm_currency(advocate):
+    from core.tenant import firm_id_of_advocate
+    from firms.models import FirmSettings
+    fid = firm_id_of_advocate(advocate.id) if hasattr(Invoice, 'firm_id') else None
+    s = FirmSettings.objects.filter(firm_id=fid).only('currency').first() if fid else None
+    return (s.currency if s else 'INR') or 'INR'
+
+
 def _create_invoice(actor, data, case, raised_by=None):
     """Create the GST invoice for `case` from a create-form body.
 
@@ -304,9 +314,17 @@ def _create_invoice(actor, data, case, raised_by=None):
     advocate recorded on the invoice (defaults to `actor`); when accounts
     issue an advocate's request it is that advocate, so "raised by" and the
     team's scoping stay with the person who ran the case.
+
+    The invoice, its lines, tax detail, handling row and number are written in
+    one transaction: a failure leaves nothing behind and gives the number back.
+    The client email and internal alerts go out only after that commits.
     """
     raised_by = raised_by or actor
-    particulars, taxable = _taxable(data)
+    try:
+        particulars, taxable = _taxable(data)
+        check_currency(data.get('currency'), _firm_currency(raised_by))
+    except MoneyError as exc:
+        return None, _money_error(exc)
 
     # A GSTIN typed on the form must be a real one; a blank one is filled
     # from the client record below.
@@ -331,55 +349,80 @@ def _create_invoice(actor, data, case, raised_by=None):
     if tax_mode not in ('rcm', 'forward'):
         tax_mode = 'rcm'
     try:
-        gst_rate = float(data.get('gstRate') or 18)
+        gst_rate = float(data.get('gstRate') if data.get('gstRate') not in (None, '') else 18)
     except (TypeError, ValueError):
-        gst_rate = 18.0
+        gst_rate = -1
+    if gst_rate not in GST_RATES:
+        return None, Response({'error': 'GST rate must be one of {}%.'.format(', '.join(map(str, GST_RATES))),
+                               'errors': {'gstRate': 'Invalid'}}, status=http.HTTP_400_BAD_REQUEST)
     owner = Advocate.objects.filter(id=practice_root(raised_by)).first()
     supplier_state = (owner.state if owner else '') or ''
     interstate = bool(supplier_state and tax['recipient_state']
                       and _norm_state(supplier_state) != _norm_state(tax['recipient_state']))
     cgst, sgst, igst, total_value = _compute_gst(taxable, tax_mode, gst_rate, interstate)
     tax.update({'tax_mode': tax_mode, 'gst_rate': gst_rate, 'is_interstate': interstate,
-                'taxable_value': taxable, 'cgst_amount': cgst, 'sgst_amount': sgst,
-                'igst_amount': igst, 'total_value': total_value})
-
-    # Auto-number when the client doesn't supply one (the new forms don't).
-    number = (data.get('invoiceNumber') or '').strip() or _next_invoice_number()
-    if Invoice.objects.filter(invoice_number=number).exists():
-        return None, Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
+                'taxable_value': float(taxable), 'cgst_amount': float(cgst), 'sgst_amount': float(sgst),
+                'igst_amount': float(igst), 'total_value': float(total_value)})
 
     today = datetime.date.today()
-    invoice = Invoice.objects.create(
-        invoice_number=number,
-        amount=total_value,           # gross for forward charge; == taxable for RCM
-        invoice_date=_as_date(data.get('invoiceDate'), today),
-        due_date=_as_date(data.get('dueDate'), today + datetime.timedelta(days=30)),
-        status='UNPAID',
-        advocate_id=raised_by.id,
-        case=case,
-        client_id=case.client_id,
-    )
-    if particulars:
-        InvoiceItem.objects.bulk_create([
-            InvoiceItem(invoice_id=invoice.id, description=p['description'],
-                        amount=p['amount'], position=p['position'])
-            for p in particulars])
-    InvoiceTaxDetail.objects.create(invoice_id=invoice.id, **tax)
-    # Whoever issues it handles it from here (accounts).
-    handling = InvoiceHandling.objects.create(invoice_id=invoice.id, issued_by_id=actor.id)
-    recalc_case_totals(case.id)
-
-    # Issuing is what tells the client. Record whether the email actually went.
-    if client_events.invoice_generated(raised_by, case.client, invoice, case):
-        handling.client_notified_at = timezone.now()
-        handling.save(update_fields=['client_notified_at'])
-    # Internal hand-off: tell the accountants (and the team's finance
-    # viewers) there's a new bill to collect.
-    # The requester of an issued request hears about it from
-    # invoice_request_issued instead, so they are not told twice.
-    internal_events.invoice_raised(actor, invoice, case,
-                                   skip_ids=() if raised_by is actor else (raised_by.id,))
+    invoice_date = _as_date(data.get('invoiceDate'), today)
+    typed = (data.get('invoiceNumber') or '').strip()[:255]
+    try:
+        with transaction.atomic():
+            if typed:
+                # Unique within the firm only: another firm's numbers are not
+                # this firm's business (and must not be revealed by a 409).
+                if numbering.number_taken(raised_by, typed):
+                    return None, Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
+                number = typed
+            else:
+                number = numbering.next_number(raised_by, invoice_date)
+            invoice = Invoice.objects.create(
+                invoice_number=number,
+                amount=float(total_value),    # gross for forward charge; == taxable for RCM
+                invoice_date=invoice_date,
+                due_date=_as_date(data.get('dueDate'), today + datetime.timedelta(days=30)),
+                status='UNPAID',
+                advocate_id=raised_by.id,
+                case=case,
+                client_id=case.client_id,
+            )
+            if particulars:
+                InvoiceItem.objects.bulk_create([
+                    InvoiceItem(invoice_id=invoice.id, description=p['description'],
+                                amount=float(p['amount']), position=p['position'])
+                    for p in particulars])
+            InvoiceTaxDetail.objects.create(invoice_id=invoice.id, **tax)
+            # Whoever issues it handles it from here (accounts).
+            handling = InvoiceHandling.objects.create(invoice_id=invoice.id, issued_by_id=actor.id)
+            recalc_case_totals(case.id)
+            business_event(actor, 'INVOICE', 'ISSUE', 'Invoice {} issued'.format(number),
+                           entity_type='INVOICE', entity_id=invoice.id,
+                           detail={'number': number, 'amount': str(total_value), 'caseId': case.id,
+                                   'raisedBy': raised_by.id},
+                           firm_id=getattr(invoice, 'firm_id', None))
+            transaction.on_commit(lambda: _announce_invoice(actor, raised_by, invoice, case, handling))
+    except IntegrityError:
+        # The database refused a duplicate number (a hand-typed number raced
+        # another invoice). Nothing was saved.
+        return None, Response({'error': 'Invoice number already exists'}, status=http.HTTP_409_CONFLICT)
     return invoice, None
+
+
+def _announce_invoice(actor, raised_by, invoice, case, handling):
+    """After commit: tell the client (recording whether the email went) and the
+    accountants. Never raises - the invoice is already issued."""
+    try:
+        if client_events.invoice_generated(raised_by, case.client, invoice, case):
+            handling.client_notified_at = timezone.now()
+            handling.save(update_fields=['client_notified_at'])
+        # The requester of an issued request hears about it from
+        # invoice_request_issued instead, so they are not told twice.
+        internal_events.invoice_raised(actor, invoice, case,
+                                       skip_ids=() if raised_by is actor else (raised_by.id,))
+    except Exception:                                       # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception('invoice %s: announcement failed', invoice.id)
 
 
 class PayInvoiceView(APIView):
@@ -389,13 +432,25 @@ class PayInvoiceView(APIView):
         invoice = _base(request).filter(id=pk).first()
         if invoice is None:
             return Response({'error': 'Invoice not found'}, status=http.HTTP_404_NOT_FOUND)
-        if (invoice.status or '').upper() == 'CANCELLED':
-            return Response({'error': 'A cancelled invoice cannot be paid.'}, status=http.HTTP_409_CONFLICT)
         # For money already recorded without a link to this invoice. A new
         # payment is recorded against the invoice instead (payments/create
         # with invoiceId), which moves it to PARTIAL / PAID by itself.
-        invoice.status = 'PAID'
-        invoice.save(update_fields=['status'])
+        with transaction.atomic():
+            invoice = Invoice.objects.select_for_update().get(id=invoice.id)
+            before = (invoice.status or '').upper()
+            if before == 'PAID':
+                return Response(InvoiceSerializer(invoice).data)        # retry: already done
+            try:
+                check_invoice_transition(before, 'PAID')
+            except TransitionError as exc:
+                msg = 'A cancelled invoice cannot be paid.' if before == 'CANCELLED' else str(exc)
+                return Response({'error': msg}, status=http.HTTP_409_CONFLICT)
+            invoice.status = 'PAID'
+            invoice.save(update_fields=['status'])
+            business_event(request.user, 'INVOICE', 'MARK_PAID', 'Invoice {} marked paid'.format(invoice.invoice_number),
+                           entity_type='INVOICE', entity_id=invoice.id, detail={'from': before, 'to': 'PAID'},
+                           firm_id=getattr(invoice, 'firm_id', None))
+        recalc_case_totals(invoice.case_id)
         client_events.invoice_paid(request.user, invoice.client, invoice, invoice.case)
         # Internal hand-off: tell the case's advocates it's settled.
         internal_events.payment_settled(request.user, invoice, invoice.case,
@@ -426,8 +481,24 @@ class CancelInvoiceView(APIView):
             return Response({'error': 'Give the reason for cancelling.', 'errors': {'reason': 'Required'}},
                             status=http.HTTP_400_BAD_REQUEST)
         with transaction.atomic():
+            invoice = Invoice.objects.select_for_update().get(id=invoice.id)
+            before = (invoice.status or '').upper()
+            if before == 'CANCELLED':
+                return Response({'error': 'This invoice is already cancelled.'}, status=http.HTTP_409_CONFLICT)
+            if PaymentInvoice.objects.filter(invoice_id=invoice.id).exists():
+                return Response({'error': 'Money has been received on this invoice, so it cannot be cancelled.'},
+                                status=http.HTTP_409_CONFLICT)
+            try:
+                check_invoice_transition(before, 'CANCELLED')
+            except TransitionError:
+                return Response({'error': 'Money has been received on this invoice, so it cannot be cancelled.'},
+                                status=http.HTTP_409_CONFLICT)
             invoice.status = 'CANCELLED'
             invoice.save(update_fields=['status'])
+            business_event(request.user, 'INVOICE', 'CANCEL', 'Invoice {} cancelled'.format(invoice.invoice_number),
+                           entity_type='INVOICE', entity_id=invoice.id,
+                           detail={'from': before, 'reason': reason[:200]},
+                           firm_id=getattr(invoice, 'firm_id', None))
             handling, _ = InvoiceHandling.objects.get_or_create(
                 invoice_id=invoice.id, defaults={'issued_by_id': invoice.advocate_id})
             handling.cancelled_by_id, handling.cancel_reason = request.user.id, reason[:2000]
@@ -470,7 +541,7 @@ class BillingProfileView(APIView):
 
 def _requests_in_scope(user):
     """Invoice requests on cases this user's team (or firm) can see."""
-    case_ids = Case.objects.filter(advocate_id__in=practice_ids(user)).values_list('id', flat=True)
+    case_ids = owned(Case.objects.filter(advocate_id__in=practice_ids(user)), user).values_list('id', flat=True)
     return InvoiceRequest.objects.filter(case_id__in=list(case_ids))
 
 
@@ -518,11 +589,14 @@ def _check_request_body(data):
     bad = _due_date_bad(data)
     if bad is not None:
         return None, bad
-    _, taxable = _taxable(data)
-    if taxable <= 0:
-        return None, Response({'error': 'Add at least one particular with an amount.'},
-                              status=http.HTTP_400_BAD_REQUEST)
-    return taxable, None
+    try:
+        _, taxable = _taxable(data)
+    except MoneyError as exc:
+        if not (data.get('particulars') or data.get('amount')):
+            return None, Response({'error': 'Add at least one particular with an amount.'},
+                                  status=http.HTTP_400_BAD_REQUEST)
+        return None, _money_error(exc)
+    return float(taxable), None
 
 
 class InvoiceRequestListView(APIView):

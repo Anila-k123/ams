@@ -16,14 +16,19 @@ practice-wide needs restore reworked first, not just the export.
 
 import os
 import io
+import re
 import json
 import time
 import hashlib
+import logging
 import datetime
 import zipfile
 
 from django.conf import settings
 from django.db import connection, transaction
+from psycopg2 import sql
+
+log = logging.getLogger(__name__)
 
 # Data tables to export/restore (all carry advocate_id). Parents first, so the
 # insert order reads sensibly even though restore disables FK triggers.
@@ -200,10 +205,12 @@ def create_backup(advocate, backup_type):
             copied = 0
             try:
                 _, docs = _rows('documents', advocate.id)
+                from documents.storage import resolve_stored_file
                 for d in (docs or []):
-                    fp = d.get('file_path')
-                    if fp and os.path.exists(fp):
-                        z.write(fp, arcname=f"documents/{d.get('stored_name') or os.path.basename(fp)}")
+                    # Only files inside the documents folder go into a backup.
+                    fp = resolve_stored_file(d.get('file_path'), d.get('stored_name'))
+                    if fp:
+                        z.write(fp, arcname=f"documents/{os.path.basename(fp)}")
                         copied += 1
                 sections.append({'name': 'DOCUMENTS', 'status': 'SUCCESS',
                                  'durationMs': int((time.time() - s) * 1000), 'error': None})
@@ -343,65 +350,201 @@ def restore_backup(advocate, file_bytes, restore_type):
                 'rollbackFile': None,
             }
 
+    problem = _check_archive_sizes(z)
+    if problem:
+        return {'status': 'FAILED', 'message': problem, 'rollbackFile': None}
+
     rollback = create_backup(advocate, 'FULL')
 
     if restore_type in ('DOCUMENTS', 'REPORTS', 'SETTINGS'):
-        # Non-data restores: extract documents back to the uploads folder.
-        restored = 0
-        if restore_type == 'DOCUMENTS':
-            docs_dir = os.path.join(settings.DOCUMENT_UPLOAD_DIR, 'documents')
-            os.makedirs(docs_dir, exist_ok=True)
-            for n in z.namelist():
-                if n.startswith('documents/') and not n.endswith('/'):
-                    with open(os.path.join(docs_dir, os.path.basename(n)), 'wb') as f:
-                        f.write(z.read(n))
-                    restored += 1
+        restored = _restore_document_files(advocate, z) if restore_type == 'DOCUMENTS' else 0
         return {'status': 'SUCCESS', 'message': f'Restored {restored} document(s).',
                 'rollbackFile': rollback['fileName']}
 
-    # DATABASE / FULL: restore data tables from JSON.
-    # FK triggers are disabled for the connection during the swap (postgres superuser)
-    # so we can delete/insert without worrying about referencing tables like
-    # notification_history; re-inserting the same-id rows keeps integrity intact.
+    # DATABASE / FULL: restore data tables from JSON, in one transaction.
+    #
+    # The archive is untrusted input: anyone with BACKUP_MANAGE can upload one.
+    # So, unlike before:
+    #   - column names are checked against the real table and quoted, never
+    #     pasted into SQL (a crafted key used to run arbitrary SQL);
+    #   - foreign keys stay ON (no session_replication_role, which also needed a
+    #     database superuser); rows go in parents-first and out children-first;
+    #   - every case/client/task/document a row points at must be restored here
+    #     or already belong to this practice;
+    #   - a document's file path is rebuilt from its stored name inside the
+    #     uploads folder, never taken from the archive.
     names = z.namelist()
     inserted = 0
+    touched_cases = set()
     try:
-        with connection.cursor() as cur:
-            cur.execute("SET session_replication_role = 'replica'")
-            try:
-                with transaction.atomic():
-                    # Children first. A table that does not exist on this
-                    # database is skipped rather than failing the restore -
-                    # same reason as the export side.
-                    present = [t for t in DATA_TABLES if _table_exists(t)]
-                    for t in reversed(present):
-                        cur.execute(f'DELETE FROM {t} WHERE advocate_id = %s', [advocate.id])
-                    for t in present:
-                        entry = f'data/{t}.json'
-                        if entry not in names:
-                            continue
-                        rows = json.loads(z.read(entry) or b'[]')
-                        for r in rows:
-                            # Force ownership to the advocate doing the restore.
-                            # The archive carries whatever advocate_id it was
-                            # exported with; trusting it would let an uploaded
-                            # file write rows into somebody else's account,
-                            # which the DELETE above would never clean up.
-                            if 'advocate_id' in r:
-                                r['advocate_id'] = advocate.id
-                            cols = list(r.keys())
-                            placeholders = ', '.join(['%s'] * len(cols))
-                            cur.execute(
-                                f'INSERT INTO {t} ({", ".join(cols)}) VALUES ({placeholders})',
-                                [r[c] for c in cols])
-                            inserted += 1
-            finally:
-                cur.execute("SET session_replication_role = 'origin'")
+        with transaction.atomic(), connection.cursor() as cur:
+            present = [t for t in DATA_TABLES if _table_exists(t)]
+            columns = {t: _table_columns(cur, t) for t in present}
+            for t in reversed(present):
+                cur.execute(sql.SQL('DELETE FROM {} WHERE advocate_id = %s').format(sql.Identifier(t)),
+                            [advocate.id])
+            scope = _RestoreScope(cur, advocate)
+            from core import tenant
+            firm_id = tenant.firm_id_of_advocate(advocate.id) if tenant.columns() else None
+            for t in present:
+                entry = f'data/{t}.json'
+                if entry not in names:
+                    continue
+                rows = json.loads(z.read(entry) or b'[]')
+                if not isinstance(rows, list):
+                    raise RestoreRejected(f'{entry} is not a list of records.')
+                for r in rows:
+                    if not isinstance(r, dict):
+                        raise RestoreRejected(f'{entry} contains something that is not a record.')
+                    unknown = sorted(set(r) - columns[t])
+                    if unknown:
+                        raise RestoreRejected(f'{entry} has fields this database does not know: '
+                                              f'{", ".join(unknown[:5])}.')
+                    # Force ownership to the advocate doing the restore. The
+                    # archive carries whatever advocate_id it was exported
+                    # with; trusting it would write rows into another account.
+                    if 'advocate_id' in r:
+                        r['advocate_id'] = advocate.id
+                    # Raw SQL skips pre_save, so the tenant is set here too: the
+                    # restored row belongs to the restoring user's firm, never
+                    # to whatever firm id the archive carries.
+                    if 'firm_id' in columns[t]:
+                        r['firm_id'] = firm_id
+                    if t == 'documents':
+                        r['file_path'] = _restored_file_path(r.get('stored_name'))
+                    scope.check(t, r)
+                    cols = list(r.keys())
+                    cur.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(
+                        sql.Identifier(t),
+                        sql.SQL(', ').join(sql.Identifier(c) for c in cols),
+                        sql.SQL(', ').join(sql.Placeholder() for _ in cols)),
+                        [r[c] for c in cols])
+                    scope.inserted(t, r.get('id'))
+                    if r.get('case_id'):
+                        touched_cases.add(r['case_id'])
+                    if t == 'cases' and r.get('id'):
+                        touched_cases.add(r['id'])
+                    inserted += 1
+        from core.finance import recalc_case_totals
+        for case_id in touched_cases:
+            recalc_case_totals(case_id)
         return {'status': 'SUCCESS',
                 'message': 'Restore completed successfully: {} record(s) '
                            'restored.'.format(inserted),
                 'recordsRestored': inserted,
                 'rollbackFile': rollback['fileName']}
-    except Exception as e:
-        return {'status': 'FAILED', 'message': f'Restore failed and was rolled back: {e}',
+    except RestoreRejected as e:
+        return {'status': 'FAILED', 'message': f'Restore refused, nothing was changed: {e}',
                 'rollbackFile': rollback['fileName']}
+    except Exception:
+        # No database text to the user (it can expose the schema); the log has it.
+        log.exception('restore failed for advocate %s', advocate.id)
+        return {'status': 'FAILED',
+                'message': ('Restore failed and was rolled back. The archive does not fit this '
+                            "database (for example it refers to records that aren't yours, or to "
+                            'records that others still use).'),
+                'rollbackFile': rollback['fileName']}
+
+
+class RestoreRejected(ValueError):
+    """The archive was refused before anything was written."""
+
+
+# Which table each reference column points at. A restored row may only point at
+# rows restored in the same archive or already owned within this practice.
+_REFERENCES = {
+    'case_id': 'cases', 'related_case_id': 'cases',
+    'client_id': 'clients',
+    'task_id': 'case_task',
+    'document_id': 'documents',
+}
+_PEOPLE_COLUMNS = ('assigned_by_id', 'assigned_to_id', 'reviewed_by_id')
+_STORED_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$')
+
+
+def _table_columns(cur, table):
+    cur.execute("SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = %s", [table])
+    return {c for (c,) in cur.fetchall()}
+
+
+def _restored_file_path(stored_name):
+    if not stored_name or not _STORED_NAME.match(str(stored_name)):
+        raise RestoreRejected('a document has an invalid stored file name.')
+    from documents.storage import documents_root
+    return os.path.join(documents_root(), str(stored_name))
+
+
+class _RestoreScope:
+    def __init__(self, cur, advocate):
+        from core.practice import practice_ids
+        self.cur = cur
+        self.people = set(practice_ids(advocate))
+        self.new = {t: set() for t in set(_REFERENCES.values())}
+        self.existing = {}
+
+    def _existing(self, table):
+        # Practice rows still in the table after this advocate's own were
+        # deleted (colleagues' records may legitimately be referenced).
+        if table not in self.existing:
+            if not _table_exists(table):
+                self.existing[table] = set()
+            else:
+                self.cur.execute(sql.SQL('SELECT id FROM {} WHERE advocate_id = ANY(%s)').format(
+                    sql.Identifier(table)), [list(self.people)])
+                self.existing[table] = {i for (i,) in self.cur.fetchall()}
+        return self.existing[table]
+
+    def check(self, table, row):
+        for col, parent in _REFERENCES.items():
+            ref = row.get(col)
+            if ref in (None, ''):
+                continue
+            if ref not in self.new[parent] and ref not in self._existing(parent):
+                raise RestoreRejected(f'a {table} record points at {parent} #{ref}, '
+                                      'which is not in this backup or your practice.')
+        for col in _PEOPLE_COLUMNS:
+            ref = row.get(col)
+            if ref not in (None, '') and ref not in self.people:
+                raise RestoreRejected(f'a {table} record names a person outside your practice.')
+
+    def inserted(self, table, pk):
+        if table in self.new and pk is not None:
+            self.new[table].add(pk)
+
+
+def _check_archive_sizes(z):
+    """Refuse oversized or zip-bomb archives before reading any entry."""
+    limit = int(settings.BACKUP_MAX_UPLOAD_MB) * 1024 * 1024
+    total = 0
+    for info in z.infolist():
+        total += info.file_size
+        if info.file_size > limit or total > limit * 4:
+            return ('This backup is too large to restore here '
+                    f'(limit {settings.BACKUP_MAX_UPLOAD_MB} MB, uncompressed {total // 1048576}+ MB).')
+    return None
+
+
+def _restore_document_files(advocate, z):
+    """Write back only files that belong to this advocate's own document rows,
+    never a file another advocate's document uses, and only allowed types."""
+    from core.models import Document
+    from documents.storage import ALLOWED_EXTENSIONS, documents_root, max_upload_bytes
+    mine = set(Document.objects.filter(advocate_id=advocate.id).values_list('stored_name', flat=True))
+    others = set(Document.objects.exclude(advocate_id=advocate.id).values_list('stored_name', flat=True))
+    root = documents_root()
+    os.makedirs(root, exist_ok=True)
+    restored = 0
+    for info in z.infolist():
+        n = info.filename
+        if not n.startswith('documents/') or n.endswith('/'):
+            continue
+        name = os.path.basename(n)
+        if (name not in mine or name in others or not _STORED_NAME.match(name)
+                or os.path.splitext(name)[1].lower() not in ALLOWED_EXTENSIONS
+                or info.file_size > max_upload_bytes()):
+            continue
+        with open(os.path.join(root, name), 'wb') as f:
+            f.write(z.read(info))
+        restored += 1
+    return restored

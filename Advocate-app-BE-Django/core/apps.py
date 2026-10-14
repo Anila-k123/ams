@@ -15,3 +15,7 @@ class CoreConfig(AppConfig):
         # migrations pay nothing for this.
         from core import audit_diff
         audit_diff.register()
+        # Firm ownership stamped on save + cross-firm references refused
+        # (core/tenant.py). Only when this database has the firm_id columns.
+        from core import tenant
+        tenant.connect()

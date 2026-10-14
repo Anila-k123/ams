@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from core.models import Case, CaseEvent, Document
 from core.permissions import RequirePermission
 from core.practice import practice_ids
+from core.tenant import owned
 from workspace.models import CaseParty, CaseProfile, CaseTask
 
 from .access import viewable_sessions
@@ -66,8 +67,8 @@ class CaseFileView(APIView):
     def get(self, request, pk):
         session = get_object_or_404(viewable_sessions(request.user).select_related('project'), pk=pk)
         case_id = draft_case_id(session)
-        case = Case.objects.select_related('client').filter(
-            id=case_id, advocate_id__in=practice_ids(request.user), deleted=False).first() if case_id else None
+        case = owned(Case.objects.select_related('client').filter(
+            id=case_id, advocate_id__in=practice_ids(request.user), deleted=False), request.user).first() if case_id else None
         if case is None:
             return Response({'case': None, 'documents': [], 'canSeeCase': False, 'canSeeDocuments': False})
         perms = request.user.permission_codes()

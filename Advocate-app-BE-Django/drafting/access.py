@@ -10,6 +10,7 @@ creator for now. Merge phase 3 revisits both together with the drafting RBAC cod
 """
 
 from core.practice import practice_ids
+from core.tenant import owned
 
 from .models import DraftSession, Sample
 
@@ -33,7 +34,7 @@ REVIEW_STATES = ('SUBMITTED', 'APPROVED', 'CHANGES_REQUESTED')
 def reviewable_task_ids(user):
     from workspace import review
     from workspace.models import CaseTask
-    tasks = CaseTask.objects.filter(advocate_id__in=practice_ids(user), review_status__in=REVIEW_STATES)
+    tasks = owned(CaseTask.objects.filter(advocate_id__in=practice_ids(user), review_status__in=REVIEW_STATES), user)
     return [t.id for t in tasks if review.can_review(t, user)]
 
 
@@ -68,7 +69,7 @@ def review_task(session, user):
         return None, False
     from workspace import review
     from workspace.models import CaseTask
-    task = CaseTask.objects.filter(id=session.ams_task_id, advocate_id__in=practice_ids(user)).first()
+    task = owned(CaseTask.objects.filter(id=session.ams_task_id, advocate_id__in=practice_ids(user)), user).first()
     return task, bool(task and review.can_review(task, user))
 
 

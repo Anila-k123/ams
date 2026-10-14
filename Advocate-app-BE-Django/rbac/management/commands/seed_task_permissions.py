@@ -9,6 +9,7 @@ either way; this decides who may hand a task to a specific person.
 """
 
 from django.core.management.base import BaseCommand
+from rbac.seeding import seed_roles, template_roles
 from core.models import Permission, Role, RolePermission
 
 # (name, module, description)
@@ -35,16 +36,17 @@ class Command(BaseCommand):
 
         granted = 0
         for role_name in DEFAULT_ROLES:
-            role = Role.objects.filter(name=role_name).first()
-            if role is None:
+            targets = seed_roles(role_name)
+            if not targets:
                 self.stdout.write(self.style.WARNING(f"  role {role_name!r} not found - skipped"))
                 continue
-            for name, _, _ in PERMISSIONS:
-                perm = Permission.objects.get(name=name)
-                _, made = RolePermission.objects.get_or_create(role_id=role.id, permission_id=perm.id)
-                if made:
-                    granted += 1
-                    self.stdout.write(f"  granted {name} to {role_name}")
+            for role in targets:
+                for name, _, _ in PERMISSIONS:
+                    perm = Permission.objects.get(name=name)
+                    _, made = RolePermission.objects.get_or_create(role_id=role.id, permission_id=perm.id)
+                    if made:
+                        granted += 1
+                        self.stdout.write(f"  granted {name} to {role_name}")
 
         self.stdout.write(self.style.SUCCESS(
             f"Done: {len(created)} permission(s) created, {granted} grant(s) added."))

@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 def _owns_case(request, case_id):
     """Only allow workspace ops on cases the requesting advocate owns."""
-    return Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists()
+    return owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).exists()
 
 
 def _can_assign(request):
@@ -134,7 +134,7 @@ class CaseNotesView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        qs = CaseNote.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id)
+        qs = owned(CaseNote.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id), request.user)
         return Response(CaseNoteSerializer(qs, many=True).data)
 
     def post(self, request, case_id):
@@ -151,7 +151,7 @@ class DeleteCaseNoteView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk):
-        note = CaseNote.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        note = owned(CaseNote.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if note is None:
             return Response({'error': 'Note not found'}, status=status.HTTP_404_NOT_FOUND)
         note.delete()
@@ -350,7 +350,7 @@ class TaskDocumentsView(APIView):
         document_id = request.data.get('documentId')
         if not document_id:
             return Response({'error': 'documentId is required'}, status=status.HTTP_400_BAD_REQUEST)
-        if not Document.objects.filter(id=document_id, advocate_id__in=practice_ids(request.user)).exists():
+        if not owned(Document.objects.filter(id=document_id, advocate_id__in=practice_ids(request.user)), request.user).exists():
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         CaseTaskDocument.objects.get_or_create(
             task_id=task_id, document_id=document_id,
@@ -552,7 +552,7 @@ class CaseEventsView(APIView):
     def get(self, request, case_id):
         if not _owns_case(request, case_id):
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
-        qs = CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id).order_by('date', 'id')
+        qs = owned(CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id), request.user).order_by('date', 'id')
         return Response([_event_payload(e) for e in qs])
 
 
@@ -584,7 +584,7 @@ class WorkspaceStatsView(APIView):
 
     def get(self, request):
         today = datetime.date.today()
-        base = Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False)
+        base = owned(Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user)
 
         def _count(value):
             return base.filter(status__iexact=value).count()
@@ -660,8 +660,8 @@ class CaseSummaryView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        case = Case.objects.select_related('client').filter(
-            id=case_id, advocate_id__in=practice_ids(request.user)).first()
+        case = owned(Case.objects.select_related('client').filter(
+            id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
         today = datetime.date.today()
@@ -693,7 +693,7 @@ class CaseSummaryView(APIView):
             },
             'nextHearing': _event_payload(next_ev) if next_ev else None,
             'taskCounts': {'open': open_tasks, 'done': done_tasks},
-            'noteCount': CaseNote.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id).count(),
+            'noteCount': owned(CaseNote.objects.filter(advocate_id__in=practice_ids(request.user), case_id=case_id), request.user).count(),
             'tags': CaseTagSerializer(tags, many=True).data,
         })
 
@@ -713,6 +713,11 @@ class CasePartiesView(APIView):
         name = (request.data.get('name') or '').strip()
         if not name:
             return Response({'error': 'name is required'}, status=status.HTTP_400_BAD_REQUEST)
+        # A party the case already lists (same name) is returned, not added again:
+        # re-importing a court record re-posts its parties.
+        existing = CaseParty.objects.filter(case_id=case_id, name__iexact=name).first()
+        if existing is not None:
+            return Response(CasePartySerializer(existing).data, status=status.HTTP_200_OK)
         party = CaseParty.objects.create(
             advocate_id=request.user.id, case_id=case_id, name=name,
             role=request.data.get('role') or None,
@@ -742,7 +747,7 @@ class RelatedCasesView(APIView):
     permission_classes = [RequirePermission()]
 
     def _case_map(self, request, ids):
-        cases = Case.objects.filter(id__in=ids, advocate_id__in=practice_ids(request.user))
+        cases = owned(Case.objects.filter(id__in=ids, advocate_id__in=practice_ids(request.user)), request.user)
         return {c.id: c for c in cases}
 
     def get(self, request, case_id):
@@ -807,6 +812,7 @@ log = logging.getLogger(__name__)
 from courtsearch import client as court_client
 from courtsearch import matching
 from core.practice import practice_ids
+from core.tenant import owned
 
 # Cached once an hour per court so page loads are fast and the courts' servers
 # (and the scraper) are never hammered regardless of how many advocates view.

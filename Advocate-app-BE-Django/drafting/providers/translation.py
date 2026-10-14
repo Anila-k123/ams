@@ -63,6 +63,13 @@ class TranslationProvider:
         """Translate a list of strings; returns translations in the same order."""
         if not sentences:
             return []
+        if not settings.ALLOW_EXTERNAL_TRANSLATION:
+            # Sarvam receives the whole text and names can't be masked (they must
+            # be transliterated), so external translation needs explicit consent.
+            raise RuntimeError(
+                'Translation sends the document to an external service (Sarvam) and is turned '
+                'off. Ask your administrator to enable it (ALLOW_EXTERNAL_TRANSLATION) if your '
+                'firm has approved that.')
         if not self._key:
             raise RuntimeError(
                 'Sarvam API key not set. Add SARVAM_API_KEY=... to backend/.env.'
@@ -75,19 +82,11 @@ class TranslationProvider:
                 f'Sarvam has no language code for {source_lang!r}→{target_lang!r}'
             )
 
-        print(
-            f'[translate] → Sarvam ({self._model}): {len(sentences)} item(s) {src}→{tgt}',
-            flush=True,
-        )
         t0 = time.time()
-
         results = [self._translate_one(s, src, tgt) for s in sentences]
-
-        print(
-            f'[translate] ← done in {time.time() - t0:.1f}s | '
-            f'e.g. {sentences[0][:60]!r} → {results[0][:60]!r}',
-            flush=True,
-        )
+        # Counts and timing only: the sentences are client document text.
+        logger.info('translate via Sarvam (%s): %d item(s) %s->%s in %.1fs',
+                    self._model, len(sentences), src, tgt, time.time() - t0)
         return results
 
     def _translate_one(self, text: str, src: str, tgt: str) -> str:

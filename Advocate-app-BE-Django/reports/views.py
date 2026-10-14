@@ -14,6 +14,7 @@ from reportlab.lib.units import mm
 from .pdf import build_pdf, build_invoice_pdf, money, letterhead_from_advocate
 from core.finance import invoice_balance, invoice_paid_amounts
 from core.practice import practice_ids, practice_root
+from core.tenant import owned
 from invoices.models import InvoiceItem, InvoiceTaxDetail, FirmBillingProfile
 
 MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -40,8 +41,8 @@ def _branding(request):
 
 class CaseReportView(APIView):
     def get(self, request):
-        cases = Case.objects.select_related('client').filter(
-            advocate_id__in=practice_ids(request.user), deleted=False).order_by('-created_at')
+        cases = owned(Case.objects.select_related('client').filter(
+            advocate_id__in=practice_ids(request.user), deleted=False), request.user).order_by('-created_at')
         counts = defaultdict(int)
         rows = []
         for c in cases:
@@ -64,8 +65,8 @@ class ClientReportView(APIView):
     permission_classes = [RequirePermission('REPORT_VIEW')]
 
     def get(self, request):
-        clients = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False).order_by('name')
-        case_qs = Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False)
+        clients = owned(Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user).order_by('name')
+        case_qs = owned(Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user)
         by_client = defaultdict(lambda: defaultdict(int))
         for c in case_qs:
             by_client[c.client_id]['total'] += 1
@@ -88,7 +89,8 @@ class ExpenseReportView(APIView):
     permission_classes = [RequirePermission('REPORT_VIEW')]
 
     def get(self, request):
-        return _pdf(_expense_pdf(_expenses(request.user.id), 'All Expenses', _branding(request)), 'EXPENSE_REPORT.pdf')
+        return _pdf(_expense_pdf(owned(_expenses(request.user.id), request.user), 'All Expenses',
+                                 _branding(request)), 'EXPENSE_REPORT.pdf')
 
 
 def _expenses(advocate_id):
@@ -117,8 +119,8 @@ class InvoicePdfView(APIView):
     permission_classes = [RequirePermission('REPORT_VIEW')]
 
     def get(self, request, pk):
-        inv = Invoice.objects.select_related('case', 'client').filter(
-            id=pk, advocate_id__in=practice_ids(request.user)).first()
+        inv = owned(Invoice.objects.select_related('case', 'client').filter(
+            id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if inv is None:
             return Response({'error': 'Invoice not found'}, status=404)
         items = list(InvoiceItem.objects.filter(invoice_id=inv.id))
@@ -132,8 +134,8 @@ class ReceiptPdfView(APIView):
     permission_classes = [RequirePermission('REPORT_VIEW')]
 
     def get(self, request, pk):
-        p = ClientPayment.objects.select_related('case', 'client').filter(
-            id=pk, advocate_id__in=practice_ids(request.user)).first()
+        p = owned(ClientPayment.objects.select_related('case', 'client').filter(
+            id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if p is None:
             return Response({'error': 'Payment not found'}, status=404)
         blocks = [
@@ -154,15 +156,15 @@ class ClientDetailPdfView(APIView):
     permission_classes = [RequirePermission('REPORT_EXPORT')]
 
     def get(self, request, pk):
-        cl = Client.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        cl = owned(Client.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if cl is None:
             return Response({'error': 'Client not found'}, status=404)
-        cases = Case.objects.filter(advocate_id__in=practice_ids(request.user), client_id=pk, deleted=False)
+        cases = owned(Case.objects.filter(advocate_id__in=practice_ids(request.user), client_id=pk, deleted=False), request.user)
         counts = defaultdict(int)
         for c in cases:
             counts[(c.status or '').lower()] += 1
-        docs = Document.objects.filter(advocate_id__in=practice_ids(request.user), client_id=pk)
-        pays = ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user), client_id=pk).order_by('-payment_date')[:10]
+        docs = owned(Document.objects.filter(advocate_id__in=practice_ids(request.user), client_id=pk), request.user)
+        pays = owned(ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user), client_id=pk), request.user).order_by('-payment_date')[:10]
         blocks = [
             {'type': 'kv', 'rows': [
                 ('Name', cl.name or ''), ('Phone', cl.phone or ''), ('Email', cl.email or ''),
@@ -186,14 +188,14 @@ class CaseDetailPdfView(APIView):
     permission_classes = [RequirePermission('REPORT_EXPORT')]
 
     def get(self, request, pk):
-        c = Case.objects.select_related('client').filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        c = owned(Case.objects.select_related('client').filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if c is None:
             return Response({'error': 'Case not found'}, status=404)
-        expenses = Expense.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk)
-        payments = ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk)
-        invoices = Invoice.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk)
-        docs = Document.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk)
-        events = CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk).order_by('date')
+        expenses = owned(Expense.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk), request.user)
+        payments = owned(ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk), request.user)
+        invoices = owned(Invoice.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk), request.user)
+        docs = owned(Document.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk), request.user)
+        events = owned(CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), case_id=pk), request.user).order_by('date')
         adv = request.user
         total_exp = sum(e.amount or 0 for e in expenses)
         total_pay = sum(p.amount or 0 for p in payments)
@@ -227,28 +229,28 @@ class MonthlyPdfView(APIView):
         today = datetime.date.today()
         year = int(request.query_params.get('year') or today.year)
         month = int(request.query_params.get('month') or today.month)
-        cases = Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False)
+        cases = owned(Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user)
         status_counts = defaultdict(int)
         for c in cases:
             status_counts[(c.status or '').lower()] += 1
-        income = sum(p.amount or 0 for p in ClientPayment.objects.filter(
-            advocate_id__in=practice_ids(request.user), payment_date__year=year, payment_date__month=month))
-        expense = sum(e.amount or 0 for e in Expense.objects.filter(
-            advocate_id__in=practice_ids(request.user), payment_date__year=year, payment_date__month=month))
-        new_clients = Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False,
-                                            created_at__year=year, created_at__month=month).count()
-        invoices_gen = Invoice.objects.billable().filter(advocate_id__in=practice_ids(request.user),
-                                              invoice_date__year=year, invoice_date__month=month).count()
-        payments_recv = ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user),
-                                                     payment_date__year=year, payment_date__month=month).count()
-        upcoming = CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), date__gte=today).count()
+        income = sum(p.amount or 0 for p in owned(ClientPayment.objects.filter(
+            advocate_id__in=practice_ids(request.user), payment_date__year=year, payment_date__month=month), request.user))
+        expense = sum(e.amount or 0 for e in owned(Expense.objects.filter(
+            advocate_id__in=practice_ids(request.user), payment_date__year=year, payment_date__month=month), request.user))
+        new_clients = owned(Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False,
+                                            created_at__year=year, created_at__month=month), request.user).count()
+        invoices_gen = owned(Invoice.objects.billable().filter(advocate_id__in=practice_ids(request.user),
+                                              invoice_date__year=year, invoice_date__month=month), request.user).count()
+        payments_recv = owned(ClientPayment.objects.filter(advocate_id__in=practice_ids(request.user),
+                                                     payment_date__year=year, payment_date__month=month), request.user).count()
+        upcoming = owned(CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), date__gte=today), request.user).count()
         blocks = [
             {'type': 'heading', 'text': 'Case Overview'},
             {'type': 'kv', 'rows': [
                 ('Total Cases', cases.count()),
                 ('Active', status_counts.get('active', 0)), ('Closed', status_counts.get('closed', 0)),
                 ('Pending', status_counts.get('pending', 0)), ('Dismissed', status_counts.get('dismissed', 0)),
-                ('Total Clients', Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False).count()),
+                ('Total Clients', owned(Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user).count()),
                 ('New Clients (month)', new_clients),
             ]},
             {'type': 'heading', 'text': 'Financials'},
@@ -269,7 +271,7 @@ class FilteredExpensePdfView(APIView):
 
     def get(self, request):
         p = request.query_params
-        qs = Expense.objects.select_related('case').filter(advocate_id__in=practice_ids(request.user))
+        qs = owned(Expense.objects.select_related('case').filter(advocate_id__in=practice_ids(request.user)), request.user)
         if p.get('startDate'):
             qs = qs.filter(payment_date__gte=p['startDate'])
         if p.get('endDate'):
@@ -287,25 +289,26 @@ class DashboardPdfView(APIView):
 
     def get(self, request):
         today = datetime.date.today()
-        cases = Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False)
+        cases = owned(Case.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user)
         status_counts = defaultdict(int)
         for c in cases:
             status_counts[c.status or 'Unknown'] += 1
         month_ago = today - datetime.timedelta(days=30)
-        income = sum(p.amount or 0 for p in ClientPayment.objects.filter(
-            advocate_id__in=practice_ids(request.user), payment_date__gte=month_ago))
-        expense = sum(e.amount or 0 for e in Expense.objects.filter(
-            advocate_id__in=practice_ids(request.user), payment_date__gte=month_ago))
-        pending_inv = Invoice.objects.open().filter(advocate_id__in=practice_ids(request.user)).count()
+        income = sum(p.amount or 0 for p in owned(ClientPayment.objects.filter(
+            advocate_id__in=practice_ids(request.user), payment_date__gte=month_ago), request.user))
+        expense = sum(e.amount or 0 for e in owned(Expense.objects.filter(
+            advocate_id__in=practice_ids(request.user), payment_date__gte=month_ago), request.user))
+        pending_inv = owned(Invoice.objects.open().filter(advocate_id__in=practice_ids(request.user)),
+                            request.user).count()
         blocks = [
             {'type': 'heading', 'text': 'Summary'},
             {'type': 'kv', 'rows': [
                 ('Total Cases', cases.count()),
                 ('Active Cases', status_counts.get('Active', 0)),
-                ('Total Clients', Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False).count()),
-                ('Upcoming Hearings', CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), date__gte=today).count()),
+                ('Total Clients', owned(Client.objects.filter(advocate_id__in=practice_ids(request.user), deleted=False), request.user).count()),
+                ('Upcoming Hearings', owned(CaseEvent.objects.filter(advocate_id__in=practice_ids(request.user), date__gte=today), request.user).count()),
                 ('Pending Invoices', pending_inv),
-                ('Total Documents', Document.objects.filter(advocate_id__in=practice_ids(request.user)).count()),
+                ('Total Documents', owned(Document.objects.filter(advocate_id__in=practice_ids(request.user)), request.user).count()),
             ]},
             {'type': 'heading', 'text': 'Financials (last 30 days)'},
             {'type': 'kv', 'rows': [('Income', money(income)), ('Expenses', money(expense))]},

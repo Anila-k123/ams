@@ -11,13 +11,14 @@ from core.validators import amount_error, error_response
 from core.pagination import SpringStylePagination
 from .serializers import ExpenseSerializer
 from core.practice import practice_ids
+from core.tenant import owned
 from core.finance import recalc_case_totals
 
 SORT_MAP = {'paymentDate': 'payment_date', 'amount': 'amount', 'title': 'title', 'id': 'id'}
 
 
 def _base(request):
-    return Expense.objects.select_related('case').filter(advocate_id__in=practice_ids(request.user))
+    return owned(Expense.objects.select_related('case').filter(advocate_id__in=practice_ids(request.user)), request.user)
 
 
 def _case_id(data):
@@ -40,7 +41,7 @@ def _apply(expense, data, request):
     expense.expense_type = data.get('expenseType') or expense.expense_type or 'CLIENT_CASE'
     cid = _case_id(data)
     if cid is not None:
-        case = Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)).first()
+        case = owned(Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)), request.user).first()
         expense.case = case
         expense.client = case.client if case else None
 
@@ -160,7 +161,7 @@ class DeleteExpenseView(APIView):
     permission_classes = [RequirePermission('EXPENSE_DELETE')]
 
     def delete(self, request, pk):
-        expense = Expense.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        expense = owned(Expense.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if expense is None:
             return Response({'error': 'Expense not found'}, status=status.HTTP_404_NOT_FOUND)
         case_id = expense.case_id

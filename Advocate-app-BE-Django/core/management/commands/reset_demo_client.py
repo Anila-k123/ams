@@ -149,8 +149,10 @@ class Command(BaseCommand):
         # Files only after the rows are gone for good: a rolled-back delete must
         # not leave documents pointing at files that no longer exist.
         removed = 0
-        for path in sorted(set(files)):
-            if path and os.path.isfile(path):
+        from documents.storage import resolve_stored_file
+        for stored in sorted(set(files)):
+            path = resolve_stored_file(stored)   # only inside the documents folder
+            if path:
                 shutil.copy2(path, folder)
                 os.remove(path)
                 removed += 1

@@ -14,6 +14,7 @@ safe to re-run on every deploy.
 """
 
 from django.core.management.base import BaseCommand
+from rbac.seeding import seed_roles, template_roles
 from core.models import Permission, Role, RolePermission
 
 # (name, module, description)
@@ -22,7 +23,8 @@ PERMISSIONS = [
      'Receive hearing, cause-list and case payment alerts'),
 ]
 
-# The case workers. The Accountant is deliberately left out.
+# The case workers. The Accountant is deliberately left out. (rename_junior_role
+# runs first on every deploy, so the role is called 'Advocate' by now.)
 DEFAULT_ROLES = ['Super Admin', 'Senior Advocate', 'Advocate', 'Intern']
 
 
@@ -40,16 +42,17 @@ class Command(BaseCommand):
 
         granted = 0
         for role_name in DEFAULT_ROLES:
-            role = Role.objects.filter(name=role_name).first()
-            if role is None:
+            targets = seed_roles(role_name)
+            if not targets:
                 self.stdout.write(self.style.WARNING(f"  role {role_name!r} not found - skipped"))
                 continue
-            for name, _, _ in PERMISSIONS:
-                perm = Permission.objects.get(name=name)
-                _, made = RolePermission.objects.get_or_create(role_id=role.id, permission_id=perm.id)
-                if made:
-                    granted += 1
-                    self.stdout.write(f"  granted {name} to {role_name}")
+            for role in targets:
+                for name, _, _ in PERMISSIONS:
+                    perm = Permission.objects.get(name=name)
+                    _, made = RolePermission.objects.get_or_create(role_id=role.id, permission_id=perm.id)
+                    if made:
+                        granted += 1
+                        self.stdout.write(f"  granted {name} to {role_name}")
 
         self.stdout.write(self.style.SUCCESS(
             f"Done: {len(created)} permission(s) created, {granted} grant(s) added."))

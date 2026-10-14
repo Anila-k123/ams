@@ -267,3 +267,25 @@ def check_payload(data, spec):
     merged = {k: data.get(k) for k in data.keys()} if hasattr(data, 'keys') else dict(data)
     merged.update(cleaned)
     return merged, None
+
+
+# --- Passwords ---------------------------------------------------------------
+# One rule for every place a password is set (reset, change, settings, user
+# management, client portal). Matches the forms, which all ask for 8+ characters;
+# browser copy in src/utils/validators.ts (passwordError).
+PASSWORD_MIN = 8
+PASSWORD_MAX = 128
+
+
+def password_error(value, email=None):
+    """None when the password is acceptable, else the message to show."""
+    value = value or ''
+    if len(value) < PASSWORD_MIN:
+        return f'Use at least {PASSWORD_MIN} characters.'
+    if len(value) > PASSWORD_MAX:
+        return f'Use at most {PASSWORD_MAX} characters.'
+    if not value.strip():
+        return "A password can't be only spaces."
+    if email and value.strip().lower() == email.strip().lower():
+        return "Don't use your email address as your password."
+    return None

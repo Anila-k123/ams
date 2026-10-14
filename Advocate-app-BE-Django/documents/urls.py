@@ -16,5 +16,6 @@ urlpatterns = [
     path('documents/<int:pk>/summary/regenerate', views.DocumentSummaryRegenerateView.as_view()),
     path('documents/<int:pk>/versions', views.DocumentVersionsView.as_view()),
     path('documents/<int:pk>/versions/<int:version>/download', views.download_document_version),
+    path('documents/<int:pk>/link', views.document_link),
     path('documents/<int:pk>', views.DocumentDetailView.as_view()),
 ]

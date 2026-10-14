@@ -32,6 +32,7 @@ from rest_framework.views import APIView
 from core.models import Advocate, Case, Document
 from core.permissions import RequirePermission
 from core.practice import practice_ids
+from core.tenant import owned
 from documents.storage import add_version, create_document
 from workspace import review
 from workspace.models import CaseTask, CaseTaskDocument
@@ -56,8 +57,8 @@ def _case_for(session, user):
 def _task_for(session, case, user):
     if not (case and session.ams_task_id):
         return None
-    return CaseTask.objects.filter(id=session.ams_task_id, case_id=case.id,
-                                   advocate_id__in=practice_ids(user)).first()
+    return owned(CaseTask.objects.filter(id=session.ams_task_id, case_id=case.id,
+                                   advocate_id__in=practice_ids(user)), user).first()
 
 
 def task_payload(task):

@@ -1,0 +1,8 @@
+{
+  "_comment": "Proposal from the Phase 0 inventory (docs/PHASE0_BASELINE.md). Ids only. Copy, review and approve before using with apply_tenancy. Unresolved identities get no membership and their rows keep firm_id NULL.",
+  "firms": [
+    {"key": "firm-a", "name": "Firm A (root 1)", "slug": "firm-a", "roots": [1]},
+    {"key": "firm-b", "name": "Firm B (root 68)", "slug": "firm-b", "roots": [68, 70]}
+  ],
+  "unresolved": [4, 28, 36, 37, 41, 42, 61]
+}

@@ -27,12 +27,13 @@ log = logging.getLogger(__name__)
 
 TRACKED_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
 
-# Auth/credential endpoints: a row saying "someone tried to log in" is fine,
-# but these are high-volume and the interesting failures are already logged by
-# the auth layer. Skipped to keep the trail about business actions.
+# Auth/credential endpoints write their own security events (core/session.py),
+# so they are skipped here to keep this trail about business actions.
+# /api/platform/ is the SaaS operator API: operators are not firm users and
+# have their own audit table (platform_admin.PlatformAudit).
 SKIP_PATHS = (
     '/api/advocates/login', '/api/advocates/signup',
-    '/api/auth/', '/api/password', '/api/otp',
+    '/api/auth/', '/api/password', '/api/otp', '/api/invitations/', '/api/platform/',
 )
 
 # /api/<module>/... -> module name for the audit row, e.g. "CASES".

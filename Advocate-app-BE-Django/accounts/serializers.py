@@ -3,12 +3,19 @@ from rest_framework import serializers
 from core.models import Advocate
 
 
-def _branding_url(path, context):
-    """Turn a stored branding path into a loadable URL (/api/profile/files/branding/<name>)."""
+def _branding_url(path, context, private=False):
+    """Turn a stored branding path into a loadable URL (/api/profile/files/branding/<name>).
+
+    A signature or seal is `private`: its URL carries a short-lived signature
+    (accounts/branding.py), because an <img> tag cannot send the login token
+    and these images must not be fetchable by anyone who guesses the name."""
     if not path:
         return None
     name = os.path.basename(path.replace('\\', '/'))
     rel = '/api/profile/files/branding/' + name
+    if private:
+        from .branding import signed_query
+        rel += '?' + signed_query(name)
     request = context.get('request') if context else None
     return request.build_absolute_uri(rel) if request else rel
 
@@ -85,10 +92,10 @@ class FullProfileSerializer(serializers.ModelSerializer):
         return _branding_url(obj.office_logo_path, self.context)
 
     def get_signatureUrl(self, obj):
-        return _branding_url(obj.signature_path, self.context)
+        return _branding_url(obj.signature_path, self.context, private=True)
 
     def get_officeSealUrl(self, obj):
-        return _branding_url(obj.office_seal_path, self.context)
+        return _branding_url(obj.office_seal_path, self.context, private=True)
 
 
 class LoginSerializer(serializers.Serializer):

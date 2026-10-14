@@ -28,6 +28,8 @@ from django.utils import timezone
 from django.utils.html import escape
 
 from core.audit import record_system_action
+from core.jobs import job_run
+from core.tenant import can_receive, firm_active
 from core.models import (Advocate, Case, Client, Notification,
                          NotificationHistory, NotificationQueue)
 from core.practice import practice_root
@@ -37,6 +39,11 @@ log = logging.getLogger(__name__)
 
 # Minutes to wait before retry n. Beyond this the row is left FAILED.
 BACKOFF_MINUTES = [5, 30, 120]
+# A row claimed (PROCESSING) longer than this belonged to a drain that died
+# mid-send; it is handed back to the queue.
+STALE_CLAIM_MINUTES = 15
+PROCESSING = 'PROCESSING'
+CANCELLED = 'CANCELLED'
 
 
 class Command(BaseCommand):
@@ -54,29 +61,67 @@ class Command(BaseCommand):
                                  'the next scheduled run.')
 
     def handle(self, *args, **o):
+        with job_run('process_notifications') as run:
+            run.counts.update(self._drain(o))
+
+    def _claim(self, row_id, now):
+        """Take one row for this drain: PENDING -> PROCESSING in a single UPDATE.
+        Only one drain (the scheduler, or a send_now() from a request) can win a
+        row, so nothing is sent twice."""
+        return NotificationQueue.objects.filter(id=row_id, status=service.QUEUED).update(
+            status=PROCESSING, processing_started_at=now) == 1
+
+    def _release_stale(self, now):
+        stale = now - datetime.timedelta(minutes=STALE_CLAIM_MINUTES)
+        return NotificationQueue.objects.filter(status=PROCESSING, processing_started_at__lt=stale).update(
+            status=service.QUEUED, processing_started_at=None)
+
+    def _cancel(self, row, reason):
+        row.status, row.last_error = CANCELLED, reason[:2000]
+        row.save(update_fields=['status', 'last_error'])
+
+    def _drain(self, o):
         now = timezone.now()
+        released = 0 if o['dry_run'] else self._release_stale(now)
         qs = NotificationQueue.objects.filter(status=service.QUEUED)
         if o.get('ids'):
             qs = qs.filter(id__in=o['ids'])
         rows = list(qs.order_by('id')[:o['limit']])
 
-        sent = failed = waiting = 0
+        sent = failed = waiting = cancelled = 0
         for row in rows:
-            # Respect the backoff window set by a previous failure.
             if row.next_retry_at and row.next_retry_at > now:
                 waiting += 1
                 continue
             try:
                 payload = json.loads(row.payload_json or '{}')
             except ValueError:
+                payload = None
+
+            channel = (payload or {}).get('channel') or service.IN_APP
+            if o['dry_run']:
+                self.stdout.write('  would send {} via {} to advocate {}'.format(
+                    (payload or {}).get('eventType'), channel, row.advocate_id))
+                continue
+            if not self._claim(row.id, now):
+                continue                    # another drain has it
+            row.status = PROCESSING
+            if payload is None:
                 self._fail(row, 'payload_json is not valid JSON', now)
                 failed += 1
                 continue
 
-            channel = payload.get('channel') or service.IN_APP
-            if o['dry_run']:
-                self.stdout.write('  would send {} via {} to advocate {}'.format(
-                    payload.get('eventType'), channel, row.advocate_id))
+            # Re-check at send time: the person or the firm may have been
+            # suspended, or the person may have left, since this was queued.
+            firm_id = getattr(row, 'firm_id', None)
+            to_client = bool(payload.get('recipientEmail') and payload.get('clientId'))
+            if not firm_active(firm_id):
+                self._cancel(row, 'firm not active')
+                cancelled += 1
+                continue
+            if not to_client and not can_receive(row.advocate_id, firm_id):
+                self._cancel(row, 'recipient no longer an active member of this firm')
+                cancelled += 1
                 continue
 
             try:
@@ -96,12 +141,11 @@ class Command(BaseCommand):
             self._audit(row, payload, channel, ok=True)
             sent += 1
 
-
         self.stdout.write(self.style.SUCCESS(
-            'Queue: {} sent, {} failed, {} waiting on backoff.{}'.format(
-                sent, failed, waiting, ' [dry run]' if o['dry_run'] else '')))
-
-    # -- delivery ----------------------------------------------------------
+            'Queue: {} sent, {} failed, {} cancelled, {} waiting on backoff.{}'.format(
+                sent, failed, cancelled, waiting, ' [dry run]' if o['dry_run'] else '')))
+        return {'sent': sent, 'failed': failed, 'cancelled': cancelled, 'waiting': waiting,
+                'staleReleased': released}
 
     def _deliver(self, row, payload, channel):
         """Send on one channel. Raises on failure; returns a provider note."""

@@ -17,6 +17,7 @@ safe to re-run on every deploy.
 """
 
 from django.core.management.base import BaseCommand
+from rbac.seeding import seed_roles, template_roles
 from core.models import Permission, Role, RolePermission
 
 # (name, module, description)
@@ -54,30 +55,32 @@ class Command(BaseCommand):
 
         granted = 0
         for role_name, codes in GRANTS.items():
-            role = Role.objects.filter(name=role_name).first()
-            if role is None:
+            targets = seed_roles(role_name)
+            if not targets:
                 self.stdout.write(self.style.WARNING(f"  role {role_name!r} not found - skipped"))
                 continue
-            for code in codes:
-                perm = Permission.objects.filter(name=code).first()
-                if perm is None:
-                    self.stdout.write(self.style.WARNING(f"  permission {code} not found - skipped"))
-                    continue
-                _, made = RolePermission.objects.get_or_create(role_id=role.id, permission_id=perm.id)
-                if made:
-                    granted += 1
-                    self.stdout.write(f"  granted {code} to {role_name}")
+            for role in targets:
+                for code in codes:
+                    perm = Permission.objects.filter(name=code).first()
+                    if perm is None:
+                        self.stdout.write(self.style.WARNING(f"  permission {code} not found - skipped"))
+                        continue
+                    _, made = RolePermission.objects.get_or_create(role_id=role.id, permission_id=perm.id)
+                    if made:
+                        granted += 1
+                        self.stdout.write(f"  granted {code} to {role_name}")
 
         revoked = 0
         for role_name, codes in REVOKES.items():
-            role = Role.objects.filter(name=role_name).first()
-            if role is None:
+            targets = template_roles(role_name)
+            if not targets:
                 continue
-            perm_ids = list(Permission.objects.filter(name__in=codes).values_list('id', flat=True))
-            n, _ = RolePermission.objects.filter(role_id=role.id, permission_id__in=perm_ids).delete()
-            if n:
-                revoked += n
-                self.stdout.write(f"  removed {', '.join(codes)} from {role_name}")
+            for role in targets:
+                perm_ids = list(Permission.objects.filter(name__in=codes).values_list('id', flat=True))
+                n, _ = RolePermission.objects.filter(role_id=role.id, permission_id__in=perm_ids).delete()
+                if n:
+                    revoked += n
+                    self.stdout.write(f"  removed {', '.join(codes)} from {role_name}")
 
         self.stdout.write(self.style.SUCCESS(
             f"Done: {len(created)} permission(s) created, {granted} grant(s) added, {revoked} removed."))

@@ -4,6 +4,7 @@ Column names follow Hibernate's snake_case; camelCase JSON is produced in the
 serializers, not here.
 """
 
+from django.conf import settings
 from django.db import models
 
 
@@ -76,21 +77,37 @@ class Advocate(models.Model):
     def is_anonymous(self):
         return False
 
+    def effective_role_ids(self):
+        """The roles that count for this advocate right now.
+
+        Legacy / shadow: every assigned role. Firm mode (firm-level RBAC,
+        rbac/firm_roles.py): only enabled roles OWNED BY THE ACTIVE FIRM, plus
+        the global Client role for client-portal logins - so permissions never
+        combine across firms and a global template assigned by mistake grants
+        nothing."""
+        role_ids = list(AdvocateRole.objects.filter(advocate_id=self.id).values_list('role_id', flat=True))
+        if settings.TENANCY_MODE != 'firm' or not settings.TENANCY_COLUMNS or not role_ids:
+            return role_ids
+        from core import tenant
+        firm = tenant.firm_of(self)
+        if firm is None:
+            return []
+        from django.db.models import Q
+        return list(Role.objects.filter(id__in=role_ids, disabled=False)
+                    .filter(Q(firm_id=firm.id) | Q(firm_id__isnull=True, name__iexact='Client'))
+                    .values_list('id', flat=True))
+
     def permission_codes(self):
         """Return the set of permission name strings for this advocate,
         resolved through advocate_roles -> role_permissions -> permissions."""
-        role_ids = AdvocateRole.objects.filter(
-            advocate_id=self.id).values_list('role_id', flat=True)
         perm_ids = RolePermission.objects.filter(
-            role_id__in=list(role_ids)).values_list('permission_id', flat=True)
+            role_id__in=self.effective_role_ids()).values_list('permission_id', flat=True)
         return set(Permission.objects.filter(
             id__in=list(perm_ids)).values_list('name', flat=True))
 
     def role_names(self):
-        role_ids = AdvocateRole.objects.filter(
-            advocate_id=self.id).values_list('role_id', flat=True)
         return list(Role.objects.filter(
-            id__in=list(role_ids)).values_list('name', flat=True))
+            id__in=self.effective_role_ids()).values_list('name', flat=True))
 
 
 class Client(models.Model):
@@ -102,6 +119,10 @@ class Client(models.Model):
     deleted = models.BooleanField(default=False)
     created_at = models.DateField(null=True, blank=True)
     advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='advocate_id')
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         managed = False
@@ -133,6 +154,10 @@ class Case(models.Model):
     advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, db_column='advocate_id')
     client = models.ForeignKey(Client, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='client_id')
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         managed = False
         db_table = 'cases'
@@ -154,6 +179,10 @@ class CaseEvent(models.Model):
     notified = models.BooleanField(default=False)
     case = models.ForeignKey(Case, on_delete=models.DO_NOTHING, db_column='case_id')
     advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, db_column='advocate_id')
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         managed = False
@@ -186,16 +215,32 @@ class Document(models.Model):
     # firm switches it on for this document. Column added by documents/migrations/0005.
     client_visible = models.BooleanField(default=False)
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         managed = False
         db_table = 'documents'
 
 
 class Role(models.Model):
+    """A role. With the tenancy schema (firms/migrations/0004):
+    firm_id NULL + is_template -> a global system template (immutable);
+    firm_id set -> owned by that firm (a clone of a template, or custom).
+    Names are unique per firm (and among templates), not globally."""
     id = models.BigAutoField(primary_key=True)
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255, unique=not settings.TENANCY_COLUMNS)
     description = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(null=True, blank=True)
+    if settings.TENANCY_COLUMNS:
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+        is_template = models.BooleanField(default=False)
+        cloned_from_id = models.BigIntegerField(null=True, blank=True)
+        # The firm's administrator role (a clone of Super Admin): protected,
+        # needed to grant high-risk permissions, and never left without a holder.
+        is_admin = models.BooleanField(default=False)
+        disabled = models.BooleanField(default=False)
 
     class Meta:
         managed = False
@@ -219,6 +264,10 @@ class AdvocateRole(models.Model):
     advocate_id = models.BigIntegerField()
     role_id = models.BigIntegerField()
     created_at = models.DateTimeField(null=True, blank=True)
+    if settings.TENANCY_COLUMNS:
+        # The firm and membership this assignment belongs to.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+        membership_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -251,6 +300,10 @@ class Expense(models.Model):
     case = models.ForeignKey(Case, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='case_id')
     client = models.ForeignKey(Client, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='client_id')
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         managed = False
         db_table = 'expenses'
@@ -273,7 +326,10 @@ class InvoiceQuerySet(models.QuerySet):
 
 class Invoice(models.Model):
     id = models.BigAutoField(primary_key=True)
-    invoice_number = models.CharField(max_length=255, unique=True)
+    # Unique within the firm's numbering scope, not across the server
+    # (invoices/migrations/0010: invoices_firm_number_uniq, plus
+    # invoices_legacy_number_uniq for rows without a firm).
+    invoice_number = models.CharField(max_length=255)
     amount = models.FloatField()
     invoice_date = models.DateField()
     due_date = models.DateField()
@@ -284,9 +340,21 @@ class Invoice(models.Model):
 
     objects = InvoiceQuerySet.as_manager()
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         managed = False
         db_table = 'invoices'
+        # Mirrors the live indexes, for the test database (built from models).
+        constraints = ([
+            models.UniqueConstraint(fields=['firm_id', 'invoice_number'], name='invoices_firm_number_uniq'),
+            models.UniqueConstraint(fields=['invoice_number'], condition=models.Q(firm_id__isnull=True),
+                                    name='invoices_legacy_number_uniq'),
+        ] if settings.TENANCY_COLUMNS else [
+            models.UniqueConstraint(fields=['invoice_number'], name='invoices_number_uniq'),
+        ])
 
 
 class ClientPayment(models.Model):
@@ -299,6 +367,10 @@ class ClientPayment(models.Model):
     advocate = models.ForeignKey(Advocate, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='advocate_id')
     case = models.ForeignKey(Case, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='case_id')
     client = models.ForeignKey(Client, on_delete=models.DO_NOTHING, null=True, blank=True, db_column='client_id')
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         managed = False
@@ -338,6 +410,10 @@ class AuditLog(models.Model):
     metadata = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField()
     advocate_id = models.BigIntegerField(null=True, blank=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         managed = False
@@ -466,6 +542,10 @@ class NotificationQueue(models.Model):
     created_at = models.DateTimeField()
     advocate_id = models.BigIntegerField()
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         managed = False
         db_table = 'notification_queue'
@@ -501,6 +581,10 @@ class Notification(models.Model):
     entity_type = models.CharField(max_length=50, null=True, blank=True)
     entity_id = models.BigIntegerField(null=True, blank=True)
     case_id = models.BigIntegerField(null=True, blank=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         managed = False

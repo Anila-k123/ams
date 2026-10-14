@@ -45,7 +45,15 @@ def _metered(feature, operation, model_name, owner_field=None, ref_type=''):
                     owner = model.objects.filter(id=obj_id).values_list(owner_field, flat=True).first()
                 except Exception:                            # noqa: BLE001
                     owner = None
-            with metering(feature, operation, owner, ref_type=ref_type or model_name.lower(), ref_id=obj_id):
+            # A draft's facts hold party names that may be in no AMS record;
+            # the external-model masker must know them (providers/privacy.py).
+            from .providers.privacy import fact_names, names_for_masking
+            facts = None
+            if model_name == 'DraftSession':
+                from .models import DraftSession
+                facts = DraftSession.objects.filter(id=obj_id).values_list('facts', flat=True).first()
+            with metering(feature, operation, owner, ref_type=ref_type or model_name.lower(), ref_id=obj_id), \
+                    names_for_masking(fact_names(facts)):
                 return fn(self, obj_id, *args, **kwargs)
         return wrapper
     return deco
@@ -121,11 +129,14 @@ def process_sample(self, sample_id: int):
         # Populate the clause library from these clauses when tagged with a type.
         if sample.contract_type:
             variant = sample.variant or LibraryClause.Variant.ANY
+            # bulk_create skips pre_save, so the owning firm is set here: the
+            # library row belongs to the firm of the sample it came from.
+            owner_firm = {'firm_id': getattr(sample, 'firm_id', None)} if hasattr(sample, 'firm_id') else {}
             LibraryClause.objects.bulk_create([
                 LibraryClause(
                     contract_type=sample.contract_type, clause_type=c.clause_type,
                     variant=variant, title=(c.clause_type or 'Clause').replace('_', ' ').title(),
-                    text=c.text, embedding=c.embedding, source_sample=sample,
+                    text=c.text, embedding=c.embedding, source_sample=sample, **owner_firm,
                 )
                 for c in to_create
             ])
@@ -145,7 +156,7 @@ def process_sample(self, sample_id: int):
 
 
 @shared_task(bind=True, max_retries=3)
-@_metered('draft', 'draft.prepare_template', 'Template', None, 'template')
+@_metered('draft', 'draft.prepare_template', 'Template', 'created_by_id', 'template')
 def process_template(self, template_id: int):
     """Parse an uploaded template file into clause-skeleton slots (body_json) and
     LLM-name each slot, then mark the template READY. Runs in the background so the
@@ -1015,6 +1026,23 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
     return all_blocks, failures
 
 
+def library_for(session):
+    """The library clauses this draft may draw on: those extracted from samples
+    in the drafting advocate's own practice.
+
+    Library rows carry no owner of their own (drafting.LibraryClause), so before
+    this every firm's drafts were filled from every other firm's sample clauses.
+    Clauses with no source sample are left out: nobody can say whose they are.
+    Firm ownership proper arrives with the tenant model (SaaS Phase 2)."""
+    from core.models import Advocate
+    from .access import visible_samples
+    from .models import LibraryClause
+    owner = Advocate.objects.filter(id=session.created_by_id).first()
+    if owner is None:
+        return LibraryClause.objects.none()
+    return LibraryClause.objects.filter(source_sample__in=visible_samples(owner))
+
+
 def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
     """Mode 3 — from scratch, no uploaded document. Structure comes from the
     session's template; each slot is filled from the firm's Clause Library
@@ -1059,6 +1087,7 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
     if style_directive:
         system_prompt += f'\n\nPREFERRED DRAFTING STYLE: {style_directive}'
 
+    library = library_for(session)
     specs = []
     for position, slot in enumerate(session.template.body_json):
         slot_label = slot.get('label', '')
@@ -1068,7 +1097,7 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
         # Retrieve the closest library clauses for this slot (contract_type-scoped).
         query_vec = emb.embed(slot_desc)
         candidates = list(
-            LibraryClause.objects
+            library
             .filter(contract_type__iexact=contract_type, is_active=True)
             .exclude(embedding=None)
             .order_by(CosineDistance('embedding', query_vec))[:TOP_K]
@@ -1173,14 +1202,19 @@ def generate_draft(self, session_id: int):
     from .providers.llm import get_llm
     from .providers.embeddings import get_embeddings
 
+    from django.db import transaction
+    S = DraftSession.Status
+    # Claim the run: only a session waiting for a draft (PENDING), or one whose
+    # last run failed (a retry), is generated. A duplicate or late job - a
+    # double dispatch, a retry arriving after the user already has a READY
+    # draft - finds nothing to claim and stops, instead of wiping the draft.
+    if not DraftSession.objects.filter(id=session_id, status__in=[S.PENDING, S.FAILED]).update(
+            status=S.GENERATING):
+        logger.info('generate_draft: session %s is not waiting for a draft; skipped', session_id)
+        return
     try:
         session = (DraftSession.objects.select_related('template')
                    .prefetch_related('samples').get(id=session_id))
-        session.status = DraftSession.Status.GENERATING
-        session.save(update_fields=['status'])
-
-        # Idempotent re-run: drop any blocks from a previous attempt.
-        DraftBlock.objects.filter(session=session).delete()
 
         llm = get_llm(session.llm)           # always Gemini
         emb = get_embeddings()
@@ -1219,22 +1253,26 @@ def generate_draft(self, session_id: int):
         # Tables from a PDF template / sample arrive as | a | b | lines: make them real tables.
         _tables_to_html(blocks)
 
-        # Persist all blocks at once.
-        DraftBlock.objects.bulk_create(blocks)
-
-        # Optional post-pass: replace stale IPC/CrPC/Evidence Act references with
-        # the BNS/BNSS/BSA equivalents — only when the user opted in at session creation.
-        if session.apply_bns_codes:
-            from .services.legal_codes import patch_draft_session as _patch_legal_codes
-            _patch_legal_codes(session.id)
-
-        session.status = DraftSession.Status.READY
-        session.save(update_fields=['status'])
-
-        # Keep the AI's draft as a version, so later redlines can compare against it.
+        # Swap the draft in one transaction: the previous blocks are replaced
+        # only once the new ones are complete, so a failure (or a crash) leaves
+        # the earlier draft as it was instead of an empty or half draft.
         from .versions import save_version
         from .models import DraftVersion
-        save_version(session, DraftVersion.Kind.GENERATED, 'AI draft', session.created_by_id)
+        with transaction.atomic():
+            DraftBlock.objects.filter(session=session).delete()
+            DraftBlock.objects.bulk_create(blocks)
+
+            # Optional post-pass: replace stale IPC/CrPC/Evidence Act references with
+            # the BNS/BNSS/BSA equivalents — only when the user opted in at session creation.
+            if session.apply_bns_codes:
+                from .services.legal_codes import patch_draft_session as _patch_legal_codes
+                _patch_legal_codes(session.id)
+
+            session.status = DraftSession.Status.READY
+            session.save(update_fields=['status'])
+
+            # Keep the AI's draft as a version, so later redlines can compare against it.
+            save_version(session, DraftVersion.Kind.GENERATED, 'AI draft', session.created_by_id)
 
     except Exception as exc:
         from .models import DraftSession

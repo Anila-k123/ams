@@ -4,6 +4,7 @@ owned and migrated by Django. case_id is stored as a plain integer referencing t
 `cases` table; we deliberately avoid a DB-level FK so Django never touches that table.
 """
 
+from django.conf import settings
 from django.db import models
 
 
@@ -13,6 +14,10 @@ class CaseNote(models.Model):
     case_id = models.BigIntegerField(db_index=True)
     body = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = 'case_note'
@@ -54,6 +59,10 @@ class CaseTask(models.Model):
     submitted_at = models.DateTimeField(null=True, blank=True)
     reviewed_by_id = models.BigIntegerField(null=True, blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = 'case_task'

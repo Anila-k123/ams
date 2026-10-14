@@ -15,6 +15,7 @@ from courtsearch.models import ImportedCaseRecord
 from .serializers import (ActListSerializer, ActDetailSerializer, SectionDetailSerializer,
                           _jurisdiction_label)
 from core.practice import practice_ids
+from core.tenant import owned
 
 # Provakil-style field-scoped search chips. "all" searches every act-level
 # text field; the two section-scoped modes join through Section and return
@@ -197,8 +198,12 @@ class ActCaseLinksView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, pk):
-        links = ActCaseLink.objects.filter(act_id=pk).order_by('-linked_at')
-        cases_by_id = {c.id: c for c in Case.objects.filter(id__in=[l.case_id for l in links])}
+        # Acts are shared by every firm; the links are not. Only links to cases
+        # this user may see are listed (another firm's matter linked to the same
+        # act must not appear here).
+        mine = owned(Case.objects.filter(advocate_id__in=practice_ids(request.user)), request.user)
+        links = ActCaseLink.objects.filter(act_id=pk, case_id__in=mine.values('id')).order_by('-linked_at')
+        cases_by_id = {c.id: c for c in mine.filter(id__in=[l.case_id for l in links])}
         return Response([
             {
                 'id': link.id,
@@ -216,7 +221,7 @@ class ActCaseLinksView(APIView):
         if not case_id:
             return Response({'error': 'caseId is required.'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
         # Only the advocate's own cases can be linked - same scoping cases/views.py uses.
-        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
+        case = owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         if not case:
             return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
         link, created = ActCaseLink.objects.get_or_create(
@@ -233,6 +238,9 @@ class ActCaseUnlinkView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, pk, case_id):
+        # Same rule as CaseActUnlinkView: only a link on one of this user's cases.
+        if not owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).exists():
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
         ActCaseLink.objects.filter(act_id=pk, case_id=case_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -259,7 +267,7 @@ class CaseActLinksView(APIView):
     permission_classes = [RequirePermission()]
 
     def _owned_case(self, request, case_id):
-        return Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
+        return owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first()
 
     def get(self, request, case_id):
         if not self._owned_case(request, case_id):
@@ -289,7 +297,7 @@ class CaseActUnlinkView(APIView):
     permission_classes = [RequirePermission()]
 
     def delete(self, request, case_id, act_id):
-        if not Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists():
+        if not owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).exists():
             return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
         ActCaseLink.objects.filter(act_id=act_id, case_id=case_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -334,7 +342,7 @@ class CaseCitedActsView(APIView):
     permission_classes = [RequirePermission()]
 
     def get(self, request, case_id):
-        if not Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).exists():
+        if not owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).exists():
             return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
         rec = ImportedCaseRecord.objects.filter(case_id=case_id).order_by('-fetched_at').first()
         cited = _cited_acts_from_raw(rec.raw) if rec else []

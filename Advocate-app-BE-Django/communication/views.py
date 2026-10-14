@@ -12,6 +12,29 @@ from core.models import (CommunicationSettings,
 from core.pagination import SpringStylePagination
 from core.practice import practice_ids
 
+def _firm_rows(qs, user):
+    """Notification history / log / queue rows of this firm only.
+
+    The rows are keyed by advocate (practice_ids), but a person who moved here
+    from another firm keeps their old rows; in firm mode those must not show,
+    nor be exported. Queue rows carry firm_id; history rows are matched by the
+    case or client they concern (rows about neither are the member's own)."""
+    from core.tenant import has_firm_column, mode, resolve_firm
+    if mode() != 'firm':
+        return qs
+    firm = resolve_firm(user)
+    if has_firm_column(qs.model):
+        return qs.filter(firm_id=firm.id)
+    from django.db.models import Q
+    from core.models import Case, Client
+    names = {f.attname for f in qs.model._meta.concrete_fields}
+    if 'case_id' in names:
+        qs = qs.filter(Q(case_id__isnull=True) | Q(case_id__in=Case.objects.filter(firm_id=firm.id).values('id')))
+    if 'client_id' in names:
+        qs = qs.filter(Q(client_id__isnull=True) | Q(client_id__in=Client.objects.filter(firm_id=firm.id).values('id')))
+    return qs
+
+
 
 def _now():
     return datetime.datetime.now()
@@ -118,7 +141,7 @@ def _history_map(h):
 class HistoryView(APIView):
     def get(self, request):
         p = request.query_params
-        qs = NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user))
+        qs = _firm_rows(NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user)), request.user)
         if p.get('channel'):
             qs = qs.filter(channel=p['channel'])
         if p.get('status'):
@@ -149,8 +172,8 @@ class StatisticsView(APIView):
         # screens in one section disagreeing about the same number.
         aid = practice_ids(request.user)
         today = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
-        H = NotificationHistory.objects.filter(advocate_id__in=aid)
-        Q = NotificationQueue.objects.filter(advocate_id__in=aid)
+        H = _firm_rows(NotificationHistory.objects.filter(advocate_id__in=aid), request.user)
+        Q = _firm_rows(NotificationQueue.objects.filter(advocate_id__in=aid), request.user)
         return Response({
             'totalSent': H.filter(status='SENT').count(),
             'failedTotal': H.filter(status='FAILED').count(),
@@ -189,7 +212,7 @@ def _email_configured(advocate_id):
 
 class LogsView(APIView):
     def get(self, request):
-        qs = NotificationLog.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('-created_at', '-id')
+        qs = _firm_rows(NotificationLog.objects.filter(advocate_id__in=practice_ids(request.user)), request.user).order_by('-created_at', '-id')
         return Response([{
             'id': l.id, 'logLevel': l.log_level, 'message': l.message, 'channel': l.channel,
             'eventType': l.event_type, 'recipient': l.recipient, 'details': l.details,
@@ -201,7 +224,7 @@ class LogsView(APIView):
 
 class QueueStatusView(APIView):
     def get(self, request):
-        Q = NotificationQueue.objects.filter(advocate_id__in=practice_ids(request.user))
+        Q = _firm_rows(NotificationQueue.objects.filter(advocate_id__in=practice_ids(request.user)), request.user)
         return Response({
             'pending': Q.filter(status='PENDING').count(),
             'processing': Q.filter(status='PROCESSING').count(),
@@ -254,7 +277,8 @@ class TestView(APIView):
 
 class ExportCsvView(APIView):
     def get(self, request):
-        qs = NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user)).order_by('-sent_at')[:10000]
+        qs = _firm_rows(NotificationHistory.objects.filter(advocate_id__in=practice_ids(request.user)),
+                        request.user).order_by('-sent_at')[:10000]
         resp = HttpResponse(content_type='text/csv; charset=UTF-8')
         resp['Content-Disposition'] = 'attachment; filename=notification_history.csv'
         w = csv.writer(resp)

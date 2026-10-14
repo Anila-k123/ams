@@ -1,9 +1,12 @@
 """Password-reset OTP flow: forgot-password -> verify-otp -> reset-password.
 
 The OTP is hashed (SHA-256 + salt) before storage in password_reset_otp; the raw
-OTP is emailed via SMTP. Since Django both issues and verifies the OTP, the hash
-just needs to be internally consistent (the table starts empty). Email-send
-failures are swallowed so the flow still works offline — the OTP is logged.
+OTP is emailed via SMTP and never logged (whoever reads a log could otherwise
+reset any account). On a development machine use the console email backend
+(MAIL_BACKEND=django.core.mail.backends.console.EmailBackend) to see the code.
+
+Guessing is stopped in accounts/throttle.py: after OTP_MAX_FAILURES wrong codes
+for an email, all its live codes are burned and a new one must be requested.
 """
 
 import hashlib
@@ -21,6 +24,9 @@ from rest_framework import status
 
 from core.models import Advocate, PasswordResetOtp
 from core.passwords import hash_password
+from core.validators import password_error
+
+from . import throttle
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +69,10 @@ def forgot_password(request):
         created_at=_now(), expires_at=_now() + datetime.timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
         used=False,
     )
-    log.warning("Password-reset OTP for %s: %s (expires in %s min)", email, otp, settings.OTP_EXPIRY_MINUTES)
+    log.info('Password-reset code issued for advocate %s (expires in %s min)',
+             advocate.id, settings.OTP_EXPIRY_MINUTES)
+    from core.session import security_event
+    security_event('PASSWORD_RESET_REQUESTED', request, actor=advocate)
     try:
         send_mail(
             subject='Your Password Reset OTP',
@@ -84,16 +93,40 @@ def _valid_otp_row(email, otp):
     ).order_by('-id').first()
 
 
+_TOO_MANY = {'success': False, 'error': 'Too many wrong codes. Request a new code and try again.'}
+_INVALID = {'success': False, 'error': 'Invalid or expired OTP.'}
+
+
+def _burn_codes(email):
+    PasswordResetOtp.objects.filter(email__iexact=email, used=False).update(used=True)
+
+
+def _checked_row(request, email, otp):
+    """(row, error_response). Counts wrong codes; burns every live code for the
+    email once OTP_MAX_FAILURES is reached, so a 6-digit code can't be guessed."""
+    if throttle.otp_failures(email) >= settings.OTP_MAX_FAILURES:
+        _burn_codes(email)
+        return None, Response(_TOO_MANY, status=status.HTTP_429_TOO_MANY_REQUESTS)
+    row = _valid_otp_row(email, otp) if otp else None
+    if row is None:
+        throttle.record_otp_failure(email, throttle.client_ip(request))
+        if throttle.otp_failures(email) >= settings.OTP_MAX_FAILURES:
+            _burn_codes(email)
+            return None, Response(_TOO_MANY, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        return None, Response(_INVALID, status=status.HTTP_400_BAD_REQUEST)
+    return row, None
+
+
 @api_view(['POST'])
 @authentication_classes([])
 @permission_classes([AllowAny])
 def verify_otp(request):
     email = (request.data.get('email') or '').strip()
     otp = (request.data.get('otp') or '').strip()
-    if _valid_otp_row(email, otp):
-        return Response({'success': True, 'message': 'OTP verified.'})
-    return Response({'success': False, 'error': 'Invalid or expired OTP.'},
-                    status=status.HTTP_400_BAD_REQUEST)
+    row, error = _checked_row(request, email, otp)
+    if error is not None:
+        return error
+    return Response({'success': True, 'message': 'OTP verified.'})
 
 
 @api_view(['POST'])
@@ -103,16 +136,24 @@ def reset_password(request):
     email = (request.data.get('email') or '').strip()
     otp = (request.data.get('otp') or '').strip()
     new_password = request.data.get('newPassword') or ''
-    row = _valid_otp_row(email, otp)
-    if row is None:
-        return Response({'success': False, 'error': 'Invalid or expired OTP.'},
-                        status=status.HTTP_400_BAD_REQUEST)
-    advocate = Advocate.objects.filter(email__iexact=email).first()
+    row, error = _checked_row(request, email, otp)
+    if error is not None:
+        return error
+    advocate = Advocate.objects.filter(id=row.advocate_id).first() or \
+        Advocate.objects.filter(email__iexact=email).first()
     if advocate is None:
         return Response({'success': False, 'error': 'Account not found.'},
                         status=status.HTTP_400_BAD_REQUEST)
+    problem = password_error(new_password, advocate.email)
+    if problem:
+        return Response({'success': False, 'error': problem}, status=status.HTTP_400_BAD_REQUEST)
     advocate.password = hash_password(new_password)
     advocate.save(update_fields=['password'])
-    row.used = True
-    row.save(update_fields=['used'])
+    # Every session that existed before the reset ends (a stolen token included).
+    from core.session import PASSWORD_RESET, revoke_all, security_event
+    revoke_all(advocate.id, PASSWORD_RESET)
+    security_event('PASSWORD_RESET', request, actor=advocate)
+    # Every code for this email is spent now, not just the one used.
+    _burn_codes(email)
+    throttle.clear_otp_failures(email)
     return Response({'success': True, 'message': 'Password reset successful.'})

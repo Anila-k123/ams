@@ -106,9 +106,11 @@ def import_document(user, doc):
     if (existing and existing.ams_version == version
             and existing.status in (Sample.Status.READY, Sample.Status.PROCESSING)):
         return existing
-    if not doc.file_path or not os.path.exists(doc.file_path):
-        raise FileNotFoundError(doc.file_path)
-    with open(doc.file_path, 'rb') as fh:
+    from documents.storage import resolve_stored_file
+    path = resolve_stored_file(doc.file_path, doc.stored_name)
+    if path is None:
+        raise FileNotFoundError(doc.stored_name)
+    with open(path, 'rb') as fh:
         data = fh.read()
     from .tasks import process_sample
     from .views import _dispatch

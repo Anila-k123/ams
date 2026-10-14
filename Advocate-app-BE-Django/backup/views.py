@@ -57,7 +57,20 @@ class ValidateView(APIView):
         if f is None:
             return Response({'valid': False, 'error': 'file is required'},
                             status=status.HTTP_400_BAD_REQUEST)
+        too_big = _too_big(f)
+        if too_big:
+            return too_big
         return Response(service.validate_zip(f.read()))
+
+
+def _too_big(f):
+    """Refuse an archive over BACKUP_MAX_UPLOAD_MB before reading it into memory."""
+    if f.size > int(settings.BACKUP_MAX_UPLOAD_MB) * 1024 * 1024:
+        return Response({'valid': False, 'status': 'FAILED',
+                         'error': f'Backup files can be at most {settings.BACKUP_MAX_UPLOAD_MB} MB.',
+                         'message': f'Backup files can be at most {settings.BACKUP_MAX_UPLOAD_MB} MB.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    return None
 
 
 class RestoreView(APIView):
@@ -68,6 +81,9 @@ class RestoreView(APIView):
         if f is None:
             return Response({'status': 'FAILED', 'message': 'file is required'},
                             status=status.HTTP_400_BAD_REQUEST)
+        too_big = _too_big(f)
+        if too_big:
+            return too_big
         rtype = request.query_params.get('type') or request.data.get('type') or 'FULL'
         return Response(service.restore_backup(request.user, f.read(), rtype.upper()))
 

@@ -14,6 +14,7 @@ Grants (agreed chamber split):
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from rbac.seeding import seed_roles, template_roles
 from core.models import Permission, Role, RolePermission
 
 CODES = {
@@ -42,13 +43,14 @@ class Command(BaseCommand):
             perms[code] = perm
             self.stdout.write(f'{"created" if created else "exists "} {code}')
         for role_name, codes in GRANTS.items():
-            role = Role.objects.filter(name=role_name).first()
-            if role is None:
+            targets = seed_roles(role_name)
+            if not targets:
                 self.stdout.write(self.style.WARNING(f'role {role_name!r} not found, skipped'))
                 continue
-            for code in codes:
-                _, created = RolePermission.objects.get_or_create(
-                    role_id=role.id, permission_id=perms[code].id, defaults={'created_at': now})
-                if created:
-                    self.stdout.write(f'  granted {code} -> {role_name}')
+            for role in targets:
+                for code in codes:
+                    _, created = RolePermission.objects.get_or_create(
+                        role_id=role.id, permission_id=perms[code].id, defaults={'created_at': now})
+                    if created:
+                        self.stdout.write(f'  granted {code} -> {role_name}')
         self.stdout.write(self.style.SUCCESS('Drafting permissions in place.'))

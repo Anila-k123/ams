@@ -13,6 +13,7 @@ from core.permissions import RequirePermission
 
 
 from .docx import render_session_docx, session_title
+from django.utils.http import content_disposition_header
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def file_response(request, data, filename):
         filename = filename[:-len('.docx')] + '.pdf'
     else:
         resp = HttpResponse(data, content_type=DOCX_TYPE)
-    resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+    resp['Content-Disposition'] = content_disposition_header(True, filename)
     return resp
 
 

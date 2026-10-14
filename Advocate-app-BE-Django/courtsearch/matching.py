@@ -26,6 +26,8 @@ sides.
 
 from __future__ import annotations
 
+from core.tenant import owned
+
 import json
 import logging
 import re
@@ -231,8 +233,8 @@ def your_items_by_courtroom(advocate, court, on):
         by_key.setdefault((r.case_type, r.case_no, r.case_year), []).append(r)
 
     out = {}
-    cases = Case.objects.filter(advocate_id__in=practice_ids(advocate),
-                                deleted=False)
+    cases = owned(Case.objects.filter(advocate_id__in=practice_ids(advocate),
+                                deleted=False), advocate)
     for case in cases:
         identity = case_identity(case)
         if identity['court'] != court:
@@ -315,8 +317,8 @@ def my_forums(advocate):
     from core.models import Case
     from core.practice import practice_ids
 
-    cases = Case.objects.filter(advocate_id__in=practice_ids(advocate),
-                                deleted=False).only('id', 'case_number')
+    cases = owned(Case.objects.filter(advocate_id__in=practice_ids(advocate),
+                                deleted=False), advocate).only('id', 'case_number')
     counts = {}
     for identity in identities_for(cases).values():
         if identity['court']:
@@ -345,8 +347,8 @@ def my_listings(advocate, on):
         by_court_key.setdefault(
             (r.court, r.case_type, r.case_no, r.case_year), []).append(r)
 
-    cases = list(Case.objects.filter(advocate_id__in=practice_ids(advocate),
-                                     deleted=False))
+    cases = list(owned(Case.objects.filter(advocate_id__in=practice_ids(advocate),
+                                     deleted=False), advocate))
     identities = identities_for(cases)
 
     out = []

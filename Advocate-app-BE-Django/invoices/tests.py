@@ -423,16 +423,20 @@ class ClientNotifiedTest(TestCase):
         self.case = make_case(self.accounts, client=make_client(self.accounts, name='Payer'))
 
     def _issue(self):
-        return self.client.post('/api/invoices/create',
-                                {'caseId': self.case.id, 'particulars': [{'description': 'Fee', 'amount': 500}]},
-                                content_type='application/json', **auth(self.accounts)).json()
+        # The client email goes out after the invoice commits (on_commit).
+        with self.captureOnCommitCallbacks(execute=True):
+            return self.client.post('/api/invoices/create',
+                                    {'caseId': self.case.id, 'particulars': [{'description': 'Fee', 'amount': 500}]},
+                                    content_type='application/json', **auth(self.accounts)).json()
 
     def test_marked_when_the_email_goes(self):
         from unittest import mock
+        from invoices.models import InvoiceHandling
         with mock.patch('notifications.client_events.invoice_generated', return_value=[1]):
             inv = self._issue()
         self.assertIsNotNone(inv['issuedAt'])
-        self.assertIsNotNone(inv['clientNotifiedAt'])
+        # Recorded once the invoice has committed and the email went.
+        self.assertIsNotNone(InvoiceHandling.objects.get(invoice_id=inv['id']).client_notified_at)
 
     def test_not_marked_when_no_email_was_sent(self):
         from unittest import mock

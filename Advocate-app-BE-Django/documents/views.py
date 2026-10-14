@@ -3,8 +3,9 @@ import json
 import logging
 import datetime
 
-import jwt
 from django.conf import settings
+from django.db import transaction
+from rest_framework.exceptions import AuthenticationFailed
 from django.db.models import Q, Sum
 from django.http import FileResponse, Http404
 from rest_framework.views import APIView
@@ -14,7 +15,6 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from core.models import Document, Case, Client, Advocate
-from core.jwt import decode_token
 from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import DocumentSerializer
@@ -49,8 +49,11 @@ def filter_file_kind(qs, value):
         q |= Q(original_name__iendswith=e)
     return qs.filter(q)
 from .models import DocumentSummary, DocumentVersion
-from .storage import UnsupportedFileType, add_version, create_document
+from .storage import (FILE_UNAVAILABLE, UnsupportedFileType, add_version, create_document,
+                      remove_stored_file, resolve_stored_file)
 from core.practice import practice_ids
+from core.tenant import owned
+from django.utils.http import content_disposition_header
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +65,7 @@ def _base(user):
     """Documents this user may read: everything in their practice. Documents belong
     to the matter, not the uploader, the same as cases/tasks; the views gate on
     DOCUMENT_VIEW."""
-    return Document.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(user))
+    return owned(Document.objects.select_related('case', 'client').filter(advocate_id__in=practice_ids(user)), user)
 
 
 class DocumentListView(APIView):
@@ -161,8 +164,8 @@ class UploadDocumentView(APIView):
             return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
         case_id = request.data.get('caseId') or None
         client_id = request.data.get('clientId') or None
-        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first() if case_id else None
-        client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first() if client_id else None
+        case = owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first() if case_id else None
+        client = owned(Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)), request.user).first() if client_id else None
         try:
             doc = create_document(
                 request.user, f,
@@ -193,7 +196,7 @@ class DocumentDetailView(APIView):
         return Response(DocumentSerializer(doc).data)
 
     def put(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         for attr, key in [('document_name', 'documentName'), ('category', 'category'),
@@ -205,25 +208,20 @@ class DocumentDetailView(APIView):
         return Response(DocumentSerializer(doc).data)
 
     def delete(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            if doc.file_path and os.path.exists(doc.file_path):
-                os.remove(doc.file_path)
-        except OSError:
-            pass
-        doc.delete()
-        # No DB foreign key to the summary/version tables, so clean up explicitly,
-        # including the archived version files on disk.
-        DocumentSummary.objects.filter(document_id=pk).delete()
-        for v in DocumentVersion.objects.filter(document_id=pk):
-            try:
-                if v.file_path and os.path.exists(v.file_path):
-                    os.remove(v.file_path)
-            except OSError:
-                pass
-        DocumentVersion.objects.filter(document_id=pk).delete()
+        # Rows first, in one transaction; the files go only once that has
+        # committed, so a failed delete never leaves a row without its file.
+        # No DB foreign key to the summary/version tables, so clean up explicitly.
+        files = [(doc.file_path, doc.stored_name)] + [
+            (v.file_path, v.stored_name) for v in DocumentVersion.objects.filter(document_id=pk)]
+        with transaction.atomic():
+            doc.delete()
+            DocumentSummary.objects.filter(document_id=pk).delete()
+            DocumentVersion.objects.filter(document_id=pk).delete()
+        # remove_stored_file only ever deletes inside the documents folder.
+        transaction.on_commit(lambda: [remove_stored_file(p, n) for p, n in files])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -267,7 +265,7 @@ class DocumentSummaryRegenerateView(APIView):
     permission_classes = [RequirePermission('DOCUMENT_EDIT')]
 
     def post(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         from .summarizer import enqueue_and_run
@@ -323,7 +321,7 @@ class DocumentVersionsView(APIView):
         return Response(out)
 
     def post(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         f = request.FILES.get('file')
@@ -346,26 +344,64 @@ def _advocate_name(advocate_id):
     return a.full_name if a else None
 
 
-# ---- download / preview: authenticate via Authorization header OR ?token= ----
+# ---- download / preview: Authorization header, or a short-lived signed link ----
+#
+# A raw login token in a URL leaks into server/proxy logs, browser history and
+# Referer headers, so ?token= is no longer accepted. Where the browser needs a
+# plain URL (a new tab, an <iframe>), the app asks for a SIGNED LINK:
+# POST /api/documents/<id>/link {purpose} -> a URL valid for DOCUMENT_LINK_SECONDS,
+# bound to that document, that user, that purpose and the user's current
+# session version (signing out kills unused links too). Every use re-checks the
+# user, membership, firm and document permission exactly like a header request.
 
-def _advocate_from_request(request):
-    token = None
-    header = request.META.get('HTTP_AUTHORIZATION', '')
-    if header.startswith('Bearer '):
-        token = header[7:].strip()
-    if not token:
-        token = request.query_params.get('token')
-    if not token:
-        return None
+_LINK_SALT = 'ams.document-link'
+
+
+def _link_value(advocate, pk, purpose):
+    from core import tenant
+    from core.session import token_version
+    m = tenant.active_membership(advocate.id) if settings.TENANCY_COLUMNS else None
+    return '|'.join(str(x) for x in (pk, purpose, advocate.id, token_version(advocate.id),
+                                     m.id if m else '', str(m.firm.public_id) if m else ''))
+
+
+def make_document_link(advocate, pk, purpose):
+    from django.core import signing
+    return signing.TimestampSigner(salt=_LINK_SALT).sign(_link_value(advocate, pk, purpose))
+
+
+def _advocate_from_link(sig, pk, purpose):
+    from django.core import signing
     try:
-        payload = decode_token(token)
-    except jwt.PyJWTError:
+        value = signing.TimestampSigner(salt=_LINK_SALT).unsign(sig, max_age=settings.DOCUMENT_LINK_SECONDS)
+    except signing.BadSignature:
         return None
-    aid = payload.get('advocateId')
-    advocate = Advocate.objects.filter(id=aid).first()
-    # Same gate as AdvocateJWTAuthentication: someone who has left the practice
-    # must not keep downloading its documents with an old ?token= link.
-    if advocate is not None and getattr(advocate, 'left_on', None) is not None:
+    parts = value.split('|')
+    if len(parts) != 6 or parts[0] != str(pk) or parts[1] != purpose:
+        return None                       # another document or another purpose
+    payload = {'advocateId': int(parts[2]), 'tv': int(parts[3])}
+    if parts[4]:
+        payload.update({'mid': int(parts[4]), 'fid': parts[5]})
+    from core.auth import validate_claims
+    try:
+        advocate, _m, _f = validate_claims(payload)
+    except AuthenticationFailed:
+        return None
+    return advocate
+
+
+def _advocate_from_request(request, pk=None, purpose=None):
+    header = request.META.get('HTTP_AUTHORIZATION', '')
+    advocate = None
+    if header.startswith('Bearer '):
+        from core.auth import resolve_token
+        try:
+            advocate, _m, _f = resolve_token(header[7:].strip())
+        except AuthenticationFailed:
+            return None
+    elif request.query_params.get('sig') and pk is not None:
+        advocate = _advocate_from_link(request.query_params['sig'], pk, purpose)
+    if advocate is None:
         return None
     # Client users download through /api/client/documents, never these firm endpoints.
     from clientaccess.gate import is_client
@@ -378,7 +414,7 @@ def _readable_file(advocate, pk):
     """The document if `advocate` may download it: in their practice, and their own
     upload or they hold DOCUMENT_VIEW. These endpoints are AllowAny (token may be in
     the query string), so the permission is checked here rather than by DRF."""
-    doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(advocate)).first()
+    doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(advocate)), advocate).first()
     if doc is None:
         return None
     if doc.advocate_id != advocate.id and 'DOCUMENT_VIEW' not in advocate.permission_codes():
@@ -387,18 +423,24 @@ def _readable_file(advocate, pk):
 
 
 def _serve(request, pk, as_attachment):
-    advocate = _advocate_from_request(request)
+    advocate = _advocate_from_request(request, pk, 'download' if as_attachment else 'preview')
     if advocate is None:
         return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)
     doc = _readable_file(advocate, pk)
-    if doc is None or not doc.file_path or not os.path.exists(doc.file_path):
-        raise Http404('Document file not found')
+    if doc is None:
+        raise Http404('Document not found')
+    path = resolve_stored_file(doc.file_path, doc.stored_name)
+    if path is None:
+        return Response({'error': FILE_UNAVAILABLE}, status=status.HTTP_404_NOT_FOUND)
     if as_attachment:
         Document.objects.filter(id=pk).update(download_count=(doc.download_count or 0) + 1)
-    resp = FileResponse(open(doc.file_path, 'rb'),
+    from core.session import security_event
+    security_event('DOCUMENT_DOWNLOAD' if as_attachment else 'DOCUMENT_PREVIEW', request, actor=advocate,
+                   detail={'document': doc.id})
+    resp = FileResponse(open(path, 'rb'),
                         content_type=doc.file_type or 'application/octet-stream')
-    disposition = 'attachment' if as_attachment else 'inline'
-    resp['Content-Disposition'] = f'{disposition}; filename="{doc.original_name}"'
+    # Encoded by Django: a name with quotes or non-ASCII can't break the header.
+    resp['Content-Disposition'] = content_disposition_header(as_attachment, doc.original_name or 'document')
     return resp
 
 
@@ -421,21 +463,40 @@ def preview_document(request, pk):
 @permission_classes([AllowAny])
 def download_document_version(request, pk, version):
     """Download a specific version's file (current version or an archived one)."""
-    advocate = _advocate_from_request(request)
+    advocate = _advocate_from_request(request, pk, f'version:{version}')
     if advocate is None:
         return Response({'error': 'Unauthorized'}, status=status.HTTP_401_UNAUTHORIZED)
     doc = _readable_file(advocate, pk)
     if doc is None:
         raise Http404('Document not found')
     if version == (doc.version or 1):
-        path, name, ftype = doc.file_path, doc.original_name, doc.file_type
+        stored, name, ftype = (doc.file_path, doc.stored_name), doc.original_name, doc.file_type
     else:
         v = DocumentVersion.objects.filter(document_id=pk, version=version).first()
         if v is None:
             raise Http404('Version not found')
-        path, name, ftype = v.file_path, v.original_name, v.file_type
-    if not path or not os.path.exists(path):
-        raise Http404('Version file not found')
+        stored, name, ftype = (v.file_path, v.stored_name), v.original_name, v.file_type
+    path = resolve_stored_file(*stored)
+    if path is None:
+        return Response({'error': FILE_UNAVAILABLE}, status=status.HTTP_404_NOT_FOUND)
+    from core.session import security_event
+    security_event('DOCUMENT_DOWNLOAD', request, actor=advocate, detail={'document': doc.id, 'version': version})
     resp = FileResponse(open(path, 'rb'), content_type=ftype or 'application/octet-stream')
-    resp['Content-Disposition'] = f'attachment; filename="{name}"'
+    resp['Content-Disposition'] = content_disposition_header(True, name or 'document')
     return resp
+
+
+@api_view(['POST'])
+def document_link(request, pk):
+    """POST /api/documents/<id>/link {purpose: download | preview | version:<n>}
+    -> a short-lived signed URL for a browser tab / iframe (no token in it)."""
+    purpose = (request.data.get('purpose') or 'download').strip()
+    if purpose not in ('download', 'preview') and not (purpose.startswith('version:') and purpose[8:].isdigit()):
+        return Response({'error': 'Unknown purpose.'}, status=status.HTTP_400_BAD_REQUEST)
+    if _readable_file(request.user, pk) is None:
+        return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+    from urllib.parse import quote
+    base = {'download': f'/api/documents/download/{pk}', 'preview': f'/api/documents/preview/{pk}'}.get(
+        purpose, f'/api/documents/{pk}/versions/{purpose[8:]}/download')
+    sig = make_document_link(request.user, pk, purpose)
+    return Response({'url': f'{base}?sig={quote(sig)}', 'expiresIn': settings.DOCUMENT_LINK_SECONDS})

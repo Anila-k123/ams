@@ -9,6 +9,7 @@ existing invoice list/summary keeps working unchanged; the particulars are
 extra detail layered on top.
 """
 
+from django.conf import settings
 from django.db import models
 
 
@@ -62,6 +63,10 @@ class FirmBillingProfile(models.Model):
     iso_note = models.CharField(max_length=255, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = 'firm_billing_profile'
@@ -131,6 +136,10 @@ class InvoiceRequest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         db_table = 'invoice_request'
 
@@ -183,3 +192,41 @@ class InvoiceHandling(models.Model):
 
     def __str__(self):
         return 'InvoiceHandling(invoice={})'.format(self.invoice_id)
+
+
+class InvoiceSequence(models.Model):
+    """The next automatic invoice number of one numbering scope.
+
+    A scope is a firm (or, before tenancy, a practice root) plus, when the
+    firm restarts numbering each financial year, that year. The row is locked
+    (SELECT ... FOR UPDATE) while a number is taken, so two invoices created at
+    the same moment in one firm get consecutive numbers instead of the same
+    one; different firms never touch each other's row. See invoices/numbering.py.
+    """
+    scope = models.CharField(max_length=80, unique=True)   # 'firm:12' / 'firm:12:FY2026-27' / 'practice:5'
+    firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    next_value = models.BigIntegerField(default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'invoice_sequence'
+
+    def __str__(self):
+        return 'InvoiceSequence({}, next={})'.format(self.scope, self.next_value)
+
+
+class PaymentRequestKey(models.Model):
+    """Idempotency for recording a payment: one Idempotency-Key per firm makes
+    one payment. A retried request (double click, network timeout) gets the
+    payment the first attempt recorded instead of a second one; the same key
+    with a different body is refused. `fingerprint` is a hash of the body."""
+    firm_id = models.BigIntegerField(null=True, blank=True)
+    advocate_id = models.BigIntegerField()
+    key = models.CharField(max_length=100)
+    fingerprint = models.CharField(max_length=64)
+    payment_id = models.BigIntegerField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'payment_request_key'
+        constraints = [models.UniqueConstraint(fields=['advocate_id', 'key'], name='payment_request_key_uniq')]

@@ -13,6 +13,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import CaseSerializer
 from core.practice import practice_ids, is_owner, practice_root, firm_team_roots, same_firm
+from core.tenant import owned
 from core.finance import recalc_case_totals
 from notifications import client_events
 
@@ -22,7 +23,7 @@ SEARCH_FIELDS = ['case_number', 'case_title', 'case_type', 'court_level', 'statu
 
 
 def _base_qs(request):
-    return Case.objects.select_related('client').filter(advocate_id__in=practice_ids(request.user))
+    return owned(Case.objects.select_related('client').filter(advocate_id__in=practice_ids(request.user)), request.user)
 
 
 def _search(qs, keyword):
@@ -56,7 +57,7 @@ class CaseTimelineView(APIView):
 
     def get(self, request, case_id):
         from .timeline import build_timeline
-        case = Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)).first()
+        case = owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -129,14 +130,16 @@ class SearchCasesView(APIView):
 
 
 def _clear_import_children(case_id):
-    """Remove the auto-generated (import) children of a case so a re-import starts
-    clean: the stored court record, and the parties/hearings we derive from it.
-    User-authored content (notes, tags, tasks) is left untouched."""
-    from workspace.models import CaseParty
-    from core.models import CaseEvent
+    """Drop the stored court record of a case being re-added, so the re-import
+    stores a fresh one.
+
+    Hearings (CaseEvent) and parties (CaseParty) are kept: imported and
+    hand-entered rows look identical (no source column), and this used to
+    delete both - wiping hearings and parties the team had added themselves.
+    The re-import does not duplicate them: creating an event that already
+    exists answers 409, and adding a party the case already has returns the
+    existing one (workspace/views.py CasePartiesView)."""
     from courtsearch.models import ImportedCaseRecord
-    CaseParty.objects.filter(case_id=case_id).delete()
-    CaseEvent.objects.filter(case_id=case_id).delete()
     ImportedCaseRecord.objects.filter(case_id=case_id).delete()
 
 
@@ -163,8 +166,8 @@ class CreateCaseView(APIView):
         # stores the CNR in its profile; importing that CNR again would make a
         # second copy of the same case.
         linked = CaseProfile.objects.filter(
-            cnr=case_number.upper(), case_id__in=Case.objects.filter(
-                advocate_id__in=practice_ids(request.user), deleted=False).values('id')).first()
+            cnr=case_number.upper(), case_id__in=owned(Case.objects.filter(
+                advocate_id__in=practice_ids(request.user), deleted=False), request.user).values('id')).first()
         if linked:
             return Response({'error': 'This court case is already in your workspace (linked to case {}).'.format(
                 Case.objects.filter(id=linked.case_id).values_list('case_number', flat=True).first())},
@@ -180,15 +183,15 @@ class CreateCaseView(APIView):
         # The DB constraint is per advocate; this check is per practice, which
         # is stricter on purpose: two members of one chambers both adding the
         # same number would list the case twice in every shared view.
-        existing = Case.objects.filter(
+        existing = owned(Case.objects.filter(
             case_number=case_number,
-            advocate_id__in=practice_ids(request.user)).first()
+            advocate_id__in=practice_ids(request.user)), request.user).first()
         if existing is not None and not existing.deleted:
             return Response({'error': 'Case number already exists'}, status=status.HTTP_409_CONFLICT)
         client_id = _extract_client_id(data)
         client = None
         if client_id is not None:
-            client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first()
+            client = owned(Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         if existing is not None and existing.deleted:
             # Re-adding a case this practice archived: reuse the row rather
             # than inserting a second one, reset it to a fresh active case, and
@@ -231,7 +234,7 @@ class CreateCaseView(APIView):
 
 
 def _owned(request, pk):
-    return Case.objects.select_related('client').filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+    return owned(Case.objects.select_related('client').filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
 
 
 class UpdateCaseView(APIView):
@@ -251,7 +254,7 @@ class UpdateCaseView(APIView):
             case.case_number = data['caseNumber']
         client_id = _extract_client_id(data)
         if client_id is not None:
-            case.client = Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)).first()
+            case.client = owned(Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         case.save()
         if 'amount' in data:
             case = recalc_case_totals(case.id) or case

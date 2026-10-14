@@ -316,12 +316,9 @@ class Command(BaseCommand):
         CaseEvent.objects.filter(advocate_id__in=ids).delete()
         CaseTask.objects.filter(advocate_id__in=ids).delete()
         CaseNote.objects.filter(advocate_id__in=ids).delete()
+        from documents.storage import remove_stored_file
         for doc in Document.objects.filter(advocate_id__in=ids):
-            try:
-                if doc.file_path and os.path.exists(doc.file_path):
-                    os.remove(doc.file_path)
-            except OSError:
-                pass
+            remove_stored_file(doc.file_path, doc.stored_name)
         Document.objects.filter(advocate_id__in=ids).delete()
         Case.objects.filter(advocate_id__in=ids).delete()
         Client.objects.filter(advocate_id__in=ids).delete()

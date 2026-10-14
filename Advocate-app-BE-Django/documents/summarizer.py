@@ -73,8 +73,9 @@ def _is_supported(file_type, path):
 
 def extract_text(doc):
     """Return extracted text (capped) or None if unsupported / no text found."""
-    path = doc.file_path
-    if not path or not os.path.exists(path):
+    from .storage import resolve_stored_file
+    path = resolve_stored_file(doc.file_path, doc.stored_name)
+    if path is None:
         return None
     kind = _is_supported(doc.file_type, path)
     if kind is None:
@@ -125,6 +126,16 @@ def _parse_json(raw):
         raise
 
 
+def _unmask_json(value, masker):
+    if isinstance(value, str):
+        return masker.unmask(value)
+    if isinstance(value, list):
+        return [_unmask_json(v, masker) for v in value]
+    if isinstance(value, dict):
+        return {k: _unmask_json(v, masker) for k, v in value.items()}
+    return value
+
+
 def summarize(row):
     """Run summarization for a DocumentSummary row (synchronous)."""
     row.status = DocumentSummary.PROCESSING
@@ -151,11 +162,22 @@ def summarize(row):
         f"--- DOCUMENT TEXT ---\n{text}"
     )
     try:
+        # The whole document goes to the model. complete_text does not mask
+        # (only Lisa's chat planner did), so mask here when masking applies
+        # (external provider, or ASSISTANT_MASK_LOCAL) and unmask the result.
+        from assistant.provider import masking_enabled
+        masker = None
+        if masking_enabled():
+            from assistant.privacy import Masker
+            masker = Masker.for_user(doc.advocate_id)
+            user_prompt = masker.mask(user_prompt)
         # Background (thread or cron), so the user comes from the document.
         with metering('summary', 'summary.document', doc.advocate_id,
                       ref_type='document', ref_id=doc.id):
             raw = complete_text(SUMMARY_SYSTEM_PROMPT, user_prompt)
         data = _parse_json(raw)
+        if masker is not None:
+            data = _unmask_json(data, masker)
     except AssistantUnavailable as exc:
         row.status = DocumentSummary.FAILED
         row.error = f'LLM unavailable: {exc}'

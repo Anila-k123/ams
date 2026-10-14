@@ -9,7 +9,10 @@ from rest_framework import status
 from core.models import Advocate
 from core.jwt import generate_token
 from core.passwords import verify_password, hash_password
-from core.validators import check_payload
+from core.validators import check_payload, password_error
+from core import session
+from core.session import revoke_all, security_event
+from . import throttle
 from .serializers import (
     AdvocateProfileSerializer, FullProfileSerializer, LoginSerializer, SignupSerializer,
 )
@@ -22,16 +25,38 @@ class LoginView(APIView):
     def post(self, request):
         s = LoginSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        email = s.validated_data['email']
+        email = s.validated_data['email'].strip()
         password = s.validated_data['password']
-        advocate = Advocate.objects.filter(email=email).first()
+        ip = throttle.client_ip(request)
+        # Locked out after repeated failures (accounts/throttle.py) - checked
+        # before the password, so a right guess during the lock gains nothing.
+        wait = throttle.login_retry_after(email, ip)
+        if wait:
+            minutes = max(1, round(wait / 60))
+            security_event('LOGIN_LOCKED', request, email=email, success=False)
+            resp = Response({'error': f'Too many failed sign-in attempts. Try again in {minutes} '
+                                      f'minute{"s" if minutes != 1 else ""}.', 'code': 'LOCKED'},
+                            status=status.HTTP_429_TOO_MANY_REQUESTS)
+            resp['Retry-After'] = str(wait)
+            return resp
+        # Exact match first (emails are unique as stored), then ignoring case,
+        # as the password-reset flow already does.
+        advocate = (Advocate.objects.filter(email=email).first()
+                    or Advocate.objects.filter(email__iexact=email).order_by('id').first())
         if advocate is None or not verify_password(password, advocate.password):
-            return Response({'error': 'Invalid email or password!'},
+            throttle.record_login(email, ip, success=False)
+            security_event('LOGIN_FAILED', request, email=email, success=False)
+            # One message for unknown email and wrong password: no account enumeration.
+            return Response({'error': 'Invalid email or password!', 'code': 'INVALID_CREDENTIALS'},
                             status=status.HTTP_401_UNAUTHORIZED)
-        # A token would be refused on the next call anyway (core/auth.py); say so now.
-        if advocate.left_on is not None:
-            return Response({'error': 'This account is no longer active.'},
-                            status=status.HTTP_401_UNAUTHORIZED)
+        throttle.record_login(email, ip, success=True)
+        # Account / membership / firm state is only revealed after a correct
+        # password, so it says nothing to someone guessing.
+        refusal = _login_refusal(advocate)
+        if refusal is not None:
+            code, message = refusal
+            security_event('LOGIN_REFUSED', request, actor=advocate, success=False, detail={'code': code})
+            return Response({'error': message, 'code': code}, status=status.HTTP_403_FORBIDDEN)
         from clientaccess.gate import client_link
         link = client_link(advocate)
         if link is not None:
@@ -39,13 +64,55 @@ class LoginView(APIView):
             link.last_login_at = timezone.now()
             link.save(update_fields=['last_login_at'])
         token = generate_token(advocate)
+        firm_info, membership_info = _workspace(advocate)
+        security_event('LOGIN', request, actor=advocate, firm_id=(firm_info or {}).get('_id'))
+        if firm_info:
+            firm_info.pop('_id', None)
         return Response({
             'token': token,
             'message': 'Login Successful!',
             'role': advocate.role or 'ADVOCATE',
             'theme': advocate.theme or 'light',
             'fullName': advocate.full_name or 'Advocate',
+            'firm': firm_info,
+            'membership': membership_info,
+            'permissions': sorted(advocate.permission_codes()),
         })
+
+
+def _login_refusal(advocate):
+    """(code, message) when this correct-password sign-in must be refused."""
+    if advocate.left_on is not None:
+        return 'ACCOUNT_DISABLED', 'This account is no longer active.'
+    if settings.TENANCY_MODE != 'firm':
+        return None
+    from core import tenant
+    from firms.models import FirmMembership
+    m = tenant.active_membership(advocate.id)
+    if m is None:
+        if FirmMembership.objects.filter(advocate_id=advocate.id, status=FirmMembership.SUSPENDED).exists():
+            return 'MEMBERSHIP_SUSPENDED', 'Your access to this firm is suspended. Contact your firm administrator.'
+        return 'NO_ACTIVE_MEMBERSHIP', 'This account is not an active member of any firm.'
+    if m.firm.status == m.firm.SUSPENDED:
+        return 'FIRM_SUSPENDED', "Your firm's access is suspended. Contact AMS support."
+    if not m.firm.is_active:
+        return 'FIRM_INACTIVE', 'Your firm is not active.'
+    return None
+
+
+def _workspace(advocate):
+    """Firm and membership facts for the frontend (display only - every request
+    is re-checked on the server)."""
+    if not settings.TENANCY_COLUMNS:
+        return None, None
+    from core import tenant
+    m = tenant.active_membership(advocate.id)
+    if m is None:
+        return None, None
+    display = getattr(getattr(m.firm, 'settings', None), 'display_name', '') if hasattr(m.firm, 'settings') else ''
+    return ({'publicId': str(m.firm.public_id), 'name': display or m.firm.name, 'slug': m.firm.slug,
+             'status': m.firm.status, '_id': m.firm.id},
+            {'id': m.id, 'kind': m.kind, 'status': m.status})
 
 
 class SignupView(APIView):
@@ -93,7 +160,10 @@ class SignupView(APIView):
 
 class LogoutView(APIView):
     def post(self, request):
-        # Stateless JWT: nothing to invalidate server-side.
+        # Ends every session of this person (account-wide token version,
+        # core/session.py): the token just used, and those on other devices.
+        revoke_all(request.user.id, session.LOGOUT)
+        security_event('LOGOUT', request, actor=request.user)
         return Response({'message': 'Logged out successfully'})
 
 
@@ -115,8 +185,13 @@ class SettingsView(APIView):
         s.save()
         new_password = request.data.get('newPassword')
         if new_password:
+            problem = password_error(new_password, advocate.email)
+            if problem:
+                return Response({'error': problem}, status=status.HTTP_400_BAD_REQUEST)
             advocate.password = hash_password(new_password)
             advocate.save(update_fields=['password'])
+            revoke_all(advocate.id, session.PASSWORD_CHANGE)
+            security_event('PASSWORD_CHANGE', request, actor=advocate)
         return Response(AdvocateProfileSerializer(advocate).data)
 
 
@@ -207,6 +282,12 @@ class BrandingUploadView(APIView):
         f = request.FILES.get('file')
         if f is None:
             return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
+        # Branding files are served from the API's own origin (logos publicly), so
+        # only plain raster images: an uploaded .html/.svg could run script there.
+        if (os.path.splitext(f.name or '')[1].lower() not in {'.png', '.jpg', '.jpeg', '.webp'}
+                or f.size > 2 * 1024 * 1024):
+            return Response({'error': 'Use a PNG, JPEG or WebP image of at most 2 MB.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         branding_dir = os.path.join(settings.DOCUMENT_UPLOAD_DIR, 'branding')
         os.makedirs(branding_dir, exist_ok=True)
         ext = os.path.splitext(f.name)[1]
@@ -244,20 +325,28 @@ class BrandingUploadView(APIView):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def serve_branding_file(request, sub_dir, filename):
-    """GET /api/profile/files/{subDir}/{filename} — public so <img> tags can load it."""
+    """GET /api/profile/files/{subDir}/{filename}.
+
+    Logos and profile photos are public so <img> tags and emails can load them.
+    A signature or seal is served only with a valid, unexpired ?sig= issued by
+    the profile serializer (accounts/branding.py): a guessed or old link gets 404."""
     import os
     import mimetypes
     from django.conf import settings
     from django.http import FileResponse, Http404
+    from .branding import is_private, valid_signature
     # Path-traversal guard: only a bare filename under a known subdir.
     if sub_dir not in ('branding',) or '/' in filename or '\\' in filename or '..' in filename:
+        raise Http404('Not found')
+    private = is_private(filename)
+    if private and not valid_signature(filename, request.query_params.get('sig')):
         raise Http404('Not found')
     path = os.path.join(settings.DOCUMENT_UPLOAD_DIR, sub_dir, filename)
     if not os.path.exists(path):
         raise Http404('File not found')
     ctype = mimetypes.guess_type(path)[0] or 'application/octet-stream'
     resp = FileResponse(open(path, 'rb'), content_type=ctype)
-    resp['Cache-Control'] = 'max-age=3600'
+    resp['Cache-Control'] = 'private, max-age=300' if private else 'max-age=3600'
     return resp
 
 
@@ -273,6 +362,12 @@ class ChangePasswordView(APIView):
         if not new or new != confirm:
             return Response({'error': 'New passwords do not match.'},
                             status=status.HTTP_400_BAD_REQUEST)
+        problem = password_error(new, advocate.email)
+        if problem:
+            return Response({'error': problem}, status=status.HTTP_400_BAD_REQUEST)
         advocate.password = hash_password(new)
         advocate.save(update_fields=['password'])
+        # Every existing session ends; the caller signs in again with the new password.
+        revoke_all(advocate.id, session.PASSWORD_CHANGE)
+        security_event('PASSWORD_CHANGE', request, actor=advocate)
         return Response({'message': 'Password changed successfully.'})

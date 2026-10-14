@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from pgvector.django import VectorField
 
@@ -9,6 +10,10 @@ class Client(models.Model):
     # The AMS client this mirrors, when created by linking an AMS case.
     ams_client_id = models.BigIntegerField(null=True, blank=True, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = '"drf"."client"'
@@ -27,6 +32,10 @@ class Project(models.Model):
     # key (AMS convention for the Spring-owned tables); at most one project per case.
     case_id = models.BigIntegerField(null=True, blank=True, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = '"drf"."project"'
@@ -68,6 +77,10 @@ class Template(models.Model):
     archived_by_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = '"drf"."template"'
@@ -144,6 +157,10 @@ class Sample(models.Model):
     ams_version = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     class Meta:
         db_table = '"drf"."sample"'
         constraints = [models.UniqueConstraint(fields=['uploaded_by_id', 'ams_document_id'],
@@ -203,6 +220,10 @@ class LibraryClause(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = '"drf"."library_clause"'
@@ -284,6 +305,10 @@ class DraftSession(models.Model):
     ams_synced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = '"drf"."draft_session"'
@@ -553,6 +578,10 @@ class Playbook(models.Model):
     archived_by_id = models.BigIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    if settings.TENANCY_COLUMNS:
+        # Owning firm (tenant), stamped on save by core/tenant.py.
+        firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
 
     class Meta:
         db_table = '"drf"."playbook"'

@@ -88,12 +88,14 @@ class ClientTestBase(TestCase):
         return Advocate.objects.get(email=email)
 
     def doc(self, case, name, shared):
-        path = os.path.join(self.dir, f'{name}.pdf')
+        # Uploaded files live in <DOCUMENT_UPLOAD_DIR>/documents (documents/storage.py).
+        os.makedirs(os.path.join(self.dir, 'documents'), exist_ok=True)
+        path = os.path.join(self.dir, 'documents', f'{name}.pdf')
         with open(path, 'wb') as fh:
             fh.write(b'%PDF ' + name.encode())
         now = datetime.datetime.now()
         return Document.objects.create(
-            document_name=name, original_name=f'{name}.pdf', stored_name=name, file_path=path, file_size=5,
+            document_name=name, original_name=f'{name}.pdf', stored_name=f'{name}.pdf', file_path=path, file_size=5,
             file_type='application/pdf', category='Filing', version=1, download_count=0, status='ACTIVE',
             upload_date=now, updated_at=now, advocate_id=self.senior.id, case=case, client_visible=shared)
 
@@ -264,7 +266,9 @@ class LoginsTest(ClientTestBase):
         resp = self.client.patch(f'/api/clients/{self.client_a.id}/logins/{link.id}', {'isActive': False},
                                  content_type='application/json', **auth(self.senior))
         self.assertEqual(resp.json()['status'], 'DISABLED')
-        self.assertEqual(self.login('anita@coromandel.test').status_code, 401)
+        # Right password, disabled account: a distinct, non-enumerating refusal.
+        resp = self.login('anita@coromandel.test')
+        self.assertEqual((resp.status_code, resp.json()['code']), (403, 'ACCOUNT_DISABLED'))
         self.assertEqual(self.client.get('/api/client/me', **auth(self.anita)).status_code, 401)
 
     def test_firm_rules(self):

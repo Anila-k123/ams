@@ -14,6 +14,8 @@ check authentication before permissions. That must not come back.
 
 from __future__ import annotations
 
+import os
+
 from django.test import TestCase
 
 from core import practice
@@ -304,7 +306,9 @@ class ResetDemoClientTest(TestCase):
         Invoice.objects.create(invoice_number='INV-T1', amount=100, invoice_date=today,
                                due_date=today, status='UNPAID', advocate=self.firm,
                                case=self.case, client=self.kannan)
-        self.upload = self._tmp.name + '/receipt.pdf'
+        # Uploaded files live in DOCUMENT_UPLOAD_DIR/documents (documents/storage.py).
+        os.makedirs(self._tmp.name + '/documents', exist_ok=True)
+        self.upload = self._tmp.name + '/documents/receipt.pdf'
         with open(self.upload, 'wb') as fh:
             fh.write(b'%PDF-1.4 test')
         Document.objects.create(document_name='Receipt', original_name='receipt.pdf',
@@ -586,10 +590,30 @@ class FormatChecksOnFormsTest(TestCase):
         r = self._send('put', '/api/profile', {'panNumber': 'BADPAN', 'pinCode': '600004'})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(list(r.json()['errors']), ['panNumber'])
-        r = self._send('post', '/api/admin/users',
-                       {'email': 'not-an-email', 'password': 'Strong#Pass1', 'fullName': 'X'})
+        colleague = make_advocate(parent_advocate_id=self.adv.id)
+        r = self._send('put', f'/api/admin/users/{colleague.id}', {'email': 'not-an-email', 'fullName': 'X'})
         self.assertEqual(r.status_code, 400)
         self.assertIn('email', r.json()['errors'])
+
+
+class NoAdminSetPasswordsTest(TestCase):
+    """Team members are only invited (they choose their own password); an
+    administrator can't create an account with a password, even via the API."""
+
+    def test_direct_account_creation_is_refused(self):
+        import json
+        from core.models import Advocate
+        admin = make_advocate('admin-direct@test.local', ALL_PERMISSIONS)
+        before = Advocate.objects.count()
+        r = self.client.post('/api/admin/users', data=json.dumps(
+            {'email': 'new.person@test.local', 'password': 'Strong#Pass1', 'fullName': 'New Person'}),
+            content_type='application/json', **auth(admin))
+        self.assertEqual(r.status_code, 410)
+        self.assertEqual(r.json()['code'], 'USE_INVITATION')
+        self.assertEqual(Advocate.objects.count(), before)
+        self.assertFalse(Advocate.objects.filter(email='new.person@test.local').exists())
+        # Listing and editing team members still work.
+        self.assertEqual(self.client.get('/api/admin/users', **auth(admin)).status_code, 200)
 
 
 class TeamsWithinFirmTest(TestCase):

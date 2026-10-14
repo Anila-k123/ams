@@ -113,6 +113,7 @@ class AssistantMeteringTest(TestCase):
         self.assertEqual((row.feature, row.advocate_id), ('chat', self.adv.id))
 
 
+@override_settings(DRAFTING_MASK_EXTERNAL=False)   # token counting only; masking: drafting/tests_external_ai_privacy.py
 class DraftingProviderMeteringTest(TestCase):
     def _provider(self, provider):
         from drafting.providers.llm import LLMProvider

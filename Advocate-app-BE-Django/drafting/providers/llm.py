@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import time
@@ -12,6 +13,15 @@ logger = logging.getLogger(__name__)
 # honours a Retry-After header when the server sends one.
 _RETRY_STATUS = {429, 502, 503, 504}
 _MAX_ATTEMPTS = 4
+
+
+def _fingerprint(*parts):
+    """Short, non-reversible id for log lines (lets you correlate, reveals nothing)."""
+    h = hashlib.sha256()
+    for p in parts:
+        h.update((p or '').encode('utf-8', 'replace'))
+        h.update(b'\x00')
+    return h.hexdigest()[:12]
 
 
 class LLMProvider:
@@ -50,11 +60,22 @@ class LLMProvider:
             )
 
     def complete(self, system: str, user: str, max_tokens: int = 2048) -> str:
-        logger.info('=== Outgoing LLM Request (%s / %s) ===', self._provider, self._model)
-        logger.info('System: %s', system)
-        logger.info('User: %s', user)
-        logger.info('Temperature: %s, Max tokens: %s', self._temperature, max_tokens)
-        logger.info('=================================')
+        # An external model only ever sees masked text, or nothing at all
+        # (drafting/providers/privacy.py); the reply is unmasked before it is used.
+        from .privacy import guard
+        privacy = guard(self._provider, self._base_url)
+        if privacy is not None:
+            system, user = privacy.outgoing(system, user)
+        result = self._complete(system, user, max_tokens)
+        return privacy.incoming(result) if privacy is not None else result
+
+    def _complete(self, system: str, user: str, max_tokens: int) -> str:
+        # Never log the prompt or the reply: they carry client facts and clause
+        # text, and these logs end up in plain files (keepalive logs/*.log).
+        # Sizes and a short fingerprint are enough to match a request to its reply.
+        logger.info('LLM request %s/%s: system %d chars, user %d chars, max_tokens %s, id %s',
+                    self._provider, self._model, len(system or ''), len(user or ''),
+                    max_tokens, _fingerprint(system, user))
 
         # Each provider path returns (text, usage); usage is (input, output)
         # tokens, or None when the provider reports none. Returned rather than
@@ -76,8 +97,8 @@ class LLMProvider:
         finally:
             self._meter(system, user, result, usage, started, ok)
 
-        logger.info('Response: %s', result)
-        logger.info('=================================')
+        logger.info('LLM reply %s/%s: %d chars in %.1fs', self._provider, self._model,
+                    len(result or ''), time.monotonic() - started)
         return result
 
     def _meter(self, system, user, result, usage, started, ok):

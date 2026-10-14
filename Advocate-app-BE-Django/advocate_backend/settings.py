@@ -7,6 +7,7 @@ the exact REST contract the React frontend already depends on. Config is read fr
 a .env file via python-decouple.
 """
 
+import sys
 from pathlib import Path
 from datetime import timedelta
 from decouple import config, Csv
@@ -14,8 +15,21 @@ from decouple import config, Csv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Core security / debug ---
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-advocate-dev-key-change-me')
-DEBUG = config('DEBUG', default=True, cast=bool)
+# Fail closed: DEBUG is off unless .env turns it on, and outside DEBUG the app
+# refuses to start without a real SECRET_KEY. The key signs every login token
+# (core/jwt.py), so a known default would let anyone forge a token for any user.
+DEBUG = config('DEBUG', default=False, cast=bool)
+_DEV_ONLY_KEY = 'django-insecure-advocate-dev-key-change-me'
+SECRET_KEY = config('SECRET_KEY', default='') or (_DEV_ONLY_KEY if DEBUG else '')
+if not DEBUG and (not SECRET_KEY or SECRET_KEY.startswith('django-insecure')):
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        'SECRET_KEY is missing or is a development key. Set a long random SECRET_KEY in .env '
+        '(python -c "import secrets; print(secrets.token_urlsafe(50))"), or set DEBUG=True on a '
+        'development machine.')
+# Signs login tokens. Defaults to SECRET_KEY so nobody is logged out when this is
+# introduced; set it separately to be able to rotate token signing on its own.
+JWT_SIGNING_KEY = config('JWT_SIGNING_KEY', default='') or SECRET_KEY
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # --- Applications ---
@@ -48,6 +62,7 @@ INSTALLED_APPS = [
     'appeals',
     'workspace',
     'firms',               # teams grouped into a firm (core/practice.py)
+    'platform_admin',      # SaaS platform operators (separate identity, docs/PLATFORM.md)
     'courtsearch',
     'acts',
     'dictionary',
@@ -70,11 +85,26 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
+    # X-Frame-Options: nothing the API returns may be framed by another site
+    # (clickjacking). The app's own previews use blob: URLs, not framed API URLs.
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Records state-changing API calls into audit_log / activities. Last in the
     # chain so it sees the final response status; it reads request.user, which
     # DRF populates during view dispatch.
     'core.audit_middleware.AuditLogMiddleware',
 ]
+
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True                 # never sniff an upload into HTML/script
+SECURE_REFERRER_POLICY = 'same-origin'
+# HTTPS hardening. Off by default because the office opens AMS over plain http on
+# the LAN; turn these on in .env once AMS is served over HTTPS.
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', default=False, cast=bool)
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = config('SECURE_COOKIES', default=False, cast=bool)
+if config('BEHIND_HTTPS_PROXY', default=False, cast=bool):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 ROOT_URLCONF = 'advocate_backend.urls'
 WSGI_APPLICATION = 'advocate_backend.wsgi.application'
@@ -120,13 +150,49 @@ REST_FRAMEWORK = {
     'UNAUTHENTICATED_USER': None,
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.SpringStylePagination',
     'PAGE_SIZE': 20,
+    # Tenant errors (core/tenant.py) become 403/404 answers, never a 500.
+    'EXCEPTION_HANDLER': 'core.tenant.exception_handler',
 }
+
+# --- SaaS tenancy (core/tenant.py, docs/TENANCY.md) ---
+# legacy: practice/team scoping exactly as before (default).
+# shadow: legacy scoping enforced; the firm-based scope is computed alongside and
+#         differences are logged (metadata only) and classified.
+# firm:   the firm boundary is enforced: data = authorised active membership +
+#         firm ownership + role permissions + team scope.
+TENANCY_MODE = config('TENANCY_MODE', default='legacy')
+if len(sys.argv) > 1 and sys.argv[1] == 'test':
+    # Tests don't inherit a developer's .env mode; tenancy tests set it themselves.
+    TENANCY_MODE = 'legacy'
+if TENANCY_MODE not in ('legacy', 'shadow', 'firm'):
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured("TENANCY_MODE must be 'legacy', 'shadow' or 'firm'.")
+# Whether this database has the tenancy columns (firm_id on business tables,
+# firm_team.firm_id). Off until the tenancy migrations are applied to a database:
+# the models only declare the columns when this is on, so an unmigrated database
+# keeps working unchanged. The test database is built from the models, so tests
+# always have them; makemigrations always sees the full models too (otherwise it
+# would propose removing the columns). Shadow / firm mode need it on.
+TENANCY_COLUMNS = (config('TENANCY_COLUMNS', default=False, cast=bool)
+                   or (len(sys.argv) > 1 and sys.argv[1] in ('test', 'makemigrations')))
+if TENANCY_MODE != 'legacy' and not TENANCY_COLUMNS:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured('TENANCY_MODE shadow/firm needs TENANCY_COLUMNS=True '
+                               '(apply the tenancy migrations first).')
 
 # --- JWT config (consumed by core/jwt.py + core/auth.py) ---
 # The frontend jwt-decodes the token and reads `exp` and `sub` (email); it does
 # NOT verify the signature, so we sign with our own SECRET_KEY.
 JWT_ALGORITHM = 'HS256'
-JWT_EXPIRATION = timedelta(milliseconds=config('JWT_EXPIRATION_MS', default=86400000, cast=int))
+JWT_EXPIRATION = timedelta(milliseconds=config('JWT_EXPIRATION_MS', default=28800000, cast=int))
+# Hard ceiling on any access token's life, whatever JWT_EXPIRATION says (core/jwt.py).
+ACCESS_TOKEN_MAX_HOURS = config('ACCESS_TOKEN_MAX_HOURS', default=8, cast=int)
+# Tokens issued before Phase 4 carry no audience / firm claims and are refused.
+# To let them run out gracefully after an upgrade, set an ISO datetime here (at
+# most 8 h ahead); they are still fully re-validated against the database.
+_legacy_until = config('JWT_ACCEPT_LEGACY_UNTIL', default='')
+from datetime import datetime as _dt  # noqa: E402
+JWT_ACCEPT_LEGACY_UNTIL = _dt.fromisoformat(_legacy_until) if _legacy_until else None
 
 # --- Client role (clientaccess app): where set-password links point (the AMS frontend) ---
 CLIENT_APP_URL = config('CLIENT_APP_URL', default='http://localhost:5173')
@@ -138,6 +204,9 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+# Firm provisioning sends an Idempotency-Key header (platform console, docs/PLATFORM.md).
+from corsheaders.defaults import default_headers  # noqa: E402
+CORS_ALLOW_HEADERS = (*default_headers, "idempotency-key")
 
 # --- Document storage: reuse the existing Spring uploads folder so the 30
 # already-uploaded documents download/preview, and new uploads land beside them. ---
@@ -201,6 +270,9 @@ PUBLIC_BASE_URL = config('PUBLIC_BASE_URL', default='http://localhost:8080')
 # 'django.core.mail.backends.console.EmailBackend' for local testing, which
 # prints each message to the server console instead of sending it.
 EMAIL_BACKEND = config('MAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
+# Folder for the file-based backend (MAIL_BACKEND=...filebased.EmailBackend): each
+# message becomes a file there. Used by the browser E2E run as its local inbox.
+EMAIL_FILE_PATH = config('MAIL_FILE_PATH', default='')
 EMAIL_HOST = config('MAIL_HOST', default='smtp.gmail.com')
 EMAIL_PORT = config('MAIL_PORT', default=587, cast=int)
 EMAIL_USE_TLS = config('MAIL_USE_TLS', default=True, cast=bool)
@@ -246,6 +318,14 @@ TEST_RUNNER = 'core.test_runner.ManagedModelTestRunner'
 # is already required, already secret, and already per-deployment - so this is
 # never accidentally blank.
 OTP_SALT = config('OTP_SALT', default='') or SECRET_KEY
+# Wrong reset codes allowed per email before all its live codes are burned.
+OTP_MAX_FAILURES = config('OTP_MAX_FAILURES', default=5, cast=int)
+# Login lockout (accounts/throttle.py): wrong passwords per email / per address
+# within the window before sign-in is refused (429) until the window passes.
+LOGIN_LOCKOUT_ENABLED = config('LOGIN_LOCKOUT_ENABLED', default=True, cast=bool)
+LOGIN_MAX_FAILURES = config('LOGIN_MAX_FAILURES', default=5, cast=int)
+LOGIN_MAX_FAILURES_PER_IP = config('LOGIN_MAX_FAILURES_PER_IP', default=20, cast=int)
+LOGIN_LOCKOUT_MINUTES = config('LOGIN_LOCKOUT_MINUTES', default=15, cast=int)
 OTP_EXPIRY_MINUTES = config('OTP_EXPIRY_MINUTES', default=10, cast=int)
 OTP_RATE_LIMIT = config('OTP_RATE_LIMIT', default=5, cast=int)
 
@@ -270,6 +350,27 @@ LOGGING = {
 }
 
 # Max upload size ~ 25MB per file (matches Spring config)
+# Largest document a user may upload (documents/storage.py check_file_type) and
+# largest backup archive accepted for restore (backup/views.py). The two
+# *_MAX_MEMORY_SIZE settings below only decide when Django spills an upload to a
+# temp file - they are not limits. Keep DOCUMENT_MAX_UPLOAD_MB in step with
+# MAX_UPLOAD_MB in the frontend's src/utils/fileTypes.ts.
+# Interim lock on the global role rows (rbac/views.py) until each firm owns its
+# roles. Set False only on a single-firm installation.
+ROLE_EDITING_LOCKED = config('ROLE_EDITING_LOCKED', default=True, cast=bool)
+# Platform operators (platform_admin): token lifetime, and how long a firm
+# invitation lasts (links in invitation emails use CLIENT_APP_URL).
+PLATFORM_TOKEN_MINUTES = config('PLATFORM_TOKEN_MINUTES', default=60, cast=int)
+# Fernet key encrypting operators' TOTP seeds (core/crypto.py) - its own key, kept
+# out of the database. Tests get a throw-away key.
+PLATFORM_MFA_KEY = config('PLATFORM_MFA_KEY', default='')
+if not PLATFORM_MFA_KEY and len(sys.argv) > 1 and sys.argv[1] == 'test':
+    PLATFORM_MFA_KEY = 'ZmFrZS10ZXN0LWtleS1vbmx5LWZvci11bml0LXRlc3Q='
+INVITATION_TTL_HOURS = config('INVITATION_TTL_HOURS', default=72, cast=int)
+# Lifetime of a signed document link (documents/views.py document_link).
+DOCUMENT_LINK_SECONDS = config('DOCUMENT_LINK_SECONDS', default=60, cast=int)
+DOCUMENT_MAX_UPLOAD_MB = config('DOCUMENT_MAX_UPLOAD_MB', default=25, cast=int)
+BACKUP_MAX_UPLOAD_MB = config('BACKUP_MAX_UPLOAD_MB', default=200, cast=int)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 52428800
 FILE_UPLOAD_MAX_MEMORY_SIZE = 26214400
 
@@ -285,6 +386,14 @@ def _d(name, default='', cast=None):
 
 
 # LLM_PROVIDER: 'anthropic' | 'openai' (OpenAI-compatible /v1) | 'ollama' (native)
+# Drafting text bound for a model outside this machine / the office network is
+# masked first, and refused when it can't be masked safely
+# (drafting/providers/privacy.py). False sends the original text: only on an
+# explicit, approved decision.
+DRAFTING_MASK_EXTERNAL = config('DRAFTING_MASK_EXTERNAL', default=True, cast=bool)
+# Translation services (Sarvam, Google) receive whole documents and cannot work
+# on masked text, so they are off unless the firm has explicitly allowed it.
+ALLOW_EXTERNAL_TRANSLATION = config('ALLOW_EXTERNAL_TRANSLATION', default=False, cast=bool)
 LLM_PROVIDER = _d('LLM_PROVIDER', 'anthropic')
 LLM_MODEL = _d('LLM_MODEL', 'claude-sonnet-4-6')
 LLM_BASE_URL = _d('LLM_BASE_URL', '')

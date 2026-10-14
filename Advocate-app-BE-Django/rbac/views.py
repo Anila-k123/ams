@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -7,7 +8,7 @@ from core.permissions import RequirePermission
 from core.passwords import hash_password
 from core import practice
 from core.practice import practice_root
-from core.validators import check_payload
+from core.validators import check_payload, password_error
 
 
 def _parse_ids(data, key):
@@ -21,8 +22,54 @@ def _parse_ids(data, key):
     return [int(x) for x in raw]
 
 
-def _role_map(r):
-    return {'id': r.id, 'name': r.name, 'description': r.description}
+def _role_map(r, scope=None):
+    out = {'id': r.id, 'name': r.name, 'description': r.description}
+    if scope is not None:
+        out['builtIn'] = scope == BUILT_IN
+        out['editable'] = scope == FIRM_ONLY
+    return out
+
+
+# --- Interim role lock (until firm-owned roles, SaaS Phase 3) ------------------
+# Roles are global rows shared by every firm on the server: renaming "Senior
+# Advocate" or changing its permissions in one firm changed it in all of them,
+# and a firm could assign another firm's custom role. Until each firm owns its
+# roles:
+#   - built-in roles are visible and assignable, but not editable;
+#   - a custom role can be seen, edited and assigned only by the firm whose
+#     members are the only ones holding it;
+#   - new roles cannot be created (they would belong to no firm).
+BUILT_IN_ROLE_NAMES = {'super admin', 'senior advocate', 'advocate',
+                       'accountant', 'receptionist', 'intern'}
+BUILT_IN, FIRM_ONLY, FOREIGN = 'built-in', 'firm', 'foreign'
+_LOCKED = {'error': 'Built-in roles are shared by every firm on this server and cannot be '
+                    'changed yet. Firm-specific roles are coming.'}
+_NO_NEW_ROLES = {'error': 'Creating new roles is paused until firm-specific roles are '
+                          'available. Use one of the existing roles.'}
+
+
+def _firm_rbac():
+    """Firm-level RBAC (rbac/firm_views.py) replaces the interim lock in firm mode."""
+    return settings.TENANCY_MODE == 'firm' and settings.TENANCY_COLUMNS
+
+
+def _firm_member_ids(request):
+    return set(_firm_users(request).values_list('id', flat=True))
+
+
+def _role_scope(role, firm_ids):
+    if role.name.strip().lower() in BUILT_IN_ROLE_NAMES:
+        return BUILT_IN
+    holders = set(AdvocateRole.objects.filter(role_id=role.id).values_list('advocate_id', flat=True))
+    return FIRM_ONLY if holders and holders <= firm_ids else FOREIGN
+
+
+def _not_assignable(role_ids, request):
+    """The ids in role_ids this admin may not assign (unknown or another firm's)."""
+    firm_ids = _firm_member_ids(request)
+    roles = {r.id: r for r in Role.objects.filter(id__in=role_ids)}
+    return [rid for rid in role_ids
+            if rid not in roles or _role_scope(roles[rid], firm_ids) == FOREIGN]
 
 
 # Client logins (clientaccess) are managed only from the client's "Client logins"
@@ -53,14 +100,25 @@ ROLE_OR_USER_READ = [RequirePermission('ROLE_MANAGE', 'USER_MANAGE')]
 @api_view(['GET', 'POST'])
 @permission_classes(ROLE_OR_USER_READ)
 def list_roles(request):
+    if _firm_rbac():
+        from . import firm_views
+        return firm_views.list_roles(request)
     if request.method == 'GET':
         from clientaccess.gate import client_role_ids
-        return Response([_role_map(r) for r in Role.objects.exclude(id__in=client_role_ids()).order_by('id')])
+        firm_ids = _firm_member_ids(request)
+        out = []
+        for r in Role.objects.exclude(id__in=client_role_ids()).order_by('id'):
+            scope = _role_scope(r, firm_ids)
+            if scope != FOREIGN:            # another firm's custom role stays out of sight
+                out.append(_role_map(r, scope))
+        return Response(out)
     # POST — creating a role is an escalation path, so it needs ROLE_MANAGE
     # even though listing does not.
     if 'ROLE_MANAGE' not in request.user.permission_codes():
         return Response({'error': 'Access denied: missing required permission.'},
                         status=status.HTTP_403_FORBIDDEN)
+    if settings.ROLE_EDITING_LOCKED:
+        return Response(_NO_NEW_ROLES, status=status.HTTP_403_FORBIDDEN)
     name = (request.data.get('name') or '').strip()
     if not name:
         return Response({'error': 'name is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -75,11 +133,19 @@ def list_roles(request):
 @api_view(['GET', 'PUT', 'DELETE'])
 @permission_classes(ROLE_MANAGE)
 def role_detail(request, role_id):
+    if _firm_rbac():
+        from . import firm_views
+        return firm_views.role_detail(request, role_id)
     role = Role.objects.filter(id=role_id).first()
     if role is None or _client_role(role_id):
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+    scope = _role_scope(role, _firm_member_ids(request))
+    if scope == FOREIGN:
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
     if request.method == 'GET':
-        return Response(_role_map(role))
+        return Response(_role_map(role, scope))
+    if settings.ROLE_EDITING_LOCKED and scope == BUILT_IN:
+        return Response(_LOCKED, status=status.HTTP_403_FORBIDDEN)
     if request.method == 'PUT':
         name = request.data.get('name')
         if name is not None:
@@ -110,7 +176,12 @@ def role_detail(request, role_id):
 @api_view(['GET'])
 @permission_classes(ROLE_OR_USER_READ)
 def list_permissions(request):
-    data = [{'id': p.id, 'name': p.name, 'description': p.description, 'module': p.module}
+    # highRisk is the server's classification (rbac/firm_roles.HIGH_RISK): the
+    # Roles page marks these and only a firm administrator may grant them. The
+    # browser no longer keeps its own copy of the list.
+    from .firm_roles import HIGH_RISK
+    data = [{'id': p.id, 'name': p.name, 'description': p.description, 'module': p.module,
+             'highRisk': p.name in HIGH_RISK}
             for p in Permission.objects.all().order_by('module', 'name')]
     return Response(data)
 
@@ -118,8 +189,17 @@ def list_permissions(request):
 @api_view(['GET', 'PUT'])
 @permission_classes(ROLE_MANAGE)
 def role_permissions(request, role_id):
-    if _client_role(role_id):
+    if _firm_rbac():
+        from . import firm_views
+        return firm_views.role_permissions(request, role_id)
+    role = Role.objects.filter(id=role_id).first()
+    if role is None or _client_role(role_id):
         return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+    scope = _role_scope(role, _firm_member_ids(request))
+    if scope == FOREIGN:
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == 'PUT' and settings.ROLE_EDITING_LOCKED and scope == BUILT_IN:
+        return Response(_LOCKED, status=status.HTTP_403_FORBIDDEN)
     if request.method == 'GET':
         perm_ids = RolePermission.objects.filter(role_id=role_id).values_list('permission_id', flat=True)
         perms = Permission.objects.filter(id__in=list(perm_ids)).order_by('module', 'name')
@@ -141,6 +221,26 @@ def role_permissions(request, role_id):
         RolePermission(role_id=role_id, permission_id=pid) for pid in sorted(valid)
     ])
     return Response({'message': 'Permissions updated.', 'count': len(valid)})
+
+
+@api_view(['POST'])
+@permission_classes(ROLE_MANAGE)
+def role_clone(request, role_id):
+    """POST /api/roles/<id>/clone {name} - firm mode only."""
+    if not _firm_rbac():
+        return Response(_NO_NEW_ROLES, status=status.HTTP_403_FORBIDDEN)
+    from . import firm_views
+    return firm_views.clone(request, role_id)
+
+
+@api_view(['GET'])
+@permission_classes(ROLE_OR_USER_READ)
+def role_members(request, role_id):
+    """GET /api/roles/<id>/members - who holds a role (firm mode)."""
+    if not _firm_rbac():
+        return Response({'error': 'Role not found'}, status=status.HTTP_404_NOT_FOUND)
+    from . import firm_views
+    return firm_views.role_members(request, role_id)
 
 
 # ==================== Admin user management (/api/admin/users) ====================
@@ -183,6 +283,31 @@ def _join_firm(adv, requester):
         return
     FirmTeam.objects.get_or_create(team_root_id=froot, defaults={'firm_root_id': froot})
     FirmTeam.objects.update_or_create(team_root_id=adv.id, defaults={'firm_root_id': froot})
+
+
+def _sync_membership(adv, requester):
+    """Firm mode: a user added by an admin becomes an ACTIVE member of the
+    admin's firm (and a new team head's FirmTeam row points at the firm)."""
+    if not _firm_rbac():
+        return
+    import datetime
+    from core import tenant
+    from firms.models import FirmMembership, FirmTeam
+    firm = tenant.resolve_firm(requester)
+    FirmMembership.objects.get_or_create(
+        firm=firm, advocate_id=adv.id,
+        defaults={'kind': FirmMembership.STAFF, 'status': FirmMembership.ACTIVE,
+                  'team_root_id': adv.parent_advocate_id or adv.id, 'joined_at': datetime.datetime.now()})
+    FirmTeam.objects.filter(team_root_id=adv.id, firm_id__isnull=True).update(firm_id=firm.id)
+
+
+def _end_membership(adv):
+    if not settings.TENANCY_COLUMNS:
+        return
+    import datetime
+    from firms.models import FirmMembership
+    FirmMembership.objects.filter(advocate_id=adv.id, status=FirmMembership.ACTIVE).update(
+        status=FirmMembership.LEFT, left_at=datetime.datetime.now())
 
 
 def _resolve_practice_owner(owner_value, target_id=None, requester=None):
@@ -237,6 +362,10 @@ def _firm_users(request):
     server, an admin must not list, edit, re-role or close another firm's
     people."""
     from django.db.models import Q
+    if settings.TENANCY_MODE == 'firm':
+        from core import tenant
+        firm = tenant.resolve_firm(request.user)
+        return Advocate.objects.filter(id__in=tenant.firm_member_ids(firm))
     roots = practice.firm_team_roots(request.user)
     return Advocate.objects.filter(Q(id__in=roots) | Q(parent_advocate_id__in=roots))
 
@@ -257,51 +386,11 @@ class UsersView(APIView):
                          _firm_users(request).exclude(id__in=client_advocate_ids()).order_by('id')])
 
     def post(self, request):
-        d, bad = check_payload(request.data, {'email': 'email', 'phone': 'phone'})
-        if bad is not None:
-            return bad
-        if not d.get('email'):
-            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if Advocate.objects.filter(email=d.get('email')).exists():
-            return Response({'error': 'Email already registered!'}, status=status.HTTP_409_CONFLICT)
-        # No default password: falling back to a shared literal meant every
-        # account created here started with the same publicly-known password.
-        raw_password = d.get('password') or ''
-        if len(raw_password) < 8:
-            return Response({'error': 'password is required (minimum 8 characters).'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        # Which practice the new account joins. Explicit practiceOwnerId wins
-        # (null = head their own practice / firm-wide staff; an id = report to
-        # that senior). Falls back to the old sharePractice behaviour when the
-        # field is absent, so existing callers are unaffected.
-        if 'practiceOwnerId' in d:
-            parent_id, err = _resolve_practice_owner(d.get('practiceOwnerId'), requester=request.user)
-            if err:
-                return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
-        elif d.get('sharePractice') is False:
-            parent_id = None
-        else:
-            parent_id = practice_root(request.user)
-        adv = Advocate(
-            full_name=d.get('fullName') or '',
-            email=d.get('email'),
-            password=hash_password(raw_password),
-            bar_council_id=d.get('barCouncilId') or f"TEMP-{d.get('email','')[:20]}",
-            phone=d.get('phone') or None,
-            specialization=d.get('specialization') or None,
-            experience=d.get('experience') or 0,
-            address=d.get('address') or None,
-            role=d.get('role') or 'ADVOCATE',
-            theme='light',
-            whatsapp_enabled=False,
-            email_notifications_enabled=True,
-            browser_notifications_enabled=True,
-            # Resolved above: which practice this account belongs to.
-            parent_advocate_id=parent_id,
-        )
-        adv.save()
-        _join_firm(adv, request.user)
-        return Response(_user_map(adv), status=status.HTTP_201_CREATED)
+        # Accounts are no longer created with a password chosen by an
+        # administrator: people are invited (POST /api/firm/invitations) and set
+        # their own password from the one-time link. Refused for every caller.
+        return Response({'error': 'Add team members by invitation: they receive a link and set their own password.',
+                         'code': 'USE_INVITATION'}, status=status.HTTP_410_GONE)
 
 
 class UserDetailView(APIView):
@@ -326,7 +415,15 @@ class UserDetailView(APIView):
             if key in d and d[key] is not None:
                 setattr(adv, attr, d[key])
         if d.get('password'):
+            problem = password_error(d['password'], d.get('email') or adv.email)
+            if problem:
+                return Response({'error': problem}, status=status.HTTP_400_BAD_REQUEST)
             adv.password = hash_password(d['password'])
+            # An administrator setting someone's password ends that person's sessions.
+            from core.session import PASSWORD_RESET, revoke_all, security_event
+            revoke_all(adv.id, PASSWORD_RESET)
+            security_event('PASSWORD_SET_BY_ADMIN', request, actor=request.user,
+                           detail={'target': adv.id})
 
         # Reassign which practice this user belongs to (null = make them a
         # head/senior; an id = move them under that senior).
@@ -388,8 +485,18 @@ class UserDetailView(APIView):
                               len(members), ', '.join(members[:3]))},
                 status=status.HTTP_409_CONFLICT)
 
+        if _firm_rbac():
+            from . import firm_roles
+            from core import tenant
+            firm = tenant.resolve_firm(request.user)
+            if firm_roles.active_admin_ids(firm) <= {adv.id}:
+                return Response({'error': 'This is the last active firm administrator. Make someone '
+                                          'else an administrator first.'}, status=status.HTTP_409_CONFLICT)
+        from core.session import security_event
         if _has_history(adv):
-            practice.mark_left(adv)
+            practice.mark_left(adv)                 # also ends their sessions
+            _end_membership(adv)
+            security_event('ACCOUNT_DEACTIVATED', request, actor=request.user, detail={'target': adv.id})
             return Response({
                 'message': 'Account closed. {} can no longer sign in, and the '
                            'records they created are kept.'.format(adv.email),
@@ -397,9 +504,27 @@ class UserDetailView(APIView):
             })
 
         AdvocateRole.objects.filter(advocate_id=pk).delete()
+        _end_membership(adv)
+        from core.session import CLOSED, revoke_all
+        revoke_all(adv.id, CLOSED)
+        security_event('ACCOUNT_CLOSED', request, actor=request.user, detail={'target': adv.id})
         adv.delete()
         return Response({'message': 'User deleted successfully.',
                          'closed': False, 'deleted': True})
+
+
+class UserSessionsView(APIView):
+    """POST /api/admin/users/<id>/revoke-sessions - sign this member out on
+    every device (their current tokens stop working on the next request)."""
+    permission_classes = USER_MANAGE
+
+    def post(self, request, pk):
+        if _client_user(pk) or _firm_user(request, pk) is None:
+            return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        from core.session import ADMIN_REVOKE, revoke_all, security_event
+        revoke_all(pk, ADMIN_REVOKE)
+        security_event('SESSIONS_REVOKED', request, actor=request.user, detail={'target': int(pk)})
+        return Response({'message': 'All sessions of this user have been ended.'})
 
 
 class UserRolesView(APIView):
@@ -410,6 +535,9 @@ class UserRolesView(APIView):
             return Response(_NOT_HERE, status=status.HTTP_404_NOT_FOUND)
         if _firm_user(request, pk) is None:
             return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        if _firm_rbac():
+            from . import firm_views
+            return firm_views.get_user_roles(request, pk)
         role_ids = AdvocateRole.objects.filter(advocate_id=pk).values_list('role_id', flat=True)
         roles = Role.objects.filter(id__in=list(role_ids)).order_by('id')
         return Response([{'id': r.id, 'name': r.name, 'description': r.description} for r in roles])
@@ -420,6 +548,13 @@ class UserRolesView(APIView):
             return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
         if _firm_user(request, pk) is None:
             return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        if _firm_rbac():
+            from . import firm_views
+            return firm_views.set_user_roles(request, pk, new_ids)
+        # Roles the user already holds may stay; any new one must be assignable here.
+        current = set(AdvocateRole.objects.filter(advocate_id=pk).values_list('role_id', flat=True))
+        if _not_assignable([r for r in new_ids if r not in current], request):
+            return Response({'error': 'Role not found'}, status=status.HTTP_400_BAD_REQUEST)
         AdvocateRole.objects.filter(advocate_id=pk).delete()
         AdvocateRole.objects.bulk_create([
             AdvocateRole(advocate_id=pk, role_id=rid) for rid in new_ids
@@ -435,7 +570,13 @@ class UserRoleItemView(APIView):
             return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
         if _firm_user(request, pk) is None:
             return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
-        if not AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).exists():
+        if _firm_rbac():
+            from . import firm_views
+            return firm_views.add_user_role(request, pk, role_id)
+        already = AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).exists()
+        if not already and _not_assignable([int(role_id)], request):
+            return Response({'error': 'Role not found'}, status=status.HTTP_400_BAD_REQUEST)
+        if not already:
             AdvocateRole.objects.create(advocate_id=pk, role_id=role_id)
         return Response({'message': 'Role assigned.'})
 
@@ -444,5 +585,8 @@ class UserRoleItemView(APIView):
             return Response(_NOT_HERE, status=status.HTTP_400_BAD_REQUEST)
         if _firm_user(request, pk) is None:
             return Response(_USER_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+        if _firm_rbac():
+            from . import firm_views
+            return firm_views.remove_user_role(request, pk, role_id)
         AdvocateRole.objects.filter(advocate_id=pk, role_id=role_id).delete()
         return Response({'message': 'Role removed.'})

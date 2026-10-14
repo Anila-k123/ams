@@ -83,6 +83,9 @@ def has_firm_wide_scope(user):
             return True
     except Exception:                                        # noqa: BLE001
         pass
+    from django.conf import settings
+    if settings.TENANCY_MODE == 'firm':
+        return False      # firm-level RBAC: the permission decides, never a role's name
     try:
         return bool(set(user.role_names()) & FIRM_WIDE_ROLES)
     except Exception:                                        # noqa: BLE001
@@ -128,6 +131,11 @@ def firm_team_roots(user_or_root):
 
 def same_firm(a, b):
     """True when two advocates belong to the same firm."""
+    from django.conf import settings
+    if settings.TENANCY_MODE == 'firm':
+        from core import tenant
+        fa = tenant.firm_id_of_advocate(getattr(a, 'id', a))
+        return fa is not None and fa == tenant.firm_id_of_advocate(getattr(b, 'id', b))
     return firm_root(a) == firm_root(b)
 
 
@@ -144,7 +152,28 @@ def practice_ids(user):
     cached = getattr(user, _CACHE_ATTR, None)
     if cached is not None:
         return cached
+    legacy = _legacy_practice_ids(user)
+    out = legacy
+    from django.conf import settings
+    if settings.TENANCY_MODE != 'legacy':
+        # SaaS tenancy (core/tenant.py): the firm is the boundary, the team a
+        # restriction inside it. Shadow mode only compares and logs.
+        from core import tenant
+        firm_ids = tenant.firm_scope_ids(user)
+        if settings.TENANCY_MODE == 'shadow':
+            tenant.report_shadow_difference(user, legacy, firm_ids)
+        else:
+            out = firm_ids
+    try:
+        setattr(user, _CACHE_ATTR, out)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return out
 
+
+def _legacy_practice_ids(user):
+    """practice_ids as it was before tenancy: team, or every team of the firm
+    via firms.FirmTeam for firm-wide roles."""
     root = practice_root(user)
     ids = {root, user.id}
     try:
@@ -166,13 +195,7 @@ def practice_ids(user):
         # If the column is missing (the DDL command has not been run yet) fall
         # back to the old single-advocate scope rather than failing the request.
         ids = {user.id}
-
-    out = sorted(ids)
-    try:
-        setattr(user, _CACHE_ATTR, out)
-    except Exception:                                        # noqa: BLE001
-        pass
-    return out
+    return sorted(ids)
 
 
 def members(root_id):
@@ -207,6 +230,8 @@ def mark_left(advocate, on=None):
     when = on or datetime.date.today()
     Advocate.objects.filter(id=advocate.id).update(left_on=when)
     advocate.left_on = when
+    from core.session import DEACTIVATED, revoke_all
+    revoke_all(advocate.id, DEACTIVATED)
     # The cached scope may have been computed while they were active.
     if hasattr(advocate, _CACHE_ATTR):
         delattr(advocate, _CACHE_ATTR)

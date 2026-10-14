@@ -31,17 +31,20 @@ from core.models import Advocate, AdvocateRole, AuditLog, CaseEvent, Client, Doc
 from core.passwords import hash_password
 from core.permissions import RequirePermission
 from core.finance import invoice_balance, invoice_paid_amounts
+from core.validators import password_error
+from documents.storage import FILE_UNAVAILABLE, resolve_stored_file
 from core.practice import practice_ids
+from core.tenant import owned
 from workspace.models import CaseParty, HearingDetail
 
 from . import scope
 from .gate import CLIENT_ROLE
 from .models import ClientInvite, ClientUser
 from core.validators import check_payload
+from django.utils.http import content_disposition_header
 
 log = logging.getLogger(__name__)
 INVITE_TTL = datetime.timedelta(hours=72)
-MIN_PASSWORD = 8
 
 
 # --- helpers ------------------------------------------------------------------
@@ -238,7 +241,7 @@ class ClientInvoicePdfView(_ClientView):
         _audit(request, client, 'DOWNLOAD', f'{request.user.email} downloaded invoice {inv.invoice_number}',
                'Invoice', inv.id)
         resp = HttpResponse(pdf, content_type='application/pdf')
-        resp['Content-Disposition'] = f'attachment; filename="{inv.invoice_number}.pdf"'
+        resp['Content-Disposition'] = content_disposition_header(True, f'{inv.invoice_number}.pdf')
         return resp
 
 
@@ -265,13 +268,16 @@ class ClientDocumentFileView(_ClientView):
 
     def get(self, request, pk):
         d = scope.documents(self.client_id).filter(id=pk).first()
-        if d is None or not d.file_path or not os.path.isfile(d.file_path):
+        if d is None:
             return Response({'error': 'Document not found.'}, status=404)
+        path = resolve_stored_file(d.file_path, d.stored_name)
+        if path is None:
+            return Response({'error': FILE_UNAVAILABLE}, status=404)
         _audit(request, self.client(), 'DOWNLOAD', f'{request.user.email} opened document "{d.document_name}"',
                'Document', d.id)
-        resp = FileResponse(open(d.file_path, 'rb'), content_type=d.file_type or 'application/octet-stream')
+        resp = FileResponse(open(path, 'rb'), content_type=d.file_type or 'application/octet-stream')
         disposition = 'inline' if request.query_params.get('inline') == '1' else 'attachment'
-        resp['Content-Disposition'] = f'{disposition}; filename="{d.original_name}"'
+        resp['Content-Disposition'] = content_disposition_header(disposition == 'attachment', d.original_name or 'document')
         return resp
 
 
@@ -303,8 +309,9 @@ class SetPasswordView(APIView):
 
     def post(self, request):
         password = request.data.get('password') or ''
-        if len(password) < MIN_PASSWORD:
-            return Response({'error': f'Use at least {MIN_PASSWORD} characters.'}, status=400)
+        problem = password_error(password)
+        if problem:
+            return Response({'error': problem}, status=400)
         raw = request.data.get('token') or ''
         invite = (ClientInvite.objects.select_related('client_user')
                   .filter(token_hash=_hash(raw), used_at__isnull=True, expires_at__gte=timezone.now()).first()) \
@@ -330,7 +337,7 @@ class SetPasswordView(APIView):
 # --- firm side --------------------------------------------------------------------
 
 def _scoped_client(user, client_id):
-    return Client.objects.filter(id=client_id, advocate_id__in=practice_ids(user), deleted=False).first()
+    return owned(Client.objects.filter(id=client_id, advocate_id__in=practice_ids(user), deleted=False), user).first()
 
 
 def _login_row(link):
@@ -399,6 +406,7 @@ class ClientLoginsView(_FirmView):
                     advocate.full_name = full_name
                 advocate.left_on = None
                 advocate.save(update_fields=['full_name', 'left_on'])
+            _client_membership(advocate.id, client, active=True)
         url = issue_invite(link)
         firm = _firm(client) or {}
         sent = _send(email, f'Your login for {firm.get("name") or "your advocate"}',
@@ -407,6 +415,28 @@ class ClientLoginsView(_FirmView):
                      f'Set your password within 72 hours:\n{url}\n')
         # The link is returned so the advocate can share it another way if email is down.
         return Response({**_login_row(link), 'inviteUrl': url, 'emailSent': sent}, status=201)
+
+
+def _client_membership(advocate_id, client, active):
+    """The portal login's membership of the client's firm (kind CLIENT).
+
+    In firm mode a sign-in needs an ACTIVE membership; portal logins created
+    after tenancy was switched on never got one, so new clients could set a
+    password but not sign in. Created / re-activated here, suspended when the
+    login is disabled. No-op on a database without firms (legacy)."""
+    from core import tenant
+    from firms.models import FirmMembership
+    firm_id = getattr(client, 'firm_id', None) if tenant.columns() else None
+    if not firm_id:
+        return
+    m = FirmMembership.objects.filter(firm_id=firm_id, advocate_id=advocate_id).first()
+    status = FirmMembership.ACTIVE if active else FirmMembership.SUSPENDED
+    if m is None:
+        if active:
+            FirmMembership.objects.create(firm_id=firm_id, advocate_id=advocate_id, kind=FirmMembership.CLIENT,
+                                          status=status, joined_at=timezone.now())
+    elif m.status != status:
+        FirmMembership.objects.filter(id=m.id).update(status=status)
 
 
 class ClientLoginDetailView(_FirmView):
@@ -418,9 +448,15 @@ class ClientLoginDetailView(_FirmView):
         if link is None:
             return Response({'error': 'Login not found.'}, status=404)
         if 'isActive' in request.data:
-            a = Advocate.objects.get(id=link.advocate_id)
-            a.left_on = None if request.data['isActive'] else datetime.date.today()
-            a.save(update_fields=['left_on'])
+            active = bool(request.data['isActive'])
+            with transaction.atomic():
+                a = Advocate.objects.get(id=link.advocate_id)
+                a.left_on = None if active else datetime.date.today()
+                a.save(update_fields=['left_on'])
+                _client_membership(a.id, client, active=active)
+            if not active:
+                from core.session import revoke_all
+                revoke_all(a.id, 'client login disabled')
         return Response(_login_row(link))
 
 
@@ -429,7 +465,7 @@ class DocumentClientVisibleView(APIView):
     permission_classes = [RequirePermission('DOCUMENT_EDIT')]
 
     def put(self, request, pk):
-        doc = Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)).first()
+        doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if doc is None:
             return Response({'error': 'Document not found.'}, status=404)
         if not (doc.case_id or doc.client_id):

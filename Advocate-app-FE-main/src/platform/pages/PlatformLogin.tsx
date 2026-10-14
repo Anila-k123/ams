@@ -37,7 +37,7 @@ export default function PlatformLogin() {
   return (
     <AuthFrame>
       <div className="pp-kicker">AMS platform administration</div>
-      <h1>Operator sign-in</h1>
+      <h1>Platform Admin Sign in</h1>
       <p className="muted auth-lead">For the team operating AMS. Law firm users sign in at the normal login page.</p>
       <form className="stack" onSubmit={submit} noValidate>
         {reason && !error && <AuthAlert>{reason}</AuthAlert>}

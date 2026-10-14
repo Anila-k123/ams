@@ -78,3 +78,6 @@ Thumbs.db
 
 # Background process logs (tools/keepalive.ps1)
 /logs/
+
+# Per-developer tenancy mappings (account ids differ between databases; docs/TENANCY.md)
+Advocate-app-BE-Django/firms/tenancy_mapping.local*.json

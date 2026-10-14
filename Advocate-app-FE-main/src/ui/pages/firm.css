@@ -44,3 +44,7 @@
 /* Text-styled button (role member counts). */
 .linkish { background: none; border: 0; padding: 0; color: var(--tape); cursor: pointer; text-align: left; font: inherit; }
 .linkish:hover { text-decoration: underline; }
+
+/* Role card footer: Edit / Copy / Disable / Delete wrap inside the card on
+   narrow cards instead of spilling past its edge. */
+.pp-role-actions { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 2px; flex-wrap: wrap; gap: 6px; row-gap: 8px; min-width: 0; }

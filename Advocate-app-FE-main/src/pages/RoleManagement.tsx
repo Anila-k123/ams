@@ -237,7 +237,7 @@ export default function RoleManagement() {
                   {role.memberCount} {role.memberCount === 1 ? "person" : "people"}
                 </button>
               )}
-              <div className="row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 2 }}>
+              <div className="row pp-role-actions">
                 {role.editable ? (
                   <>
                     <Button size="sm" icon="edit" onClick={() => openEdit(role)} aria-label={`Edit ${role.name}`}>Edit</Button>
@@ -267,7 +267,7 @@ export default function RoleManagement() {
               <article key={t.id} className="panel pp-role">
                 <div className="row between"><h3>{t.name}</h3><Chip tone="info">Template</Chip></div>
                 <p className="muted small grow">{t.description || "No description"}</p>
-                <div className="row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 2 }}>
+                <div className="row pp-role-actions">
                   <Button size="sm" icon="eye" onClick={() => openEdit(t)}>View</Button>
                   <span className="grow" />
                   <Button size="sm" variant="primary" onClick={() => openClone(t)} aria-label={`Copy template ${t.name}`}>Use as a starting point</Button>

@@ -162,7 +162,7 @@ page('/login', {
     </form>
     <p class="small muted" style="margin-top:18px">Client? Use the link in your invitation email.</p>
     <div class="pp-hint" style="margin-top:20px"><b class="small" style="color:var(--ink)">Demo</b>: any role signs in with password <span class="mono">Demo@1234</span>. Pick the role to view PactPro as:
-      <div class="row wrap" id="l-roles">${['Senior Advocate', 'Junior Advocate', 'Intern', 'Accountant', 'Super Admin'].map(r => `<button type="button" class="filter-chip" data-role="${r}" aria-pressed="${session.role === r}">${r}</button>`).join('')}</div>
+      <div class="row wrap" id="l-roles">${['Senior Advocate', 'Advocate', 'Intern', 'Accountant', 'Super Admin'].map(r => `<button type="button" class="filter-chip" data-role="${r}" aria-pressed="${session.role === r}">${r}</button>`).join('')}</div>
       <div style="margin-top:10px">Or preview the <a class="link" href="#/set-password">client invitation</a>.</div></div>`),
   mount(root) {
     updateThemeBtn(); wireReveal(root);
@@ -452,7 +452,7 @@ page('/settings', {
    ========================================================================== */
 const ROLE_NAMES = () => D.roles.filter(r => r.name !== 'Client').map(r => r.name);
 function userForm(u) {
-  const isNew = !u; u = u || { role: 'Junior Advocate' };
+  const isNew = !u; u = u || { role: 'Advocate' };
   modal({
     title: isNew ? 'Add user' : 'Edit user', sub: isNew ? 'They get an email with this password and must change it on first sign in.' : esc(u.email), size: 'wide',
     body: `<form class="form-grid" novalidate id="uf2">

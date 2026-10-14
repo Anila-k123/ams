@@ -19,7 +19,7 @@ D.firm = {
 D.advocates = [
   { id: 1, name: 'Rajesh Kumar', role: 'Senior Advocate', email: 'rajesh@kumar-associates.demo', phone: '+91 98400 11201', bar: 'MS/1123/2001', head: true, since: '2001' },
   { id: 2, name: 'Arjun Menon', role: 'Senior Advocate', email: 'arjun@kumar-associates.demo', phone: '+91 98400 22417', bar: 'MS/2874/2008', reportsTo: null, since: '2008' },
-  { id: 3, name: 'Priya Nair', role: 'Junior Advocate', email: 'priya@kumar-associates.demo', phone: '+91 98844 31092', bar: 'MS/5521/2019', reportsTo: 1, since: '2019' },
+  { id: 3, name: 'Priya Nair', role: 'Advocate', email: 'priya@kumar-associates.demo', phone: '+91 98844 31092', bar: 'MS/5521/2019', reportsTo: 1, since: '2019' },
   { id: 4, name: 'Karthik R.', role: 'Intern', email: 'karthik@kumar-associates.demo', phone: '+91 90031 77810', bar: '—', reportsTo: 3, since: '2026' },
   { id: 5, name: 'Lakshmi S.', role: 'Receptionist', email: 'lakshmi@kumar-associates.demo', phone: '+91 90030 55102', bar: '—', since: '2015' },
   { id: 6, name: 'Suresh Kumar', role: 'Accountant', email: 'suresh@kumar-associates.demo', phone: '+91 94440 66310', bar: '—', since: '2012' },
@@ -391,7 +391,7 @@ D.playbooks = [
 D.roles = [
   { id: 1, name: 'Super Admin', desc: 'Full control of the practice, including users, roles and backups.', users: 1 },
   { id: 2, name: 'Senior Advocate', desc: 'Runs matters end to end, reviews juniors\' work, raises invoices.', users: 2 },
-  { id: 3, name: 'Junior Advocate', desc: 'Works on assigned matters; submits drafts and research for review.', users: 1 },
+  { id: 3, name: 'Advocate', desc: 'Works on assigned matters; submits drafts and research for review.', users: 1 },
   { id: 4, name: 'Intern', desc: 'Research and paperwork on assigned tasks only.', users: 1 },
   { id: 5, name: 'Receptionist', desc: 'Front desk: clients, hearings calendar and document intake.', users: 1 },
   { id: 6, name: 'Accountant', desc: 'Invoices, payments, expenses and financial reports.', users: 1 },
@@ -411,7 +411,7 @@ D.permissionModules = {
 D.rolePerms = {
   'Super Admin': Object.values(D.permissionModules).flat(),
   'Senior Advocate': Object.values(D.permissionModules).flat().filter(p => !['ROLE_MANAGE', 'BACKUP_MANAGE'].includes(p)),
-  'Junior Advocate': ['CASE_VIEW', 'CASE_EDIT', 'CLIENT_VIEW', 'EVENT_VIEW', 'EVENT_CREATE', 'DOCUMENT_VIEW', 'DOCUMENT_UPLOAD', 'TASK_VIEW', 'TASK_EDIT', 'DRAFT_VIEW', 'DRAFT_CREATE'],
+  'Advocate': ['CASE_VIEW', 'CASE_EDIT', 'CLIENT_VIEW', 'EVENT_VIEW', 'EVENT_CREATE', 'DOCUMENT_VIEW', 'DOCUMENT_UPLOAD', 'TASK_VIEW', 'TASK_EDIT', 'DRAFT_VIEW', 'DRAFT_CREATE'],
   'Intern': ['CASE_VIEW', 'DOCUMENT_VIEW', 'TASK_VIEW', 'DRAFT_VIEW'],
   'Receptionist': ['CASE_VIEW', 'CLIENT_VIEW', 'CLIENT_CREATE', 'CLIENT_EDIT', 'EVENT_VIEW', 'EVENT_CREATE', 'DOCUMENT_VIEW', 'DOCUMENT_UPLOAD'],
   'Accountant': ['CASE_VIEW', 'CLIENT_VIEW', 'INVOICE_VIEW', 'INVOICE_CREATE', 'INVOICE_EDIT', 'PAYMENT_VIEW', 'PAYMENT_CREATE', 'EXPENSE_VIEW', 'EXPENSE_CREATE', 'EXPENSE_EDIT', 'REPORT_VIEW', 'REPORT_EXPORT'],

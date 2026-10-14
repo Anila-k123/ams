@@ -135,7 +135,7 @@ Top-nav shell (firm logo, Sign out, footer): Home (greeting, 3 stats, upcoming h
   - Priorities: High / Medium / Low.
   - Statuses: In Progress / To review / Completed / Canceled.
   - Review states: Awaiting review / Approved / Changes requested.
-- **Roles:** Super Admin, Senior Advocate, Junior Advocate, Intern, Receptionist, Accountant, Client.
+- **Roles:** Super Admin, Senior Advocate, Advocate, Intern, Receptionist, Accountant, Client.
 - **Firm and people:**
   - Firm: Kumar & Associates.
   - Staff: Rajesh Kumar (owner), Arjun Menon, Priya Nair, Karthik R., Lakshmi S., Suresh Kumar, Meena Iyer.

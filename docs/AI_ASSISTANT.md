@@ -106,6 +106,16 @@ Before anything is sent to the model, `privacy.Masker` replaces:
 - The model may use tokens in tool arguments (`find_client("[CLIENT_1]")`); they are unmasked before the lookup.
 - The reply is unmasked as it streams; a token split across pieces is held back until complete.
 - Always on for openai / gemini; for the local model `ASSISTANT_MASK_LOCAL` (default `True`).
+
+### Other AI features (drafting, document summaries, translation)
+
+Until 2026-10-13 only Lisa's chat was masked; drafting and summaries sent text as written. Now:
+
+- **Drafting** (generate, edit, refine, playbooks, consistency, risk): `LLMProvider.complete` -> `drafting/providers/privacy.py`. A model outside this machine / the office network (Anthropic, Gemini, OpenAI, an ngrok tunnel) gets text masked with the acting advocate's names (`Masker.for_user`) plus the names typed into the draft's facts; the reply is unmasked, so drafts carry the real names. If there is no acting user, or a known name is still visible after masking, nothing is sent (`ExternalAIBlocked`) - use a local model. `DRAFTING_MASK_EXTERNAL=False` turns this off (approved decision only).
+- **Document summaries:** the document text is masked when `masking_enabled()` and the summary JSON unmasked.
+- **Translation** (Sarvam): needs the whole text, names can't be masked, so it is off unless `ALLOW_EXTERNAL_TRANSLATION=True`.
+- Prompts, replies and translated text are never logged (sizes and timing only).
+- Known limit, same as chat: a name that appears only in free text and in no record or fact is not known, so not masked.
 - **Limit:** a name that appears only in free text (a note, a court filing) and in no record isn't caught.
 
 ## Audit and metering

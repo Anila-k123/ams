@@ -722,7 +722,7 @@ function userMenu(btn) {
     { label: 'Keyboard shortcuts', icon: 'bolt', meta: '?', onClick: shortcutsHelp },
     '-',
     { html: `<div class="faint xs" style="padding:6px 10px 4px">View as role (demo of permissions)</div>` },
-    ...['Senior Advocate', 'Junior Advocate', 'Intern', 'Accountant', 'Super Admin'].map(r => ({ label: r, icon: session.role === r ? 'check' : 'user', onClick: () => switchRole(r) })),
+    ...['Senior Advocate', 'Advocate', 'Intern', 'Accountant', 'Super Admin'].map(r => ({ label: r, icon: session.role === r ? 'check' : 'user', onClick: () => switchRole(r) })),
     '-',
     { label: 'Sign out', icon: 'logout', danger: true, onClick: signOut },
   ], { width: 260 });

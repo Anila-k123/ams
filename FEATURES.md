@@ -42,6 +42,9 @@ This document catalogues **every** capability of the application — from the sm
 
 ## 1. Authentication, Accounts & Profile
 
+- Sign-in lockout: 5 wrong passwords for one email (or 20 from one address) in 15 minutes refuse further attempts for the rest of the window, even with the right password; the login page shows how long to wait. Password-reset codes: 5 wrong codes burn every live code. Codes are never written to logs. Every new password: 8-128 characters, not only spaces, not the email.
+- Sessions: sign-in returns the firm and membership; a session lasts at most 8 hours and is checked against the database on every request, so a suspended firm or membership, a closed account, a password change or reset, an administrator's "sign out everywhere" or logging out ends it immediately (logging out ends the person's sessions on every device). Other open tabs follow a sign-out. Documents opened in a new tab use one-minute signed links, never the login token. Sign-ins, sign-outs, password changes/resets, deactivations, suspensions and document downloads are recorded in the audit log.
+
 **Login & session**
 - Email + password login issuing a **JWT** (HS256, 24-hour expiry).
 - Token stored in `localStorage`; sent as `Authorization: Bearer <token>` on every request.
@@ -203,6 +206,8 @@ Every form field that takes a structured value is checked in the browser (as you
 ---
 
 ## 7. Documents & AI Summarization
+
+- Uploads are limited to 25 MB each (`DOCUMENT_MAX_UPLOAD_MB`). A document whose file is not on this server (for example uploaded on a previous machine) answers "This file is not available on this server." instead of an error. Word previews and Acts text are sanitised (DOMPurify) before display.
 
 **Centralized repository:**
 - Multi-file drag-drop upload with **per-file progress**.
@@ -474,6 +479,8 @@ A floating chat panel with two modes:
 
 ## 19. RBAC — Roles, Permissions & User Management
 
+- Firm-specific roles: each firm has its own copy of the standard roles (Super Admin shown as Firm Administrator, Senior/Advocate, Accountant, Intern, Receptionist) and can create, clone, rename, re-permission, disable or delete (if unused) its own roles; other firms are unaffected. Only a firm administrator can hand out high-risk permissions (roles, users, backups, firm-wide scope, settings, invoice issuing, audit); nobody can grant a permission they don't hold; the last firm administrator can't be removed. (Before firm mode is switched on, the shared built-in roles stay read-only.)
+
 **Roles & permissions:**
 - Roles (name, description) with assignable permission sets; permissions are module-scoped.
 - Permission codes include: `CASE_CREATE`, `CASE_EDIT/UPDATE`, `CASE_DELETE`, `CASE_VIEW`/`CASE_VIEW_ALL`, `CLIENT_VIEW`, `DOCUMENT_VIEW`, `DOCUMENT_UPLOAD`, `REPORT_VIEW`, `TASK_ASSIGN`, `AUDIT_VIEW`, `USER_MANAGE`, `ROLE_MANAGE`, `BACKUP_MANAGE`.
@@ -488,6 +495,26 @@ A floating chat panel with two modes:
 **Seed commands:** `seed_admin_permissions`, `seed_firm_wide_scope`, `seed_task_permissions`.
 
 ---
+
+### Firm administration (SaaS Phase 6)
+
+- **Firm Settings** — display name, logo (PNG/JPEG/WebP, 2 MB), office contact, GSTIN/PAN, invoice prefix and numbering, time zone, currency, brand colour; the sidebar shows the firm's name and logo.
+- **Team Members** — one page for the firm's people: profile, practice and roles; tabs for active / invited / suspended / left members and invitations; new people are invited by email and set their own password; resend or withdraw invitations (delivery status shown); suspend, reactivate, remove with confirmation; the last administrator is protected.
+- **Roles** — system templates to copy from, copy a role, see who holds it, disable / enable, high-risk permissions marked.
+- **Invitation page** — clear screens for expired, withdrawn, already-used and invalid links; accepting sends you to sign in.
+
+### Billing and reliability safeguards (SaaS Phase 7)
+
+- Each firm numbers its own invoices (its prefix, optional restart every financial year); numbers never clash, even when two invoices are created at the same moment; existing numbers are kept.
+- Amounts are exact to the paisa; negative, nil or three-decimal amounts and unsupported GST rates are refused.
+- A payment saved twice by a double click or a retry is recorded once; the same cheque or UPI reference entered twice is caught; payments can't exceed what is due.
+- Paid and cancelled invoices are final; every issue, payment, mark-paid and cancellation is in the firm's audit log.
+- Reminders reach only current members of the firm, once per period, never for a suspended firm, and keep working when a case's creator leaves.
+- Failed uploads leave no stray files; a failed or repeated draft generation never wipes the existing draft.
+
+### Platform console (SaaS Phase 6)
+
+For the team operating AMS, at `/platform` (separate sign-in with an authenticator code): dashboard figures, firm directory with search and status filter, create a firm (idempotent, invitation to its first administrator), firm detail (contact, members, usage counts, plan, invitation status and resend, activate / suspend with reason), and a searchable platform audit log.
 
 ## 20. Multi-User Shared Practice (Firm Mode)
 
@@ -519,6 +546,8 @@ A floating chat panel with two modes:
 ---
 
 ## 22. Backup & Restore
+
+- Restore treats the uploaded archive as untrusted: unknown columns are refused, nothing runs with superuser rights, records may only point at cases/clients/tasks/documents in the archive or the user's practice, document paths are rebuilt inside the uploads folder, archives over `BACKUP_MAX_UPLOAD_MB` (200) are refused, and a documents-only restore writes back only the user's own files. Errors no longer show database text.
 
 - Backup types: **Quick, Full (data + documents), Database-only, Documents, Reports, Settings**.
 - Restore from a backup file, validate integrity, view history & stats, download, delete.

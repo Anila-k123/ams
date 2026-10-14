@@ -50,7 +50,7 @@ python manage.py seed_invoice_permissions
 
 `seed_invoice_permissions` creates `INVOICE_ISSUE` (Accountant, Super Admin), lets the Advocate role raise invoices for accounts to issue, and takes `INVOICE_ISSUE` / `PAYMENT_CREATE` / `INVOICE_EDIT` away from the Senior Advocate, so issuing, payments and corrections all stay with accounts (see FEATURES.md §9).
 
-The role hierarchy is **Super Admin > Senior Advocate > Advocate > Intern** (plus Accountant and Client). The middle role used to be called "Junior Advocate". On a database from before 2026-10-05, rename it once (it keeps its id, permissions and users; safe to re-run):
+The role hierarchy is **Super Admin > Senior Advocate > Advocate > Intern** (plus Accountant and Client). The middle role used to be called "Advocate". On a database from before 2026-10-05, rename it once (it keeps its id, permissions and users; safe to re-run):
 
 ```
 python manage.py rename_junior_role
@@ -79,6 +79,62 @@ Note: the name has capitals, so write it quoted in `psql` / pgAdmin (`"PactPro_d
 - Drafting uploads (reference documents, templates, playbook files): `DRAFTING_MEDIA_ROOT`.
   - Both are served only through the API, behind the login and practice scope, never as public `/media`.
   - The default `DRAFTING_MEDIA_ROOT` still points at the retired InstaDraft checkout (`Desktop/pact-pro-draft/backend/media`). Copy that folder somewhere permanent and set `DRAFTING_MEDIA_ROOT` before archiving InstaDraft.
+
+## Backups and restore verification
+
+Scripts are in `Advocate-app-BE-Django/scripts/`. They never write to `PactPro_db` or to any other application's database on the server (`leaserush`, `esg_db`, `esg_dbb` share this PostgreSQL instance).
+
+**Credentials:** the scripts hold no passwords. `pg_dump` / `psql` read them from the PostgreSQL password file `%APPDATA%\postgresql\pgpass.conf` (one line `localhost:5432:*:postgres:<password>`, readable only by the account that runs the backup) or from `PGPASSFILE`. Keep that file and the `.env` files out of Git and out of backups' logs.
+
+**Backup** — `backup_db.bat` (wrapper) or `backup_db.ps1`:
+
+```
+set AMS_BACKUP_DIR=E:\AMS_Backups                  (another disk or a network share)
+set AMS_MEDIA_DIR=<settings.MEDIA_ROOT>            (drafting media, optional but recommended)
+scripts\backup_db.bat                              (add -DryRun to see what it would do)
+```
+
+- Works in `<dir>\inprogress\<stamp>`, then moves a finished backup to `<dir>\daily\<stamp>`; a failed one goes to `<dir>\failed\<stamp>` with its log and exit code 1. A backup counts as good only if it has a `COMPLETE` marker.
+- Contents: `PactPro_db.dump` (`pg_dump -Fc`), `PactPro_db.schema.sql`, `dump_toc.txt` (proof the archive reads back), `table_counts.csv` and `schema_summary.csv` (exact row counts, constraint/index counts), `files\` (copies of `DOCUMENT_UPLOAD_DIR` and the drafting media), `manifest.sha256`, `backup.log`.
+- Refuses a folder on the system drive (unless `-AllowSystemDrive` for a test), inside the repository, or on a disk/share that is not connected.
+- Retention: 30 daily, 8 weekly, 12 monthly. Expired backups are only **listed** in the log; they are deleted only with `-ApplyRetention`, and the newest complete backup is never deleted.
+
+**Restore verification** — `restore_verify.bat <backup folder> [-CreateDatabase]`:
+
+- Target is always the isolated database `pactpro_restore_check`; any other name is refused.
+- If it exists it must be empty (no tables), otherwise the script stops. It never drops or replaces a database; `-CreateDatabase` creates it when absent.
+- Checks: SHA-256 manifest, `pg_restore --exit-on-error`, row counts and constraint/index counts against the backup's snapshots, document files referenced by the restored rows present in the file copy. Writes `restore_report_<stamp>.md` in the backup folder.
+- Drop the check database afterwards only with approval: `dropdb pactpro_restore_check`.
+
+**Full recovery (disaster):** stop the app and scheduler → restore the dump into a **new** database (`createdb PactPro_db_restored` + `pg_restore --no-owner --exit-on-error`) → run `restore_verify` checks against it → point `DB_NAME` at it → copy the `files\` folders back to `DOCUMENT_UPLOAD_DIR` / drafting media → start → smoke test (login, a case, a document download, an invoice, a draft). Keep the old database untouched until sign-off. Point-in-time recovery between nightly backups is not available on this server.
+
+**Restore drill:** monthly, restore the latest backup into `pactpro_restore_check` and record the result in `docs/PHASE0_BASELINE.md`.
+
+**Who connects to the database:** `scripts/db_activity_sampler.ps1 -OutDir <folder>` records, every 5 minutes for 7 days, which users/applications/hosts are connected to `PactPro_db` and the per-table write counters (read-only, no query text). Used to prove no other application writes to the AMS tables before they are altered.
+
+## Phase 1 security settings and pending steps
+
+- **Migration pending:** `accounts.0001_initial` creates `auth_attempt` (login / reset-code attempt counting). Apply it only after a verified backup (`python manage.py migrate accounts`). Until then sign-in works but the lockout is off, and the backend logs `attempt counting is OFF`.
+- **`.env` on every machine:** `DEBUG` now defaults to False, and with DEBUG off the app refuses to start without a real `SECRET_KEY`. Development / test machines must say `DEBUG=True`; a production `.env` must set a long random `SECRET_KEY` (changing the key that signs tokens - `JWT_SIGNING_KEY`, else `SECRET_KEY` - logs everyone out).
+- **Sessions (Phase 4):** migration `accounts.0002` (token versions). Tokens issued before Phase 4 are refused (everyone signs in once); `JWT_ACCEPT_LEGACY_UNTIL=<ISO datetime, at most 8 h ahead>` lets them run out instead. `ACCESS_TOKEN_MAX_HOURS` (8), `JWT_EXPIRATION_MS` (8 h default), `DOCUMENT_LINK_SECONDS` (60). Logout signs a person out on every device.
+- **Platform (Phase 5):** migrations `accounts.0003`, `firms.0005`, `platform_admin.0001`. Create the first operator on the server console: `manage.py platform_operator create --email ... --role OWNER` (prompts for a 14+ character password, prints the authenticator secret once). Settings: `PLATFORM_TOKEN_MINUTES` (60), `INVITATION_TTL_HOURS` (72); invitation links use `CLIENT_APP_URL`. See `docs/PLATFORM.md`.
+- **Platform console (Phase 6):** migrations `firms.0006` (invitation delivery status) and `platform_admin.0002` (encrypted MFA seed). Set `PLATFORM_MFA_KEY` in `.env` (Fernet key, independent of `SECRET_KEY`) **before** creating operators and back it up with the database: without it operator sign-in answers 503. Console at `/platform/login`. Failed invitation emails show as *not delivered* on the platform dashboard and firm pages; resend from there. UI tests: `npm test` (Vitest + Testing Library, `vitest.config.ts`). After restoring a database or moving servers run `manage.py platform_operator verify-key`: it confirms `PLATFORM_MFA_KEY` still reads every operator's seed (prints nothing secret).
+- **Phase 9 (validation):** on every deploy run `rename_junior_role` first (Junior Advocate -> Advocate: system template and every firm copy still named so; applied to the local PactPro_db on 2026-10-14, backup `20261014_143534`), then the permission seeds (idempotent; now reach every firm's copy of a system role): `seed_admin_permissions`, `seed_alert_permissions`, `seed_firm_wide_scope`, `seed_task_permissions`, `seed_invoice_permissions`, `seed_drafting_permissions`. Once `CASE_ALERTS` exists, hearing and cause-list alerts go only to its holders (Super Admin, Senior Advocate, Advocate, Intern; not the Accountant) instead of everyone with `CASE_VIEW`. Applied to the local PactPro_db on 2026-10-14 after a dry run (backup `20261014_133222`): 24 grants, 2 removals from the Senior Advocate template only, no firm role or member lost anything. Check a database with `manage.py integrity_report` (read-only; exit 1 on an error). Browser E2E: `npm run e2e` in the frontend, against `pactpro_e2e` only (`docs/E2E.md`).
+- **Phase 7 (financial integrity, `docs/RELIABILITY.md`):** migrations `invoices.0009` (`invoice_sequence`, `payment_request_key`), `invoices.0010` (invoice numbers unique per firm: adds `invoices_firm_number_uniq` / `invoices_legacy_number_uniq`, drops the server-wide `UNIQUE (invoice_number)`; no row changed), `notifications.0001` (`notification_key`, `job_run`). Background job health: `manage.py job_status` (`--failed`, `--job process_notifications`). Invitation emails sent with the console mail backend show as *not emailed (console)*, not *sent*.
+- **New switches** (defaults in brackets): `DOCUMENT_MAX_UPLOAD_MB` (25), `BACKUP_MAX_UPLOAD_MB` (200), `LOGIN_LOCKOUT_ENABLED` (True), `LOGIN_MAX_FAILURES` (5), `LOGIN_MAX_FAILURES_PER_IP` (20), `LOGIN_LOCKOUT_MINUTES` (15), `OTP_MAX_FAILURES` (5), `ROLE_EDITING_LOCKED` (True), `DRAFTING_MASK_EXTERNAL` (True), `ALLOW_EXTERNAL_TRANSLATION` (False), HTTPS: `SECURE_SSL_REDIRECT`, `SECURE_HSTS_SECONDS`, `SECURE_COOKIES`, `BEHIND_HTTPS_PROXY` (all off).
+- **Restricted database role:** `scripts/create_app_role.sql` creates a LOGIN role without superuser/createdb/createrole and grants it read/write on the `public` and `drf` tables (plus default privileges for future migrations). Rehearse on an isolated database first; then `DB_USER=<that role>` in `.env`, and run migrations as the owner. Not yet applied anywhere.
+
+## SaaS tenancy migrations (Phase 2)
+
+Not applied to the office database. On an isolated database: `migrate` (adds firm tables and nullable `firm_id` columns), set `TENANCY_COLUMNS=True`, then `plan_tenancy` -> approval -> `apply_tenancy --yes` -> `verify_tenancy`, then `TENANCY_MODE=shadow` and later `firm` with approval. Full procedure and rollback: `docs/TENANCY.md`. Run `makemigrations` normally (it always sees the tenancy columns).
+
+## Read-only baseline inventory
+
+```
+python manage.py baseline_inventory --out C:\AMS_Baseline\<date>
+```
+
+Switches the session to READ ONLY (and stops if PostgreSQL does not confirm it), then writes JSON/CSV files: practice roots and a proposed firm mapping, roles and the role × permission matrix, every user's effective permissions, permissions the code uses but the database lacks, ownership anomalies, schema/model drift, document path patterns, invoice number formats, database roles and connections. The output contains names and emails: the command refuses a folder inside the repository. Never commit it.
 
 ## Background jobs (drafting)
 

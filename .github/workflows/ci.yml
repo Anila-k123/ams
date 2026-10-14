@@ -6,11 +6,10 @@
 # any production AI key. No repository secrets are used.
 name: CI
 
+# Paused (CI/DevOps deferred): no automatic runs on push or pull request.
+# Run it by hand from GitHub -> Actions -> CI -> "Run workflow" when needed;
+# to turn automatic runs back on, restore the push / pull_request triggers.
 on:
-  pull_request:
-    branches: [main, dev3]
-  push:
-    branches: [main, dev3]
   workflow_dispatch:
 
 permissions:

@@ -45,7 +45,7 @@ scripts\backup_db.bat                     REM needs AMS_BACKUP_DIR (off the syst
 scripts\restore_verify.bat <backup dir>   REM restores only into pactpro_restore_check, never drops a database
 venv\Scripts\python.exe manage.py baseline_inventory --out C:\AMS_Baseline\<date>   REM read-only; output has personal data, never commit
 ```
-The PostgreSQL server also hosts other applications' databases (`leaserush`, `esg_db`, `esg_dbb`) under the same superuser login: never run anything against them. `pactpro_db1` (named in `run-dev.bat`) does not exist yet. CI: `.github/workflows/ci.yml` (throw-away PostgreSQL 18 + pgvector, no secrets, no deployment).
+The PostgreSQL server also hosts other applications' databases (`leaserush`, `esg_db`, `esg_dbb`) under the same superuser login: never run anything against them. `pactpro_db1` (named in `run-dev.bat`) does not exist yet. CI: `.github/workflows/ci.yml` (throw-away PostgreSQL 18 + pgvector, no secrets, no deployment) - **paused**: manual "Run workflow" only, no automatic runs on push/PR (CI/DevOps deferred).
 
 Export query params: never name one `format` — DRF treats `?format=` as its renderer switch and returns 404 (draft PDF uses `?output=pdf`).
 

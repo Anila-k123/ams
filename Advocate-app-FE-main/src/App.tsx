@@ -19,6 +19,8 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 // public page that sets a password from an invite link.
 const ClientApp = lazy(() => import('./client/ClientApp'));
 const SetPassword = lazy(() => import('./client/SetPassword'));
+const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
+const PlatformApp = lazy(() => import('./platform/PlatformApp'));
 // Full-screen drafting pages (outside the sidebar shell).
 const DraftingSampleTool = lazy(() => import('./pages/Drafting/Standalone').then((m: any) => ({ default: m.SampleTool })));
 const DraftingEditor = lazy(() => import('./pages/Drafting/Standalone').then((m: any) => ({ default: m.DraftEditor })));
@@ -68,6 +70,9 @@ function App() {
             <Route path="/verify-otp" element={<VerifyOtp />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/set-password" element={<SetPassword />} />
+            <Route path="/accept-invite" element={<AcceptInvite />} />
+            {/* Platform operators: separate session, never the firm token */}
+            <Route path="/platform/*" element={<PlatformApp />} />
 
             <Route path="/dashboard/*" element={<ProtectedRoute><DashboardForRole /></ProtectedRoute>} />
             <Route path="/cases" element={<ProtectedRoute><CasesForRole /></ProtectedRoute>} />

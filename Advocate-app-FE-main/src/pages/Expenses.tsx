@@ -1,7 +1,7 @@
 // Expenses: court fees, travel and out-of-pocket costs per case, set against
 // what the client has paid. Per-case detail opens in a drawer; today's and the
 // month's reports open in a modal and can be printed or downloaded.
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -18,6 +18,7 @@ import { Modal, Drawer, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/finance.css";
 import { amountError, blockSignKeys } from "../utils/validators";
+import { newRequestKey } from "../utils/requestKey";
 
 const CATEGORIES = ["Travel", "Court Fees", "Documents", "Stationery", "Miscellaneous"];
 
@@ -322,6 +323,7 @@ function Expenses() {
     });
     setOpenInvoices([]);
     setFormError("");
+    paymentKey.current = newRequestKey();   // a new payment, a new key
     setShowPaymentModal(true);
     if (hasPermission("INVOICE_VIEW")) {
       api.get("/api/invoices/my-invoices")
@@ -345,6 +347,9 @@ function Expenses() {
     setNewPayment({ ...newPayment, [e.target.name]: e.target.value });
   };
 
+  // Same key on a retry, so a timed-out save is not recorded twice.
+  const paymentKey = useRef(newRequestKey());
+
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
@@ -363,9 +368,10 @@ function Expenses() {
           amount: parseFloat(newPayment.amount),
           caseEntity: { id: newPayment.caseId },
           invoiceId: newPayment.invoiceId || undefined,
-        }),
+        }, { headers: { "Idempotency-Key": paymentKey.current } }),
         "Saving Payment..."
       );
+      paymentKey.current = newRequestKey();
       success("Payment recorded.");
       setShowPaymentModal(false);
       // refresh

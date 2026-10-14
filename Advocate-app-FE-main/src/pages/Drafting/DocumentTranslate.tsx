@@ -1,3 +1,4 @@
+import { sanitizeHtml } from '../../utils/sanitizeHtml'
 import { useEffect, useRef, useState } from 'react'
 import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
@@ -46,7 +47,7 @@ function DocPanel({ fileUrl, name }: { fileUrl?: string | null; name?: string })
   if (loading) return <div className="row" style={{ justifyContent: 'center', padding: 48 }}><Spinner label="Loading document" /></div>
   if (error) return <div className="callout bad" style={{ margin: 16 }}><Icon name="warn" size="sm" /><div>{error}</div></div>
   if (isPdf && pdfUrl) return <iframe title={name ?? 'document'} src={pdfUrl} style={{ width: '100%', height: '100%', minHeight: '70vh', border: 'none' }} />
-  if (isDocx) return <div className="paper-sheet pp-docx-preview" dangerouslySetInnerHTML={{ __html: html }} />
+  if (isDocx) return <div className="paper-sheet pp-docx-preview" dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />
   return <div className="callout warn" style={{ margin: 16 }}><Icon name="warn" size="sm" /><div>In-app preview isn't supported for this file type.</div></div>
 }
 

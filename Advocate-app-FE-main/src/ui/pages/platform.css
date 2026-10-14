@@ -1,0 +1,23 @@
+/* SaaS Platform Admin (src/platform). Red Tape tokens only. A distinct top bar
+   so operators never confuse this console with a firm workspace. */
+.pf-shell { min-height: 100vh; background: var(--paper); color: var(--ink); }
+.pf-top { display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: var(--ink); color: var(--paper); }
+.pf-top .pf-brand { font-weight: 700; letter-spacing: .02em; }
+.pf-top .pf-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; opacity: .85; }
+.pf-top nav { display: flex; gap: 4px; flex: 1; }
+.pf-top nav a { color: inherit; text-decoration: none; padding: 6px 10px; border-radius: 6px; opacity: .8; }
+.pf-top nav a.active, .pf-top nav a:hover { opacity: 1; background: rgba(255, 255, 255, .12); }
+.pf-top .pf-who { font-size: 13px; opacity: .85; }
+.pf-main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+.pf-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.pf-stat { padding: 14px 16px; }
+.pf-stat .n { font-size: 26px; font-weight: 700; }
+.pf-stat .l { font-size: 13px; color: var(--ink-3); }
+.pf-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.pf-dl dt { color: var(--ink-3); }
+.pf-dl dd { margin: 0; }
+.pf-row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .pf-top { flex-wrap: wrap; padding: 10px 16px; }
+  .pf-main { padding: 16px; }
+}

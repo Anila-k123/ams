@@ -1,3 +1,4 @@
+import { sanitizeHtml } from '../../../utils/sanitizeHtml'
 import { useEffect, useState } from 'react'
 import { Spinner } from '../../../ui/kit'
 import Icon from '../../../ui/Icon'
@@ -52,6 +53,6 @@ export default function InlineDocViewer({ fileUrl, name, amsDocId, fileName }:
   if (error) return <div className="callout bad"><Icon name="warn" size="sm" /><div>{error}</div></div>
   if (isPdf && pdfUrl) return <iframe title={name ?? 'document'} src={pdfUrl} style={{ width: '100%', height: '100%', border: 'none' }} />
   if (isImage && imgUrl) return <img src={imgUrl} alt={name ?? 'document'} style={{ maxWidth: '100%' }} />
-  if (isDocx) return <div className="pp-docx-preview" style={{ fontSize: '0.85rem' }} dangerouslySetInnerHTML={{ __html: html }} />
+  if (isDocx) return <div className="pp-docx-preview" style={{ fontSize: '0.85rem' }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />
   return <div className="callout warn"><Icon name="warn" size="sm" /><div>In-app preview isn't supported for this file type.</div></div>
 }

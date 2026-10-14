@@ -6,7 +6,12 @@ import api from "../api/client";
 function toError(err: any): Error {
   const res = err?.response;
   if (!res) return err instanceof Error ? err : new Error("Request failed");
-  if (res.status === 403) return new Error("Access denied");
+  // A 403 that explains itself (e.g. "Built-in roles ... cannot be changed yet")
+  // keeps its sentence; a bare one stays "Access denied".
+  if (res.status === 403) {
+    const reason = res.data && typeof res.data === "object" ? res.data.error : null;
+    return new Error(reason || "Access denied");
+  }
   const data = res.data;
   let message = "Request failed";
   if (typeof data === "string") {
@@ -36,6 +41,9 @@ const rbacService = {
   getMyPermissions: () => call("get", "/advocates/my-permissions"),
   getMyRoles: () => call("get", "/advocates/my-roles"),
   getAllRoles: () => call("get", "/roles"),
+  getRoleTemplates: () => call("get", "/roles?templates=1"),
+  cloneRole: (id: any, name: string) => call("post", `/roles/${id}/clone`, { name }),
+  getRoleMembers: (id: any) => call("get", `/roles/${id}/members`),
   getRole: (id: any) => call("get", `/roles/${id}`),
   createRole: (role: any) => call("post", "/roles", role),
   updateRole: (id: any, role: any) => call("put", `/roles/${id}`, role),
@@ -45,7 +53,7 @@ const rbacService = {
   getAllPermissions: () => call("get", "/permissions"),
   getAllUsers: () => call("get", "/admin/users"),
   getUser: (id: any) => call("get", `/admin/users/${id}`),
-  createUser: (user: any) => call("post", "/admin/users", user),
+  // No createUser: team members are invited (POST /api/firm/invitations) and set their own password.
   updateUser: (id: any, user: any) => call("put", `/admin/users/${id}`, user),
   deleteUser: (id: any) => call("delete", `/admin/users/${id}`),
   setUserRoles: (userId: any, roleIds: any) => call("put", `/admin/users/${userId}/roles`, roleIds),

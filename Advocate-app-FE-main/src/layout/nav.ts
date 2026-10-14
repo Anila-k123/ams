@@ -63,6 +63,7 @@ export const NAV: { pinned: NavItem[]; groups: NavGroup[]; bottom: NavItem[] } =
       { path: `${D}/communication/settings`, label: 'Communication Channels', icon: 'cog', perm: 'SETTINGS_EDIT' },
     ] },
     { id: 'firm', label: 'Firm Administration', icon: 'key', items: [
+      { path: `${D}/firm/settings`, label: 'Firm Settings', icon: 'cog', perm: 'SETTINGS_EDIT' },
       { path: `${D}/users`, label: 'Team Members', icon: 'user', perm: 'USER_MANAGE' },
       { path: `${D}/roles`, label: 'Roles & Permissions', icon: 'key', perm: 'ROLE_MANAGE' },
       { path: `${D}/activity`, label: 'Audit Log', icon: 'history', perm: 'AUDIT_VIEW' },

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useEffect, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { jwtDecode } from 'jwt-decode'
 import { logoutAndRedirect } from '../utils/auth'
 
@@ -18,7 +18,7 @@ export interface Session {
 interface AuthState extends Session {
   isClient: boolean
   /** Store the /api/auth/login (or set-password) response. */
-  login: (data: { token: string; role?: string; fullName?: string }, email?: string) => void
+  login: (data: { token: string; role?: string; fullName?: string; firm?: unknown }, email?: string) => void
   /** Update the cached name / email after a profile edit. */
   updateProfile: (patch: { fullName?: string; email?: string }) => void
   logout: () => void
@@ -47,9 +47,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('token', data.token)
     localStorage.setItem('role', data.role || 'ADVOCATE')
     localStorage.setItem('fullName', data.fullName || '')
+    // Display only (name of the firm); the server re-checks the firm on every request.
+    if (data.firm) localStorage.setItem('firm', JSON.stringify(data.firm))
+    else localStorage.removeItem('firm')
     if (email) localStorage.setItem('email', email)
     setSession(read())
   }, [])
+
+  // Another tab signed out, or signed in as someone else: this tab must not keep
+  // showing the previous person's firm data.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== 'token' && e.key !== null) return
+      const now = localStorage.getItem('token')
+      if (now === session.token) return
+      if (!now) window.location.href = '/login'
+      else window.location.reload()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [session.token])
 
   const updateProfile = useCallback<AuthState['updateProfile']>((patch) => {
     if (patch.fullName !== undefined) localStorage.setItem('fullName', patch.fullName)

@@ -43,6 +43,7 @@ import DocumentPlaceholders from './components/DocumentPlaceholders'
 import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview, type ReviewRoundSummary, type DraftReviewRequest, type DraftComments, type DraftCommentThread } from './api/drafting'
 import DraftChanges, { changeSummary } from '../../components/DraftChanges'
 import { RiskContext, type RiskMap } from './context/RiskContext'
+import { sanitizeHtml } from '../../utils/sanitizeHtml'
 
 // ── legacy blank detection (old ______ / dot-leader drafts) ────────────────────
 const BLANK_SRC = '_{2,}|…{2,}|\\.{4,}|\\[[\\s_.•●…]*\\]'
@@ -210,13 +211,15 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 
 // Remove edit-highlight spans (unwrap, keep text) — used so downloads are clean.
 function stripEditHl(html: string): string {
-  const div = document.createElement('div')
-  div.innerHTML = html
-  div.querySelectorAll('[data-edit-hl]').forEach(el => {
+  // DOMParser builds an inert document: unlike innerHTML on an element of this
+  // page, nothing in it loads or runs (an <img onerror> in stored draft HTML
+  // would otherwise execute here).
+  const body = new DOMParser().parseFromString(html, 'text/html').body
+  body.querySelectorAll('[data-edit-hl]').forEach(el => {
     while (el.firstChild) el.parentNode?.insertBefore(el.firstChild, el)
     el.parentNode?.removeChild(el)
   })
-  return div.innerHTML
+  return body.innerHTML
 }
 
 // Print stylesheet used for the PDF export (rendered in a hidden iframe).
@@ -670,7 +673,7 @@ export default function DraftPage() {
       (session?.blocks || []).forEach(b => {
         const hCss = headingStyleCss(b.style_json?.heading)
         parts.push((b.heading ? `<h3${hCss ? ` style="${hCss}"` : ''}>${escText(b.heading)}</h3>` : '')
-          + (b.content_html?.trim() ? b.content_html : textToHtml(stripDocTitle(stripLeadingHeading(b.text, b.heading || ''), dTitle))))
+          + (b.content_html?.trim() ? sanitizeHtml(b.content_html) : textToHtml(stripDocTitle(stripLeadingHeading(b.text, b.heading || ''), dTitle))))
       })
     }
     return stripEditHl(parts.join('\n'))

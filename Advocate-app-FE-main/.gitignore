@@ -23,3 +23,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Browser E2E run (docs/E2E.md): state holds this run's synthetic credentials.
+e2e/.state/
+e2e/.mail/
+e2e/.uploads/
+e2e/.results/

@@ -19,7 +19,7 @@ import { FilterChip, SearchInput, Segmented, SelectField, TextArea, TextField } 
 import { Modal, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/clients.css";
-import { DOCUMENT_ACCEPT, DOCUMENT_TYPES_LABEL, isAllowedDocument } from "../utils/fileTypes";
+import { DOCUMENT_ACCEPT, DOCUMENT_TYPES_LABEL, MAX_UPLOAD_MB, documentProblem } from "../utils/fileTypes";
 
 const CATEGORIES = [
   "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
@@ -214,14 +214,13 @@ export default function DocumentsPanel() {
 
   const hasFilters = !!(searchText || selectedCategory || selectedStatus || selectedFileType || selectedCase || sharedOnly);
 
-  // Only allowed document types join the upload list (utils/fileTypes); a dropped
-  // web page or script is left out with a message. The server refuses them too.
+  // Only allowed document types within the size limit join the upload list
+  // (utils/fileTypes); anything else is left out with a message. The server
+  // refuses them too.
   const addFiles = (files: File[]) => {
-    const ok = files.filter((f) => isAllowedDocument(f.name));
-    const refused = files.filter((f) => !isAllowedDocument(f.name));
-    if (refused.length) {
-      toast.error(`${refused.map((f) => f.name).join(", ")} can't be uploaded. Use ${DOCUMENT_TYPES_LABEL}.`);
-    }
+    const ok = files.filter((f) => !documentProblem(f));
+    const problems = files.map(documentProblem).filter(Boolean);
+    if (problems.length) toast.error(problems.join(" "));
     if (ok.length) setUploadFiles((prev) => [...prev, ...ok]);
   };
 
@@ -450,7 +449,7 @@ export default function DocumentsPanel() {
       )}
 
       {/* Upload */}
-      <Modal open={showUploadModal} title="Upload documents" sub={`${DOCUMENT_TYPES_LABEL}, up to 25 MB each.`}
+      <Modal open={showUploadModal} title="Upload documents" sub={`${DOCUMENT_TYPES_LABEL}, up to ${MAX_UPLOAD_MB} MB each.`}
         onClose={() => { if (!uploading) setShowUploadModal(false); }} dismissable={!uploading}
         footer={<>
           <Button variant="ghost" onClick={() => setShowUploadModal(false)} disabled={uploading}>Cancel</Button>

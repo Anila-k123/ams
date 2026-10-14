@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import api from "../api/client";
+import { newRequestKey } from "../utils/requestKey";
 import { useLoading } from "../contexts/LoadingContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
@@ -444,11 +445,15 @@ export default function InvoicesPanel() {
 
   const openPayment = (inv: any) => {
     setPaying(inv);
+    paymentKey.current = newRequestKey();   // a new payment, a new key
     setPayment({ ...EMPTY_PAYMENT, amount: String(inv.balance ?? inv.amount), paymentDate: today() });
   };
 
   const due = (inv: any) => inv?.balance ?? inv?.amount ?? 0;
   const payAmount = parseFloat(payment.amount) || 0;
+
+  // Same key on a retry, so a timed-out save is not recorded twice.
+  const paymentKey = useRef(newRequestKey());
 
   const savePayment = async () => {
     if (!paying || payAmount <= 0) return;
@@ -457,7 +462,8 @@ export default function InvoicesPanel() {
         invoiceId: paying.id, amount: payAmount,
         paymentMode: payment.paymentMode || null, referenceNumber: payment.referenceNumber || null,
         paymentDate: payment.paymentDate || null, description: payment.description || null,
-      }), "Recording Payment...");
+      }, { headers: { "Idempotency-Key": paymentKey.current } }), "Recording Payment...");
+      paymentKey.current = newRequestKey();
       const full = payAmount >= due(paying) - 0.005;
       setPaying(null);
       fetchInvoices();

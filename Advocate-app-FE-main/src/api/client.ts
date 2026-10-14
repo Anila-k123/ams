@@ -2,8 +2,9 @@ import axios from 'axios'
 import { logoutAndRedirect } from '../utils/auth'
 
 // The one HTTP client for the whole app (merge phase 04). Every request carries the
-// AMS JWT. AMS has no refresh token (one 24h token), so a 401 means "sign in
-// again": clear the session and go to /login, as logoutAndRedirect() always did.
+// AMS JWT. AMS has no refresh token (one token, at most 8 h), so a 401 means "sign
+// in again" (expired, signed out elsewhere, membership or firm suspended): clear
+// the session and go to /login, showing the server's reason.
 export const API_BASE: string = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8080'   // not localhost: see .env
 
 export const getToken = () => localStorage.getItem('token')
@@ -24,7 +25,13 @@ export function createApi(prefix = '') {
     (res) => res,
     (error) => {
       const url: string = error.config?.url || ''
-      if (error.response?.status === 401 && getToken() && !PUBLIC_AUTH.test(`${prefix}${url}`)) logoutAndRedirect()
+      if (error.response?.status === 401 && getToken() && !PUBLIC_AUTH.test(`${prefix}${url}`)) {
+        const detail = error.response?.data?.detail || error.response?.data?.error
+        logoutAndRedirect(true, typeof detail === 'string' && detail !== 'Token expired' ? detail : '')
+      }
+      // A 403 may mean a role was just taken away: let PermissionContext re-read
+      // the permissions so the screen stops offering what the server refuses.
+      if (error.response?.status === 403) window.dispatchEvent(new Event('ams:permissions-stale'))
       return Promise.reject(error)
     },
   )

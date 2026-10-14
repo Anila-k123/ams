@@ -30,6 +30,20 @@ export function PermissionProvider({ children }) {
     else { setPermissions(new Set()); setRoles([]); setLoading(false); }
   }, [token, fetchPermissions]);
 
+  // api/client.ts signals a 403: a role may have been removed. Re-read, at most
+  // every few seconds, so menus and buttons follow what the server allows.
+  useEffect(() => {
+    if (!token) return undefined;
+    let last = 0;
+    const onStale = () => {
+      if (Date.now() - last < 5000) return;
+      last = Date.now();
+      fetchPermissions();
+    };
+    window.addEventListener("ams:permissions-stale", onStale);
+    return () => window.removeEventListener("ams:permissions-stale", onStale);
+  }, [token, fetchPermissions]);
+
   const hasPermission = useCallback(
     (perm) => permissions.has(perm),
     [permissions]

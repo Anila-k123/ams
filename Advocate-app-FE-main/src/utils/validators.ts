@@ -182,3 +182,16 @@ export function amountError(value: string | number, label = "Amount"): string | 
 export const blockSignKeys = (e: { key: string; preventDefault: () => void }) => {
   if (e.key === "-" || e.key === "+" || e.key === "e" || e.key === "E") e.preventDefault();
 };
+
+// Passwords: same rule as core/validators.py password_error, used by every place
+// a password is set (reset, change, settings, user management, client portal).
+export const PASSWORD_MIN = 8;
+export const PASSWORD_MAX = 128;
+export function passwordError(value: string, email?: string): string | null {
+  const v = value || "";
+  if (v.length < PASSWORD_MIN) return `Use at least ${PASSWORD_MIN} characters.`;
+  if (v.length > PASSWORD_MAX) return `Use at most ${PASSWORD_MAX} characters.`;
+  if (!v.trim()) return "A password can't be only spaces.";
+  if (email && v.trim().toLowerCase() === email.trim().toLowerCase()) return "Don't use your email address as your password.";
+  return null;
+}

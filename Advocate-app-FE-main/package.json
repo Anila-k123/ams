@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@stomp/stompjs": "^7.0.0",
@@ -17,19 +19,24 @@
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
-    "axios": "^1.12.2",
+    "axios": "1.20.0",
     "diff": "^9.0.0",
-    "jspdf": "^3.0.3",
+    "dompurify": "3.4.16",
+    "jspdf": "4.2.1",
     "jwt-decode": "^4.0.0",
     "mammoth": "^1.12.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-icons": "^5.5.0",
-    "react-router-dom": "^7.9.1",
+    "react-router-dom": "7.18.4",
     "recharts": "^3.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@playwright/test": "1.49.1",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
@@ -38,9 +45,11 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.4.0",
+    "jsdom": "30.1.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.71.1",
-    "vite": "^7.1.7"
+    "vite": "^7.1.7",
+    "vitest": "5.0.2"
   },
   "allowScripts": {
     "esbuild@0.28.1": true,

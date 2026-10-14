@@ -1,5 +1,5 @@
 import '../ui/pages/auth.css';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useId, useState, type ReactNode, type InputHTMLAttributes } from 'react';
 import api from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
@@ -77,7 +77,9 @@ function LoginModule() {
   const { success, error } = useToast() as any;
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({ email: '', password: '' });
+  // Arriving from an accepted invitation: say so and pre-fill the email.
+  const arrived = (useLocation().state || {}) as { notice?: string; email?: string };
+  const [formData, setFormData] = useState({ email: arrived.email || '', password: '' });
   const [buttonLoading, setButtonLoading] = useState(false);
 
   function handleChange(e: any) {
@@ -99,8 +101,9 @@ function LoginModule() {
         error(response.data.error || 'Login failed!');
       }
     } catch (err: any) {
-      console.error('Error during login:', err.response || err.message);
-      error('Login failed! Please check your credentials or try again.');
+      // The server's own sentence when it sent one: "Invalid email or password!",
+      // "This account is no longer active." or the lockout's "Try again in N minutes."
+      error(err?.response?.data?.error || 'Login failed! Please check your credentials or try again.');
     } finally {
       setButtonLoading(false);
     }
@@ -112,6 +115,7 @@ function LoginModule() {
       <h1>Sign in</h1>
       <p className="muted auth-lead">Use the email your firm admin created for you.</p>
       <form onSubmit={handleSubmit} className="stack">
+        {arrived.notice && <div className="callout info" role="status"><div>{arrived.notice}</div></div>}
         <div className="field">
           <label htmlFor="l-email">Email <span className="req" aria-hidden="true">*</span></label>
           <input id="l-email" className="input" type="email" name="email" autoComplete="username"

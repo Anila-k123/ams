@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState, useCallback } from 'react';
 import { useNavigate, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 
-import api from '../api/client';
+import api, { apiUrl } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLoading } from '../contexts/LoadingContext';
@@ -44,6 +44,7 @@ const SystemActivity = lazy(() => import('./SystemActivity'));
 const BackupPage = lazy(() => import('./BackupPage'));
 const UserManagement = lazy(() => import('./UserManagement'));
 const RoleManagement = lazy(() => import('./RoleManagement'));
+const FirmSettings = lazy(() => import('./FirmSettings'));
 const CommunicationDashboard = lazy(() => import('./CommunicationDashboard'));
 const CommunicationSettings = lazy(() => import('./CommunicationSettings'));
 const CommunicationHistory = lazy(() => import('./CommunicationHistory'));
@@ -169,6 +170,17 @@ function AppShell() {
       .catch(() => {});
   }, [auth.token, updateProfile, profileTick]);
 
+  // The firm this session works in (name and logo from Firm Settings). Re-read
+  // when Firm Settings saves, so the shell follows without a reload.
+  const [firm, setFirm] = useState<{ displayName: string; logoUrl: string | null } | null>(null);
+  useEffect(() => {
+    if (!auth.token) return;
+    const load = () => api.get('/api/firm/current').then((r) => setFirm(r.data?.firm || null)).catch(() => setFirm(null));
+    load();
+    window.addEventListener('firm-settings-changed', load);
+    return () => window.removeEventListener('firm-settings-changed', load);
+  }, [auth.token]);
+
   const handleToggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     toggleTheme();
@@ -245,7 +257,8 @@ function AppShell() {
         counts={counts}
         hot={['pendingInvoices']}
         rail={rail}
-        firmName={branding.officeName}
+        firmName={firm?.displayName || branding.officeName}
+        firmLogo={firm?.logoUrl ? apiUrl(firm.logoUrl) : undefined}
         onNavigate={() => { if (mobileOpen) closeSidebar(); }}
       />
       <div className="scrim" onClick={closeSidebar} aria-hidden="true" />
@@ -315,6 +328,9 @@ function AppShell() {
               <Route path="/backup" element={<PermissionRoute permissions="BACKUP_MANAGE"><BackupPage /></PermissionRoute>} />
               {/* Admin routes are permission-gated, not just hidden from the sidebar (codes match rbac/views.py). */}
               <Route path="/users" element={<PermissionRoute permissions="USER_MANAGE"><UserManagement /></PermissionRoute>} />
+              <Route path="/firm/settings" element={<PermissionRoute permissions="SETTINGS_EDIT"><FirmSettings /></PermissionRoute>} />
+              {/* Merged into Team Members; old links still land there. */}
+              <Route path="/firm/members" element={<Navigate to="/dashboard/users" replace />} />
               <Route path="/roles" element={<PermissionRoute permissions="ROLE_MANAGE"><RoleManagement /></PermissionRoute>} />
               {/* Drafting (merged from InstaDraft, merge phase 04). */}
               <Route path="/drafting/*" element={<PermissionRoute permissions="DRAFT_VIEW"><DraftingRoutes /></PermissionRoute>} />

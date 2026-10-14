@@ -1,3 +1,4 @@
+import { sanitizeHtml } from '../../../utils/sanitizeHtml'
 import { authHeaders } from '../../../api/client'
 import { useEffect, useState } from 'react'
 import { Modal } from '../../../ui/overlays'
@@ -81,7 +82,7 @@ export default function DocumentViewer({ visible, onHide, fileUrl, name }: Props
             />
           )}
           {!loading && !error && isDocx && (
-            <div className="paper-sheet pp-docx-preview" dangerouslySetInnerHTML={{ __html: html }} />
+            <div className="paper-sheet pp-docx-preview" dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }} />
           )}
         </div>
       )}

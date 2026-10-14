@@ -8,6 +8,10 @@ import { TextField } from "../ui/forms";
 import { Modal, confirm } from "../ui/overlays";
 import "../ui/pages/firm.css";
 
+// High-risk permissions (who can do what, firm-wide reach, money) are marked
+// by the server: /api/permissions sends `highRisk` (rbac/firm_roles.HIGH_RISK),
+// and only a firm administrator may grant them.
+
 export default function RoleManagement() {
   const [roles, setRoles] = useState<any[]>([]);
   const [permissions, setPermissions] = useState<any[]>([]);
@@ -20,6 +24,11 @@ export default function RoleManagement() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [triedSave, setTriedSave] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [cloneOf, setCloneOf] = useState<any>(null);
+  const [cloneName, setCloneName] = useState("");
+  const [membersOf, setMembersOf] = useState<any>(null);
+  const [members, setMembers] = useState<any[] | null>(null);
   const { hasPermission } = usePermission() as any;
   const { success, error } = useToast() as any;
   const canManage = hasPermission("ROLE_MANAGE");
@@ -29,6 +38,10 @@ export default function RoleManagement() {
       const [r, p] = await Promise.all([rbacService.getAllRoles(), rbacService.getAllPermissions()]);
       setRoles(r);
       setPermissions(p);
+      // Firm mode only: the system templates a firm can clone from.
+      if (!r.some((x: any) => x.builtIn)) {
+        rbacService.getRoleTemplates().then(setTemplates).catch(() => setTemplates([]));
+      }
     } catch {
       error("Couldn't load roles and permissions.");
     } finally {
@@ -117,6 +130,47 @@ export default function RoleManagement() {
     });
   };
 
+  const openClone = (role: any) => { setCloneOf(role); setCloneName(`${role.name} (copy)`); };
+
+  const handleClone = async () => {
+    if (!cloneName.trim()) { error("Give the new role a name."); return; }
+    setSaving(true);
+    try {
+      await rbacService.cloneRole(cloneOf.id, cloneName.trim());
+      success(`Created ${cloneName.trim()}.`);
+      setCloneOf(null);
+      loadData();
+    } catch (err: any) {
+      error(err.message || "Couldn't copy the role.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openMembers = async (role: any) => {
+    setMembersOf(role); setMembers(null);
+    try { setMembers(await rbacService.getRoleMembers(role.id)); } catch { setMembers([]); error("Couldn't load who holds this role."); }
+  };
+
+  const toggleDisabled = (role: any) => {
+    const disabling = !role.disabled;
+    const run = async () => {
+      try {
+        await rbacService.updateRole(role.id, { name: role.name, description: role.description || "", disabled: disabling });
+        success(disabling ? `${role.name} disabled.` : `${role.name} enabled.`);
+        loadData();
+      } catch (err: any) {
+        error(err.message || "Couldn't change the role.");
+      }
+    };
+    if (!disabling) { run(); return; }
+    confirm({
+      title: `Disable ${role.name}?`, danger: true, confirmLabel: "Disable role",
+      message: `People holding it (${role.memberCount ?? 0}) lose its permissions until it is enabled again. It can't be assigned while disabled.`,
+      accept: run,
+    });
+  };
+
   const togglePerm = (permId: any) => {
     setSelectedPerms((prev) =>
       prev.includes(permId) ? prev.filter((p) => p !== permId) : [...prev, permId]
@@ -139,15 +193,27 @@ export default function RoleManagement() {
     return <EmptyState icon="lock" title="No access" text="You do not have permission to manage roles." />;
   }
 
-  const saveBlocked = !!editingRole && (permsLoading || loadFailed);
+  const readOnly = !!editingRole && !editingRole.editable;
+  // Firm-level roles (server in firm mode): every listed role belongs to this
+  // firm and can be edited; shared built-in roles (legacy mode) are read-only.
+  const sharedRoles = roles.some((r) => r.builtIn);
+  const saveBlocked = readOnly || (!!editingRole && (permsLoading || loadFailed));
 
   return (
     <div>
       <PageHead
         title="Roles & Permissions"
         sub="A role decides what its people can see and change. Edit a role and everyone in it is updated at once."
-        actions={<Button variant="primary" icon="plus" onClick={openCreate}>Create role</Button>}
+        actions={!loading && !sharedRoles ? <Button variant="primary" icon="plus" onClick={openCreate}>Create role</Button> : undefined}
       />
+      {/* Legacy mode only: role rows are shared by every firm on the server, so
+          built-in roles are read-only (rbac/views.py interim lock). In firm mode
+          each firm owns its roles (rbac/firm_views.py). The server enforces both. */}
+      {sharedRoles && (
+        <p className="muted small" role="note" style={{ margin: "0 0 12px" }}>
+          Built-in roles are shared by every firm on this server, so they can be assigned but not changed yet.
+        </p>
+      )}
 
       {loading ? (
         <div className="pp-role-grid">
@@ -161,31 +227,86 @@ export default function RoleManagement() {
             <article key={role.id} className="panel pp-role">
               <div className="row between">
                 <h3>{role.name}</h3>
-                {role.name === "Super Admin" && <Chip tone="tape">System</Chip>}
+                {role.builtIn && <Chip tone="tape">Built-in</Chip>}
+                {role.isAdmin && <Chip tone="tape">Firm Administrator</Chip>}
+                {role.disabled && <Chip>Disabled</Chip>}
               </div>
               <p className="muted small grow">{role.description || "No description"}</p>
+              {role.memberCount !== undefined && (
+                <button type="button" className="linkish small" onClick={() => openMembers(role)}>
+                  {role.memberCount} {role.memberCount === 1 ? "person" : "people"}
+                </button>
+              )}
               <div className="row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 2 }}>
-                <Button size="sm" icon="edit" onClick={() => openEdit(role)} aria-label={`Edit ${role.name}`}>Edit</Button>
-                <span className="grow" />
-                <Button size="sm" variant="ghost" className="danger" icon="trash" onClick={() => handleDelete(role)} aria-label={`Delete ${role.name}`}>Delete</Button>
+                {role.editable ? (
+                  <>
+                    <Button size="sm" icon="edit" onClick={() => openEdit(role)} aria-label={`Edit ${role.name}`}>Edit</Button>
+                    {role.template === false && <Button size="sm" variant="ghost" onClick={() => openClone(role)} aria-label={`Copy ${role.name}`}>Copy</Button>}
+                    <span className="grow" />
+                    {role.template === false && !role.isAdmin && (
+                      <Button size="sm" variant="ghost" onClick={() => toggleDisabled(role)}>{role.disabled ? "Enable" : "Disable"}</Button>
+                    )}
+                    {!role.isAdmin && <Button size="sm" variant="ghost" className="danger" icon="trash" onClick={() => handleDelete(role)} aria-label={`Delete ${role.name}`}>Delete</Button>}
+                  </>
+                ) : (
+                  <Button size="sm" icon="eye" onClick={() => openEdit(role)} aria-label={`View ${role.name}`}
+                    title="Built-in roles can't be changed yet">View</Button>
+                )}
               </div>
             </article>
           ))}
         </div>
       )}
 
+      {templates.length > 0 && (
+        <section style={{ marginTop: 24 }}>
+          <h2 className="h3">System templates</h2>
+          <p className="muted small">Standard roles provided with AMS. They can't be changed; copy one to start a role for your firm.</p>
+          <div className="pp-role-grid">
+            {templates.map((t) => (
+              <article key={t.id} className="panel pp-role">
+                <div className="row between"><h3>{t.name}</h3><Chip tone="info">Template</Chip></div>
+                <p className="muted small grow">{t.description || "No description"}</p>
+                <div className="row" style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 2 }}>
+                  <Button size="sm" icon="eye" onClick={() => openEdit(t)}>View</Button>
+                  <span className="grow" />
+                  <Button size="sm" variant="primary" onClick={() => openClone(t)} aria-label={`Copy template ${t.name}`}>Use as a starting point</Button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <Modal open={!!cloneOf} onClose={() => setCloneOf(null)} size="narrow" title={`Copy ${cloneOf?.name || ""}`}
+        sub="The new role starts with the same permissions; change them afterwards."
+        footer={<><Button variant="ghost" onClick={() => setCloneOf(null)}>Cancel</Button>
+          <Button variant="primary" loading={saving} disabled={saving || !cloneName.trim()} onClick={handleClone}>Create role</Button></>}>
+        <TextField label="New role name" required value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
+      </Modal>
+
+      <Modal open={!!membersOf} onClose={() => setMembersOf(null)} size="narrow" title={`People with ${membersOf?.name || ""}`}>
+        {members === null ? <Skel h={40} /> : members.length === 0 ? <p className="muted">Nobody holds this role.</p> : (
+          <ul className="stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {members.map((m) => <li key={m.id}><b>{m.fullName}</b> <span className="muted small">{m.email}</span></li>)}
+          </ul>
+        )}
+      </Modal>
+
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
         size="xwide"
-        title={editingRole ? `Edit ${editingRole.name}` : "Create role"}
-        sub="Tick what people with this role can do."
+        title={readOnly ? editingRole.name : editingRole ? `Edit ${editingRole.name}` : "Create role"}
+        sub={readOnly ? (editingRole?.template ? "System template: copy it to make a role you can change." : "Built-in role: shared by every firm, so it can't be changed yet.") : "Tick what people with this role can do. High-risk permissions are marked."}
         footer={<>
           <span className="faint xs grow" aria-live="polite">{selectedPerms.length} permissions selected</span>
           <Button variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
-          <Button variant="primary" loading={saving} onClick={handleSave} disabled={saveBlocked || saving}>
-            {editingRole ? "Save role" : "Create role"}
-          </Button>
+          {!readOnly && (
+            <Button variant="primary" loading={saving} onClick={handleSave} disabled={saveBlocked || saving}>
+              {editingRole ? "Save role" : "Create role"}
+            </Button>
+          )}
         </>}
       >
         <form className="stack" style={{ gap: 16 }} noValidate onSubmit={(e) => { e.preventDefault(); handleSave(); }}>
@@ -224,7 +345,8 @@ export default function RoleManagement() {
                           {list.map((p) => (
                             <label key={p.id} className="check" title={p.description || p.name}>
                               <input type="checkbox" checked={selectedPerms.includes(p.id)} onChange={() => togglePerm(p.id)} />
-                              <span>{p.description || p.name}<span className="mono faint xs fm-perm-code">{p.name}</span></span>
+                              <span>{p.description || p.name}<span className="mono faint xs fm-perm-code">{p.name}</span>
+                                {p.highRisk && <Chip tone="bad" title="High risk: only a firm administrator can grant this">High risk</Chip>}</span>
                             </label>
                           ))}
                         </div>

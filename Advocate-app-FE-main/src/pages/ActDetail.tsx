@@ -7,6 +7,7 @@ import { SelectField, SearchInput, Tabs } from "../ui/forms";
 import { Modal, confirm } from "../ui/overlays";
 import "../ui/pages/research.css";
 
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 function formatDate(iso: string) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -14,15 +15,9 @@ function formatDate(iso: string) {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-// Section content/footnote come from India Code as light HTML. Strip anything
-// that isn't inert markup before handing it to dangerouslySetInnerHTML.
-function sanitizeActHtml(html: string) {
-  if (!html) return "";
-  return html
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
-    .replace(/\s(href|src)\s*=\s*(?:"(?:javascript|data):[^"]*"|'(?:javascript|data):[^']*')/gi, "");
-}
+// Section content/footnote come from India Code as light HTML; sanitizeHtml
+// (DOMPurify) cleans it. The old regex cleaner let through unquoted
+// javascript: links, encoded schemes, <iframe>/<svg> and slash-separated handlers.
 
 // One section: a pp-acc accordion whose body is fetched lazily on first open.
 function SectionRow({ actId, section }: { actId: any; section: any }) {
@@ -57,14 +52,14 @@ function SectionRow({ actId, section }: { actId: any; section: any }) {
         {detail && (
           <>
             {detail.content ? (
-              <div dangerouslySetInnerHTML={{ __html: sanitizeActHtml(detail.content) }} />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(detail.content) }} />
             ) : (
               <p className="faint">No digitised text available for this section.</p>
             )}
             {detail.footnote && (
               <>
                 <div className="rs-sec-label">Footnotes</div>
-                <div className="small" dangerouslySetInnerHTML={{ __html: sanitizeActHtml(detail.footnote) }} />
+                <div className="small" dangerouslySetInnerHTML={{ __html: sanitizeHtml(detail.footnote) }} />
               </>
             )}
           </>

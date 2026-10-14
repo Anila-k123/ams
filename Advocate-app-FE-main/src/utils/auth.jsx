@@ -18,7 +18,14 @@ export function isTokenExpired(token) {
 /**
  * ✅ Logs the user out and redirects to login (with alert modal)
  */
-export function logoutAndRedirect(showAlert = true) {
+// One dialog per session end: when a session ends, every request the page has
+// in flight fails with 401 at once, and each used to open its own dialog
+// (10 stacked "Session Expired" boxes, found by the Phase 9 browser run).
+let ending = false;
+
+export function logoutAndRedirect(showAlert = true, reason = "") {
+  if (ending) return;
+  ending = true;
   // Optional user-friendly alert
   if (showAlert) {
     // Create modal element dynamically
@@ -44,7 +51,7 @@ export function logoutAndRedirect(showAlert = true) {
         ">
           <h2 style="color: #d32f2f;">⚠️ Session Expired</h2>
           <p style="margin: 12px 0; font-size: 15px; color: #333;">
-            Your session has expired. Please log in again to continue.
+            <span id="logoutReason">Your session has expired. Please log in again to continue.</span>
           </p>
           <button id="okBtn" style="
             background-color: #1976d2;
@@ -62,6 +69,9 @@ export function logoutAndRedirect(showAlert = true) {
     `;
 
     document.body.appendChild(modal);
+    // The server's own sentence when it gave one ("Your firm's access is
+    // suspended", "Your session has ended") - set as text, never as HTML.
+    if (reason) modal.querySelector("#logoutReason").textContent = reason;
 
     const okBtn = modal.querySelector("#okBtn");
     okBtn.onclick = () => {
@@ -79,5 +89,11 @@ function performLogout() {
   localStorage.removeItem("email");
   localStorage.removeItem("role");
   localStorage.removeItem("fullName");
+  localStorage.removeItem("firm");
+  // Firm data cached for this tab (drafts in progress, filters) must not survive
+  // into the next person's session. Removing "token" also tells other tabs
+  // (AuthContext listens for it) to sign out too. The full page load below
+  // drops every in-memory cache (documents, dashboard).
+  try { sessionStorage.clear(); } catch { /* storage unavailable */ }
   window.location.href = "/login";
 }

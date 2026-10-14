@@ -12,6 +12,7 @@ type Props = {
   hot: CountKey[];
   rail: boolean;                     // icon-only rail (collapsed, or tablet width)
   firmName?: string;
+  firmLogo?: string;                 // the firm's logo (Firm Settings), replaces the seal
   onNavigate: () => void;            // closes the mobile drawer
 };
 
@@ -20,7 +21,7 @@ function Count({ n, hot }: { n?: number; hot?: boolean }) {
   return <span className={`count${hot ? ' hot' : ''}`}>{n > 99 ? '99+' : n}</span>;
 }
 
-export default function Sidebar({ can, counts, hot, rail, firmName, onNavigate }: Props) {
+export default function Sidebar({ can, counts, hot, rail, firmName, firmLogo, onNavigate }: Props) {
   const { pathname } = useLocation();
   const navRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState<string>(() => localStorage.getItem(OPEN_KEY) ?? 'court');
@@ -75,7 +76,9 @@ export default function Sidebar({ can, counts, hot, rail, firmName, onNavigate }
   return (
     <aside className="side" aria-label="Main navigation">
       <div className="brand">
-        <span className="seal" aria-hidden="true">P</span>
+        {firmLogo
+          ? <img className="seal firm-logo" src={firmLogo} alt="" />
+          : <span className="seal" aria-hidden="true">P</span>}
         <div><b>PactPro</b>{firmName && <small className="ellipsis">{firmName}</small>}</div>
       </div>
 

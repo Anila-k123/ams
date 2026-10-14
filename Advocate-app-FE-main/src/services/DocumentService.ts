@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, getToken } from "../api/client";
+import { apiUrl, authHeaders } from "../api/client";
 
 const BASE_URL = apiUrl("/api/documents");
 
@@ -107,9 +107,17 @@ class DocumentService {
     return { blob, filename };
   }
 
-  getPreviewUrl(id: any) {
-    const token = getToken() || "";
-    return `${BASE_URL}/preview/${id}?token=${encodeURIComponent(token)}`;
+  /** A short-lived signed URL (no login token in it) for a new tab / iframe.
+   *  purpose: "download" | "preview" | `version:${n}`. Valid for about a minute. */
+  async getSignedLink(id: any, purpose = "preview") {
+    const res = await fetch(`${BASE_URL}/${id}/link`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ purpose }),
+    });
+    if (!res.ok) throw new Error("Couldn't open the document.");
+    const data = await res.json();
+    return apiUrl(data.url);
   }
 
   async getPreviewBlob(id: any) {

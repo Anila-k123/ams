@@ -138,12 +138,14 @@ You never lose work, but nothing becomes a version until you choose it.
 | # | Do | Expect |
 |---|---|---|
 | 5.1 | Ask Lisa: *"Change the monthly rent to Rs. 45,000"* | Lisa shows Removed / Added for the rent clause |
-| 5.2 | **Accept**, then **Apply** | The editor **reloads**; *40,000* struck through, *45,000* inserted, marked as **PactPro AI**'s change; only the changed digits are marked |
+| 5.2 | **Accept** | Nothing changes in the document yet: a bar above Lisa's message box says *1 accepted change not in the document yet* |
+| 5.2a | **Update in document** | The editor **reloads**; *40,000* struck through, *45,000* inserted, marked as **PactPro AI**'s change; only the changed digits are marked |
 | 5.3 | Editor **Review** tab → **Accept** | The redline disappears |
 | 5.4 | Another change, then **Reject** it | The clause stays as it was |
-| 5.5 | Ask Lisa for a change, but type into that sentence yourself before Apply | *"…changed since Lisa read it…"*; nothing changes |
-| 5.6 | Save to PactPro first, then Lisa → **Make the language more formal** (or *More concise* / *Fix grammar*) → **Apply all** | The editor reloads **once**; every changed clause shows as **PactPro AI** tracked changes; one new version (File → Version History). Toast: *N of Lisa's changes are in the document…* |
-| 5.7 | As 5.6, but edit one of those clauses yourself before **Apply all** | The others are placed; a second toast says *1 change couldn't be placed…* |
+| 5.5 | Ask Lisa for a change, but type into that sentence yourself before **Update in document** | *"…changed since Lisa read it…"*; nothing changes |
+| 5.6 | Save to PactPro first, then Lisa → **Make the language more formal** (or *More concise* / *Fix grammar*) → **Apply all** (or Accept some, Reject others) → **Update in document** | The editor reloads **once**; every changed clause shows as **PactPro AI** tracked changes; one new version (File → Version History). Toast: *N of Lisa's changes are in the document…* |
+| 5.7 | As 5.6, but edit one of those clauses yourself before **Update in document** | The others are placed; a second toast names the clause that couldn't be placed |
+| 5.8 | A clause over several lines with a blank (e.g. a Vakalathnama's party block) or a line repeated elsewhere (a signature line) → **Fix grammar** → **Update in document** | Placed: the change is matched line by line inside that clause only, with blanks as the document shows them |
 
 ## 6. Comments and @mentions (Priya + Karthik, 5 minutes)
 

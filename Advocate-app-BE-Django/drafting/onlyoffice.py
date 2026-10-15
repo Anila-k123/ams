@@ -447,7 +447,7 @@ class SaveView(APIView):
 
 
 class ApplyView(APIView):
-    """POST draft-sessions/<id>/onlyoffice/apply/ {before, after} or {changes: [{before, after}, ...]}: Lisa's
+    """POST draft-sessions/<id>/onlyoffice/apply/ {before, after} or {changes: [{before, after, blockId}, ...]}: Lisa's
     accepted changes, written into the Word file on the server as tracked changes by "PactPro AI" (the
     Community edition has no connector to do it in the open editor). Several changes (Lisa's "Apply all" on a
     whole-document refine) go in one pass: one version, one editor reload, no requests racing each other.
@@ -464,24 +464,32 @@ class ApplyView(APIView):
         raw = request.data.get('changes')
         if not isinstance(raw, list):
             raw = [{'before': request.data.get('before'), 'after': request.data.get('after')}]
-        changes = [(str(c.get('before') or ''), str(c.get('after') or '')) for c in raw if isinstance(c, dict)]
-        changes = [(b, a) for b, a in changes if b.strip() and b != a]
+        def _block(c):
+            try:
+                return int(c.get('blockId'))
+            except (TypeError, ValueError):
+                return None
+        changes = [(str(c.get('before') or ''), str(c.get('after') or ''), _block(c)) for c in raw if isinstance(c, dict)]
+        changes = [(b, a, bid) for b, a, bid in changes if b.strip() and b != a]
         if not changes:
             return Response({'error': 'Nothing to change.'}, status=400)
         from .docfile import apply_tracked
         df = ensure_file(session, request.user)
         if df.editing:
             df = force_save(df)                            # keep what was typed before we change the file
-        data, applied = _file_bytes(df), 0
-        for before, after in changes:                      # one after another on the same file
-            data, ok = apply_tracked(data, before, after)
+        data, applied, skipped = _file_bytes(df), 0, []
+        for before, after, block_id in changes:            # one after another on the same file
+            data, ok = apply_tracked(data, before, after, block_id=block_id)
             applied += ok
+            if not ok:
+                skipped.append(block_id)
         if not applied:
             return Response({'error': "The clause has changed since Lisa read it, so the change can't be "
                                       'placed automatically. Copy the new text into the clause.'}, status=409)
         store_version(df, data, request.user.id)
+        # skippedBlocks: which clauses still need the new text copied in by hand.
         return Response({'config': editor_config(session, request.user), 'applied': applied,
-                         'skipped': len(changes) - applied})
+                         'skipped': len(changes) - applied, 'skippedBlocks': skipped})
 
 
 # --- version history and compare (the editor's own screens, docs/ONLYOFFICE_PLAN.md) ------------

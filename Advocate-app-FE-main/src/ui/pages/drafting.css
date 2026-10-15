@@ -149,6 +149,8 @@
 .pp-chat-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: var(--t-sm); }
 .pp-chat-msgs { flex: 1; min-height: 160px; overflow: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 12px; }
 .pp-chat-input { flex: none; border-top: 1px solid var(--line); padding: 8px 12px 12px; }
+/* ONLYOFFICE drafts: accepted Lisa changes waiting for "Update in document". */
+.dr-update-bar { flex: none; margin: 0 12px 8px; align-items: center; }
 .pp-chat-input .lisa-quick { padding-bottom: 8px; }
 .dr-chat-ta { height: auto !important; min-height: 40px; resize: vertical; padding-top: 8px; }
 .pp-chat-intro { text-align: center; padding: 16px 4px 4px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
@@ -202,6 +204,10 @@
 .pp-gutter { cursor: col-resize; position: relative; background: var(--surface); border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 .pp-gutter::after { content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 2px; height: 32px; border-radius: 2px; background: var(--line-strong); }
 .pp-gutter:hover::after { background: var(--tape); height: 48px; }
+/* A wider grab area than the 6px line, and no browser panning on touch while dragging. */
+.pp-gutter, .dr-row-handle { touch-action: none; }
+.pp-gutter::before { content: ''; position: absolute; inset: 0 -5px; z-index: 2; }
+body.pp-dragging-x .pp-gutter::after { background: var(--tape); height: 48px; }
 .pp-rpane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .dr-rtabs { padding: 0 12px; margin-bottom: 0; flex: none; }
 .pp-rtab-slot { flex: 1; min-height: 0; display: flex; flex-direction: column; }

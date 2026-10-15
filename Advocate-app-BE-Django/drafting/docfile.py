@@ -591,32 +591,67 @@ def _track_in_paragraph(p, start, end, insert, author, when):
             (first.addnext(ins) if first is not None else p.insert(0, ins))
 
 
-def apply_tracked(data, before, after, author=AI_AUTHOR):
+def _clause_paragraphs(doc, block_id):
+    """The paragraphs inside clause `block_id`'s marker, or [] when the file has no such marker."""
+    for sdt in doc.element.body.iter(qn('w:sdt')):
+        tag = sdt.find(f'{qn("w:sdtPr")}/{qn("w:tag")}')
+        if tag is not None and tag.get(qn('w:val')) == f'{TAG}{block_id}':
+            content = sdt.find(qn('w:sdtContent'))
+            return [p for p in content.iter(qn('w:p'))] if content is not None else []
+    return []
+
+
+def apply_tracked(data, before, after, author=AI_AUTHOR, block_id=None):
     """The Word file with the change from `before` to `after` (a clause's text) written as tracked
     changes by `author`, for the person who decides to accept or reject in the editor.
-    Returns (bytes, True), or (data, False) when a change can't be pinned to exactly one place."""
+    Returns (bytes, True), or (data, False) when a change can't be pinned to exactly one place.
+
+    Lisa reads a clause as its block text: one line per Word paragraph, blanks as [[Label]]. The file
+    shows a blank as its form field's text (the value, or the label as a grey hint), so blanks are put
+    back the way the file shows them, and the change is placed line by line: a clause spans several
+    paragraphs, a tracked change can't."""
+    import difflib
     from datetime import datetime, timezone
+    shown = {label: f['value'] or label for label, f in fields(data).items()}
+    as_in_file = lambda s: PLACEHOLDER.sub(lambda m: shown.get(m.group(1).strip(), m.group(0)), s)
+    before, after = as_in_file(before), as_in_file(after)
     doc = Document(io.BytesIO(data))
     paras = _doc_paragraphs(doc)
+    if block_id is not None:
+        # Only inside that clause's marker: the same words elsewhere (a repeated signature line) don't count.
+        own = _clause_paragraphs(doc, block_id)
+        paras = own or paras
     texts = [''.join(_run_text(r) for r in _text_runs(p)) for p in paras]
-    edits = edits_for(before, after, '\n'.join(texts))
-    if not edits:
+    b_lines, a_lines = before.split('\n'), after.split('\n')
+    pairs = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=b_lines, b=a_lines, autojunk=False).get_opcodes():
+        if tag == 'equal':
+            continue
+        if tag == 'replace' and i2 - i1 == j2 - j1:       # reworded lines: each stays in its paragraph
+            pairs += list(zip(b_lines[i1:i2], a_lines[j1:j2]))
+        else:                                              # lines added / removed: only if it fits one paragraph
+            pairs.append(('\n'.join(b_lines[i1:i2]), '\n'.join(a_lines[j1:j2])))
+    if not pairs:
         return data, False
     when = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    for find, replace in edits:
-        hit = [(n, t.find(find)) for n, t in enumerate(texts) if find in t]
-        if len(hit) != 1:                                  # spans paragraphs, or no longer unique
+    for old, new in pairs:
+        edits = edits_for(old, new, '\n'.join(texts))
+        if not edits:
             return data, False
-        n, at = hit[0]
-        # Only the part that differs is marked: the context around it stays as it is.
-        pre = 0
-        while pre < min(len(find), len(replace)) and find[pre] == replace[pre]:
-            pre += 1
-        suf = 0
-        while suf < min(len(find), len(replace)) - pre and find[-1 - suf] == replace[-1 - suf]:
-            suf += 1
-        _track_in_paragraph(paras[n], at + pre, at + len(find) - suf, replace[pre:len(replace) - suf], author, when)
-        texts[n] = ''.join(_run_text(r) for r in _text_runs(paras[n]))
+        for find, replace in edits:
+            hit = [(n, t.find(find)) for n, t in enumerate(texts) if find in t]
+            if len(hit) != 1:                              # spans paragraphs, or no longer unique
+                return data, False
+            n, at = hit[0]
+            # Only the part that differs is marked: the context around it stays as it is.
+            pre = 0
+            while pre < min(len(find), len(replace)) and find[pre] == replace[pre]:
+                pre += 1
+            suf = 0
+            while suf < min(len(find), len(replace)) - pre and find[-1 - suf] == replace[-1 - suf]:
+                suf += 1
+            _track_in_paragraph(paras[n], at + pre, at + len(find) - suf, replace[pre:len(replace) - suf], author, when)
+            texts[n] = ''.join(_run_text(r) for r in _text_runs(paras[n]))
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue(), True

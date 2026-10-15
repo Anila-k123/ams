@@ -507,8 +507,8 @@ export const draftingApi = {
     api.post<{ config: Record<string, unknown> }>(`/draft-sessions/${id}/onlyoffice/apply/`, { before, after })
       .then(r => r.data),
   // Several of Lisa's changes in one pass (her "Apply all"): one version, one editor reload.
-  applyOfficeMany: (id: number, changes: { before: string; after: string }[]) =>
-    api.post<{ config: Record<string, unknown>; applied: number; skipped: number }>(
+  applyOfficeMany: (id: number, changes: { before: string; after: string; blockId?: number }[]) =>
+    api.post<{ config: Record<string, unknown>; applied: number; skipped: number; skippedBlocks?: (number | null)[] }>(
       `/draft-sessions/${id}/onlyoffice/apply/`, { changes }).then(r => r.data),
   // The editor's version history (refreshHistory / setHistoryData), restore, and the document to compare with.
   getOfficeHistory: (id: number) =>

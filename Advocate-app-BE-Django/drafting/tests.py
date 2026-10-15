@@ -2302,6 +2302,40 @@ class ServerTrackedChangeTest(TestCase):
         from .docfile import _para_text
         self.assertEqual(_para_text(body.find('.//' + qn('w:p'))), 'Rent is Rs. 45,000 a month.')
 
+    def test_multi_paragraph_clause_with_a_blank_and_repeated_words_is_placed(self):
+        """Lisa reads a clause as lines with [[Label]] blanks; the file has one paragraph per line, the blank
+        as a form field showing its label, and the same signature line in two clauses (found by draft #114:
+        each of these used to answer "the clause has changed since Lisa read it")."""
+        import io as _io
+
+        from docx import Document
+        from docx.oxml.ns import qn
+        from .docfile import apply_tracked, building, record, tokens_to_fields, wrap_blocks
+        sign = 'Signed in My Presence. The Client.'
+        doc = Document()
+        token = building.set({})
+        try:
+            record(7, [doc.add_paragraph(t)._p for t in ('VERSUS', '[[Details]]Defendant(s)/Respondent(s)', sign)])
+            record(8, [doc.add_paragraph(t)._p for t in ('Witness', sign)])
+            wrap_blocks(doc)
+        finally:
+            building.reset(token)
+        buf = _io.BytesIO()
+        doc.save(buf)
+        data = tokens_to_fields(buf.getvalue())
+        before = f'VERSUS\n[[Details]]Defendant(s)/Respondent(s)\n{sign}'
+        after = 'VERSUS\n[[Details]]Defendant(s) / Respondent(s)\nSigned in my presence. The Client.'
+        out, ok = apply_tracked(data, before, after, block_id=7)
+        self.assertTrue(ok)
+        body = Document(_io.BytesIO(out)).element.body
+        changed = [p for p in body.iter(qn('w:p')) if p.find('.//' + qn('w:ins')) is not None]
+        self.assertEqual(len(changed), 2)                  # one line each, both inside clause 7
+        clause8 = [s for s in body.iter(qn('w:sdt'))
+                   if (s.find(f'{qn("w:sdtPr")}/{qn("w:tag")}').get(qn('w:val'))) == 'pactpro:block:8'][0]
+        self.assertIsNone(clause8.find('.//' + qn('w:ins')))
+        # Without the clause, the repeated line can't be pinned to one place.
+        self.assertFalse(apply_tracked(data, sign, 'Signed in my presence. The Client.')[1])
+
     def test_endpoint_writes_redline_and_refuses_when_it_cannot_place_it(self):
         from .docfile import clause_texts, review_state
         from .models import DraftFile

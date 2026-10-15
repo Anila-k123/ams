@@ -199,6 +199,10 @@ control into each block's text. Search, Lisa context, task summaries and the on-
    nobody else is editing, or the user confirms the reload.
 2. Agents edit the stored `.docx` on the server (lxml on the Word XML), inside the clause's content control. They
    write `w:del` for removed text and `w:ins` for new text, author **"PactPro AI"**, with the date.
+   On the draft page, Lisa's **Accept** only collects a change; **Update in document** (a bar above Lisa's
+   message box, like the Placeholders panel's Apply) sends every accepted change at once: one version, one
+   reload. `docfile.apply_tracked` looks only inside the clause's own marker (`blockId`), places the change
+   line by line (a clause is several paragraphs), and reads `[[Label]]` blanks as the file shows them.
 3. The editor reloads in review mode; the lawyer accepts or rejects with the standard Word controls.
 4. Applies to:
    - Lisa's "rewrite clause";

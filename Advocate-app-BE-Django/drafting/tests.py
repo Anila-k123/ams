@@ -2302,6 +2302,62 @@ class ServerTrackedChangeTest(TestCase):
         from .docfile import _para_text
         self.assertEqual(_para_text(body.find('.//' + qn('w:p'))), 'Rent is Rs. 45,000 a month.')
 
+    def test_multi_paragraph_clause_with_a_blank_and_repeated_words_is_placed(self):
+        """Lisa reads a clause as lines with [[Label]] blanks; the file has one paragraph per line, the blank
+        as a form field showing its label, and the same signature line in two clauses (found by draft #114:
+        each of these used to answer "the clause has changed since Lisa read it")."""
+        import io as _io
+
+        from docx import Document
+        from docx.oxml.ns import qn
+        from .docfile import apply_tracked, building, record, tokens_to_fields, wrap_blocks
+        sign = 'Signed in My Presence. The Client.'
+        doc = Document()
+        token = building.set({})
+        try:
+            record(7, [doc.add_paragraph(t)._p for t in ('VERSUS', '[[Details]]Defendant(s)/Respondent(s)', sign)])
+            record(8, [doc.add_paragraph(t)._p for t in ('Witness', sign)])
+            wrap_blocks(doc)
+        finally:
+            building.reset(token)
+        buf = _io.BytesIO()
+        doc.save(buf)
+        data = tokens_to_fields(buf.getvalue())
+        before = f'VERSUS\n[[Details]]Defendant(s)/Respondent(s)\n{sign}'
+        after = 'VERSUS\n[[Details]]Defendant(s) / Respondent(s)\nSigned in my presence. The Client.'
+        out, ok = apply_tracked(data, before, after, block_id=7)
+        self.assertTrue(ok)
+        body = Document(_io.BytesIO(out)).element.body
+        changed = [p for p in body.iter(qn('w:p')) if p.find('.//' + qn('w:ins')) is not None]
+        self.assertEqual(len(changed), 2)                  # one line each, both inside clause 7
+        clause8 = [s for s in body.iter(qn('w:sdt'))
+                   if (s.find(f'{qn("w:sdtPr")}/{qn("w:tag")}').get(qn('w:val'))) == 'pactpro:block:8'][0]
+        self.assertIsNone(clause8.find('.//' + qn('w:ins')))
+        # Without the clause, the repeated line can't be pinned to one place.
+        self.assertFalse(apply_tracked(data, sign, 'Signed in my presence. The Client.')[1])
+
+    def test_lines_joined_by_the_model_still_place_the_word_change(self):
+        """Lisa's text came back with two of the clause's lines joined by a space (draft #114, the enrolment
+        number): the words go back onto the file's lines and only the changed number is marked."""
+        import io as _io
+
+        from docx import Document
+        from docx.oxml.ns import qn
+        from .docfile import apply_tracked
+        doc = Document()
+        doc.add_paragraph('Signed in My Presence. The Client.')
+        doc.add_paragraph('Sd/S. Meenakshi, Advocate Enrolment No. MS/2210/2014 Place: Chennai')
+        buf = _io.BytesIO()
+        doc.save(buf)
+        before = 'Signed in My Presence. The Client.\nSd/S. Meenakshi, Advocate Enrolment No. MS/2210/2014 Place: Chennai'
+        after = 'Signed in My Presence. The Client. Sd/S. Meenakshi, Advocate Enrolment No. MS/2223/2026 Place: Chennai'
+        out, ok = apply_tracked(buf.getvalue(), before, after)
+        self.assertTrue(ok)
+        body = Document(_io.BytesIO(out)).element.body
+        self.assertEqual(len(list(body.iter(qn('w:p')))), 2)       # still two paragraphs
+        self.assertEqual([''.join(t.text for t in d.iter(qn('w:delText'))) for d in body.iter(qn('w:del'))], ['10/2014'])
+        self.assertEqual([''.join(t.text for t in i.iter(qn('w:t'))) for i in body.iter(qn('w:ins'))], ['23/2026'])
+
     def test_endpoint_writes_redline_and_refuses_when_it_cannot_place_it(self):
         from .docfile import clause_texts, review_state
         from .models import DraftFile
@@ -2425,7 +2481,7 @@ class OnlyOfficeHistoryTest(TestCase):
 @override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
                    ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
 class OnlyOfficeFinaliseTest(TestCase):
-    """Finalise / reopen, PDF/A, @mentions, and the DRAFT watermark on copies of an unfinished draft."""
+    """Finalise / reopen, @mentions, and the DRAFT watermark on copies of an unfinished draft."""
 
     def setUp(self):
         self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
@@ -2469,13 +2525,6 @@ class OnlyOfficeFinaliseTest(TestCase):
         self.assertIsNone(reopened['final'])
         self.assertNotEqual(reopened['config']['document']['key'], old_key)
         self.assertEqual(self.client.get(self._url(''), **auth(self.owner)).json()['role'], 'decide')
-
-    def test_pdfa_comes_from_the_document_server(self):
-        with mock.patch('drafting.onlyoffice.convert', return_value=b'%PDF-1.4 pdfaid') as conv:
-            resp = self.client.get(self._url('pdfa/'), **auth(self.owner))
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(conv.call_args[0][1], 'pdfa')
-        self.assertIn('PDF-A', resp['Content-Disposition'])
 
     def test_mentions_offer_and_notify_only_people_on_the_draft(self):
         from .models import DraftReviewRequest

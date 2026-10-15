@@ -169,6 +169,13 @@ svg.i.lg { width: 22px; height: 22px; }
 /* The PactPro mark image takes the place of the red "P" circle. */
 .seal.brand-mark { background: transparent; box-shadow: none; object-fit: contain; padding: 0; border-radius: 22%; }
 .brand .seal.firm-logo { object-fit: contain; background: #fff; padding: 2px; }
+/* While a divider is dragged (utils/dragResize.ts): embedded editors (ONLYOFFICE iframes) must not take
+   the mouse, and nothing gets text-selected. */
+body.pp-dragging { user-select: none; }
+body.pp-dragging iframe { pointer-events: none; }
+body.pp-dragging-x, body.pp-dragging-x * { cursor: col-resize !important; }
+body.pp-dragging-y, body.pp-dragging-y * { cursor: row-resize !important; }
+
 /* PactPro logo on a white chip (BrandLogo): sized by height so it stays low;
    wider side padding instead. In the sidebar it replaces the "PactPro" text;
    the small mark / firm logo shows only on the collapsed icon rail. */

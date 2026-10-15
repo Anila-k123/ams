@@ -14,7 +14,7 @@ from .onlyoffice import (
     CompareSourceView as OnlyOfficeCompareView, HistoryDataView as OnlyOfficeHistoryDataView,
     HistoryView as OnlyOfficeHistoryView, RestoreView as OnlyOfficeRestoreView,
     VersionFileView as OnlyOfficeVersionFileView, FinaliseView as OnlyOfficeFinaliseView,
-    PdfaView as OnlyOfficePdfaView, RedlineView as OnlyOfficeRedlineView, MentionUsersView as OnlyOfficeMentionUsersView,
+    RedlineView as OnlyOfficeRedlineView, MentionUsersView as OnlyOfficeMentionUsersView,
     MentionNotifyView as OnlyOfficeMentionNotifyView, StateView as OnlyOfficeStateView,
 )
 from .review_requests import (
@@ -90,7 +90,6 @@ urlpatterns = [
     path('draft-sessions/<int:pk>/onlyoffice/restore/', OnlyOfficeRestoreView.as_view(), name='draft-onlyoffice-restore'),
     path('draft-sessions/<int:pk>/onlyoffice/compare/', OnlyOfficeCompareView.as_view(), name='draft-onlyoffice-compare'),
     path('draft-sessions/<int:pk>/onlyoffice/finalise/', OnlyOfficeFinaliseView.as_view(), name='draft-onlyoffice-finalise'),
-    path('draft-sessions/<int:pk>/onlyoffice/pdfa/', OnlyOfficePdfaView.as_view(), name='draft-onlyoffice-pdfa'),
     path('draft-sessions/<int:pk>/onlyoffice/redline/', OnlyOfficeRedlineView.as_view(), name='draft-onlyoffice-redline'),
     path('draft-sessions/<int:pk>/onlyoffice/users/', OnlyOfficeMentionUsersView.as_view(), name='draft-onlyoffice-users'),
     path('draft-sessions/<int:pk>/onlyoffice/notify/', OnlyOfficeMentionNotifyView.as_view(), name='draft-onlyoffice-notify'),

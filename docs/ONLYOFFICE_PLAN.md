@@ -199,6 +199,10 @@ control into each block's text. Search, Lisa context, task summaries and the on-
    nobody else is editing, or the user confirms the reload.
 2. Agents edit the stored `.docx` on the server (lxml on the Word XML), inside the clause's content control. They
    write `w:del` for removed text and `w:ins` for new text, author **"PactPro AI"**, with the date.
+   On the draft page, Lisa's **Accept** only collects a change; **Update in document** (a bar above Lisa's
+   message box, like the Placeholders panel's Apply) sends every accepted change at once: one version, one
+   reload. `docfile.apply_tracked` looks only inside the clause's own marker (`blockId`), places the change
+   line by line (a clause is several paragraphs), and reads `[[Label]]` blanks as the file shows them.
 3. The editor reloads in review mode; the lawyer accepts or rejects with the standard Word controls.
 4. Applies to:
    - Lisa's "rewrite clause";
@@ -451,7 +455,8 @@ Both are in the Docs API of every edition, Community included.
   - `DELETE …/finalise/` reopens it, with a new key.
   - The page shows a **Final · name · date** chip; **Finalise** / **Reopen** are in the top bar's **More** menu.
 - **PDF/A** (built): `GET …/onlyoffice/pdfa/` has the document server convert the current file to PDF/A (checked:
-  the file carries the PDF/A id). The page has a **PDF/A** button.
+  the file carries the PDF/A id). **Removed** (15 Oct 2026): not needed for now; Download → PDF covers sharing.
+  If court filing needs PDF/A later, it is a document-server conversion (`outputtype: 'pdfa'`).
 - **DRAFT watermark** (built): Download (Word / PDF) of an ONLYOFFICE draft that isn't final carries a diagonal
   DRAFT watermark (VML in every section header, `docfile.add_watermark`; Word and LibreOffice both draw it).
   `?watermark=0` leaves it out. The editor itself shows no watermark.
@@ -599,7 +604,7 @@ For a draft in ONLYOFFICE the page no longer shows the old editor's own tools, w
 - **Compare** in the top bar opens PactPro's *Compare with…* (`openOfficeCompare`), the same as the editor's Collaboration →
   Compare → Document from storage.
 - **More** (`PopMenu`) holds the occasional actions so the bar fits on one line: Save options…, Finalise / Reopen,
-  PDF/A for filing, Re-draft… (its Confirm still shows in the bar).
+  Re-draft… (its Confirm still shows in the bar).
 - **Kept:** Download, Save, Open on desktop, Request review, Save to case / Submit to task; on the right Ask Lisa, Review
   (Lisa's consistency check and playbook risks) and Activity (review requests).
 Drafts still on the old TipTap editor keep every button as before.

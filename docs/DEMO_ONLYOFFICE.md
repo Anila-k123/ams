@@ -97,7 +97,7 @@ You never lose work, but nothing becomes a version until you choose it.
 | 1.2 | When it's ready | The draft page opens with the **PactPro editor** (ONLYOFFICE) in the middle; placeholders, reference documents, Lisa and Review around it. **Open on desktop** is in the toolbar |
 | 1.3 | Look at the document | Exactly the template: **K&A letterhead**, fonts, numbered maroon headings, justified clauses, page size. **No "Clause 123" boxes** around clauses |
 | 1.4 | Look at the top bar | One line: **Compare**, **Download**, **Saved** (greyed), **Open on desktop**, **More**, **Request review**, **Save to case**. Not there any more (the editor has its own): Comment, Versions, Import changes, Suggest. The right side has **Ask Lisa**, **Review** (consistency / playbook) and **Activity**; no Comments tab |
-| 1.4b | Click **More** | *Save options…*, *Finalise (lock the text)*, *PDF/A for filing*, and *Re-draft…* (red, at the bottom) |
+| 1.4b | Click **More** | *Save options…*, *Finalise (lock the text)* and *Re-draft…* (red, at the bottom) |
 | 1.4c | Click **Compare** in the top bar | PactPro's **Compare with…** dialog (an earlier version or a file you received back), the same as the editor's Collaboration → Compare → Document from storage |
 | 1.5 | Drafting → **Drafts** → **Open** on this draft | The **Open with** dialog: *Desktop editor* / *PactPro editor*, *Remember my choice*. Pick **PactPro editor**: the draft page opens with the editor started |
 
@@ -138,12 +138,14 @@ You never lose work, but nothing becomes a version until you choose it.
 | # | Do | Expect |
 |---|---|---|
 | 5.1 | Ask Lisa: *"Change the monthly rent to Rs. 45,000"* | Lisa shows Removed / Added for the rent clause |
-| 5.2 | **Accept**, then **Apply** | The editor **reloads**; *40,000* struck through, *45,000* inserted, marked as **PactPro AI**'s change; only the changed digits are marked |
+| 5.2 | **Accept** | Nothing changes in the document yet: a bar above Lisa's message box says *1 accepted change not in the document yet* |
+| 5.2a | **Update in document** | The editor **reloads**; *40,000* struck through, *45,000* inserted, marked as **PactPro AI**'s change; only the changed digits are marked |
 | 5.3 | Editor **Review** tab → **Accept** | The redline disappears |
 | 5.4 | Another change, then **Reject** it | The clause stays as it was |
-| 5.5 | Ask Lisa for a change, but type into that sentence yourself before Apply | *"…changed since Lisa read it…"*; nothing changes |
-| 5.6 | Save to PactPro first, then Lisa → **Make the language more formal** (or *More concise* / *Fix grammar*) → **Apply all** | The editor reloads **once**; every changed clause shows as **PactPro AI** tracked changes; one new version (File → Version History). Toast: *N of Lisa's changes are in the document…* |
-| 5.7 | As 5.6, but edit one of those clauses yourself before **Apply all** | The others are placed; a second toast says *1 change couldn't be placed…* |
+| 5.5 | Ask Lisa for a change, but type into that sentence yourself before **Update in document** | *"…changed since Lisa read it…"*; nothing changes |
+| 5.6 | Save to PactPro first, then Lisa → **Make the language more formal** (or *More concise* / *Fix grammar*) → **Apply all** (or Accept some, Reject others) → **Update in document** | The editor reloads **once**; every changed clause shows as **PactPro AI** tracked changes; one new version (File → Version History). Toast: *N of Lisa's changes are in the document…* |
+| 5.7 | As 5.6, but edit one of those clauses yourself before **Update in document** | The others are placed; a second toast names the clause that couldn't be placed |
+| 5.8 | A clause over several lines with a blank (e.g. a Vakalathnama's party block) or a line repeated elsewhere (a signature line) → **Fix grammar** → **Update in document** | Placed: the change is matched line by line inside that clause only, with blanks as the document shows them |
 
 ## 6. Comments and @mentions (Priya + Karthik, 5 minutes)
 
@@ -216,14 +218,13 @@ You never lose work, but nothing becomes a version until you choose it.
 | 12.6 | **Compare → File from your computer** | ONLYOFFICE's own picker, same result |
 | 12.7 | **More → Re-draft…**, then **Confirm** in the bar | When ready, the editor shows the **new** AI text |
 
-## 13. Finalise and PDF/A (Priya + Karthik, 5 minutes)
+## 13. Finalise (Priya + Karthik, 5 minutes)
 
 | # | Do | Expect |
 |---|---|---|
 | 13.1 | Leave a tracked change open, **More → Finalise** | Refused, with the count of open changes / comments |
 | 13.2 | Accept / reject all, resolve comments, **More → Finalise** | Chip **Final · Priya · date**; read-only for everyone; Save / Apply / placeholders refused |
 | 13.3 | **Download** | No watermark |
-| 13.4 | **More → PDF/A for filing** | An archival PDF/A |
 | 13.5 | **More → Reopen for editing** | Editable again |
 
 ---

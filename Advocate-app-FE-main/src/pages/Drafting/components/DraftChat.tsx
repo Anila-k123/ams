@@ -22,6 +22,11 @@ interface Props {
   facts: Record<string, string>
   getClauses: () => { block_id: number; heading: string; text: string }[]
   onApply: (blockId: number, beforeText: string, afterText: string, heading?: string) => void
+  // ONLYOFFICE drafts: accepted changes wait for "Update in document" (undefined for the built-in editor,
+  // which takes each change straight away).
+  pendingUpdates?: number
+  onUpdateDocument?: () => void
+  updating?: boolean
 }
 
 const CF_ORDER = ['document_title', 'parties', 'purpose', 'instructions']
@@ -86,7 +91,8 @@ function focusedDiff(before: string, after: string, ctx = 10) {
 
 /** Right-pane AI drafting assistant: instruction → located-clause rewrite proposal
  *  (diff) → Accept / Reject / Edit further → patches the clause in the editor. */
-export default function DraftChat({ sessionId, model, focusedId, facts, getClauses, onApply }: Props) {
+export default function DraftChat({ sessionId, model, focusedId, facts, getClauses, onApply, pendingUpdates, onUpdateDocument, updating }: Props) {
+  const office = pendingUpdates !== undefined
   // Persist the transcript per draft so it survives refresh / close-reopen / tab change.
   const msgKey = `pp_chat_${sessionId}`
   const [messages, setMessages] = useState<Msg[]>(() => {
@@ -281,7 +287,9 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
                 </div>
               ) : (
                 <div className="row small" style={{ marginTop: 10, gap: 6, color: 'var(--ok)' }}>
-                  <Icon name="ok" size="sm" /> {accepted} applied{rejected ? `, ${rejected} rejected` : ''}. Review the highlighted changes and save.
+                  <Icon name="ok" size="sm" /> {office
+                    ? <>{accepted} accepted{rejected ? `, ${rejected} rejected` : ''}. Accepted changes go into the document with <strong>Update in document</strong>.</>
+                    : <>{accepted} applied{rejected ? `, ${rejected} rejected` : ''}. Review the highlighted changes and save.</>}
                 </div>
               )}
             </>)
@@ -311,6 +319,17 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
         <div ref={endRef} />
       </div>
 
+      {office && (pendingUpdates ?? 0) > 0 && (
+        <div className="callout info dr-update-bar" role="status">
+          <Icon name="edit" size="sm" />
+          <div className="grow">
+            <b>{pendingUpdates} accepted change{pendingUpdates === 1 ? '' : 's'}</b> not in the document yet.
+          </div>
+          <Button variant="primary" size="sm" icon="check" disabled={updating} onClick={onUpdateDocument}>
+            {updating ? 'Updating…' : 'Update in document'}
+          </Button>
+        </div>
+      )}
       <div className="pp-chat-input">
         <div className="lisa-quick">
           <button type="button" className="pp-pill" aria-haspopup="menu" disabled={sending}

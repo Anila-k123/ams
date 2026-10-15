@@ -27,6 +27,7 @@ import { CommentHighlight } from './editor/commentHighlight'
 import CommentsPanel, { type PendingComment } from './components/CommentsPanel'
 import EditorToolbar from './components/EditorToolbar'
 import DraftChat from './components/DraftChat'
+import { startDividerDrag } from '../../utils/dragResize'
 import DraftVersions from './components/DraftVersions'
 import RedlineDialog from './components/RedlineDialog'
 import DownloadPanel from './components/DownloadPanel'
@@ -508,10 +509,22 @@ export default function DraftPage() {
   const openWith = useOpenWith()
   const [desktop, setDesktop] = useState<null | 'closing' | 'ready' | 'away'>(null)
   const [moreAnchor, setMoreAnchor] = useState<HTMLElement | null>(null)   // the top bar's "More" menu
-  // Lisa's changes for an ONLYOFFICE draft go to the server; ones arriving together ("Apply all") are sent
-  // as one request, and requests never overlap, so they can't overwrite each other.
-  const officeQueue = useRef<{ before: string; after: string }[]>([])
-  const officeTimer = useRef<number | null>(null)
+  // Lisa's accepted changes for an ONLYOFFICE draft wait here until "Update in document" (like the
+  // Placeholders panel's Apply): then they go to the server in one request, one version, one editor reload.
+  // Requests never overlap, so they can't overwrite each other.
+  type OfficeChange = { before: string; after: string; blockId: number; heading?: string }
+  // Kept per draft in this browser, so a refresh doesn't lose accepted changes not yet in the document.
+  const pendingKey = `pp_office_pending_${sessionId}`
+  const [officePending, setOfficePending] = useState<OfficeChange[]>(() => {
+    try { return JSON.parse(localStorage.getItem(pendingKey) || '[]') as OfficeChange[] } catch { return [] }
+  })
+  useEffect(() => {
+    try {
+      if (officePending.length) localStorage.setItem(pendingKey, JSON.stringify(officePending))
+      else localStorage.removeItem(pendingKey)
+    } catch { /* storage unavailable */ }
+  }, [pendingKey, officePending])
+  const [officeUpdating, setOfficeUpdating] = useState(false)
   const officeChain = useRef<Promise<void>>(Promise.resolve())
   // A save from the editor itself (its Save, Ctrl+S, closing) also turns PactPro's button to "Saved".
   const officeVersion = useCallback(() => draftingApi.officeVersion(Number(sessionId)), [sessionId])
@@ -551,7 +564,7 @@ export default function DraftPage() {
     return () => { gone = true }
   }, [sessionId, officeKey])
   const officeRef = useRef<OfficeEditorHandle>(null)
-  // Finalise (lock the approved text) / Reopen, and the archival PDF/A.
+  // Finalise (lock the approved text) / Reopen.
   const [finalising, setFinalising] = useState(false)
   const toggleFinal = async (lock: boolean) => {
     if (!office) return
@@ -565,20 +578,6 @@ export default function DraftPage() {
       toast.error(errorMessage(e, lock ? 'Could not finalise the draft.' : 'Could not reopen the draft.'))
     } finally {
       setFinalising(false)
-    }
-  }
-  const [pdfaBusy, setPdfaBusy] = useState(false)
-  const downloadPdfa = async () => {
-    setPdfaBusy(true)
-    try {
-      const { blob, filename } = await draftingApi.officePdfa(Number(sessionId))
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob); a.download = filename
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href)
-    } catch (e) {
-      toast.error(errorMessage(e, 'Could not make the PDF/A file.'))
-    } finally {
-      setPdfaBusy(false)
     }
   }
   // The editor's Compare > "Document from storage": an earlier version of this draft, or a Word file
@@ -804,23 +803,15 @@ export default function DraftPage() {
   useEffect(() => { localStorage.setItem('pp_editor_right_w', String(rightW)) }, [rightW])
 
   // Drag a gutter to resize a side pane (left grows with the cursor; right grows
-  // as the cursor moves left).
-  const startDrag = (side: 'left' | 'right') => (e: React.MouseEvent) => {
-    e.preventDefault()
-    const startX = e.clientX, startLeft = leftW, startRight = rightW
-    const move = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX
-      if (side === 'left') setLeftW(clamp(startLeft + dx, 180, 460))
-      else setRightW(clamp(startRight - dx, 220, 720))
-    }
-    const up = () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-      document.body.style.cursor = ''; document.body.style.userSelect = ''
-    }
-    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
+  // as the cursor moves left). While dragging only the shell's CSS variable changes
+  // (no page re-render per move); the width is saved once, on release.
+  const shellRef = useRef<HTMLDivElement>(null)
+  const startDrag = (side: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
+    const startLeft = leftW, startRight = rightW
+    const width = (dx: number) => (side === 'left' ? clamp(startLeft + dx, 180, 460) : clamp(startRight - dx, 220, 720))
+    startDividerDrag(e, 'x',
+      dx => shellRef.current?.style.setProperty(side === 'left' ? '--dr-l' : '--dr-r', `${width(dx)}px`),
+      dx => (side === 'left' ? setLeftW : setRightW)(width(dx)))
   }
 
   // The editor's clauses as {id, heading, content_html, text}, for saving or suggesting.
@@ -1001,7 +992,6 @@ export default function DraftPage() {
     ...(office.canFinalise ? [office.final
       ? { label: 'Reopen for editing', icon: 'edit' as const, onClick: () => void toggleFinal(false) }
       : { label: 'Finalise (lock the text)', icon: 'check' as const, onClick: () => void toggleFinal(true) }] : []),
-    { label: 'PDF/A for filing', icon: 'download' as const, onClick: () => void downloadPdfa() },
     ...(!isReviewer ? ['-' as const,
       { label: 'Re-draft…', icon: 'refresh' as const, danger: true, meta: 'regenerate with the same inputs',
         onClick: () => setConfirmRedraft(true) }] : []),
@@ -1130,17 +1120,22 @@ export default function DraftPage() {
   // Apply an accepted chat edit to the editor: replace the target clause node's
   // body with the new text, wrapping the CHANGED words in a green highlight so the
   // lawyer can see what was altered. Marks the doc dirty so it can be Saved.
-  const applyInOffice = async (beforeText: string, afterText: string) => {
+  const applyInOffice = async (blockId: number, beforeText: string, afterText: string, heading?: string) => {
     const all = (session?.blocks ?? []).map(b => b.text || '').join('\n')
     const edits = editsFor(beforeText, afterText, all)
     const ed = officeRef.current
     const fail = () => toast.warning('Couldn\'t place this change in the document automatically. Copy the new text into the clause.')
     if (!ed?.live()) {
-      // No connector (Community edition): the server writes it into the Word file as a tracked change by
-      // "PactPro AI", and the editor reloads with the redline.
+      // No connector (Community edition): kept until "Update in document", when the server writes them into
+      // the Word file as tracked changes by "PactPro AI" and the editor reloads with the redline.
       if (!office) return
-      officeQueue.current.push({ before: beforeText, after: afterText })
-      if (officeTimer.current == null) officeTimer.current = window.setTimeout(flushOfficeChanges, 0)
+      setOfficePending(list => {
+        // A newer accepted change to the same clause replaces the waiting one (both start from the text
+        // Lisa read, so only the latest can be placed).
+        const same = list.find(c => c.blockId === blockId)
+        const next = { before: same ? same.before : beforeText, after: afterText, blockId, heading }
+        return same ? list.map(c => (c === same ? next : c)) : [...list, next]
+      })
       return
     }
     if (!edits) { fail(); return }
@@ -1156,23 +1151,31 @@ export default function DraftPage() {
     toast.success('Lisa\'s change is in the document as a tracked change: accept or reject it there.')
   }
 
-  // Send the collected changes in one request, after any request still running.
-  const flushOfficeChanges = () => {
-    officeTimer.current = null
-    const changes = officeQueue.current.splice(0)
-    if (!changes.length) return
+  // "Update in document": every accepted change waiting, in one request, after any request still running.
+  const updateOfficeDocument = () => {
+    const changes = officePending
+    if (!changes.length || officeUpdating) return
+    setOfficeUpdating(true)
     officeChain.current = officeChain.current.then(async () => {
       try {
-        const res = await draftingApi.applyOfficeMany(Number(sessionId), changes)
+        const res = await draftingApi.applyOfficeMany(Number(sessionId),
+          changes.map(c => ({ before: c.before, after: c.after, blockId: c.blockId })))
+        setOfficePending(list => list.filter(c => !changes.includes(c)))
         setOffice(o => (o ? { ...o, config: res.config } : o))
         setOfficeDirty(false)
         const what = changes.length === 1 ? 'Lisa\'s change is' : `${res.applied} of Lisa's changes are`
         toast.success(`${what} in the document as tracked changes: accept or reject them there.`)
         if (res.skipped) {
-          toast.warning(`${res.skipped} change${res.skipped === 1 ? '' : 's'} couldn't be placed (the clause changed since Lisa read it). Copy the new text in yourself.`)
+          const names = changes.filter(c => (res.skippedBlocks ?? []).includes(c.blockId))
+            .map(c => c.heading || `Clause ${c.blockId}`)
+          toast.warning(`Couldn't place ${names.length ? names.join(', ') : `${res.skipped} change${res.skipped === 1 ? '' : 's'}`}: `
+            + 'the clause changed since Lisa read it. Copy the new text in yourself.')
         }
       } catch (e) {
-        toast.warning(errorMessage(e, 'Couldn\'t place this change in the document automatically. Copy the new text into the clause.'))
+        // Nothing was placed: the changes stay waiting, so Update can be pressed again.
+        toast.warning(errorMessage(e, 'Couldn\'t place the changes in the document automatically. Copy the new text into the clause.'))
+      } finally {
+        setOfficeUpdating(false)
       }
     })
   }
@@ -1180,7 +1183,7 @@ export default function DraftPage() {
     if (office) {
       // Into the open Word document: only the words Lisa changed, so the clause keeps its formatting.
       // Tracked changes (accept / reject in the document) come in phase 3 (docs/ONLYOFFICE_PLAN.md).
-      void applyInOffice(beforeText, afterText)
+      void applyInOffice(blockId, beforeText, afterText, heading)
       return
     }
     if (!editor) return
@@ -1553,7 +1556,7 @@ export default function DraftPage() {
         )}
         {office && officeMore.length > 0 && (
           <Button size="sm" icon="more" aria-haspopup="menu" aria-expanded={!!moreAnchor} title="More actions"
-            loading={finalising || pdfaBusy} onClick={e => setMoreAnchor(moreAnchor ? null : e.currentTarget)}>More</Button>
+            loading={finalising} onClick={e => setMoreAnchor(moreAnchor ? null : e.currentTarget)}>More</Button>
         )}
         {moreAnchor && <PopMenu anchor={moreAnchor} items={officeMore} align="right" width={250} onClose={() => setMoreAnchor(null)} />}
         {office?.desktopLock && !desktop && (
@@ -1735,7 +1738,7 @@ export default function DraftPage() {
       {/* Three-pane editor — kept MOUNTED while previewing (just hidden) so the chat /
           review panels and their state survive the Preview → Edit toggle. Pane widths
           are user-resizable (drag handles) and fed in as CSS variables. */}
-      <div className="editor-shell dr-ed-shell"
+      <div className="editor-shell dr-ed-shell" ref={shellRef}
         style={{ display: (preview && !office) || compare || reviewRoundId ? 'none' : undefined, ['--dr-l' as string]: `${leftW}px`, ['--dr-r' as string]: `${rightW}px` }}>
           {/* Left — document placeholders + reference documents */}
           <aside className="ed-pane ed-side dr-ed-pane" aria-label="Placeholders and references">
@@ -1779,7 +1782,7 @@ export default function DraftPage() {
             )}
           </aside>
 
-          <div className="pp-gutter" onMouseDown={startDrag('left')} title="Drag to resize" aria-hidden="true" />
+          <div className="pp-gutter" onPointerDown={startDrag('left')} title="Drag to resize" aria-hidden="true" />
 
           {/* Middle — the editable document */}
           <div className="ed-mid dr-ed-mid">
@@ -1823,7 +1826,7 @@ export default function DraftPage() {
             </>)}
           </div>
 
-          <div className="pp-gutter" onMouseDown={startDrag('right')} title="Drag to resize" aria-hidden="true" />
+          <div className="pp-gutter" onPointerDown={startDrag('right')} title="Drag to resize" aria-hidden="true" />
 
           {/* Right — a reference document (if opened), else the tabbed Lisa / Review pane */}
           <aside className="ed-pane ed-side dr-ed-pane" aria-label="Assistant">
@@ -1877,6 +1880,9 @@ export default function DraftPage() {
                     facts={session.facts}
                     getClauses={refineClauses}
                     onApply={patchClause}
+                    pendingUpdates={office ? officePending.length : undefined}
+                    onUpdateDocument={updateOfficeDocument}
+                    updating={officeUpdating}
                   />
                 </div>
                 <div className={`pp-rtab-slot dr-review-slot ${rightTab === 'review' ? '' : 'pp-hidden'}`}>
@@ -1893,20 +1899,9 @@ export default function DraftPage() {
                   <div
                     className="dr-row-handle"
                     aria-hidden="true"
-                    onMouseDown={e => {
-                      e.preventDefault()
-                      const startY = e.clientY
+                    onPointerDown={e => {
                       const startH = reviewTopH
-                      const onMove = (ev: MouseEvent) => {
-                        const next = Math.max(80, Math.min(startH + ev.clientY - startY, 600))
-                        setReviewTopH(next)
-                      }
-                      const onUp = () => {
-                        window.removeEventListener('mousemove', onMove)
-                        window.removeEventListener('mouseup', onUp)
-                      }
-                      window.addEventListener('mousemove', onMove)
-                      window.addEventListener('mouseup', onUp)
+                      startDividerDrag(e, 'y', dy => setReviewTopH(Math.max(80, Math.min(startH + dy, 600))))
                     }}
                   />
                   {/* Playbook panel — takes remaining height */}

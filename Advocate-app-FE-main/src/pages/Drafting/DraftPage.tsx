@@ -3,7 +3,7 @@ import { DRAFTING } from './routes'
 import { usePermission } from '../../contexts/PermissionContext'
 import { useToast } from '../../contexts/ToastContext'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Button, Chip, EmptyState } from '../../ui/kit'
+import { Button, Chip, EmptyState, PopMenu, type MenuItem } from '../../ui/kit'
 import { Modal, confirm } from '../../ui/overlays'
 import { Field } from '../../ui/forms'
 import Icon, { type IconName } from '../../ui/Icon'
@@ -35,12 +35,19 @@ import ReviewRoundView, { roundTitle } from './components/ReviewRoundView'
 import ReviewActivity from './components/ReviewActivity'
 import CaseFilePanel from './components/CaseFilePanel'
 import ImportChangesDialog from './components/ImportChangesDialog'
+import OnlyOfficeEditor, { loadOnlyOfficeApi, useStoredVersionWatch, type OfficeEditorHandle } from './components/OnlyOfficeEditor'
+import { editsFor } from './utils/textEdits'
+import type { OfficeBlank, OnlyOfficeSetup } from './api/drafting'
 import RequestReviewDialog, { POWER } from './components/RequestReviewDialog'
 import ConsistencyPanel from './components/ConsistencyPanel'
 import PlaybookRiskPanel from './components/PlaybookRiskPanel'
 import InlineDocViewer from './components/InlineDocViewer'
 import DocumentPlaceholders from './components/DocumentPlaceholders'
-import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview, type ReviewRoundSummary, type DraftReviewRequest, type DraftComments, type DraftCommentThread } from './api/drafting'
+import { useSaveChoice } from '../../components/SaveChoiceDialog'
+import { useOpenWith } from '../../components/OpenWithDialog'
+import { DESKTOP_SAVED_EVENT } from '../../components/DesktopEditsBar'
+import { saveBlob } from '../../utils/openWith'
+import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview, type ReviewRoundSummary, type DraftReviewRequest, type DraftComments, type DraftCommentThread, type WordForm } from './api/drafting'
 import DraftChanges, { changeSummary } from '../../components/DraftChanges'
 import { RiskContext, type RiskMap } from './context/RiskContext'
 import { sanitizeHtml } from '../../utils/sanitizeHtml'
@@ -89,14 +96,6 @@ function highlightedHtml(before: string, after: string): string {
 const BLANK_RE = new RegExp(BLANK_SRC, 'g')
 const BLANK_SPLIT_RE = new RegExp(`(${BLANK_SRC})`, 'g')
 const BLANK_TEST_RE = new RegExp(`^(?:${BLANK_SRC})$`)
-
-function highlightBlanks(text: string, keyPrefix: string) {
-  if (!text) return text
-  return text.split(BLANK_SPLIT_RE).map((part, i) =>
-    BLANK_TEST_RE.test(part)
-      ? <mark key={`${keyPrefix}-${i}`} className="pp-blank" title="Unfilled placeholder — provide this value">{part}</mark>
-      : part)
-}
 
 // ── HTML helpers to seed / read the editor ─────────────────────────────────────
 const escAttr = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -246,10 +245,25 @@ function buildCitations(blocks: DraftBlock[]): Record<number, Citation> {
 /** Build the editor's initial HTML: one <section data-clause> per DraftBlock.
  *  Body style (font/size/colour/alignment) rides on the stored content_html's <p>
  *  tags; the captured heading style is emitted as data-heading-style. */
+// A clause shown under its heading whose formatted text also starts with that heading (sample
+// drafts, where the AI writes it too): the repeated first paragraph is dropped, as the plain-text
+// path (stripLeadingHeading) and the download do.
+function dropHeadingParagraph(html: string, heading: string): string {
+  const h = (heading || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  if (!h || !html) return html
+  const div = document.createElement('div')
+  div.innerHTML = html
+  const first = div.firstElementChild
+  const t = (first?.textContent || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  if (first && first.tagName !== 'TABLE' && t === h) first.remove()
+  return div.innerHTML
+}
+
 function buildContentHtml(blocks: DraftBlock[], docTitle = ''): string {
   return blocks.map(b => {
     const plain = stripDocTitle(stripLeadingHeading(b.text, b.heading || ''), docTitle)
-    const body = convertTokens(b.content_html?.trim() ? b.content_html : textToHtml(plain))
+    const body = convertTokens(b.content_html?.trim()
+      ? dropHeadingParagraph(b.content_html, displayHeading(b.heading, docTitle)) : textToHtml(plain))
     const hStyle = b.style_json?.heading
     const hAttr = hStyle ? ` data-heading-style="${escAttr(JSON.stringify(hStyle))}"` : ''
     return `<section data-clause data-block-id="${b.id}" data-heading="${escAttr(displayHeading(b.heading, docTitle))}"${hAttr} `
@@ -257,29 +271,92 @@ function buildContentHtml(blocks: DraftBlock[], docTitle = ''): string {
   }).join('')
 }
 
-// ── read-only Preview renderer (the filled document, diff-highlighted) ─────────
-function PreviewClause({ block, docTitle = '' }: { block: DraftBlock; docTitle?: string }) {
+// ── read-only Preview renderer: the document as it prints ─────────────────────
+// The same formatted content as the editor (fonts, alignment, indents, tables, heading styles),
+// read-only: a filled placeholder reads as its value, an empty one as a highlighted [Label].
+// Edit highlights are dropped. What changed is Compare's job, not Preview's.
+function previewHtml(block: DraftBlock, docTitle = ''): string {
   const heading = displayHeading(block.heading, docTitle)
-  const body = stripMd(stripDocTitle(stripLeadingHeading(block.text, block.heading || ''), docTitle))
-  const source = block.source_clause_detail?.text
-  const rendered = source
-    ? diffWords(stripMd(stripLeadingHeading(source, block.heading || '')), body)
-        .filter(p => !p.removed)
-        .map((p, i) => (p.added
-          ? <mark key={i} className="pp-fill">{highlightBlanks(p.value, `f${i}`)}</mark>
-          : <span key={i}>{highlightBlanks(p.value, `s${i}`)}</span>))
-    : highlightBlanks(body, 'b')
-  return (
-    <div className="pp-doc-section">
-      {heading && <h3 className="pp-clause-heading">{heading}</h3>}
-      <div className="pp-doc-text pp-doc-flow">{rendered}</div>
-    </div>
-  )
+  const hCss = headingStyleCss(block.style_json?.heading)
+  const plain = stripDocTitle(stripLeadingHeading(block.text, block.heading || ''), docTitle)
+  const div = document.createElement('div')
+  div.innerHTML = stripEditHl(block.content_html?.trim()
+    ? dropHeadingParagraph(block.content_html, heading) : textToHtml(stripMd(plain)))
+  const blank = (label: string) => {
+    const span = document.createElement('span')
+    span.className = 'pp-blank'
+    span.textContent = `[${label}]`
+    return span
+  }
+  div.querySelectorAll('[data-placeholder]').forEach(el => {
+    const value = el.getAttribute('data-value') || ''
+    el.replaceWith(value ? document.createTextNode(value) : blank(decodeEntities(el.getAttribute('data-placeholder') || '')))
+  })
+  // Blanks still in the text ([[Label]] not yet a placeholder, or an old ____ line): highlighted.
+  const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT)
+  const hits: Text[] = []
+  while (walker.nextNode()) {
+    const v = walker.currentNode.nodeValue || ''
+    if (v.split(BLANK_SPLIT_RE).some(part => BLANK_TEST_RE.test(part))) hits.push(walker.currentNode as Text)
+  }
+  hits.forEach(node => {
+    const frag = document.createDocumentFragment()
+    ;(node.nodeValue || '').split(BLANK_SPLIT_RE).forEach(part => {
+      if (!BLANK_TEST_RE.test(part)) { frag.appendChild(document.createTextNode(part)); return }
+      const m = part.match(/^\[\[([^\]]+)\]\]$/)
+      const span = blank(m ? decodeEntities(m[1].trim()) : '')
+      if (!m) span.textContent = part
+      frag.appendChild(span)
+    })
+    node.replaceWith(frag)
+  })
+  return (heading ? `<h3 class="pp-clause-heading"${hCss ? ` style="${escAttr(hCss)}"` : ''}>${escText(heading)}</h3>` : '')
+    + `<div class="pp-doc-html">${div.innerHTML}</div>`
+}
+
+function PreviewClause({ block, docTitle = '' }: { block: DraftBlock; docTitle?: string }) {
+  return <div className="pp-doc-section" dangerouslySetInnerHTML={{ __html: previewHtml(block, docTitle) }} />
 }
 
 /** The draft workspace: a three-pane editor (provenance · editable document ·
  *  assistant stub) with a read-only Preview toggle and manual Save. Polls while
  *  the draft is still generating. */
+// A draft from a Word template / sample sits on that file's page: its width and margins
+// (drafting/wordform.py page_form). As in Word, a header prints INSIDE the top margin (from
+// header_mm below the edge) and the text starts at the margin; a footer likewise at the bottom.
+// Others keep the standard sheet.
+function paperStyle(form?: WordForm | null): React.CSSProperties | undefined {
+  const p = form?.page
+  if (!p?.width_mm) return undefined
+  const mm = (v: number | null | undefined, d: number) => `${v ?? d}mm`
+  const top = form?.header_html ? mm(p.header_mm, 12.5) : mm(p.margin_top_mm, 20)
+  const bottom = form?.footer_html ? mm(p.footer_mm, 12.5) : mm(p.margin_bottom_mm, 20)
+  return {
+    width: `min(${p.width_mm}mm, calc(100% - 32px))`,
+    padding: `${top} ${mm(p.margin_right_mm, 20)} ${bottom} ${mm(p.margin_left_mm, 20)}`,
+  }
+}
+
+// The header band fills the top margin (from the header line down to where the text starts);
+// the footer band the bottom one. A taller header simply pushes the text down, as in Word.
+function bandSpace(form: WordForm | null | undefined, where: 'head' | 'foot'): string | undefined {
+  const p = form?.page
+  if (!p) return undefined
+  const space = where === 'head'
+    ? (p.margin_top_mm ?? 20) - (p.header_mm ?? 12.5)
+    : (p.margin_bottom_mm ?? 20) - (p.footer_mm ?? 12.5)
+  return space > 0 ? `${space}mm` : undefined
+}
+
+// The template's header / footer (logo, firm name, address), shown where they print; not editable
+// here: the draft's Download keeps them exactly as in the file. The HTML is built by the server
+// from the Word file (text escaped, images as data: URIs).
+function WordBand({ html, where, form }: { html?: string; where: 'head' | 'foot'; form?: WordForm | null }) {
+  if (!html) return null
+  return <div className={`pp-word-band ${where}`} title={where === 'head' ? "The template's header" : "The template's footer"}
+    style={{ minHeight: bandSpace(form, where) }} dangerouslySetInnerHTML={{ __html: html }} />
+}
+
 export default function DraftPage() {
   const { hasPermission } = usePermission() as any
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -311,7 +388,8 @@ export default function DraftPage() {
   const [focusedId, setFocusedId] = useState<number | null>(null)  // clause under the cursor (for provenance)
   const [blankCount, setBlankCount] = useState(0)    // unfilled placeholders in the live doc
   const [placeholders, setPlaceholders] = useState<{ label: string; display: string; value: string }[]>([])  // placeholder-node fields
-  const [refDoc, setRefDoc] = useState<{ name: string; url: string; amsDocId?: number; fileName?: string } | null>(null)  // reference doc open in the right pane
+  const headingFill = useRef<Record<string, string>>({})   // values typed for blanks in clause headings
+  const [refDoc, setRefDoc] = useState<{ name: string; url: string; preview?: string | null; amsDocId?: number; fileName?: string } | null>(null)  // reference doc open in the right pane
   const [rightTab, setRightTab] = useState<'chat' | 'review' | 'comments' | 'activity'>('chat')  // right-pane tab
   // Decided rounds of mine already looked at in the Activity tab (per draft, this browser only).
   const [seenRounds, setSeenRounds] = useState<number[]>([])
@@ -339,7 +417,12 @@ export default function DraftPage() {
       ClauseDocument,
       Clause.configure({
         getCitation: (id: number) => citationsRef.current[id],
-        onCite: (url: string, name?: string) => { setRefDoc({ name: name || 'Reference document', url }); setRightW(w => Math.max(w, 440)) },
+        // A citation opens its source document; a drafting file link (…/file/?name=) has a print view
+        // next to it (…/preview/), so a Word source shows its letterhead and layout too.
+        onCite: (url: string, name?: string) => {
+          const preview = /\/file\/(\?.*)?$/.test(url) ? url.replace(/\/file\/(\?.*)?$/, '/preview/?name=preview.pdf') : null
+          setRefDoc({ name: name || 'Reference document', url, preview }); setRightW(w => Math.max(w, 440))
+        },
       }),
       Placeholder,
       EditHighlight,
@@ -357,12 +440,19 @@ export default function DraftPage() {
     onUpdate: ({ editor }) => {
       if (!suppressRef.current) setDirty(true)
       setBlankCount(editor.getText().match(BLANK_RE)?.length ?? 0)
-      // Placeholder fields come from the placeholder nodes (one field per label).
+      // Placeholder fields come from the placeholder nodes (one field per label), and from blanks in
+      // clause headings ("IN THE COURT OF [[Court Name]], CHENNAI": services/headings.py).
       const map = new Map<string, string>()
       editor.state.doc.descendants(node => {
         if (node.type.name === 'placeholder') {
           const l = node.attrs.label as string
           if (!map.has(l)) map.set(l, (node.attrs.value as string) || '')
+        }
+        if (node.type.name === 'clause') {
+          for (const m of ((node.attrs.heading as string) || '').matchAll(/\[\[([^\]]+)\]\]/g)) {
+            const l = m[1].trim()
+            if (!map.has(l)) map.set(l, headingFill.current[l] || '')
+          }
         }
       })
       setPlaceholders(Array.from(map, ([label, value]) => ({ label, display: humanize(label), value })))
@@ -399,6 +489,209 @@ export default function DraftPage() {
       setError('Failed to load draft session.')
       if (pollRef.current) clearInterval(pollRef.current)
       setRedrafting(false)
+    }
+  }
+
+  // ONLYOFFICE as the editor (docs/ONLYOFFICE_PLAN.md): when the server has it switched on, the Word
+  // file is edited there and saved back by ONLYOFFICE itself; the TipTap editor stays unused.
+  const [office, setOffice] = useState<OnlyOfficeSetup | null>(null)
+  // Changes made since PactPro last stored the document (the editor keeps them on its own server as
+  // they are typed; PactPro's Save, Download, Submit or closing the draft store them).
+  const [officeDirty, setOfficeDirty] = useState(false)
+  // The editor's own Save / Ctrl+S / autosave keeps the edits safe as a working copy; only PactPro's Save makes a
+  // version (docs/DESKTOP_EDITING.md). `officeSafe`: the unsaved edits are already kept (shown next to Save).
+  const [officeSafe, setOfficeSafe] = useState(false)
+  // Desktop editing (docs/DESKTOP_EDITING.md): where Save goes, and opening the draft in Word / LibreOffice.
+  // 'closing': the PactPro editor is closed and its session ending (a desktop lock waits for that);
+  // 'ready': free to open on the desktop; 'away': opened there (back here reloads the editor).
+  const saveChoice = useSaveChoice()
+  const openWith = useOpenWith()
+  const [desktop, setDesktop] = useState<null | 'closing' | 'ready' | 'away'>(null)
+  const [moreAnchor, setMoreAnchor] = useState<HTMLElement | null>(null)   // the top bar's "More" menu
+  // Lisa's changes for an ONLYOFFICE draft go to the server; ones arriving together ("Apply all") are sent
+  // as one request, and requests never overlap, so they can't overwrite each other.
+  const officeQueue = useRef<{ before: string; after: string }[]>([])
+  const officeTimer = useRef<number | null>(null)
+  const officeChain = useRef<Promise<void>>(Promise.resolve())
+  // A save from the editor itself (its Save, Ctrl+S, closing) also turns PactPro's button to "Saved".
+  const officeVersion = useCallback(() => draftingApi.officeVersion(Number(sessionId)), [sessionId])
+  const officeStored = useCallback(() => { setOfficeDirty(false); toast.success('Saved.'); fetchSession() },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchSession reads the current session id
+    [sessionId])
+  useStoredVersionWatch(officeVersion, !!office && officeDirty, officeStored)
+  const sessionReady = session?.status === 'ready'
+  useEffect(() => {
+    if (!sessionId || !sessionReady) return
+    let gone = false
+    draftingApi.getOnlyOffice(Number(sessionId))
+      .then(s => {
+        if (gone) return
+        // Start loading the editor's script right away, while the page lays out (faster open).
+        if (s.enabled) loadOnlyOfficeApi(s.url).catch(() => { /* the editor shows the error */ })
+        setOffice(s.enabled ? s : null)
+        // Own edits not saved to PactPro yet: the editor opens them, and Save is there to keep them.
+        if (s.enabled && s.pendingWork) { setOfficeDirty(true); setOfficeSafe(true) }
+      })
+      .catch(() => { if (!gone) setOffice(null) })
+    return () => { gone = true }
+  }, [sessionId, sessionReady])
+
+  // Placeholders of the Word file (phase 2): typed here, written into the file when the field is left;
+  // the editor then reloads with the filled document (its key changed).
+  const [officeBlanks, setOfficeBlanks] = useState<OfficeBlank[]>([])
+  const [officeValues, setOfficeValues] = useState<Record<string, string>>({})
+  const [officeFilling, setOfficeFilling] = useState(false)
+  const officeKey = (office?.config.document as { key?: string } | undefined)?.key
+  useEffect(() => {
+    if (!sessionId || !officeKey) return
+    let gone = false
+    draftingApi.getOfficePlaceholders(Number(sessionId))
+      .then(list => { if (!gone) setOfficeBlanks(list) })
+      .catch(() => { if (!gone) setOfficeBlanks([]) })
+    return () => { gone = true }
+  }, [sessionId, officeKey])
+  const officeRef = useRef<OfficeEditorHandle>(null)
+  // Finalise (lock the approved text) / Reopen, and the archival PDF/A.
+  const [finalising, setFinalising] = useState(false)
+  const toggleFinal = async (lock: boolean) => {
+    if (!office) return
+    setFinalising(true)
+    try {
+      const r = lock ? await draftingApi.finaliseOffice(Number(sessionId)) : await draftingApi.reopenOffice(Number(sessionId))
+      setOffice({ ...office, config: r.config, final: r.final, canFinalise: r.canFinalise, role: lock ? 'view' : 'decide' })
+      setOfficeDirty(false)
+      toast.success(lock ? 'Finalised: the draft is locked.' : 'Reopened for editing.')
+    } catch (e) {
+      toast.error(errorMessage(e, lock ? 'Could not finalise the draft.' : 'Could not reopen the draft.'))
+    } finally {
+      setFinalising(false)
+    }
+  }
+  const [pdfaBusy, setPdfaBusy] = useState(false)
+  const downloadPdfa = async () => {
+    setPdfaBusy(true)
+    try {
+      const { blob, filename } = await draftingApi.officePdfa(Number(sessionId))
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob); a.download = filename
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Could not make the PDF/A file.'))
+    } finally {
+      setPdfaBusy(false)
+    }
+  }
+  // The editor's Compare > "Document from storage": an earlier version of this draft, or a Word file
+  // returned by the client / the other side. The editor shows the differences as tracked changes.
+  const [compareOpen, setCompareOpen] = useState(false)
+  const [compareVersions, setCompareVersions] = useState<{ version: number; created: string; name: string }[]>([])
+  const [comparing, setComparing] = useState(false)
+  const openOfficeCompare = () => {
+    setCompareOpen(true)
+    draftingApi.getOfficeHistory(Number(sessionId)).then(h => {
+      const items = ((h as { history?: { version: number; created: string; user?: { name?: string } }[] }).history || [])
+      setCompareVersions(items.map(v => ({ version: v.version, created: v.created, name: v.user?.name || '' })).reverse())
+    }).catch(() => setCompareVersions([]))
+  }
+  const compareWith = async (source: { version: number } | File) => {
+    setComparing(true)
+    try {
+      officeRef.current?.compareWith(await draftingApi.compareSource(Number(sessionId), source))
+      setCompareOpen(false)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Could not open that document for comparison.'))
+    } finally {
+      setComparing(false)
+    }
+  }
+  // PactPro's Save for the Word document: the editor stores it in PactPro now, as a new version.
+  const [officeSaving, setOfficeSaving] = useState(false)
+  const saveOffice = async (force = false) => {
+    const choice = await saveChoice.ask(force)
+    if (!choice) return
+    setOfficeSaving(true)
+    try {
+      // The editor's text reaches the file only by a save, so a copy alone still stores it first.
+      // Only "Save to PactPro" makes a version; a copy alone takes what is on screen without one.
+      if (choice.pactpro) {
+        await draftingApi.saveOffice(Number(sessionId))
+        setOfficeDirty(false)
+        await fetchSession()
+      }
+      if (choice.copy) {
+        // The download is what is on screen (unsaved edits via the working copy, no version).
+        const { blob, filename } = await draftingApi.exportDocx(Number(sessionId), false, 'docx')
+        saveBlob(blob, filename)
+      }
+      toast.success(choice.pactpro ? 'Saved.' : 'Copy saved to this computer.')
+    } catch (e) {
+      toast.error(errorMessage(e, 'Could not save the document.'))
+    } finally {
+      setOfficeSaving(false)
+    }
+  }
+  // "Open on desktop": save, close the PactPro editor, wait for its session to end, then offer the desktop
+  // editor (a click, so the browser lets the page start it).
+  const closeForDesktop = async () => {
+    if (!sessionId) return
+    try {
+      // Unsaved edits go to the working copy (not a version); the desktop editor opens that.
+      if (officeDirty) await draftingApi.saveOfficeWork(Number(sessionId))
+    } catch (e) {
+      toast.error(errorMessage(e, 'Could not save the document.'))
+      return
+    }
+    setDesktop('closing')
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 1500))
+      if (!(await draftingApi.officeEditing(Number(sessionId)).catch(() => false))) break
+    }
+    setDesktop('ready')
+  }
+  const backToEditor = () => {
+    setDesktop(null)
+    draftingApi.getOnlyOffice(Number(sessionId)).then(s => setOffice(s.enabled ? s : null))
+      .catch(() => { /* keeps the previous setup */ })
+    fetchSession()
+  }
+  // Desktop edits saved to PactPro (DesktopEditsBar): back to the PactPro editor on the new version.
+  const backRef = useRef(backToEditor)
+  backRef.current = backToEditor
+  useEffect(() => {
+    const onSaved = (e: Event) => {
+      const d = (e as CustomEvent<{ kind: string; id: number }>).detail
+      if (d?.kind === 'draft' && d.id === Number(sessionId)) backRef.current()
+    }
+    window.addEventListener(DESKTOP_SAVED_EVENT, onSaved)
+    return () => window.removeEventListener(DESKTOP_SAVED_EVENT, onSaved)
+  }, [sessionId])
+  const openOnDesktop = () => {
+    void openWith.openDocument('draft', Number(sessionId), backToEditor).then(() => setDesktop(d => (d === 'ready' ? 'away' : d)))
+  }
+  // "Apply to document": every value typed so far, written in one go. With the connector (paid
+  // editions) straight into the open document; otherwise on the server, one version, one editor reload.
+  // Changed values only: a form field may be changed (or emptied); a [[Label]] text blank needs a value.
+  const officeReady = Object.entries(officeValues).filter(([label, v]) => {
+    const blank = officeBlanks.find(b => b.label === label)
+    if (!blank) return false
+    return blank.kind === 'field' ? v.trim() !== (blank.value || '') : !!v.trim()
+  })
+  const applyOfficeBlanks = async () => {
+    if (!office || officeFilling || officeReady.length === 0) return
+    setOfficeFilling(true)
+    const values = Object.fromEntries(officeReady.map(([label, v]) => [label, v.trim()]))
+    try {
+      // On the server (form fields and [[Label]] text alike), one version and one editor reload.
+      const res = await draftingApi.fillOfficePlaceholders(Number(sessionId), values)
+      setOffice({ ...office, config: res.config })
+      setOfficeDirty(false)
+      setOfficeValues(v => Object.fromEntries(Object.entries(v).filter(([label]) => !(label in values))))
+      const n = Object.keys(values).length
+      toast.success(`Applied ${n} placeholder${n > 1 ? 's' : ''} to the document.`)
+    } catch (e) {
+      toast.error(errorMessage(e, 'Could not apply the placeholders.'))
+    } finally {
+      setOfficeFilling(false)
     }
   }
 
@@ -450,7 +743,7 @@ export default function DraftPage() {
     if (editor && session?.status === 'ready' && !loadedRef.current && (session.blocks?.length ?? 0) > 0) {
       citationsRef.current = buildCitations(session.blocks)  // ready before the NodeViews render
       suppressRef.current = true
-      editor.commands.setContent(buildContentHtml(session.blocks, resolveDocTitle()))
+      editor.commands.setContent(buildContentHtml(session.blocks, pageTitle()))
       suppressRef.current = false
       loadedRef.current = true
       setDirty(false)
@@ -537,7 +830,7 @@ export default function DraftPage() {
     // they're only stripped from the downloaded PDF/Word.
     const serializer = DOMSerializer.fromSchema(editor.schema)
     const updates: { id: number; heading: string; content_html: string; text: string }[] = []
-    const title = resolveDocTitle()
+    const title = pageTitle()
     const stored = new Map((session?.blocks ?? []).map(b => [b.id, b.heading || '']))
     editor.state.doc.forEach(node => {
       if (node.type.name !== 'clause' || node.attrs.blockId == null) return
@@ -653,10 +946,15 @@ export default function DraftPage() {
     || (session?.mode === 'library' ? '' : (session?.template_name || ''))
     || (session?.document_type ? session.document_type.toUpperCase() : '')
 
+  // The title the page shows above the clauses. A draft from a Word template / sample has none: the
+  // template's own title is its first clause heading (as in the download), so nothing is shown twice
+  // and no clause heading is hidden for repeating it.
+  const pageTitle = () => (session?.word_form ? '' : resolveDocTitle())
+
   // Build the export document HTML (title + each clause) from the live editor
   // (falling back to saved blocks). Shared by the Word and PDF exports.
   const buildExportBody = () => {
-    const dTitle = resolveDocTitle()
+    const dTitle = pageTitle()
     const parts: string[] = []
     if (dTitle) parts.push(`<h1>${escText(dTitle)}</h1>`)
     if (editor) {
@@ -679,6 +977,9 @@ export default function DraftPage() {
     return stripEditHl(parts.join('\n'))
   }
 
+  // Drawn shapes in the Word source (wordform._drawings): kept by Download, not drawable in the editor.
+  const shapeCount = (session?.blocks || []).reduce((n, b) => n + (b.style_json?.src?.shapes || 0), 0)
+
   const exportName = () =>
     ((resolveDocTitle() || 'draft')
       .replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'draft')
@@ -693,6 +994,18 @@ export default function DraftPage() {
   const review = session?.review ?? null
   // Anyone but the owner: a task's reviewer, or a colleague who was asked to review (access.request).
   const isReviewer = (!!review && !review.isOwner) || (!!session?.access && !session.access.isOwner)
+  // ONLYOFFICE drafts: occasional actions in one "More" menu, so the top bar fits on one line.
+  const officeMore: MenuItem[] = !office ? [] : [
+    ...(office.role !== 'view' ? [{ label: 'Save options…', icon: 'check' as const, meta: 'PactPro / this computer',
+      onClick: () => void saveOffice(true) }] : []),
+    ...(office.canFinalise ? [office.final
+      ? { label: 'Reopen for editing', icon: 'edit' as const, onClick: () => void toggleFinal(false) }
+      : { label: 'Finalise (lock the text)', icon: 'check' as const, onClick: () => void toggleFinal(true) }] : []),
+    { label: 'PDF/A for filing', icon: 'download' as const, onClick: () => void downloadPdfa() },
+    ...(!isReviewer ? ['-' as const,
+      { label: 'Re-draft…', icon: 'refresh' as const, danger: true, meta: 'regenerate with the same inputs',
+        onClick: () => setConfirmRedraft(true) }] : []),
+  ]
   // Approve / request changes from the editor (backend: workspace/review.py).
   const submitReview = async (action: 'approve' | 'request_changes', note = '') => {
     if (!review) return
@@ -817,7 +1130,59 @@ export default function DraftPage() {
   // Apply an accepted chat edit to the editor: replace the target clause node's
   // body with the new text, wrapping the CHANGED words in a green highlight so the
   // lawyer can see what was altered. Marks the doc dirty so it can be Saved.
+  const applyInOffice = async (beforeText: string, afterText: string) => {
+    const all = (session?.blocks ?? []).map(b => b.text || '').join('\n')
+    const edits = editsFor(beforeText, afterText, all)
+    const ed = officeRef.current
+    const fail = () => toast.warning('Couldn\'t place this change in the document automatically. Copy the new text into the clause.')
+    if (!ed?.live()) {
+      // No connector (Community edition): the server writes it into the Word file as a tracked change by
+      // "PactPro AI", and the editor reloads with the redline.
+      if (!office) return
+      officeQueue.current.push({ before: beforeText, after: afterText })
+      if (officeTimer.current == null) officeTimer.current = window.setTimeout(flushOfficeChanges, 0)
+      return
+    }
+    if (!edits) { fail(); return }
+    // As a tracked change: the person who decides accepts or rejects it in the document (Review tab).
+    const wasTracking = await ed.setTracking(true)
+    try {
+      for (const e of edits) {
+        if (!(await ed.replaceText(e.find, e.replace))) { fail(); return }
+      }
+    } finally {
+      if (wasTracking === false) await ed.setTracking(false)
+    }
+    toast.success('Lisa\'s change is in the document as a tracked change: accept or reject it there.')
+  }
+
+  // Send the collected changes in one request, after any request still running.
+  const flushOfficeChanges = () => {
+    officeTimer.current = null
+    const changes = officeQueue.current.splice(0)
+    if (!changes.length) return
+    officeChain.current = officeChain.current.then(async () => {
+      try {
+        const res = await draftingApi.applyOfficeMany(Number(sessionId), changes)
+        setOffice(o => (o ? { ...o, config: res.config } : o))
+        setOfficeDirty(false)
+        const what = changes.length === 1 ? 'Lisa\'s change is' : `${res.applied} of Lisa's changes are`
+        toast.success(`${what} in the document as tracked changes: accept or reject them there.`)
+        if (res.skipped) {
+          toast.warning(`${res.skipped} change${res.skipped === 1 ? '' : 's'} couldn't be placed (the clause changed since Lisa read it). Copy the new text in yourself.`)
+        }
+      } catch (e) {
+        toast.warning(errorMessage(e, 'Couldn\'t place this change in the document automatically. Copy the new text into the clause.'))
+      }
+    })
+  }
   const patchClause = (blockId: number, beforeText: string, afterText: string, heading?: string) => {
+    if (office) {
+      // Into the open Word document: only the words Lisa changed, so the clause keeps its formatting.
+      // Tracked changes (accept / reject in the document) come in phase 3 (docs/ONLYOFFICE_PLAN.md).
+      void applyInOffice(beforeText, afterText)
+      return
+    }
     if (!editor) return
     // Capture the filled placeholder values BEFORE patching — refine round-trips every
     // placeholder as [[Label]] (re-inserted empty), so we restore the value afterwards.
@@ -861,7 +1226,8 @@ export default function DraftPage() {
   // the value is restored on patch.
   const refineClauses = () => clausesWith(phTokenText)
   const clausesWith = (leaf: (n: { type?: { name?: string }; attrs?: { value?: string; label?: string } }) => string) => {
-    if (!editor) return (session?.blocks ?? []).map(b => ({ block_id: b.id, heading: b.heading || '', text: b.text }))
+    // In ONLYOFFICE the server copies each saved file's clause text into the blocks (docfile.sync_blocks).
+    if (!editor || office) return (session?.blocks ?? []).map(b => ({ block_id: b.id, heading: b.heading || '', text: b.text }))
     const out: { block_id: number; heading: string; text: string }[] = []
     editor.state.doc.forEach(node => {
       if (node.type.name !== 'clause' || node.attrs.blockId == null) return
@@ -904,6 +1270,7 @@ export default function DraftPage() {
 
   // Jump to a clause from a review finding: leave Preview, scroll it into view, flash it.
   const scrollToClause = (blockId: number) => {
+    if (office) { officeRef.current?.gotoClause(blockId); return }
     setPreview(false)
     requestAnimationFrame(() => {
       const el = document.querySelector(`.pp-editor-paper [data-block-id="${blockId}"]`) as HTMLElement | null
@@ -933,13 +1300,29 @@ export default function DraftPage() {
       setTimeout(() => first.classList.remove('pp-ph-flash'), 1600)
     }
   }
-  const blurPlaceholder = (label: string) =>
+  // Leaving a field: a value typed for a blank that sits in a clause heading is written into the
+  // heading now (not per keystroke, which would remove the field after the first letter).
+  const blurPlaceholder = (label: string) => {
     placeholderEls(label).forEach(el => el.classList.remove('pp-ph-active'))
+    const value = (headingFill.current[label] || '').trim()
+    if (!editor || !value) return
+    const token = `[[${label}]]`
+    const tr = editor.state.tr
+    editor.state.doc.descendants((node, pos) => {
+      const h = node.type.name === 'clause' ? ((node.attrs.heading as string) || '') : ''
+      if (h.includes(token)) tr.setNodeMarkup(pos, undefined, { ...node.attrs, heading: h.split(token).join(value) })
+    })
+    delete headingFill.current[label]
+    if (tr.docChanged) editor.view.dispatch(tr)
+  }
 
   // Live-fill a placeholder: set the value attr on every placeholder node with this
   // label. The nodes persist, so the field stays editable in the panel.
   const setPlaceholderValue = (label: string, value: string) => {
     if (!editor) return
+    // A blank in a heading: kept here while typing, written into the heading on leaving the field.
+    headingFill.current[label] = value
+    setPlaceholders(ps => ps.map(p => (p.label === label ? { ...p, value } : p)))
     const tr = editor.state.tr
     editor.state.doc.descendants((node, pos) => {
       if (node.type.name === 'placeholder' && node.attrs.label === label) {
@@ -994,6 +1377,7 @@ export default function DraftPage() {
     : (session.template_name ?? 'Draft Document')
   // The document's own title heading (same resolution as the exports).
   const docTitle = resolveDocTitle()
+  const shownTitle = pageTitle()
   // Count still-to-fill: empty placeholder fields + any legacy ______ blanks.
   const toFill = placeholders.filter(p => !p.value.trim()).length + blankCount
   const canEdit = canEditDirect
@@ -1087,37 +1471,56 @@ export default function DraftPage() {
         {!isReviewer && amsSyncedLabel && (
           <span className="chip ok" title="Last copy filed in PactPro"><Icon name="check" size="sm" />{amsSyncedLabel}</span>
         )}
-        {(canEdit || canSuggest) && (
+        {office?.role === 'suggest' && (
+          <span className="chip warn" title="The author accepts or rejects each change">Suggesting: your edits are tracked</span>
+        )}
+        {office?.final ? (
+          <span className="chip ok" title={`Locked. sha256 ${office.final.sha256.slice(0, 12)}…`}>
+            <Icon name="check" size="sm" />{`Final${office.final.by ? ` · ${office.final.by}` : ''} · ${new Date(office.final.at).toLocaleDateString()}`}
+          </span>
+        ) : office?.role === 'view' && <span className="chip" title="You can read this draft">Read only</span>}
+        {(canEdit || canSuggest) && !office && (
           <div className="seg" role="group" aria-label="Mode">
             <button type="button" aria-pressed={!preview} onClick={() => setPreview(false)}><Icon name="edit" size="sm" />Edit</button>
             <button type="button" aria-pressed={preview} onClick={() => setPreview(true)}><Icon name="eye" size="sm" />Preview</button>
           </div>
         )}
-        {canSuggest && canEditDirect && (
+        {canSuggest && canEditDirect && !office && (
           <button type="button" className="btn sm" aria-pressed={suggestMode} disabled={dirty}
             title={dirty ? 'Save or send your edits first' : 'Type suggestions for the owner to accept or decline, instead of changing the draft'}
             onClick={() => setSuggestMode(m => !m)}><Icon name="chat" size="sm" />Suggest</button>
         )}
-        <button type="button" className="btn sm" title="Select some words, then comment on them (a question or a note)"
-          onMouseDown={e => e.preventDefault()} onClick={startComment}><Icon name="chat" size="sm" />Comment</button>
-        <button type="button" className="btn sm" aria-pressed={!!compare}
-          title="See what changed between two versions, in the document"
-          onClick={() => (compare ? setCompare(null) : openCompare())}><Icon name="swap" size="sm" />Compare</button>
-        <DraftVersions sessionId={session.id} canSave={!!canEdit}
-          beforeSave={async () => !dirty || !!(await save())} onCompare={id => openCompare(id)}
-          onRestored={fresh => { loadedRef.current = false; setSession(fresh); setDirty(false); loadRounds() }} />
+        {!office && (
+          <button type="button" className="btn sm" title="Select some words, then comment on them (a question or a note)"
+            onMouseDown={e => e.preventDefault()} onClick={startComment}><Icon name="chat" size="sm" />Comment</button>
+        )}
+        {office ? (
+          <button type="button" className="btn sm"
+            title="Compare with an earlier version or a file you received back: differences show as tracked changes"
+            onClick={openOfficeCompare}><Icon name="swap" size="sm" />Compare</button>
+        ) : (
+          <button type="button" className="btn sm" aria-pressed={!!compare}
+            title="See what changed between two versions, in the document"
+            onClick={() => (compare ? setCompare(null) : openCompare())}><Icon name="swap" size="sm" />Compare</button>
+        )}
+        {!office && (
+          <DraftVersions sessionId={session.id} canSave={!!canEdit}
+            beforeSave={async () => !dirty || !!(await save())} onCompare={id => openCompare(id)}
+            onRestored={fresh => { loadedRef.current = false; setSession(fresh); setDirty(false); loadRounds() }} />
+        )}
         {hasPermission('DRAFT_EXPORT') && (
           <Button size="sm" icon="download" aria-haspopup="menu" loading={exporting} disabled={exporting}
             onClick={e => setDlAnchor(dlAnchor ? null : e.currentTarget)}>Download</Button>
         )}
         {dlAnchor && (
-          <DownloadPanel anchor={dlAnchor} onClose={() => setDlAnchor(null)}
+          <DownloadPanel anchor={dlAnchor} onClose={() => setDlAnchor(null)} ownLetterhead={!!session.word_form?.has_letterhead}
             onDownload={(letterhead, format) => downloadDocx(letterhead, format)}
             onRedline={letterhead => { setRedlineLetterhead(letterhead); setShowRedline(true) }} />
         )}
         <RedlineDialog sessionId={session.id} visible={showRedline} onHide={() => setShowRedline(false)}
-          beforeExport={async () => !dirty || !!(await save())} letterhead={redlineLetterhead} />
-        {isReviewer ? null : confirmRedraft ? (
+          office={!!office}
+          beforeExport={async () => !!office || !dirty || !!(await save())} letterhead={redlineLetterhead} />
+        {isReviewer || (office && !confirmRedraft) ? null : confirmRedraft ? (
           <div className="row wrap" style={{ gap: 4 }}>
             <span className="small muted">Re-draft? Existing content will be replaced.</span>
             <Button variant="danger" size="sm" icon="check" loading={redrafting} disabled={redrafting} onClick={triggerRedraft}>Confirm</Button>
@@ -1127,13 +1530,40 @@ export default function DraftPage() {
           <Button size="sm" icon="refresh" title="Wipe this draft and regenerate with the same inputs"
             onClick={() => setConfirmRedraft(true)}>Re-draft</Button>
         )}
-        {suggesting ? (
+        {/* PactPro's Save is the one that makes a version (a suggester's tracked changes included). The editor's
+            own Save / Ctrl+S only keeps a working copy: say so, so nobody thinks Ctrl+S was enough. */}
+        {office && office.role !== 'view' && officeDirty && officeSafe && (
+          <span className="small muted" title="Saved by the editor (Ctrl+S, its Save icon or autosave): kept for you, but not yet a PactPro version">
+            Your work is safe; not yet a PactPro version
+          </span>
+        )}
+        {office ? (office.role !== 'view' && (
+          <Button size="sm" icon="check" loading={officeSaving} disabled={officeSaving || !officeDirty}
+            title={office.role === 'suggest' ? 'Save your tracked changes for the author' : 'Save the document'}
+            onClick={() => void saveOffice()}>{officeDirty ? 'Save to PactPro' : 'Saved'}</Button>
+        )) : suggesting ? (
           <Button size="sm" variant="primary" icon="send" loading={saving} disabled={!dirty || saving}
             title="Send your edits to the owner as suggestions" onClick={sendSuggestions}>Send suggestions</Button>
         ) : canEdit && (
           <Button size="sm" icon="check" loading={saving} disabled={!dirty || saving} onClick={save}>{dirty ? 'Save' : 'Saved'}</Button>
         )}
-        {access?.isOwner && canEditDirect && (
+        {office && office.role !== 'view' && !desktop && (
+          <Button size="sm" icon="file" title="Edit this draft in Word / LibreOffice on this computer"
+            onClick={() => void closeForDesktop()}>Open on desktop</Button>
+        )}
+        {office && officeMore.length > 0 && (
+          <Button size="sm" icon="more" aria-haspopup="menu" aria-expanded={!!moreAnchor} title="More actions"
+            loading={finalising || pdfaBusy} onClick={e => setMoreAnchor(moreAnchor ? null : e.currentTarget)}>More</Button>
+        )}
+        {moreAnchor && <PopMenu anchor={moreAnchor} items={officeMore} align="right" width={250} onClose={() => setMoreAnchor(null)} />}
+        {office?.desktopLock && !desktop && (
+          <span className="small muted">{office.desktopLock.pending
+            ? `Desktop edits by ${office.desktopLock.by} not saved to PactPro yet: read only here.`
+            : `Open in a desktop editor by ${office.desktopLock.by}: read only here.`}</span>
+        )}
+        {saveChoice.dialog}
+        {openWith.dialog}
+        {access?.isOwner && canEditDirect && !office && (
           <Button size="sm" icon="upload" title="Upload a Word file you received back (client or other side) to review its changes"
             onClick={() => setShowImport(true)}>Import changes</Button>
         )}
@@ -1186,6 +1616,29 @@ export default function DraftPage() {
           )}
         </div>
       )}
+      <Modal title="Compare with…" open={compareOpen} onClose={() => setCompareOpen(false)}
+        sub="The differences show in the document as tracked changes you accept or reject.">
+        <div className="stack" style={{ gap: 12 }}>
+          <Field label="A Word file you received back (client, other side)">
+            {id => (
+              <input id={id} type="file" accept=".docx" disabled={comparing}
+                onChange={e => { const f = e.target.files?.[0]; if (f) void compareWith(f) }} />
+            )}
+          </Field>
+          <div>
+            <p className="small muted">Or an earlier version of this draft</p>
+            {compareVersions.length === 0 ? <p className="faint small">No saved versions yet.</p> : (
+              <div className="stack" style={{ gap: 6 }}>
+                {compareVersions.map(v => (
+                  <Button key={v.version} size="sm" disabled={comparing} onClick={() => void compareWith({ version: v.version })}>
+                    {`Version ${v.version} · ${v.created}${v.name ? ` · ${v.name}` : ''}`}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </Modal>
       <Modal title="What changed since the last version" open={showChanges} size="wide" onClose={() => setShowChanges(false)}>
         {review?.lastNote && <p className="muted" style={{ marginBottom: 12 }}>"{review.lastNote}"</p>}
         <DraftChanges changes={review?.lastChanges} />
@@ -1271,9 +1724,11 @@ export default function DraftPage() {
       {preview && !compare && !reviewRoundId && (
         /* Read-only filled document */
         <div className="ed-mid dr-preview">
-          <article className="paper-sheet preview" aria-label="Draft preview">
-            {docTitle && <h1 className="pp-doc-title">{docTitle}</h1>}
-            {session.blocks.map(b => <PreviewClause key={b.id} block={b} docTitle={docTitle} />)}
+          <article className="paper-sheet preview" aria-label="Draft preview" style={paperStyle(session.word_form)}>
+            <WordBand html={session.word_form?.header_html} where="head" form={session.word_form} />
+            {shownTitle && <h1 className="pp-doc-title">{shownTitle}</h1>}
+            {session.blocks.map(b => <PreviewClause key={b.id} block={b} docTitle={shownTitle} />)}
+            <WordBand html={session.word_form?.footer_html} where="foot" form={session.word_form} />
           </article>
         </div>
       )}
@@ -1281,13 +1736,29 @@ export default function DraftPage() {
           review panels and their state survive the Preview → Edit toggle. Pane widths
           are user-resizable (drag handles) and fed in as CSS variables. */}
       <div className="editor-shell dr-ed-shell"
-        style={{ display: preview || compare || reviewRoundId ? 'none' : undefined, ['--dr-l' as string]: `${leftW}px`, ['--dr-r' as string]: `${rightW}px` }}>
+        style={{ display: (preview && !office) || compare || reviewRoundId ? 'none' : undefined, ['--dr-l' as string]: `${leftW}px`, ['--dr-r' as string]: `${rightW}px` }}>
           {/* Left — document placeholders + reference documents */}
           <aside className="ed-pane ed-side dr-ed-pane" aria-label="Placeholders and references">
             <div className="ed-sec">
               <h3>Placeholders</h3>
-              <DocumentPlaceholders items={placeholders} onChange={setPlaceholderValue}
-                onFocus={focusPlaceholder} onBlur={blurPlaceholder} />
+              {office ? (
+                <DocumentPlaceholders
+                  items={officeBlanks.map(b => ({ label: b.label, display: b.label,
+                    value: officeValues[b.label] ?? b.value ?? '' }))}
+                  onChange={(label, value) => setOfficeValues(v => ({ ...v, [label]: value }))}
+                  onFocus={label => { officeRef.current?.findPlaceholder(label) }}
+                  footer={officeBlanks.length > 0 && (
+                    <Button size="sm" variant="primary" icon="check" loading={officeFilling}
+                      disabled={officeFilling || officeReady.length === 0} onClick={() => void applyOfficeBlanks()}>
+                      {officeReady.length ? `Apply ${officeReady.length} to document` : 'Apply to document'}
+                    </Button>
+                  )}
+                  note={officeFilling ? 'Writing into the document…'
+                    : 'Fill or change any you want (Enter moves to the next), then Apply: each value goes into every place it appears. You can also type straight into a field in the document.'} />
+              ) : (
+                <DocumentPlaceholders items={placeholders} onChange={setPlaceholderValue}
+                  onFocus={focusPlaceholder} onBlur={blurPlaceholder} />
+              )}
             </div>
 
             <CaseFilePanel sessionId={session.id} onOpen={d => {
@@ -1299,7 +1770,7 @@ export default function DraftPage() {
                 <h3>Reference documents</h3>
                 {session.reference_documents!.map((d, i) => (
                   <button key={`${d.kind}-${d.id}`} type="button" className="pp-ref-doc"
-                    onClick={() => { setRefDoc({ name: d.name, url: d.url }); setRightW(w => Math.max(w, 440)) }}>
+                    onClick={() => { setRefDoc({ name: d.name, url: d.url, preview: d.preview }); setRightW(w => Math.max(w, 440)) }}>
                     <span className="mono faint xs" style={{ width: 22 }}>[{i + 1}]</span>
                     <span className="pp-ref-doc-name">{d.name}</span>
                   </button>
@@ -1312,11 +1783,44 @@ export default function DraftPage() {
 
           {/* Middle — the editable document */}
           <div className="ed-mid dr-ed-mid">
+            {office && desktop ? (
+              <div className="dr-desktop">
+                {desktop === 'closing' ? <p className="muted">Closing the PactPro editor…</p> : desktop === 'ready' ? (<>
+                  <p>Open this draft in the editor on your computer, or work on it here.</p>
+                  <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
+                    <Button variant="primary" icon="file" onClick={openOnDesktop}>Open in desktop editor</Button>
+                    <Button variant="ghost" onClick={backToEditor}>Back to the PactPro editor</Button>
+                  </div>
+                </>) : (<>
+                  <p>Open in your desktop editor. Save there as often as you like; when done, <strong>Save to PactPro</strong> (bottom right) makes it a new version here.</p>
+                  <Button icon="refresh" onClick={backToEditor}>Back to the PactPro editor</Button>
+                </>)}
+              </div>
+            ) : office ? (
+              <OnlyOfficeEditor ref={officeRef} setup={office} sessionId={session.id}
+                canRestore={office.role === 'decide'}
+                onConfig={config => { setOffice(o => (o ? { ...o, config } : o)); setOfficeDirty(false); fetchSession() }}
+                onCompareRequest={openOfficeCompare}
+                onModified={m => {
+                  // Typing: unsaved. The editor saving its working copy (modified -> false): safe, not a version yet.
+                  if (m) { setOfficeDirty(true); setOfficeSafe(false) } else if (officeDirty) setOfficeSafe(true)
+                }}
+                onSaved={fetchSession} onClause={setFocusedId} />
+            ) : (<>
             <EditorToolbar editor={editor} />
-            <div className="paper-sheet pp-editor-paper">
-              {docTitle && <h1 className="pp-doc-title">{docTitle}</h1>}
+            {shapeCount > 0 && (
+              <p className="dr-shapes-note muted xs" role="note">
+                The template has {shapeCount === 1 ? 'a drawn box or shape' : `${shapeCount} drawn boxes or shapes`} (e.g.
+                stamp boxes) the editor can't show. They stay in place in Download, Save to case and View.
+              </p>
+            )}
+            <div className="paper-sheet pp-editor-paper" style={paperStyle(session.word_form)}>
+              <WordBand html={session.word_form?.header_html} where="head" form={session.word_form} />
+              {shownTitle && <h1 className="pp-doc-title">{shownTitle}</h1>}
               <EditorContent editor={editor} />
+              <WordBand html={session.word_form?.footer_html} where="foot" form={session.word_form} />
             </div>
+            </>)}
           </div>
 
           <div className="pp-gutter" onMouseDown={startDrag('right')} title="Drag to resize" aria-hidden="true" />
@@ -1333,7 +1837,7 @@ export default function DraftPage() {
                   <button type="button" className="btn ghost sm icon" aria-label="Close reference document" title="Close"
                     onClick={() => setRefDoc(null)}><Icon name="x" size="sm" /></button>
                 </div>
-                <div className="pp-refview-body"><InlineDocViewer fileUrl={refDoc.url} name={refDoc.name} amsDocId={refDoc.amsDocId} fileName={refDoc.fileName} /></div>
+                <div className="pp-refview-body"><InlineDocViewer fileUrl={refDoc.url} previewUrl={refDoc.preview} name={refDoc.name} amsDocId={refDoc.amsDocId} fileName={refDoc.fileName} /></div>
               </div>
             ) : (
               <div className="pp-rpane">
@@ -1347,9 +1851,12 @@ export default function DraftPage() {
                   <button type="button" role="tab" aria-selected={rightTab === 'activity'} onClick={() => setRightTab('activity')}>
                     <Icon name="history" size="sm" /> Activity{activityBadge > 0 && <span className="dr-badge">{activityBadge}</span>}
                   </button>
-                  <button type="button" role="tab" aria-selected={rightTab === 'comments'} onClick={() => setRightTab('comments')}>
-                    <Icon name="chat" size="sm" /> Comments{(comments?.open ?? 0) > 0 ? ` (${comments!.open})` : ''}
-                  </button>
+                  {/* ONLYOFFICE drafts keep comments in the Word file (the editor's own Comments). */}
+                  {!office && (
+                    <button type="button" role="tab" aria-selected={rightTab === 'comments'} onClick={() => setRightTab('comments')}>
+                      <Icon name="chat" size="sm" /> Comments{(comments?.open ?? 0) > 0 ? ` (${comments!.open})` : ''}
+                    </button>
+                  )}
                 </div>
                 <div className={`pp-rtab-slot ${rightTab === 'activity' ? '' : 'pp-hidden'}`}>
                   <ReviewActivity rounds={rounds} requests={requests} isOwner={!!access?.isOwner}

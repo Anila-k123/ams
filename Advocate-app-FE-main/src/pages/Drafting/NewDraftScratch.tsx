@@ -2,14 +2,15 @@ import { useEffect, useState } from 'react'
 import { DRAFTING } from './routes'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Button, PageHead, Spinner } from '../../ui/kit'
-import { Field, TextField } from '../../ui/forms'
+import { Field } from '../../ui/forms'
 import Icon from '../../ui/Icon'
 import FilePick from './components/FilePick'
 import WizSteps from './components/WizSteps'
 import { draftingApi, type Template } from './api/drafting'
 import { amsApi, type AmsCase, type AmsLink } from './api/ams'
 import CaseField from './components/CaseField'
-import { resolveFormFields, ENTITY_TYPES } from './constants/legal'
+import { resolveFormFields } from './constants/legal'
+import PartiesEditor, { emptyParty, partyLines, type Party } from './components/PartiesEditor'
 import SlotFieldInput from './components/SlotFieldInput'
 
 const STEPS = ['Setup', 'Key terms', 'Review']
@@ -38,13 +39,9 @@ export default function NewDraftScratch() {
 
   // Step 1 — key terms + model.
   const [facts, setFacts] = useState<Record<string, string>>({})
-  const [title, setTitle] = useState('')   // drafting brief: the document's own title
   // Parties to the document — default two rows; each name is selectable (client +
   // its members) or free-typed, with a role. Add/remove rows for 1, 2, or more.
-  const [parties, setParties] = useState<{ name: string; entity: string; role: string; address: string; representative: string }[]>([
-    { name: '', entity: '', role: '', address: '', representative: '' },
-    { name: '', entity: '', role: '', address: '', representative: '' },
-  ])
+  const [parties, setParties] = useState<Party[]>([emptyParty(), emptyParty()])
   const [purpose, setPurpose] = useState('')   // drafting brief: what the document should achieve (required)
   const [prompt, setPrompt] = useState('')
   const [llm] = useState('gemini')  // Gemini-only for now
@@ -82,23 +79,8 @@ export default function NewDraftScratch() {
   // Suggested party names: the case's client and opponent (still free-typeable).
   const partyOptions = [amsLink?.prefill.party_a_name, amsLink?.prefill.party_b_name,
     amsCase?.clientName].filter((v, i, a): v is string => !!v && a.indexOf(v) === i)
-  const setParty = (i: number, key: 'name' | 'entity' | 'role' | 'address' | 'representative', val: string) =>
-    setParties(ps => ps.map((p, idx) => (idx === i ? { ...p, [key]: val } : p)))
-  const addParty = () => setParties(ps => [...ps, { name: '', entity: '', role: '', address: '', representative: '' }])
-  const removeParty = (i: number) =>
-    setParties(ps => (ps.length > 1 ? ps.filter((_, idx) => idx !== i) : ps))
   // Each party → one readable line for the brief (name + any details provided).
-  const partyList = parties
-    .map(p => {
-      if (!p.name.trim()) return ''
-      const bits = [p.name.trim()]
-      if (p.entity.trim()) bits.push(`entity type: ${p.entity.trim()}`)
-      if (p.role.trim()) bits.push(`role: ${p.role.trim()}`)
-      if (p.address.trim()) bits.push(`address: ${p.address.trim()}`)
-      if (p.representative.trim()) bits.push(`represented by: ${p.representative.trim()}`)
-      return bits.join(', ')
-    })
-    .filter(Boolean)
+  const partyList = partyLines(parties)
 
   // Upload a template inline, tagged with the chosen document type, then select it.
   // Parsing + LLM naming run server-side, so this can take a few seconds.
@@ -136,7 +118,6 @@ export default function NewDraftScratch() {
     if (!resolvedTemplate) return
     setSubmitting(true); setError('')
     const mergedFacts: Record<string, string> = { ...facts }
-    if (title.trim()) mergedFacts.document_title = title.trim()
     if (partyList.length) mergedFacts.parties = partyList.join('\n')
     if (purpose.trim()) mergedFacts.purpose = purpose.trim()
     if (prompt.trim()) mergedFacts.instructions = prompt.trim()
@@ -224,37 +205,8 @@ export default function NewDraftScratch() {
           {/* Step 1 — Key Terms */}
           {step === 1 && (
             <div className="stack" style={{ gap: 16 }}>
-              <TextField label="Document title" value={title} onChange={e => setTitle(e.target.value)}
-                hint="The title this document should carry. For example: NDA, Acme Pvt Ltd." />
-
-              <div className="stack" style={{ gap: 10 }}>
-                <span className="label">Parties</span>
-                <datalist id="ns-party-names">{partyOptions.map(n => <option key={n} value={n} />)}</datalist>
-                {parties.map((p, i) => (
-                  <div key={i} className="panel tinted"><div className="panel-body" style={{ padding: '14px 16px' }}>
-                    <div className="row between" style={{ marginBottom: 10 }}>
-                      <b className="small">Party {i + 1}</b>
-                      <button type="button" className="btn ghost sm" disabled={parties.length <= 1}
-                        aria-label={`Remove party ${i + 1}`} onClick={() => removeParty(i)}><Icon name="trash" size="sm" />Remove</button>
-                    </div>
-                    <div className="form-grid">
-                      <TextField label="Name" value={p.name} list="ns-party-names" onChange={e => setParty(i, 'name', e.target.value)} />
-                      <Field label="Entity type">
-                        {id => (
-                          <select id={id} className="input" value={p.entity} onChange={e => setParty(i, 'entity', e.target.value)}>
-                            <option value="">Select</option>
-                            {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                        )}
-                      </Field>
-                      <TextField label="Role" value={p.role} onChange={e => setParty(i, 'role', e.target.value)} placeholder="Disclosing Party" />
-                      <TextField label="Represented by (optional)" value={p.representative} onChange={e => setParty(i, 'representative', e.target.value)} />
-                      <TextField full label="Address (optional)" value={p.address} onChange={e => setParty(i, 'address', e.target.value)} />
-                    </div>
-                  </div></div>
-                ))}
-                <div><button type="button" className="btn ghost sm" onClick={addParty}><Icon name="plus" size="sm" />Add party</button></div>
-              </div>
+              <PartiesEditor parties={parties} onChange={setParties} options={partyOptions} listId="ns-party-names"
+                rolePlaceholder="Disclosing Party" />
 
               <Field label="Purpose" required
                 hint="What is this document meant to achieve? For example: appoint Mr. Ravi as Managing Director for a five-year term.">
@@ -291,7 +243,6 @@ export default function NewDraftScratch() {
           {step === 2 && (
             <div className="panel tinted"><div className="panel-body">
               <dl className="kv">
-                {title.trim() && <><dt>Document title</dt><dd>{title}</dd></>}
                 <dt>Case</dt><dd>{amsCase ? <><span className="mono">{amsCase.caseNumber}</span>{amsCase.clientName ? `, ${amsCase.clientName}` : ''}</> : '—'}</dd>
                 <dt>Agreement type</dt><dd>{docType}</dd>
                 <dt>Template</dt><dd>{resolvedTemplate?.name ?? '—'}{resolvedTemplate && !selectedTemplate && <span className="faint"> (default for type)</span>}</dd>

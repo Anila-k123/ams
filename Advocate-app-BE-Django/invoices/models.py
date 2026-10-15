@@ -230,3 +230,18 @@ class PaymentRequestKey(models.Model):
     class Meta:
         db_table = 'payment_request_key'
         constraints = [models.UniqueConstraint(fields=['advocate_id', 'key'], name='payment_request_key_uniq')]
+
+
+class InvoiceCreateKey(models.Model):
+    """Idempotency for issuing an invoice: one Idempotency-Key per user makes one
+    invoice. A retried request (double click, timeout) gets the invoice the first
+    attempt issued; the same key with a different body is refused."""
+    advocate_id = models.BigIntegerField()
+    key = models.CharField(max_length=100)
+    fingerprint = models.CharField(max_length=64)
+    invoice_id = models.BigIntegerField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'invoice_create_key'
+        constraints = [models.UniqueConstraint(fields=['advocate_id', 'key'], name='invoice_create_key_uniq')]

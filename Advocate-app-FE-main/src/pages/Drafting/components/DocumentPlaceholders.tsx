@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Field } from '../../../ui/forms'
 import Icon from '../../../ui/Icon'
 
@@ -7,6 +8,8 @@ interface Props {
   onChange: (label: string, value: string) => void   // live-updates the document
   onFocus?: (label: string) => void  // jump to + highlight this placeholder in the doc
   onBlur?: (label: string) => void   // clear the highlight
+  note?: string                      // the line under the fields (how values reach the document)
+  footer?: ReactNode                 // e.g. an "Apply to document" button under the fields
 }
 
 // Placeholder labels are written by the model ("Year", "Monthly Rent", "Pincode"),
@@ -51,12 +54,21 @@ function note(kind: Kind, v: string): string | null {
 /** Lists every document placeholder as a labeled input. Typing updates the
  *  document live, and each field stays (editable) even after it's filled.
  *  Focusing a field scrolls the document to that placeholder and highlights it. */
-export default function DocumentPlaceholders({ items, onChange, onFocus, onBlur }: Props) {
+// Enter moves to the next field (the last one wraps to the first), so values can be typed in one go.
+function focusNext(e: React.KeyboardEvent<HTMLInputElement>) {
+  if (e.key !== 'Enter') return
+  e.preventDefault()
+  const inputs = Array.from(e.currentTarget.closest('.dr-ph-list')?.querySelectorAll('input') ?? [])
+  const next = inputs[(inputs.indexOf(e.currentTarget) + 1) % inputs.length]
+  next?.focus()
+}
+
+export default function DocumentPlaceholders({ items, onChange, onFocus, onBlur, note: noteText, footer }: Props) {
   if (items.length === 0) {
     return <p className="faint small">No placeholders in this document.</p>
   }
   return (
-    <div className="stack" style={{ gap: 10 }}>
+    <div className="stack dr-ph-list" style={{ gap: 10 }}>
       {items.map(item => {
         const kind = fieldKind(item.label)
         const filled = item.value.trim().length > 0
@@ -75,13 +87,15 @@ export default function DocumentPlaceholders({ items, onChange, onFocus, onBlur 
                 inputMode={kind === 'phone' ? 'tel' : kind === 'amount' || kind === 'number' ? 'decimal' : numeric ? 'numeric' : undefined}
                 maxLength={kind === 'year' ? 4 : kind === 'pincode' ? 6 : kind === 'phone' ? 13 : undefined}
                 onChange={e => onChange(item.label, clean(kind, e.target.value))}
+                onKeyDown={focusNext}
                 onFocus={() => onFocus?.(item.label)}
                 onBlur={() => onBlur?.(item.label)} />
             )}
           </Field>
         )
       })}
-      <p className="faint xs">Edits apply to the document as you type.</p>
+      {footer}
+      <p className="faint xs">{noteText ?? 'Edits apply to the document as you type.'}</p>
     </div>
   )
 }

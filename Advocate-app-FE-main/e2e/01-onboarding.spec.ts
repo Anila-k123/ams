@@ -49,6 +49,12 @@ test('operator creates a firm; the administrator is invited by email', async ({ 
   await page.getByLabel(/^Name$/).fill('Asha Admin')
   await page.getByLabel(/^Email/).fill(adminEmail())
   await page.getByLabel('City').fill('Chennai')
+  // Professional: the scenarios below use the client portal and several seats.
+  // The seeded plans are unapproved drafts: only a synthetic test firm may use
+  // them (SUBSCRIPTION_TEST_PLANS is on for the E2E server only).
+  await expect(page.getByLabel('Plan', { exact: true }).locator('option[value="PROFESSIONAL"]')).toHaveCount(0)
+  await page.getByLabel(/Synthetic test firm/).check()
+  await page.getByLabel('Plan', { exact: true }).selectOption('PROFESSIONAL')
   await page.getByRole('button', { name: /Create firm and send invitation/ }).click()
   await expect(page.getByRole('status')).toContainText('awaiting activation')
   // Delivered to the local file inbox only (MAIL_BACKEND filebased).

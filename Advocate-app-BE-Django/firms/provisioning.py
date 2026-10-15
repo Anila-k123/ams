@@ -13,7 +13,11 @@ Idempotency: with a key, a retry with the same payload returns the same firm;
 the same key with a different payload is refused. Without a key, a duplicate
 slug is refused.
 
-`plan_code` is stored for Phase 8 (subscriptions); nothing enforces it yet.
+`plan_code` picks the firm's AMS plan (subscriptions app). It must be a
+PUBLISHED plan (a draft only for a `test_firm` where test plans are enabled);
+an unknown or unpublished code refuses the whole provisioning. Without one the
+subscription is PENDING: the firm can sign in but add nothing until an
+operator assigns an approved plan. Never a silent trial or Legacy.
 """
 from __future__ import annotations
 
@@ -43,7 +47,7 @@ def _payload_hash(payload):
 
 
 def provision_firm(*, name, slug, admin_email, admin_name='', plan_code='', operator=None,
-                   idempotency_key=None):
+                   idempotency_key=None, test_firm=False):
     """Returns (firm, invitation, token, created). `token` is None on an
     idempotent replay (the original email already went out)."""
     name = ' '.join((name or '').split())
@@ -53,7 +57,7 @@ def provision_firm(*, name, slug, admin_email, admin_name='', plan_code='', oper
     if not SLUG.match(slug):
         raise ProvisioningError('The slug may use a-z, 0-9 and dashes (3-50 characters).', 400, 'SLUG')
     payload = {'name': name, 'slug': slug, 'admin_email': (admin_email or '').strip().lower(),
-               'plan_code': plan_code or ''}
+               'plan_code': (plan_code or '').upper(), 'test_firm': bool(test_firm)}
     digest = _payload_hash(payload)
     if idempotency_key:
         done = ProvisioningRequest.objects.filter(key=idempotency_key).select_related('firm').first()
@@ -65,8 +69,16 @@ def provision_firm(*, name, slug, admin_email, admin_name='', plan_code='', oper
         raise ProvisioningError('A firm with that slug already exists.', 409, 'SLUG_TAKEN')
     try:
         with transaction.atomic():
-            firm = Firm.objects.create(name=name, slug=slug, status=Firm.PROVISIONING, plan_code=plan_code or '')
+            firm = Firm.objects.create(name=name, slug=slug, status=Firm.PROVISIONING, plan_code='')
             FirmSettings.objects.create(firm=firm, display_name=name)
+            # AMS subscription, same transaction as the firm: the chosen
+            # published plan, or PENDING (see the module docstring).
+            from subscriptions.service import SubscriptionError, start_subscription
+            try:
+                start_subscription(firm, (plan_code or '').upper() or None, test_firm=test_firm,
+                                   actor=getattr(operator, 'email', None) or 'SYSTEM', reason='Firm provisioned')
+            except SubscriptionError as exc:
+                raise ProvisioningError(str(exc), exc.status, exc.code)
             roles = fr.provision_default_roles(firm)
             admin_role = next(r for r in roles.values() if r.is_admin)
             inv, token = invitations.create_invitation(
@@ -84,6 +96,7 @@ def provision_firm(*, name, slug, admin_email, admin_name='', plan_code='', oper
         # A concurrent request with the same slug or key won the race.
         if idempotency_key:
             return provision_firm(name=name, slug=slug, admin_email=admin_email, admin_name=admin_name,
-                                  plan_code=plan_code, operator=operator, idempotency_key=idempotency_key)
+                                  plan_code=plan_code, operator=operator, idempotency_key=idempotency_key,
+                                  test_firm=test_firm)
         raise ProvisioningError('A firm with that slug already exists.', 409, 'SLUG_TAKEN')
     return firm, inv, token, True

@@ -8,6 +8,18 @@ import { Modal } from "../ui/overlays";
 import DraftChanges from "./DraftChanges";
 import "../ui/pages/casedetail.css";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
+import { saveBlob } from "../utils/openWith";
+
+type SubmittedDoc = { id: number; version: number; name: string };
+
+/** The exact version that was handed in, to this computer (when the document has changed since). Opening a
+ * submitted document always goes through Open with (the editor, where the reviewer approves); the editor's
+ * Version History shows every earlier version too. */
+async function downloadSubmitted(d: SubmittedDoc) {
+  const r = await api.get<Blob>(`/api/documents/${d.id}/versions/${d.version}/download`, { responseType: "blob" });
+  const m = /filename="([^"]+)"/.exec(r.headers["content-disposition"] || "");
+  saveBlob(r.data, m ? m[1] : d.name);
+}
 
 // Senior review of delegated tasks (backend: workspace/review.py). A task one
 // advocate assigned to another is SUBMITTED by the assignee, then APPROVED (the
@@ -93,14 +105,35 @@ export function SubmitWork({ task, myId, onDone, toast, caseId }: any) {
   const [hours, setHours] = useState<number | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
+  // Attached documents with this user's edits not saved to PactPro yet (docs/DESKTOP_EDITING.md): the
+  // reviewer would see the older version, so the dialog offers to save them first.
+  const [saved, setSaved] = useState<number[]>([]);
+  const [savingDoc, setSavingDoc] = useState<number | null>(null);
+  // Attached documents left out of this submission (reference material): everything is handed in by default.
+  const [skipped, setSkipped] = useState<number[]>([]);
   if (!canSubmitTask(task, myId)) return null;
+  const attached: any[] = task.documents || [];
+  const unsaved = attached.filter((d) => d.pendingWork && !saved.includes(d.id));
+  const saveFirst = async (d: any) => {
+    setSavingDoc(d.id);
+    try {
+      await api.post(`/api/desktop-work/doc/${d.id}`, { action: "save" });
+      setSaved((s) => [...s, d.id]);
+      toast?.success(`${d.name} saved to PactPro.`);
+    } catch (err: any) {
+      toast?.error(err.response?.data?.error || "Could not save the edits.");
+    } finally {
+      setSavingDoc(null);
+    }
+  };
   const canUpload = hasPermission("DOCUMENT_UPLOAD");
   const resubmit = task.reviewStatus === "CHANGES_REQUESTED";
 
   const send = async () => {
     setBusy(true);
     try {
-      // Files first, linked without submitting; then one submission with the report.
+      // Files first, linked without submitting; then one submission with the report and what it hands in.
+      const handedIn = attached.map((d) => d.id).filter((id) => !skipped.includes(id));
       for (const file of files) {
         const fd = new FormData();
         fd.append("file", file);
@@ -109,11 +142,12 @@ export function SubmitWork({ task, myId, onDone, toast, caseId }: any) {
         const up = await api.post("/api/documents/upload", fd);
         if (up.data?.id) {
           await api.post(`/api/workspace/tasks/${task.id}/documents`, { documentId: up.data.id, submit: false });
+          handedIn.push(up.data.id);
         }
       }
-      const res = await api.post(`/api/workspace/tasks/${task.id}/submit`, { note: note.trim(), hours });
+      const res = await api.post(`/api/workspace/tasks/${task.id}/submit`, { note: note.trim(), hours, documentIds: handedIn });
       toast?.success(`Submitted to ${task.assignedByName || "the assigner"} for review.`);
-      setOpen(false); setNote(""); setHours(null); setFiles([]);
+      setOpen(false); setNote(""); setHours(null); setFiles([]); setSkipped([]);
       onDone?.(res.data);
     } catch (err: any) {
       toast?.error(err.response?.data?.error || "Could not submit the task.");
@@ -141,6 +175,41 @@ export function SubmitWork({ task, myId, onDone, toast, caseId }: any) {
               <strong>{task.reviewedByName || "Reviewer"} asked:</strong> {task.reviewNote}
             </div>
           )}
+          <div>
+            <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>Hand in for review</div>
+            {attached.length > 0 && <p className="faint xs" style={{ margin: "0 0 4px" }}>Untick reference documents: they stay on the task but aren't reviewed or approved.</p>}
+            {attached.length === 0 ? (
+              <p className="faint small">No documents attached to this task{canUpload ? " (attach files below if needed)" : ""}.</p>
+            ) : (
+              <ul className="stack" style={{ gap: 4, margin: 0, padding: 0, listStyle: "none" }}>
+                {attached.map((d) => {
+                  const pending = d.pendingWork && !saved.includes(d.id);
+                  return (
+                    <li key={d.id} className="row" style={{ gap: 8, alignItems: "center" }}>
+                      <label className="small row" style={{ flex: 1, gap: 6, alignItems: "center", cursor: "pointer" }}>
+                        <input type="checkbox" checked={!skipped.includes(d.id)}
+                          onChange={(e) => setSkipped((s) => (e.target.checked ? s.filter((x) => x !== d.id) : [...s, d.id]))} />
+                        <span>
+                          {d.name}{d.version ? <span className="faint">{` · v${d.version}`}</span> : null}
+                          {pending && <span style={{ color: "var(--warn)" }}> · edits not saved to PactPro</span>}
+                        </span>
+                      </label>
+                      {pending && (
+                        <Button size="sm" loading={savingDoc === d.id} disabled={savingDoc !== null}
+                          title="Make your latest edits a PactPro version, so the reviewer sees them"
+                          onClick={() => void saveFirst(d)}>Save to PactPro</Button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {unsaved.length > 0 && (
+              <p className="small" style={{ color: "var(--warn)", marginTop: 4 }}>
+                Unsaved edits are not submitted: the reviewer gets the last version saved to PactPro.
+              </p>
+            )}
+          </div>
           <TextArea label="What was done?" rows={4} autoFocus value={note} required
             onChange={(e) => setNote(e.target.value)}
             placeholder="e.g. Filed the vakalat at the HC registry, diary no. 45/2026. Next listing 7 Oct." />
@@ -177,6 +246,10 @@ export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onView
   const subs = task.submissions || [];
   if (!task.needsReview || subs.length === 0) return null;
   const latest = subs[0];   // the API lists them newest first
+  // The task's attachments not handed in with the latest submission (all of them for older submissions,
+  // which didn't record what they handed in).
+  const handedIn = new Set<number>((Array.isArray(latest?.documents) ? latest.documents : []).map((d: SubmittedDoc) => d.id));
+  const reference = (task.documents || []).filter((d: any) => !handedIn.has(d.id));
 
   return (
     <>
@@ -215,6 +288,28 @@ export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onView
               </div>
               {s.note ? <div className="task-submission-note">{s.note}</div>
                 : <div className="task-submission-note task-muted">No report written.</div>}
+              {Array.isArray(s.documents) && s.documents.length > 0 && (
+                <div className="task-work-files">
+                  {s.documents.map((d: SubmittedDoc) => {
+                    const now = (task.documents || []).find((x: any) => x.id === d.id)?.version;
+                    const changed = now != null && now !== d.version;
+                    return (
+                      <span key={d.id} className="row" style={{ gap: 2 }}>
+                        <Button variant="ghost" size="sm" icon="eye" disabled={!onViewDocument}
+                          title={changed ? `Open it (now v${now}; Version History in the editor shows v${d.version})` : "Open it"}
+                          onClick={() => { setOpen(false); onViewDocument?.(d.id); }}>
+                          {`${d.name} · submitted v${d.version}${changed ? ` · now v${now}` : ""}`}
+                        </Button>
+                        {changed && (
+                          <Button variant="ghost" size="sm" iconOnly icon="download" aria-label={`Download v${d.version} as submitted`}
+                            title={`Download v${d.version}, exactly as submitted`}
+                            onClick={() => void downloadSubmitted(d).catch(() => toast?.error("Could not download that version."))} />
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
               {s.changes != null && (
                 <div className="task-submission-changes">
                   <div className="task-submission-changes-title">What changed since the previous version</div>
@@ -224,13 +319,18 @@ export function SubmissionHistory({ task, myId, canAssign, toast, onDone, onView
             </div>
           ))}
 
-          {((onViewDocument && task.documents?.length > 0) || (onOpenDraft && task.draftSessionId)) && (
+          {((onViewDocument && reference.length > 0) || (onOpenDraft && task.draftSessionId)) && (
             <div className="task-work-files">
               {onOpenDraft && task.draftSessionId && (
                 <Button variant="ghost" size="sm" icon="pen" onClick={() => { setOpen(false); onOpenDraft(); }}>Open draft</Button>
               )}
-              {onViewDocument && task.documents?.map((d: any) => (
-                <Button key={d.id} variant="ghost" size="sm" icon="eye" onClick={() => onViewDocument(d.id)}>{d.name}</Button>
+              {onViewDocument && reference.length > 0 && (
+                <span className="faint small" title="Attached to the task but not handed in for review">
+                  {Array.isArray(latest.documents) ? "Reference:" : "Attached:"}
+                </span>
+              )}
+              {onViewDocument && reference.map((d: any) => (
+                <Button key={d.id} variant="ghost" size="sm" icon="eye" onClick={() => { setOpen(false); onViewDocument(d.id); }}>{d.name}</Button>
               ))}
             </div>
           )}

@@ -6,6 +6,7 @@ import { isTokenExpired, logoutAndRedirect } from './utils/auth';
 import { useAuth } from './context/AuthContext';
 import { PermissionProvider } from './contexts/PermissionContext';
 import PermissionRoute from './components/PermissionRoute';
+import DesktopEditsBar from './components/DesktopEditsBar';
 
 // Lazy-loaded route-level pages
 const Homepage = lazy(() => import('./pages/Homepage'));
@@ -102,6 +103,8 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
+        {/* Desktop edits waiting for "Save to PactPro", on every page (docs/DESKTOP_EDITING.md). */}
+        <DesktopEditsBar />
       </ErrorBoundary>
     </Router>
   );

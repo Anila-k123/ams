@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { DRAFTING } from "./Drafting/routes";
 import documentService from "../services/DocumentService";
+import AddDocumentButton from "../components/AddDocumentButton";
 import DocumentCard, { DocumentActions, formatBytes, getFileIcon, shortDate } from "../components/DocumentCard";
 import FilePreviewModal from "../components/FilePreviewModal";
 import DocumentSummaryModal from "../components/DocumentSummaryModal";
@@ -20,6 +21,9 @@ import { Modal, confirm } from "../ui/overlays";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/clients.css";
 import { DOCUMENT_ACCEPT, DOCUMENT_TYPES_LABEL, MAX_UPLOAD_MB, documentProblem } from "../utils/fileTypes";
+import { useOpenWith } from "../components/OpenWithDialog";
+import { documentEditorUrl } from "../utils/taskDocument";
+import ClientReviewDrawer, { clientReviewLabel } from "../components/ClientReviewDrawer";
 
 const CATEGORIES = [
   "Court Order", "Petition", "Evidence", "Agreement", "Affidavit",
@@ -88,6 +92,8 @@ export default function DocumentsPanel() {
   const searchedFromGlobalNav = useRef(!!(location.state as any)?.search);
   const { hasPermission } = usePermission();
   const navigate = useNavigate();
+  // Open = the desktop editor on this computer, a choice, or the PactPro editor (docs/DESKTOP_EDITING.md).
+  const openWith = useOpenWith();
   const toast = useToast();
   const { withLoading } = useLoading();
 
@@ -169,6 +175,26 @@ export default function DocumentsPanel() {
       window.removeEventListener("assistant-search", handleSearch);
     };
   }, []);
+
+  // New document: a blank Word / Excel / PowerPoint file, opened in the editor.
+  const [newOpen, setNewOpen] = useState(false);
+  const [newDoc, setNewDoc] = useState<{ kind: "word" | "cell" | "slide"; name: string; caseId: string }>(
+    { kind: "word", name: "", caseId: "" });
+  const [creating, setCreating] = useState(false);
+  const createNew = async () => {
+    setCreating(true);
+    try {
+      const res = await api.post("/api/documents/new", {
+        kind: newDoc.kind, name: newDoc.name.trim() || "Untitled", case_id: newDoc.caseId || undefined,
+      });
+      setNewOpen(false);
+      void openWith.openDocument("doc", res.data.id, documentEditorUrl(res.data.id));
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || "Could not create the document.");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const openUpload = () => {
     setShowUploadModal(true);
@@ -324,6 +350,7 @@ export default function DocumentsPanel() {
     }
   };
 
+  const [reviewDoc, setReviewDoc] = useState<any | null>(null);   // the Client review panel
   const handlers = {
     onPreview: setPreviewDoc,
     onSummary: setSummaryDoc,
@@ -334,6 +361,10 @@ export default function DocumentsPanel() {
     onShareToggle: hasPermission("DOCUMENT_EDIT") ? handleShareToggle : undefined,
     // Opens Draft Documents, where the file is prepared for drafting.
     onUseInDraft: hasPermission("DRAFT_VIEW") ? () => navigate(DRAFTING.samples) : undefined,
+    // The document editor (ONLYOFFICE): edit in place, each save a new version.
+    onOpenEditor: (d: any) => void openWith.openDocument("doc", d.id, documentEditorUrl(d.id)),
+    // Send to the client for review, follow the thread (docs/CLIENT_REVIEW.md).
+    onClientReview: hasPermission("DOCUMENT_VIEW") ? setReviewDoc : undefined,
   };
 
   // "Shared with client" narrows the page already loaded (the API has no such filter).
@@ -358,7 +389,14 @@ export default function DocumentsPanel() {
     { key: "version", label: "Version", hideSm: true, render: (d) => (
       <button type="button" className="btn ghost sm mono" onClick={(e) => { e.stopPropagation(); setVersionsDoc(d); }} title="Version history">v{d.version || 1}</button>
     ) },
-    { key: "shared", label: "Shared", render: (d) => d.clientVisible ? <Chip tone="ok">Shared</Chip> : <span className="faint small">Private</span> },
+    { key: "shared", label: "Client", render: (d) => {
+      const review = clientReviewLabel(d.clientReview);
+      return (<span className="row wrap" style={{ gap: 4 }}>
+        {d.clientVisible ? <Chip tone="ok">Shared</Chip> : !review && <span className="faint small">Private</span>}
+        {review && <button type="button" className="chip-btn" style={{ background: "none", border: 0, padding: 0, cursor: "pointer" }}
+          title="Open the client review" onClick={(e) => { e.stopPropagation(); setReviewDoc(d); }}><Chip tone={review.tone}>{review.text}</Chip></button>}
+      </span>);
+    } },
     { key: "status", label: "Status", hideSm: true, render: (d) => (d.status || "ACTIVE") === "ACTIVE" ? <Chip tone="ok">Active</Chip> : <Chip>Archived</Chip> },
     { key: "a", label: <span className="sr-only">Actions</span>, align: "right", render: (d) => (
       <div className="row" style={{ gap: 4, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
@@ -372,8 +410,13 @@ export default function DocumentsPanel() {
 
   return (
     <div>
+      {openWith.dialog}
+      <ClientReviewDrawer doc={reviewDoc} onClose={() => setReviewDoc(null)} onChanged={() => void fetchDocuments()} />
       <PageHead title="Documents" sub="Pleadings, orders, evidence and client papers across all matters."
-        actions={hasPermission("DOCUMENT_UPLOAD") && <Button variant="primary" icon="upload" onClick={openUpload}>Upload</Button>} />
+        actions={hasPermission("DOCUMENT_UPLOAD") && (
+          <AddDocumentButton onUpload={openUpload}
+            onCreate={(kind) => { setNewDoc({ kind, name: "", caseId: "" }); setNewOpen(true); }} />
+        )} />
 
       <div className="p3-storage">
         <span><b className="num">{total}</b> file{total !== 1 ? "s" : ""}{stats && <>, <b className="num">{formatBytes(stats.totalStorageBytes)}</b> stored</>}</span>
@@ -449,6 +492,22 @@ export default function DocumentsPanel() {
       )}
 
       {/* Upload */}
+      <Modal open={newOpen} title="Create a document" sub="Opens in the editor; every save is a new version."
+        onClose={() => setNewOpen(false)}
+        footer={<>
+          <Button variant="ghost" onClick={() => setNewOpen(false)} disabled={creating}>Cancel</Button>
+          <Button variant="primary" icon="plus" onClick={() => void createNew()} loading={creating}>Create and open</Button>
+        </>}>
+        <div className="stack" style={{ gap: 12 }}>
+          <Segmented label="Type" value={newDoc.kind} onChange={(kind) => setNewDoc((d) => ({ ...d, kind }))}
+            options={[{ value: "word", label: "Word" }, { value: "cell", label: "Excel" }, { value: "slide", label: "PowerPoint" }]} />
+          <TextField full label="Name" placeholder="e.g. Reply to legal notice" value={newDoc.name}
+            onChange={(e) => setNewDoc((d) => ({ ...d, name: e.target.value }))} />
+          <SelectField label="Link to case" value={newDoc.caseId} options={caseOptions} placeholder="Not linked (optional)"
+            onChange={(e) => setNewDoc((d) => ({ ...d, caseId: e.target.value }))} />
+        </div>
+      </Modal>
+
       <Modal open={showUploadModal} title="Upload documents" sub={`${DOCUMENT_TYPES_LABEL}, up to ${MAX_UPLOAD_MB} MB each.`}
         onClose={() => { if (!uploading) setShowUploadModal(false); }} dismissable={!uploading}
         footer={<>

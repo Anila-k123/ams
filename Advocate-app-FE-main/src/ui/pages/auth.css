@@ -29,7 +29,6 @@
 .home-top .icon-btn { color: var(--side-ink); }
 .home-top .icon-btn:hover { background: var(--side-hover); color: var(--side-ink); }
 .home-hero { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; max-width: 640px; padding: 48px 0; }
-.home-logo { width: 72px; height: auto; margin-bottom: 28px; border-radius: var(--r-md); }
 .home-hero .rule { width: 44px; height: 2px; background: var(--tape); margin-bottom: 22px; }
 .home-hero h1 { font: 400 clamp(44px, 7vw, 76px)/1.05 var(--f-display); letter-spacing: -.02em; margin: 0; color: var(--side-ink); }
 .home-lead { font: 400 clamp(19px, 2.2vw, 24px)/1.4 var(--f-display); color: var(--side-ink); margin: 18px 0 32px; max-width: 30ch; }

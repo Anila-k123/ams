@@ -18,7 +18,10 @@ export const ParagraphStyle = Extension.create({
         attributes: {
           style: {
             default: null,
-            parseHTML: el => el.getAttribute('style') || null,
+            // text-align is TextAlign's (the toolbar changes it); keeping it here too would let an
+            // old alignment in this string win over the new one.
+            parseHTML: el => (el.getAttribute('style') || '').split(';')
+              .filter(d => d.trim() && !/^\s*text-align\s*:/i.test(d)).join(';') || null,
             renderHTML: attrs => (attrs.style ? { style: attrs.style } : {}),
           },
         },

@@ -199,6 +199,10 @@ Groups: `feature`, `operation`, `user`, `firm`, `model`. The same figures are at
 
 Embeddings run locally (HuggingFace) and cost nothing, so they aren't metered.
 
+## Subscriptions (Phase 8)
+
+Deploy: `manage.py migrate` (subscriptions 0001-0003, metering 0002, invoices 0011), then `manage.py seed_plans`. The seeded plans are unapproved DRAFT examples: a platform owner approves and publishes real plans on Platform -> Plans. Until then new firms are created with **plan pending** (sign in, add nothing). The scheduler runs `subscription_sweep` (ended trials -> EXPIRED; releases AI/drafting requests left reserved > 2 h). `manage.py reconcile_usage [--storage]` only reports (counters vs events, stale requests, stock over limit, document rows vs files); `--apply` corrects counters and releases stale requests, never deletes data or files. `--backfill-ai --apply` fills `llm_usage.firm_id`. Never set `SUBSCRIPTION_TEST_PLANS` on a customer install (it is ignored without DEBUG anyway). Details: `docs/SUBSCRIPTIONS.md`.
+
 ## Production settings checklist
 
 - `DEBUG=False`, a real `SECRET_KEY`, and `ALLOWED_HOSTS` set to the API host.

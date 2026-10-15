@@ -156,6 +156,13 @@ def _summarize(doc):
     # (Outside a transaction this runs immediately.)
     def run():
         try:
+            from subscriptions import catalogue as plans
+            from subscriptions.service import check_entitlement
+            from core.tenant import firm_id_of_advocate
+            from django.conf import settings
+            if getattr(settings, 'TENANCY_MODE', 'legacy') == 'firm' and not check_entitlement(
+                    firm_id_of_advocate(doc.advocate_id), plans.DOC_SUMMARY).allowed:
+                return                                    # not in the firm's plan: no AI summary
             from .summarizer import enqueue_and_run
             enqueue_and_run(doc)
         except Exception:
@@ -170,6 +177,11 @@ def create_document(user, f, *, document_name=None, category=None, description=N
     now = datetime.datetime.now()
     try:
         with transaction.atomic():
+            # Subscription storage quota: reserved under a per-firm lock, so
+            # uploads racing near the limit can't together exceed it.
+            from subscriptions import catalogue as plans
+            from subscriptions.service import require
+            require(user, plans.STORAGE, f.size or 0)
             doc = _create_row(user, f, stored_name, abs_path, file_type, now, document_name,
                               category, description, case, client, external_ref)
     except Exception:
@@ -212,6 +224,9 @@ def add_version(doc, f, user, note=None):
         with transaction.atomic():
             # Lock the document so two uploads at once get versions n+1 and
             # n+2 instead of both claiming n+1.
+            from subscriptions import catalogue as plans
+            from subscriptions.service import require
+            require(user, plans.STORAGE, f.size or 0)            # the earlier file is kept too
             locked = Document.objects.select_for_update().get(id=doc.id)
             _version_rows(locked, f, user, note, stored_name, abs_path, file_type)
     except Exception:

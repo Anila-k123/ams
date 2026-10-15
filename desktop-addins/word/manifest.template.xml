@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PactPro add-in for Word, Excel and PowerPoint (docs/DESKTOP_EDITING.md). Built by desktop-addins/build.py,
+     which replaces https://PACTPRO_WEB with PactPro's web address (must be HTTPS: Office loads add-ins
+     only from https). Deploy: Microsoft 365 admin centre > Integrated apps > Upload custom apps, or a
+     shared-folder catalog (Word > Options > Trust Center > Trusted Add-in Catalogs). -->
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>6f1b3c52-8e0a-4c44-9f5e-2d7a1a9c5e01</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>PactPro</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="PactPro"/>
+  <Description DefaultValue="Save to PactPro: make what you saved here a new PactPro version, or discard it."/>
+  <IconUrl DefaultValue="https://PACTPRO_WEB/addins/word/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://PACTPRO_WEB/addins/word/icon-80.png"/>
+  <SupportUrl DefaultValue="https://PACTPRO_WEB/"/>
+  <AppDomains>
+    <AppDomain>https://PACTPRO_WEB</AppDomain>
+    <AppDomain>https://PACTPRO_API</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Document"/>
+    <Host Name="Workbook"/>
+    <Host Name="Presentation"/>
+  </Hosts>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://PACTPRO_WEB/addins/word/taskpane.html"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="PactPro.Group">
+                <Label resid="PactPro.GroupLabel"/>
+                <Icon>
+                  <bt:Image size="16" resid="PactPro.Icon16"/>
+                  <bt:Image size="32" resid="PactPro.Icon32"/>
+                  <bt:Image size="80" resid="PactPro.Icon80"/>
+                </Icon>
+                <Control xsi:type="Button" id="PactPro.Open">
+                  <Label resid="PactPro.ButtonLabel"/>
+                  <Supertip>
+                    <Title resid="PactPro.ButtonLabel"/>
+                    <Description resid="PactPro.ButtonTip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="PactPro.Icon16"/>
+                    <bt:Image size="32" resid="PactPro.Icon32"/>
+                    <bt:Image size="80" resid="PactPro.Icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>PactPro.Taskpane</TaskpaneId>
+                    <SourceLocation resid="PactPro.TaskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="PactPro.GroupX">
+                <Label resid="PactPro.GroupLabel"/>
+                <Icon>
+                  <bt:Image size="16" resid="PactPro.Icon16"/>
+                  <bt:Image size="32" resid="PactPro.Icon32"/>
+                  <bt:Image size="80" resid="PactPro.Icon80"/>
+                </Icon>
+                <Control xsi:type="Button" id="PactPro.OpenX">
+                  <Label resid="PactPro.ButtonLabel"/>
+                  <Supertip>
+                    <Title resid="PactPro.ButtonLabel"/>
+                    <Description resid="PactPro.ButtonTip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="PactPro.Icon16"/>
+                    <bt:Image size="32" resid="PactPro.Icon32"/>
+                    <bt:Image size="80" resid="PactPro.Icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>PactPro.Taskpane</TaskpaneId>
+                    <SourceLocation resid="PactPro.TaskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+      <Host xsi:type="Presentation">
+        <DesktopFormFactor>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="PactPro.GroupP">
+                <Label resid="PactPro.GroupLabel"/>
+                <Icon>
+                  <bt:Image size="16" resid="PactPro.Icon16"/>
+                  <bt:Image size="32" resid="PactPro.Icon32"/>
+                  <bt:Image size="80" resid="PactPro.Icon80"/>
+                </Icon>
+                <Control xsi:type="Button" id="PactPro.OpenP">
+                  <Label resid="PactPro.ButtonLabel"/>
+                  <Supertip>
+                    <Title resid="PactPro.ButtonLabel"/>
+                    <Description resid="PactPro.ButtonTip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="PactPro.Icon16"/>
+                    <bt:Image size="32" resid="PactPro.Icon32"/>
+                    <bt:Image size="80" resid="PactPro.Icon80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>PactPro.Taskpane</TaskpaneId>
+                    <SourceLocation resid="PactPro.TaskpaneUrl"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="PactPro.Icon16" DefaultValue="https://PACTPRO_WEB/addins/word/icon-16.png"/>
+        <bt:Image id="PactPro.Icon32" DefaultValue="https://PACTPRO_WEB/addins/word/icon-32.png"/>
+        <bt:Image id="PactPro.Icon80" DefaultValue="https://PACTPRO_WEB/addins/word/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="PactPro.TaskpaneUrl" DefaultValue="https://PACTPRO_WEB/addins/word/taskpane.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="PactPro.GroupLabel" DefaultValue="PactPro"/>
+        <bt:String id="PactPro.ButtonLabel" DefaultValue="Save to PactPro"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="PactPro.ButtonTip" DefaultValue="Make what you saved here a new PactPro version, or discard it."/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

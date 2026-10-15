@@ -48,3 +48,15 @@ export async function changePassword(currentPassword: string, newPassword: strin
 
 export const inr = (n: any) => (n == null ? "—" : `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`);
 export const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—");
+
+/** POST a form (text + files) to /api/client/<path>, e.g. a reply on a review (docs/CLIENT_REVIEW.md). */
+export async function clientPostForm(path: string, form: FormData): Promise<any> {
+  const res = await fetch(apiUrl(`/api/client/${path}`), { method: "POST", headers: { ...authHeaders() }, body: form });
+  if (res.status === 401) {
+    logoutAndRedirect();
+    throw new Error("Session expired");
+  }
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Could not send this. Please try again.");
+  return data;
+}

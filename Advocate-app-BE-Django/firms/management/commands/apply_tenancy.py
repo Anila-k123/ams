@@ -71,6 +71,11 @@ class Command(BaseCommand):
                 legacy_root_advocate_id=head,
                 defaults={'name': f['name'], 'slug': f['slug'], 'status': Firm.ACTIVE})
             out[f['key']] = firm.id
+            # The documented migration path for pre-SaaS data: these practices
+            # already used AMS, so they keep everything (Legacy), recorded
+            # explicitly - never an implicit "no subscription" fallback.
+            from subscriptions.service import assign_legacy
+            assign_legacy(firm.id, reason='apply_tenancy: existing practice, Legacy policy')
             root = Advocate.objects.filter(id=head).first()
             if root is not None:
                 FirmSettings.objects.get_or_create(firm=firm, defaults={

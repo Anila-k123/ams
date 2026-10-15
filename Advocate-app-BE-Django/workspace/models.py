@@ -88,6 +88,10 @@ class TaskSubmission(models.Model):
     # sees what a revision changed without rereading the whole draft.
     draft_snapshot = models.JSONField(null=True, blank=True)
     changes = models.JSONField(null=True, blank=True)
+    # The documents handed in with this submission, as they were: [{id, version, name}]. The reviewer reads
+    # those versions and approval marks only them; the task's other attachments are reference material.
+    # NULL on submissions made before this was recorded (then the task's attachments stand for it).
+    documents = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

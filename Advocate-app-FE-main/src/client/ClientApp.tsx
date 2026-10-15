@@ -7,6 +7,7 @@ import { DataTable, type Column } from "../ui/DataTable";
 import { ThemeToggle, PasswordField } from "../pages/Login";
 import { changePassword, clientDownload, clientGet, fmtDate, inr } from "./clientApi";
 import "../ui/pages/portal.css";
+import { ReviewList, ReviewPage } from "./ClientReviews";
 
 // What a Client-role user sees after signing in: the client portal, /client/*
 // (sign-in is /client/login). Read-only: everything comes from /api/client/*,
@@ -347,7 +348,7 @@ function Account({ account }: { account: any }) {
 // ---- shell ----------------------------------------------------------------
 
 const NAV: [string, string][] = [
-  ["", "Home"], ["cases", "My cases"], ["invoices", "Invoices"], ["documents", "Documents"],
+  ["", "Home"], ["reviews", "For review"], ["cases", "My cases"], ["invoices", "Invoices"], ["documents", "Documents"],
   ["messages", "Messages"], ["account", "Account"],
 ];
 
@@ -393,6 +394,8 @@ export default function ClientApp() {
           <Route path="cases/:id" element={<CaseDetail />} />
           <Route path="invoices" element={<Invoices />} />
           <Route path="documents" element={<Documents />} />
+          <Route path="reviews" element={<ReviewList />} />
+          <Route path="reviews/:id" element={<ReviewPage />} />
           <Route path="messages" element={<Messages />} />
           <Route path="account" element={<Account account={account} />} />
           <Route path="*" element={<Navigate to="/client" replace />} />

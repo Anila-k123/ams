@@ -271,7 +271,7 @@ export default function Samples() {
             .map(l => ({ label: l.label, onClick: () => runTranslate(langFor.s, l.value) }))} />
       )}
       {summaryFor && <DocumentSummaryModal doc={summaryFor} onClose={() => setSummaryFor(null)} />}
-      <DocumentViewer visible={!!viewing} onHide={() => setViewing(null)} fileUrl={viewing?.file} name={viewing?.name} />
+      <DocumentViewer visible={!!viewing} onHide={() => setViewing(null)} fileUrl={viewing?.file} previewUrl={viewing?.preview} name={viewing?.name} />
 
       <PageHead title="Draft Documents"
         sub="Case documents prepared for drafting. Translate them, read their summaries, or draft from them."

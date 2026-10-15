@@ -16,6 +16,8 @@ from core.practice import practice_ids, is_owner, practice_root, firm_team_roots
 from core.tenant import owned
 from core.finance import recalc_case_totals
 from notifications import client_events
+from subscriptions import catalogue as plans
+from subscriptions.enforce import entitled
 
 SORT_MAP = {'createdAt': 'created_at', 'caseNumber': 'case_number',
             'caseTitle': 'case_title', 'status': 'status', 'id': 'id'}
@@ -146,6 +148,7 @@ def _clear_import_children(case_id):
 class CreateCaseView(APIView):
     permission_classes = [RequirePermission('CASE_CREATE')]
 
+    @entitled(plans.CASES)
     def post(self, request):
         from workspace import case_profile
         from workspace.models import CaseProfile
@@ -276,6 +279,7 @@ class DeleteCaseView(APIView):
 class RestoreCaseView(APIView):
     permission_classes = [RequirePermission('CASE_EDIT')]
 
+    @entitled(plans.CASES)              # a restored case counts again
     def put(self, request, pk):
         case = _owned(request, pk)
         if case is None:
@@ -381,6 +385,10 @@ def _resolve_target_client(target, src_client):
         active, _archived = _find_practice_duplicate(target, name, email, phone_digits)
         if active is not None:
             return active.id
+    # A new client row in the target practice: it counts against the firm's
+    # client limit like any other (called inside _move_matter's transaction).
+    from subscriptions.service import require
+    require(target, plans.CLIENTS)
     copy = Client.objects.create(
         name=src_client.name, email=src_client.email, phone=src_client.phone,
         address=src_client.address, deleted=False, advocate_id=target.id)

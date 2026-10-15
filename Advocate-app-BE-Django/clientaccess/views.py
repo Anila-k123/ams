@@ -419,6 +419,11 @@ class ClientLoginsView(_FirmView):
         client = _scoped_client(request.user, client_id)
         if client is None:
             return Response({'error': 'Client not found.'}, status=404)
+        # Subscription: new portal logins need the client portal in the plan
+        # (logins created earlier keep working).
+        from subscriptions import catalogue as plans
+        from subscriptions.service import require_feature
+        require_feature(request.user, plans.CLIENT_PORTAL)
         email = (request.data.get('email') or client.email or '').strip().lower()
         if not email:
             return Response({'error': 'Enter the email address for the login.'}, status=400)

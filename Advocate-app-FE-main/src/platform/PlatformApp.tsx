@@ -5,6 +5,7 @@ import FirmCreate from './pages/FirmCreate'
 import FirmDetail from './pages/FirmDetail'
 import FirmDirectory from './pages/FirmDirectory'
 import PlatformAudit from './pages/PlatformAudit'
+import PlatformPlans from './pages/PlatformPlans'
 import PlatformDashboard from './pages/PlatformDashboard'
 import PlatformLogin from './pages/PlatformLogin'
 
@@ -23,6 +24,7 @@ export default function PlatformApp() {
         <Route path="firms" element={guarded(<FirmDirectory />, 'firm.read')} />
         <Route path="firms/new" element={guarded(<FirmCreate />, 'firm.create')} />
         <Route path="firms/:id" element={guarded(<FirmDetail />, 'firm.read')} />
+        <Route path="plans" element={guarded(<PlatformPlans />, 'firm.read')} />
         <Route path="audit" element={guarded(<PlatformAudit />, 'audit.read')} />
         <Route path="*" element={<Navigate to="/platform/dashboard" replace />} />
       </Routes>

@@ -35,6 +35,12 @@ const EVENT_LABELS: Record<string, string> = {
   DRAFT_REVIEW_REQUESTED: "Draft Review Requested",
   DRAFT_REVIEW_DONE: "Draft Review Done",
   DRAFT_COMMENT: "Draft Comment",
+  DOCUMENT_COMMENT: "Document Comment",
+  CLIENT_REVIEW_REQUEST: "Sent to Client for Review",
+  CLIENT_REVIEW_MESSAGE: "Message to Client",
+  CLIENT_REVIEW_REMINDER: "Client Review Reminder",
+  CLIENT_REVIEW_REPLIED: "Client Replied",
+  CLIENT_REVIEW_APPROVED: "Client Approved",
   PASSWORD_RESET: "Password Reset",
 };
 

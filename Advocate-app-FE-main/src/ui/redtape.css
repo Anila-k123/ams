@@ -166,7 +166,19 @@ svg.i.lg { width: 22px; height: 22px; }
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 16px 18px 14px; color: #fff; }
 .brand .seal { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--tape); display: grid; place-items: center; font: 600 13px/1 var(--f-display); color: #fff; box-shadow: inset 0 0 0 2px rgba(255,255,255,.18); }
+/* The PactPro mark image takes the place of the red "P" circle. */
+.seal.brand-mark { background: transparent; box-shadow: none; object-fit: contain; padding: 0; border-radius: 22%; }
 .brand .seal.firm-logo { object-fit: contain; background: #fff; padding: 2px; }
+/* PactPro logo on a white chip (BrandLogo): sized by height so it stays low;
+   wider side padding instead. In the sidebar it replaces the "PactPro" text;
+   the small mark / firm logo shows only on the collapsed icon rail. */
+.brand-logo { display: block; width: auto; box-sizing: border-box; background: #fff; border-radius: 8px; padding: 5px 14px; }
+.brand .brand-logo { height: 38px; }
+.brand > div { min-width: 0; }
+.brand .rail-only { display: none; }
+.app.collapsed .brand .rail-only { display: block; }
+.pp-art-brand .brand-logo { height: 44px; }
+.pp-mobile-brand .brand-logo { height: 40px; border: 1px solid var(--line); }
 .brand b { font: 500 19px/1 var(--f-display); letter-spacing: -.01em; }
 .brand small { display: block; font-size: 11px; color: var(--side-ink-2); margin-top: 3px; font-family: var(--f-body); }
 .side-search { margin: 4px 12px 10px; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--r-md); border: 1px solid #2E333D; background: #20242C; color: var(--side-ink-2); font-size: var(--t-sm); text-align: left; }
@@ -638,6 +650,7 @@ button.list-item { width: 100%; border-left: 0; border-right: 0; border-bottom: 
   .app:not(.mobile-open) .brand > div, .app:not(.mobile-open) .nav-label, .app:not(.mobile-open) .nav a span, .app:not(.mobile-open) .nav .count, .app:not(.mobile-open) .side-search span, .app:not(.mobile-open) .side-search kbd, .app:not(.mobile-open) .side-foot .who { display: none; }
   .app:not(.mobile-open) .nav a, .app:not(.mobile-open) .side-search { justify-content: center; }
   .app:not(.mobile-open) .brand { justify-content: center; padding-inline: 0; }
+  .app:not(.mobile-open) .brand .rail-only { display: block; }
   .app:not(.mobile-open) .nav-head span, .app:not(.mobile-open) .nav-head .chev { display: none; }
   .app:not(.mobile-open) .nav-head { justify-content: center; }
   .app:not(.mobile-open) .nav-items { display: none; }
@@ -931,3 +944,7 @@ a.pp-case-card:hover { border-color: var(--ink-3); }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A row a page scrolls to after a search or deep link flashes red-tape soft (keyframes in animations.css). */
 tr.highlight-row, .highlight-row { animation: highlightFade 2.8s ease-out; scroll-margin-top: 80px; }
+
+/* Subscription usage meter (ui/SubscriptionUsage.tsx). */
+.sub-meter { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; min-width: 80px; }
+.sub-meter > span { display: block; height: 100%; border-radius: 3px; }

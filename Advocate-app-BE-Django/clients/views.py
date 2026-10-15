@@ -14,6 +14,8 @@ from core.tenant import owned
 from notifications import client_events
 from . import handlers, profile
 from core.validators import check_payload
+from subscriptions import catalogue as plans
+from subscriptions.enforce import entitled
 
 SORT_MAP = {'createdAt': 'created_at', 'name': 'name', 'email': 'email', 'id': 'id'}
 
@@ -139,6 +141,7 @@ class ClientHandlersView(APIView):
 class CreateClientView(APIView):
     permission_classes = [RequirePermission('CLIENT_CREATE')]
 
+    @entitled(plans.CLIENTS)
     def post(self, request):
         data, bad = check_payload(request.data, CLIENT_FORMATS)
         if bad is not None:
@@ -253,6 +256,7 @@ class DeleteClientView(APIView):
 class RestoreClientView(APIView):
     permission_classes = [RequirePermission('CLIENT_EDIT')]
 
+    @entitled(plans.CLIENTS)            # a restored client counts again
     def put(self, request, pk):
         client = _owned(request, pk)
         if client is None:

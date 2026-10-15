@@ -48,6 +48,8 @@ not use these tables or rules.
   (`core.audit.business_event`, module INVOICE / PAYMENT) with the facts
   (number, amount, before -> after) and the firm's `firm_id`.
 
+- Invoice creation honours `Idempotency-Key` (`invoices.InvoiceCreateKey`, migration `invoices 0011`): a replay returns 200 with the same invoice, the same key with a different body is 409 `IDEMPOTENCY_MISMATCH`. Case detail and the Invoices panel send one key per form.
+
 ## Payments (`payments/views.py`)
 
 - `Idempotency-Key` header (the app sends one per payment form, reused on a

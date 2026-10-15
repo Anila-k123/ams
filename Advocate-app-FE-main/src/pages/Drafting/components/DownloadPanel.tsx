@@ -15,6 +15,9 @@ interface Props {
   onClose: () => void
   onDownload: (letterhead: boolean, format: 'docx' | 'pdf') => void
   onRedline: (letterhead: boolean) => void
+  // The draft follows a Word template / sample with its own letterhead: that one is kept, so the
+  // firm-letterhead choice is not offered (it would print two).
+  ownLetterhead?: boolean
 }
 
 // Download → PDF / Word / Redline, with one "Add firm letterhead" tick instead of a menu item
@@ -22,9 +25,10 @@ interface Props {
 // letters, notices and opinions, not deeds or pleadings, so it is off unless ticked; the choice
 // is remembered per browser. A popover of its own (not the kit's PopMenu) because it holds a
 // checkbox, and ticking it must not close the menu.
-export default function DownloadPanel({ anchor, onClose, onDownload, onRedline }: Props) {
+export default function DownloadPanel({ anchor, onClose, onDownload, onRedline, ownLetterhead }: Props) {
   const ref = useRef<HTMLDivElement>(null)
-  const [letterhead, setLetterhead] = useState(readLetterhead)
+  const [chosen, setLetterhead] = useState(readLetterhead)
+  const letterhead = ownLetterhead ? false : chosen
 
   useEffect(() => {
     const down = (e: MouseEvent) => {
@@ -46,10 +50,12 @@ export default function DownloadPanel({ anchor, onClose, onDownload, onRedline }
   return createPortal(
     <div ref={ref} className="popover menu" role="menu" aria-label="Download"
       style={{ left: Math.max(8, r.right - WIDTH), top: r.bottom + 6, width: WIDTH }}>
-      <div style={{ padding: '6px 10px 8px' }}>
-        <Check label="Add firm letterhead" checked={letterhead} onChange={e => changeLetterhead(e.target.checked)} />
-      </div>
-      <div className="sep" />
+      {!ownLetterhead && <>
+        <div style={{ padding: '6px 10px 8px' }}>
+          <Check label="Add firm letterhead" checked={letterhead} onChange={e => changeLetterhead(e.target.checked)} />
+        </div>
+        <div className="sep" />
+      </>}
       <button type="button" role="menuitem" onClick={() => pick(() => onDownload(letterhead, 'pdf'))}>
         <Icon name="file" size="sm" /><span className="grow">PDF</span>
       </button>
@@ -61,8 +67,10 @@ export default function DownloadPanel({ anchor, onClose, onDownload, onRedline }
       </button>
       <div className="sep" />
       <p className="faint xs" style={{ margin: 0, padding: '4px 10px 6px' }}>
-        Letterhead adds your firm's logo, address and signature block. Use it for notices, opinions
-        and letters, not for deeds or pleadings (the parties sign those).
+        {ownLetterhead
+          ? "PDF and Word keep the template's own letterhead, fonts and layout."
+          : <>Letterhead adds your firm's logo, address and signature block. Use it for notices, opinions
+            and letters, not for deeds or pleadings (the parties sign those).</>}
       </p>
     </div>,
     document.body,

@@ -109,7 +109,7 @@ export default function Templates() {
 
   return (
     <div>
-      <DocumentViewer visible={!!viewing} onHide={() => setViewing(null)} fileUrl={viewing?.file} name={viewing?.name} />
+      <DocumentViewer visible={!!viewing} onHide={() => setViewing(null)} fileUrl={viewing?.file} previewUrl={viewing?.preview} name={viewing?.name} />
 
       <PageHead title="Firm Templates"
         sub="Your firm's own formats. Upload a PDF or Word file and PactPro finds the fields to fill."

@@ -12,6 +12,9 @@ class LLMUsage(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     advocate_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     practice_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    # The firm the call was made for (subscriptions: per-firm AI usage). Null for
+    # rows written before Phase 8 and for calls with no acting user.
+    firm_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     # Pricing bucket: chat / summary / draft / translation / unattributed.
     feature = models.CharField(max_length=32, db_index=True)
     # Finer detail, e.g. draft.generate, draft.refine, summary.document.

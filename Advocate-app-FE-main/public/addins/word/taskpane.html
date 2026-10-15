@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PactPro</title>
+  <!-- Office requires its own script from Microsoft's CDN for every add-in. -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; padding: 16px; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; color: #1F2328; background: #FAFAF7; }
+    h1 { font-size: 16px; margin: 0 0 4px; }
+    p { margin: 0 0 12px; }
+    .muted { color: #5B616B; font-size: 12px; }
+    button { width: 100%; padding: 9px 12px; margin: 0 0 8px; border-radius: 6px; font: inherit; cursor: pointer;
+             border: 1px solid #C4C8C0; background: #fff; color: #1F2328; }
+    button.primary { background: #1F2328; border-color: #1F2328; color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { padding: 8px 10px; border-radius: 6px; background: #EEF0EA; min-height: 20px; }
+    #status.bad { background: #F8E3E1; color: #8A1F14; }
+    #status.ok { background: #E3F1E6; color: #1E5B2F; }
+    h2 { font-size: 14px; margin: 16px 0 6px; padding-top: 12px; border-top: 1px solid #DCDFD8; }
+    label { display: block; margin: 6px 0 2px; }
+    textarea, input, select { width: 100%; box-sizing: border-box; padding: 6px 8px; margin: 0 0 8px; font: inherit;
+                              border: 1px solid #C4C8C0; border-radius: 6px; background: #fff; }
+  </style>
+</head>
+<body>
+  <h1>PactPro</h1>
+  <p class="muted" id="name">Checking this file…</p>
+  <div id="status">…</div>
+  <p></p>
+  <button class="primary" id="save" disabled>Save to PactPro</button>
+  <button id="discard" disabled>Discard edits</button>
+  <section id="submit-box" hidden>
+    <h2>Hand in</h2>
+    <select id="submit-task" hidden></select>
+    <label class="muted" for="submit-note">What was done?</label>
+    <textarea id="submit-note" rows="4"></textarea>
+    <label class="muted" for="submit-hours">Hours spent (optional)</label>
+    <input id="submit-hours" type="number" min="0" max="999" step="0.25" />
+    <button class="primary" id="submit">Save and submit to task</button>
+  </section>
+  <section id="review-box" hidden>
+    <h2>Review</h2>
+    <select id="review-task" hidden></select>
+    <label class="muted" for="review-note">Comment (needed to request changes)</label>
+    <textarea id="review-note" rows="4"></textarea>
+    <div id="unsaved-choice" hidden>
+      <p class="muted">You edited this document. Approve what is on screen, or the version that was handed in?</p>
+      <button class="primary" id="approve-saved">Save my edits to PactPro, then approve</button>
+      <button id="approve-handed">Approve the version handed in</button>
+    </div>
+    <button class="primary" id="approve">Approve task</button>
+    <button id="changes">Request changes</button>
+  </section>
+  <p class="muted">Saving here (Ctrl+S) keeps your work in PactPro as a working copy only. <b>Save to PactPro</b>
+    makes it one new PactPro version; <b>Discard edits</b> drops it and the PactPro version stays as it is.</p>
+  <script src="taskpane.js"></script>
+</body>
+</html>

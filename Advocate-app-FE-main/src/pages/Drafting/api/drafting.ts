@@ -31,6 +31,7 @@ export interface Template {
   language: string
   document_type: string
   file?: string | null // optional uploaded source file for the template
+  preview?: string | null // the file as it prints (PDF), for View (drafting/files.py)
   slot_schema: SlotField[] // facts the lawyer must enter
   body_json: BodySlot[] // ordered body slots to generate into
   status?: 'processing' | 'ready' | 'failed' // async parse+name pipeline state
@@ -62,6 +63,7 @@ export interface Sample {
   client?: number
   project?: number
   file?: string | null
+  preview?: string | null  // the file as it prints (PDF), for View (drafting/files.py)
   // Backend ingestion lifecycle (parse -> split -> embed clauses).
   status: 'pending' | 'processing' | 'ready' | 'failed'
   summary?: string
@@ -105,7 +107,7 @@ export interface DraftBlock {
   text: string // plain-text projection of the body
   content_html?: string // rich body from the editor (empty until first edited)
   is_edited?: boolean // true once a user edited it in the editor
-  style_json?: { heading?: Record<string, unknown> } // captured template heading style
+  style_json?: { heading?: Record<string, unknown>; src?: { shapes?: number } } // template heading style; Word source place
   source: 'sample_clause' | 'prompt' | 'generated'
   source_clause: number | null // id of the cited SampleClause, if any
   source_clause_detail: SourceClauseDetail | null // expanded citation detail
@@ -124,9 +126,11 @@ export interface DraftSession {
   sample_names?: string[] // denormalised document names for display
   mode?: 'template' | 'sample' | 'library'
   llm?: string // chosen model ('gemini')
-  reference_documents?: { kind: 'template' | 'sample'; id: number; name: string; url: string }[]
+  // url: the file; preview: the file as it prints (a Word file made into a PDF). Both need the login.
+  reference_documents?: { kind: 'template' | 'sample'; id: number; name: string; url: string; preview?: string | null }[]
   status: 'pending' | 'generating' | 'ready' | 'failed'
   unfilled_count?: number         // empty fields left (placeholders + legacy blanks)
+  word_form?: WordForm | null     // the Word template / sample the draft follows (drafting/wordform.py)
   playbook: number | null
   risk_status: 'idle' | 'analyzing' | 'ready' | 'failed'
   risk_report?: RiskReport | null // document-level synthesis (null until analysed)
@@ -272,6 +276,18 @@ export interface CaseFile {
   canSeeDocuments: boolean
 }
 
+/** The Word file a draft follows: its page, header / footer (shown around the text, not edited) and
+ *  whether it has its own letterhead (then Download offers no firm letterhead). */
+export interface WordForm {
+  source: 'template' | 'sample'
+  page: { width_mm: number | null; margin_left_mm: number | null; margin_right_mm: number | null;
+    margin_top_mm: number | null; margin_bottom_mm: number | null
+    header_mm?: number | null; footer_mm?: number | null }
+  header_html: string
+  footer_html: string
+  has_letterhead: boolean
+}
+
 /** What an imported file turned into (drafting/incoming.py). */
 export interface ImportResult {
   round: number | null      // the suggestions round, or null when the file only had comments
@@ -372,6 +388,20 @@ interface Paginated<T> {
 
 /** All drafting endpoints. Each method unwraps to the response body, and list
  *  calls additionally unwrap the DRF pagination envelope to a plain array. */
+// ONLYOFFICE editor (docs/ONLYOFFICE_PLAN.md): off unless the server sets DRAFT_EDITOR=onlyoffice.
+// role: 'decide' edits and accepts / rejects changes, 'suggest' edits as tracked changes, 'view' reads.
+export type OnlyOfficeFinal = { at: string; by: string; sha256: string }
+// A blank in the Word file: a form field (new drafts: current value, can be changed) or [[Label]] text.
+export type OfficeBlank = { label: string; count: number; value?: string; kind?: 'field' | 'text' }
+export type OnlyOfficeSetup = {
+  enabled: true; url: string; role?: 'decide' | 'suggest' | 'view'; config: Record<string, unknown>
+  desktopLock?: { by: string; since: string; pending?: boolean } | null   // open in Word / LibreOffice, or its edits not saved to PactPro: read-only here
+  pendingWork?: boolean   // this user's own edits not saved to PactPro yet (the editor opens them)
+  final?: OnlyOfficeFinal | null   // finalised: locked, read-only for everyone
+  canFinalise?: boolean            // may finalise / reopen (who decides)
+}
+export type OnlyOfficeState = OnlyOfficeSetup | { enabled: false; reason?: string }
+
 export const draftingApi = {
   getTemplates: (archived = false) =>
     api.get<Paginated<Template>>('/templates/', { params: archived ? { archived: 1 } : {} }).then(r => r.data.results),
@@ -436,6 +466,20 @@ export const draftingApi = {
         const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
         return { blob: r.data, filename: m ? m[1] : `draft_${id}.${format}` }
       }),
+  // ONLYOFFICE drafts: the same, between two versions of the Word file (omitted `to` = what is on screen now).
+  exportOfficeRedline: (id: number, from: number, to?: number, branding = false, format: 'docx' | 'pdf' = 'docx') =>
+    api.get<Blob>(`/draft-sessions/${id}/onlyoffice/redline/`, {
+      params: { from, ...(to ? { to } : {}), ...(branding ? { branding: 1 } : {}), ...(format === 'pdf' ? { output: 'pdf' } : {}) },
+      responseType: 'blob',
+    }).then(r => {
+      const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
+      return {
+        blob: r.data, filename: m ? m[1] : `draft_${id}_redline.docx`,
+        inserted: Number(r.headers['x-redline-inserted'] || 0), deleted: Number(r.headers['x-redline-deleted'] || 0),
+        // 'template': the draft's own look (LibreOffice compare); 'standard': PactPro's plain layout (fallback).
+        layout: (r.headers['x-redline-layout'] || 'standard') as 'template' | 'standard',
+      }
+    }),
   // Tracked changes from version `from` to version `to` (omitted = the current draft), as Word or PDF.
   exportRedline: (id: number, from: number, to?: number, branding = false, format: 'docx' | 'pdf' = 'docx') =>
     api.get<Blob>(`/drafts/${id}/export/redline/`, {
@@ -450,6 +494,68 @@ export const draftingApi = {
     }),
   // Saved versions of the draft (newest first): the "before" side of a redline.
   // Comments on passages (drafting/comments.py).
+  getOnlyOffice: (id: number) =>
+    api.get<OnlyOfficeState>(`/draft-sessions/${id}/onlyoffice/`).then(r => r.data),
+  // [[Label]] blanks still in the Word file, and filling one there (returns the new editor config).
+  saveOffice: (id: number) =>
+    api.post<{ version: number; saved: boolean }>(`/draft-sessions/${id}/onlyoffice/save/`).then(r => r.data),
+  // What is open goes to the working copy only (no version): a copy for this computer, or Word next.
+  saveOfficeWork: (id: number) =>
+    api.post<{ work: boolean }>(`/draft-sessions/${id}/onlyoffice/save/`, { to: 'work' }).then(r => r.data.work),
+  // Lisa's change written into the Word file as tracked changes (no-connector editions); new editor config.
+  applyOffice: (id: number, before: string, after: string) =>
+    api.post<{ config: Record<string, unknown> }>(`/draft-sessions/${id}/onlyoffice/apply/`, { before, after })
+      .then(r => r.data),
+  // Several of Lisa's changes in one pass (her "Apply all"): one version, one editor reload.
+  applyOfficeMany: (id: number, changes: { before: string; after: string }[]) =>
+    api.post<{ config: Record<string, unknown>; applied: number; skipped: number }>(
+      `/draft-sessions/${id}/onlyoffice/apply/`, { changes }).then(r => r.data),
+  // The editor's version history (refreshHistory / setHistoryData), restore, and the document to compare with.
+  getOfficeHistory: (id: number) =>
+    api.get<Record<string, unknown>>(`/draft-sessions/${id}/onlyoffice/history/`).then(r => r.data),
+  getOfficeHistoryData: (id: number, version: number) =>
+    api.get<Record<string, unknown>>(`/draft-sessions/${id}/onlyoffice/history/${version}/`).then(r => r.data),
+  restoreOffice: (id: number, version: number) =>
+    api.post<{ config: Record<string, unknown> }>(`/draft-sessions/${id}/onlyoffice/restore/`, { version }).then(r => r.data),
+  compareSource: (id: number, source: { version: number } | File) => {
+    if (source instanceof File) {
+      const form = new FormData()
+      form.append('file', source)
+      return api.post<Record<string, unknown>>(`/draft-sessions/${id}/onlyoffice/compare/`, form).then(r => r.data)
+    }
+    return api.post<Record<string, unknown>>(`/draft-sessions/${id}/onlyoffice/compare/`, source).then(r => r.data)
+  },
+  // Finalise (lock) / reopen; the draft as PDF/A; people to @mention in comments, and notifying them.
+  finaliseOffice: (id: number) =>
+    api.post<{ config: Record<string, unknown>; final: OnlyOfficeFinal | null; canFinalise: boolean }>(
+      `/draft-sessions/${id}/onlyoffice/finalise/`).then(r => r.data),
+  reopenOffice: (id: number) =>
+    api.delete<{ config: Record<string, unknown>; final: OnlyOfficeFinal | null; canFinalise: boolean }>(
+      `/draft-sessions/${id}/onlyoffice/finalise/`).then(r => r.data),
+  officePdfa: (id: number) =>
+    api.get<Blob>(`/draft-sessions/${id}/onlyoffice/pdfa/`, { responseType: 'blob' }).then(r => {
+      const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
+      return { blob: r.data, filename: m ? m[1] : `draft_${id}_PDF-A.pdf` }
+    }),
+  getOfficeUsers: (id: number) =>
+    api.get<{ users: { id: string; name: string; email: string }[] }>(`/draft-sessions/${id}/onlyoffice/users/`)
+      .then(r => r.data.users),
+  notifyOfficeMention: (id: number, emails: string[], message: string) =>
+    api.post(`/draft-sessions/${id}/onlyoffice/notify/`, { emails, message }),
+  officeVersion: (id: number) =>
+    api.get<{ version: number }>(`/draft-sessions/${id}/onlyoffice/state/`).then(r => r.data.version),
+  officeEditing: (id: number) =>
+    api.get<{ editing: boolean }>(`/draft-sessions/${id}/onlyoffice/state/`).then(r => r.data.editing),
+  getOfficePlaceholders: (id: number) =>
+    api.get<{ placeholders: OfficeBlank[] }>(`/draft-sessions/${id}/onlyoffice/placeholders/`)
+      .then(r => r.data.placeholders),
+  fillOfficePlaceholder: (id: number, label: string, value: string) =>
+    api.post<{ filled: number; config: Record<string, unknown> }>(
+      `/draft-sessions/${id}/onlyoffice/placeholders/`, { label, value }).then(r => r.data),
+  // Every value typed so far, in one go (one version, one editor reload).
+  fillOfficePlaceholders: (id: number, values: Record<string, string>) =>
+    api.post<{ filled: number; labels: Record<string, number>; missing: string[]; config: Record<string, unknown> }>(
+      `/draft-sessions/${id}/onlyoffice/placeholders/`, { values }).then(r => r.data),
   getCaseFile: (id: number) =>
     api.get<CaseFile>(`/draft-sessions/${id}/case-file/`).then(r => r.data),
   getComments: (id: number) =>

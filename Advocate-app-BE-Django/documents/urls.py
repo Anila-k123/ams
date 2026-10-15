@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import dav, editor, views
 
 urlpatterns = [
     path('documents', views.DocumentListView.as_view()),
@@ -18,4 +18,24 @@ urlpatterns = [
     path('documents/<int:pk>/versions/<int:version>/download', views.download_document_version),
     path('documents/<int:pk>/link', views.document_link),
     path('documents/<int:pk>', views.DocumentDetailView.as_view()),
+    # Any document in the ONLYOFFICE editor (documents/editor.py, docs/ONLYOFFICE_PLAN.md).
+    path('documents/new', editor.NewDocumentView.as_view()),
+    path('desktop-links', dav.DesktopLinksView.as_view()),
+    path('desktop-work', dav.DesktopWorkListView.as_view()),
+    path('desktop-work/<str:kind>/<int:pk>', dav.DesktopWorkView.as_view()),
+    path('documents/<int:pk>/editor', editor.EditorView.as_view()),
+    path('documents/<int:pk>/editor/save', editor.SaveView.as_view()),
+    path('documents/<int:pk>/editor/state', editor.StateView.as_view()),
+    path('documents/<int:pk>/editor/history', editor.HistoryView.as_view()),
+    path('documents/<int:pk>/editor/history/<int:version>', editor.HistoryView.as_view()),
+    path('documents/<int:pk>/editor/restore', editor.RestoreView.as_view()),
+    path('documents/<int:pk>/editor/compare', editor.CompareView.as_view()),
+    path('documents/<int:pk>/editor/users', editor.MentionUsersView.as_view()),
+    path('documents/<int:pk>/editor/notify', editor.MentionNotifyView.as_view()),
+    # The document server fetches / saves with signed links (no AMS login).
+    path('editor/file/<int:pk>', editor.FileView.as_view()),
+    path('editor/callback/<int:pk>', editor.CallbackView.as_view()),
+    path('editor/version/<int:pk>/<int:version>', editor.VersionFileView.as_view()),
+    path('editor/changes/<int:pk>/<int:version>', editor.ChangesFileView.as_view()),
+    path('editor/compare/<int:pk>/<str:name>', editor.CompareFileView.as_view()),
 ]

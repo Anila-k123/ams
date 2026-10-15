@@ -246,13 +246,13 @@ to a case show nothing; linking at creation is not done yet.
 
 ## Upgrading an existing install (migrations)
 
-Pulling this work (branch `Developer-1`, and `main` once merged) needs the drafting migrations **0005–0011**
+Pulling this work (branch `Developer-1`, and `main` once merged) needs the drafting migrations **0005–0013**
 on top of 0004 (draft versions). Run them once per database, with the backend stopped or idle:
 
 ```bat
 cd Advocate-app-BE-Django
 venv\Scripts\python.exe manage.py migrate drafting
-venv\Scripts\python.exe manage.py showmigrations drafting   :: every row [X], up to 0011
+venv\Scripts\python.exe manage.py showmigrations drafting   :: every row [X], up to 0013
 ```
 
 | Migration | What it does |
@@ -265,6 +265,8 @@ venv\Scripts\python.exe manage.py showmigrations drafting   :: every row [X], up
 | `0010_round_external_from` | Adds `external_from` to review rounds: who sent a file imported from outside. |
 | `0004_playbook_template_owner_archive` | From `main`: template / playbook owner and archiving (firm set-up). |
 | `0011_merge_…` | Joins `main`'s 0004 and this branch's 0004–0010 (no changes of its own). Without it `migrate` stops with *Conflicting migrations*. |
+| `0012_word_version` | `word_file` on templates and samples: the Word version of a PDF upload (template look). |
+| `0013_sample_clause_heading` | `heading` on reference-document clauses: the detected heading, kept apart from the body. |
 
 0007 and 0009 read the constraint's current list and add to it, so they are safe on a database that
 already has extra types. No data is changed. Each database (`PactPro_db` for test, `pactpro_db1` for
@@ -276,8 +278,10 @@ Two more one-time steps after pulling:
 cd Advocate-app-FE-main
 npm install                    :: new dependency @tiptap/extension-table (tables in the draft editor)
 cd ..\Advocate-app-BE-Django
-venv\Scripts\python.exe manage.py refresh_template_layout   :: existing templates learn their alignment (no AI call)
-``` Bell notifications are delivered by the scheduler
+venv\Scripts\python.exe manage.py refresh_template_layout   :: existing templates: alignment, clause places, look; PDFs get a Word version (no AI call)
+```
+
+Bell notifications are delivered by the scheduler
 (`run_scheduler`); on an instance without it, run `manage.py process_notifications`.
 
 ## Changes from outside (Import changes)

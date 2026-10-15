@@ -60,6 +60,9 @@ class _HtmlToBlocks(HTMLParser):
         self.pending = ('Normal', None)
         self.li_fresh = False       # just opened an <li>, no content yet
         self.skip = 0               # inside <style>/<script>
+        # An editor placeholder <span data-placeholder> while the ONLYOFFICE file is built
+        # (drafting/docfile.py): written as its value, or [[Label]] when empty, not its "[Label]" text.
+        self.placeholder = None
 
     # paragraphs
     def _close(self):
@@ -87,6 +90,13 @@ class _HtmlToBlocks(HTMLParser):
         return kind if depth == 1 else f'{kind} {depth}'
 
     def handle_starttag(self, tag, attrs):
+        if tag == 'span' and 'data-placeholder' in dict(attrs):
+            from drafting.docfile import building
+            if building.get() is not None:
+                a = dict(attrs)
+                self.handle_data(a.get('data-value') or f"[[{a.get('data-placeholder') or 'Details'}]]")
+                self.placeholder = True
+                return
         if tag in ('style', 'script'):
             self.skip += 1
         elif tag in FORMAT_TAGS:
@@ -125,6 +135,9 @@ class _HtmlToBlocks(HTMLParser):
                 self.formats.append('bold')
 
     def handle_endtag(self, tag):
+        if tag == 'span' and self.placeholder:
+            self.placeholder = None
+            return
         if tag in ('style', 'script'):
             self.skip = max(0, self.skip - 1)
         elif tag in FORMAT_TAGS:
@@ -155,7 +168,10 @@ class _HtmlToBlocks(HTMLParser):
     def handle_data(self, data):
         if self.skip:
             return
-        text = re.sub(r'\s+', ' ', data)
+        if self.placeholder:
+            return                  # the span's own "[Label]" text: already written
+        # Em spaces are kept: the editor shows a template's tab stop as two of them (wordform._TAB).
+        text = re.sub(r'[^\S ]+', ' ', data.replace('\t', '  '))
         if not text.strip() and self.para is None:
             return  # whitespace between block tags
         self.li_fresh = False
@@ -354,6 +370,14 @@ def session_title(session):
     return title
 
 
+def _new_elements(body, before):
+    """Body elements added since the body had `before` children (sectPr, always last, left out)."""
+    sect = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sectPr'
+    els = [e for e in body if e.tag != sect]
+    had = before - (1 if any(e.tag == sect for e in body) else 0)
+    return els[max(had, 0):]
+
+
 def render_session_docx(session, branding=None):
     doc = Document()
     _setup(doc)
@@ -365,7 +389,10 @@ def render_session_docx(session, branding=None):
         doc.add_paragraph(title, style='Title').alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     norm = lambda t: re.sub(r'\s+', ' ', t or '').strip().rstrip('.,;:').lower()   # noqa: E731
+    from drafting.docfile import record, wrap_blocks
+    body_el = doc.element.body
     for block in session.blocks.order_by('position'):
+        before = len(body_el)
         heading = re.sub(r'\s+', ' ', block.heading or '').strip()   # tabs from reference PDFs
         # Not again under the title when it only repeats it (same rule as the editor).
         if heading and norm(heading) != norm(title):
@@ -373,6 +400,9 @@ def render_session_docx(session, branding=None):
         body = html_to_blocks(block.content_html) if (block.content_html or '').strip() \
             else _text_to_blocks(block.text)
         _write_blocks(doc, doc, body)
+        # The elements this clause became (the section properties stay last in the body).
+        record(block.id, _new_elements(body_el, before))
+    wrap_blocks(doc)
 
     if branding:
         _signature_block(doc, branding)

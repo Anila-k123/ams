@@ -25,6 +25,12 @@ import { copyText } from "../utils/clipboard";
 import DuplicateEventDialog from "../components/DuplicateEventDialog";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 import { amountError, blockSignKeys, dueDateError, todayISO } from "../utils/validators";
+import { newRequestKey } from "../utils/requestKey";
+import { EDITOR_EXTS, fileExt } from "../components/DocumentCard";
+import AddDocumentButton from "../components/AddDocumentButton";
+import { documentEditorUrl } from "../utils/taskDocument";
+import { useTaskDocument, taskDocumentLabel } from "../components/TaskDocument";
+import { useOpenWith } from "../components/OpenWithDialog";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -443,6 +449,8 @@ export default function CaseDetail() {
   // Add expense / invoice / hearing modals
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  // Same key on a retry, so a timed-out "add invoice" never issues two.
+  const invoiceKey = useRef(newRequestKey());
   const [showHearingModal, setShowHearingModal] = useState(false);
   const [dupEvent, setDupEvent] = useState<any>(null);   // the hearing a new one would repeat (409)
   // "hearing" → the Hearings tab (type locked to HEARING); "event" → the Events
@@ -747,9 +755,11 @@ export default function CaseDetail() {
       // Without INVOICE_ISSUE the invoice goes to accounts to check and issue.
       const issue = hasPermission("INVOICE_ISSUE");
       await withLoading(
-        api.post(issue ? "/api/invoices/create" : "/api/invoices/requests", body),
+        issue ? api.post("/api/invoices/create", body, { headers: { "Idempotency-Key": invoiceKey.current } })
+              : api.post("/api/invoices/requests", body),
         issue ? "Adding invoice..." : "Sending to accounts..."
       );
+      invoiceKey.current = newRequestKey();
       setShowInvoiceModal(false);
       setInvoiceForm({ invoiceDate: "", dueDate: "", particulars: [{ description: "", amount: "" }] });
       fetchFinancials();
@@ -1143,6 +1153,30 @@ export default function CaseDetail() {
     } catch { error("Preview failed."); }
   };
 
+  // The document editor (ONLYOFFICE, docs/ONLYOFFICE_PLAN.md): open a case document, or start a new one here.
+  // Open = the desktop editor on this computer, a choice, or the PactPro editor (docs/DESKTOP_EDITING.md).
+  const openWith = useOpenWith();
+  const openInEditor = (docId) => openWith.openDocument("doc", docId, documentEditorUrl(docId));
+  // "Write in editor" / "Continue document" on a task: its own document, or a new one.
+  const taskDoc = useTaskDocument();
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [newDocOpen, setNewDocOpen] = useState(false);
+  const [newDocKind, setNewDocKind] = useState("word");
+  const [newDocName, setNewDocName] = useState("");
+  const [creatingDoc, setCreatingDoc] = useState(false);
+  const createDoc = async () => {
+    setCreatingDoc(true);
+    try {
+      const res = await api.post("/api/documents/new", { kind: newDocKind, name: newDocName.trim() || "Untitled", case_id: Number(id) });
+      setNewDocOpen(false);
+      openInEditor(res.data.id);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || "Could not create the document.");
+    } finally {
+      setCreatingDoc(false);
+    }
+  };
+
   const downloadDoc = async (docId, fileName) => {
     try {
       const res = await api.get(`/api/documents/download/${docId}`, { responseType: "blob" });
@@ -1358,12 +1392,12 @@ export default function CaseDetail() {
           {full && <>
             <ReviewNote task={t} />
             <SubmissionHistory task={t} myId={myId} canAssign={hasPermission("TASK_ASSIGN")} toast={toast}
-              onDone={() => { fetchTasks(); fetchSummary(); }} onViewDocument={previewDoc}
-              onOpenDraft={() => navigate(DRAFTING.draft(t.draftSessionId))} />
+              onDone={() => { fetchTasks(); fetchSummary(); }} onViewDocument={(docId: number) => taskDoc.openAttached(t, docId)}
+              onOpenDraft={() => void openWith.openDocument("draft", t.draftSessionId, DRAFTING.draftEditor(t.draftSessionId))} />
             {t.documents?.length > 0 && (
               <div className="row wrap" style={{ gap: 4, marginTop: 6 }}>
                 {t.documents.map((d: any) => (
-                  <button type="button" key={d.id} className="cs-file-chip" onClick={() => previewDoc(d.id)} title={`View ${d.name}`}>
+                  <button type="button" key={d.id} className="cs-file-chip" onClick={() => taskDoc.openAttached(t, d.id)} title={`Open ${d.name}`}>
                     <Icon name="eye" size="sm" />{d.name}
                   </button>
                 ))}
@@ -1385,11 +1419,16 @@ export default function CaseDetail() {
             </select>
           ) : <Chip tone={prioTone(t.priority || "MEDIUM")}>{titleCase(t.priority || "MEDIUM")}</Chip>}
           {full && t.draftSessionId && can("DRAFT_VIEW") && (
-            <Button size="sm" variant="ghost" icon="eye" onClick={() => navigate(DRAFTING.draft(t.draftSessionId))}>Open draft</Button>
+            <Button size="sm" variant="ghost" icon="eye" onClick={() => void openWith.openDocument("draft", t.draftSessionId, DRAFTING.draftEditor(t.draftSessionId))}>Open draft</Button>
           )}
           {full && !t.completed && !t.cancelled && can("DRAFT_CREATE") && (
-            <Button size="sm" variant="ghost" iconOnly icon="pen" aria-label={`Draft for ${t.title}`} title="Draft for this task"
+            <Button size="sm" variant="ghost" iconOnly icon="sparkle" aria-label={`Draft ${t.title} with AI`} title="Draft with AI"
               onClick={() => navigate(newDraftUrl({ caseId: Number(id), taskId: t.id }))} />
+          )}
+          {full && !t.completed && !t.cancelled && can("DOCUMENT_UPLOAD") && (
+            <Button size="sm" variant="ghost" iconOnly icon="edit" aria-label={`${taskDocumentLabel(t)}: ${t.title}`}
+              title={`${taskDocumentLabel(t)}: ${taskDocumentLabel(t) === "Write in editor" ? "a Word document for this task, attached to it" : "this task's document"}`}
+              disabled={taskDoc.busy} onClick={() => void taskDoc.openTaskDocument({ ...t, caseId: Number(id) })} />
           )}
           {full && mine && (t.cancelled
             ? <Button size="sm" variant="ghost" iconOnly icon="restore" aria-label={`Restore ${t.title}`} title="Restore task" onClick={() => cancelTask(t.id, false)} />
@@ -1422,6 +1461,10 @@ export default function CaseDetail() {
               <td className="right nowrap">
                 <Button size="sm" variant="ghost" iconOnly icon="eye" aria-label={`Preview ${d.documentName}`} title="Preview" onClick={() => previewDoc(d.id)} />
                 {kind === "docs" && <Button size="sm" variant="ghost" icon="sparkle" onClick={() => openDocSummary(d)}><span className="hide-sm">Summary</span></Button>}
+                {kind === "docs" && EDITOR_EXTS.has(fileExt(d).toLowerCase()) && (
+                  <Button size="sm" variant="ghost" iconOnly icon="edit" aria-label={`Open ${d.documentName} in the editor`}
+                    title="Open in editor" onClick={() => openInEditor(d.id)} />
+                )}
                 <Button size="sm" variant="ghost" iconOnly icon="download" aria-label={`Download ${d.documentName}`} title="Download"
                   onClick={() => downloadDoc(d.id, kind === "docs" ? (d.originalName || d.documentName) : d.documentName)} />
               </td>
@@ -1436,6 +1479,8 @@ export default function CaseDetail() {
 
   return (
     <div className="cs-root">
+      {openWith.dialog}
+      {taskDoc.dialog}
       {/* ---------- Docket cover ---------- */}
       <header className="docket">
         <div className="row wrap" style={{ gap: "var(--s3)" }}>
@@ -1754,14 +1799,35 @@ export default function CaseDetail() {
               {can("DOCUMENT_UPLOAD") && (
                 <div className="row wrap">
                   <p className="muted small grow">Everything filed on this case. Open a summary for a quick read.</p>
-                  <label className="btn sm cs-file-btn">
-                    <Icon name="upload" size="sm" />
-                    <span className="ellipsis" style={{ maxWidth: 220 }}>{uploadFile ? uploadFile.name : "Choose file"}</span>
-                    <input type="file" accept={DOCUMENT_ACCEPT} aria-label="Choose a file to upload" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
-                  </label>
-                  <Button size="sm" variant="primary" icon="upload" onClick={uploadDoc} disabled={!uploadFile}>Upload</Button>
+                  {/* Upload a file you have, or create one in the editor: one button, two ways in. */}
+                  <input ref={uploadInputRef} type="file" accept={DOCUMENT_ACCEPT} hidden aria-label="Choose a file to upload"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
+                  {uploadFile && (
+                    <>
+                      <span className="small ellipsis" style={{ maxWidth: 240 }} title={uploadFile.name}><Icon name="file" size="sm" /> {uploadFile.name}</span>
+                      <Button size="sm" variant="primary" icon="upload" onClick={uploadDoc}>Upload</Button>
+                      <Button size="sm" variant="ghost" icon="x" aria-label="Clear the chosen file"
+                        onClick={() => { setUploadFile(null); if (uploadInputRef.current) uploadInputRef.current.value = ""; }} />
+                    </>
+                  )}
+                  <AddDocumentButton size="sm" variant={uploadFile ? "ghost" : "primary"}
+                    onUpload={() => uploadInputRef.current?.click()}
+                    onCreate={(kind) => { setNewDocKind(kind); setNewDocName(""); setNewDocOpen(true); }} />
                 </div>
               )}
+              <Modal open={newDocOpen} title="Create a document on this case" sub="Opens in the editor; every save is a new version."
+                onClose={() => setNewDocOpen(false)}
+                footer={<>
+                  <Button variant="ghost" onClick={() => setNewDocOpen(false)} disabled={creatingDoc}>Cancel</Button>
+                  <Button variant="primary" icon="plus" onClick={() => void createDoc()} loading={creatingDoc}>Create and open</Button>
+                </>}>
+                <div className="stack" style={{ gap: 12 }}>
+                  <SelectField label="Type" value={newDocKind} onChange={(e) => setNewDocKind(e.target.value)}
+                    options={[{ value: "word", label: "Word" }, { value: "cell", label: "Excel" }, { value: "slide", label: "PowerPoint" }]} />
+                  <TextField full label="Name" placeholder="e.g. Reply to legal notice" value={newDocName}
+                    onChange={(e) => setNewDocName(e.target.value)} />
+                </div>
+              </Modal>
               {docs.length ? docTable(docs, "docs") : <EmptyState icon="folder" title="No documents yet" text="Upload the plaint, affidavits and evidence for this case." />}
             </div>
           )}

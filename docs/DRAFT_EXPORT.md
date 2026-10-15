@@ -43,7 +43,152 @@ revisions it loaded with each save (`save-blocks` body `{blocks, base}`):
 
 A plain list body (older clients) saves without the check.
 
-## Layout from the template or sample
+## Headings: kept apart from the body, the AI never writes them
+
+The same rule for every draft (Firm template, Type the facts directly, Start from reference documents,
+Word or PDF) (`drafting/services/headings.py`):
+
+1. **At upload each clause is split once into heading + body.** The heading is only what the parser
+   *detected* as one: a Word heading, a bold numbered title, an ALL-CAPS title, or a PDF line the converter
+   made a heading. A short first sentence is never guessed to be a heading. Stored on template slots
+   (`heading`, `body`, `heading_kind`) and on reference-document clauses (`SampleClause.heading`).
+2. **The AI gets only the body**, with the heading as a label it must not write (*"CLAUSE HEADING (a label
+   only…): 1. PREMISES"*). A first line that repeats the heading anyway is dropped.
+3. **The heading is decided by rule**:
+   - **fixed** (no blanks or case details: *VERSUS*, *1. PREMISES*, *LEASE AGREEMENT*): exactly as the
+     template has it, numbering included;
+   - **variable** (a `[[blank]]`, a court, a case number, a name, a date: *IN THE COURT OF [[Court Name]],
+     CHENNAI*): only its details are filled from the facts by a short separate AI step
+     (`tasks._fill_variable_headings`); what can't be filled stays a `[[blank]]`.
+4. **Editor:** the heading shows above the clause, the body below; a `[[blank]]` in a heading is listed in
+   **Placeholders** and written into the heading when you leave the field. Download writes the heading into
+   the template's heading paragraph (its format kept) and the body into its body paragraphs.
+5. Templates / reference documents uploaded before this: `manage.py refresh_template_layout` re-splits
+   templates; `--samples` re-splits PDF samples' clauses. A file that now splits differently is best
+   uploaded again. Drafts already made don't change.
+
+**Dotted leaders.** Dots attached to the text before them (*O.S. No. 145 of 2024………JURISDICTION*,
+*Chennai………*) are a printed leader and stay as dots; dots after a space or a field word (*dated……*,
+*No. ……*, *Rs. ……*, *on this……day*) and underscores are blanks to fill (`tasks._is_leader`).
+
+## Template look: drafts that look like their Word template / sample
+
+A draft made from a **Word template** or a **Word sample** looks like that file, in the editor and in every
+download (`drafting/wordform.py`). The AI still writes the text; the file supplies the form.
+
+**At upload** (or with `manage.py refresh_template_layout` for older templates) each clause is placed in the
+file: which paragraphs and tables it covers, and how each of its paragraphs is formatted (font, size,
+colour, alignment, indents, spacing before / after, line spacing, bold / italic / underline). Stored on the
+template slot as `form` (`clause_forms`). Samples are placed when a draft is generated from them.
+
+**Titles and headings are the template's own.** A clause shown under a heading shows the file's own heading
+text (*LEASE AGREEMENT*, *1. PREMISES*), not the name the AI gave the slot at upload; the draft has no separate
+title line (the template's title is the title). The *Document title* field was removed from **Type the facts
+directly**; drafts made earlier keep their stored title.
+
+**Lines: fixed wording kept, case details rewritten in place.** The AI is told to keep the clause's line
+structure: lines without case details (*VAKALATNAMA*, *Dated:*, *Accepted by me:*, *Versus*) copied exactly,
+once; lines with case details (court, place, case number, names, dates) rewritten in that same line, never
+added as a second version (`tasks._LINE_RULE`). Nothing is put back by rule any more: a rule can't tell that
+*JUNAGADH DISTRICT AT JUNAGADH* is a detail to replace, and it printed the old court next to the new one.
+
+**Unchanged lines are the template's own.** A draft line with the same words as a template line (tabs and
+spacing aside) shows in the editor with the template's runs (a few **bold** words inside the line, tab gaps)
+and is written in the download as the template's paragraph itself, every run as the file has it. Changed lines
+are rebuilt in their paragraph's look (whole-line bold, font, alignment); bold on a few words of a rewritten
+line is not carried over (the words changed). Tabs typed or kept in the editor print as Word tab stops.
+
+**Layout the editor can't show stays in the download.**
+- Lines with no letters or digits (the `))` bracket column of a cause title, `-----` rules) are tab-stop layout:
+  the AI's copies are dropped, the editor doesn't show them, and the download keeps the template's own, in
+  their place (`wordform.is_layout_line`).
+- Drawn shapes (stamp boxes, lines, pictures anchored in a clause's paragraphs) are kept in place in the download
+  even when that paragraph's text was rewritten. The editor can't draw them: a note above the page says how many
+  the template has (`style_json.src.shapes`).
+
+**In the editor** the draft opens in that look:
+
+- each generated line takes the formatting of the template paragraph it starts like, else of the body
+  paragraph at its position (extra lines take the last one); a heading line takes the heading's look;
+- the paper takes the file's page width and margins; the header sits **inside** the top margin (from Word's
+  header distance), the text starts at the margin, as in print (no empty band above the header);
+- the file's **header and footer** (logo, firm name, address, page note) show above and below the text, as
+  in print. They are not editable in the draft: the file keeps them;
+- the editor cannot show page breaks or a header repeating on every page; Download / PDF show those;
+- **Preview** (every draft) shows the same formatted content read-only: fonts, alignment, indents, tables,
+  heading styles; a filled blank reads as its value, an empty one as a highlighted `[Label]`. (The old
+  "filled-in" word highlight was dropped: **Compare** shows exactly what changed.)
+
+Each block remembers its place: `style_json.src = {file: 'template:<id>' | 'sample:<id>', range: [first,
+last], heading}`. The session's `word_form` (serializer) gives the page, header / footer HTML and
+`has_letterhead`.
+
+**Download (Word / PDF) and Save to case** open the **original file** and write each clause's final text into
+that clause's own paragraphs (`render_into_original`, via `render_draft_docx`):
+
+- the *n*-th draft paragraph is written into the template paragraph it starts like, else the one at its
+  position, keeping that paragraph's style, numbering, indents and first-run font; the editor's bold /
+  italic / underline / alignment are applied on top. A typed number is dropped where Word numbers the
+  paragraph itself, so "1.1" never prints twice;
+- a table is written into the template's table (its style, header row, borders), rows added or removed;
+- everything outside the clauses is untouched: title, logo, header, footer, page size and margins,
+  signature images, section breaks;
+- a clause added in the draft goes after the one before it, in the body look; a clause deleted from the
+  draft leaves the file too;
+- if writing into the original ever fails, the house-style document is produced instead (logged), so a
+  download never fails.
+
+**Letterhead.** The firm letterhead stays an optional tick at Download for drafts without a Word source. A
+draft whose template / sample has its **own letterhead** (anything in the file's header) keeps that one,
+and Download does not offer the firm letterhead (it would print two); Save to case also skips it.
+
+**View on Firm Templates / Samples** shows the uploaded file **as it prints** (`GET templates|samples/<id>/preview/`,
+`drafting/files.py`): a PDF as it is; a Word file made into a PDF by LibreOffice once and kept under
+`MEDIA_ROOT/previews/` (made again only when the file changes), so the letterhead, logo, fonts and layout are
+seen. Without LibreOffice it falls back to the old text view (with a note). **Download original** saves the
+uploaded file itself. The draft page's **Reference documents** list and the clause **citation markers** ([1], [2]…)
+open the same way in the side panel: through the logged-in file / print-view links (uploads are never
+served from `/media`), a Word source shown as it prints.
+
+**Not covered:** the **redline** download (tracked changes) stays in house style; drafts made before this
+keep the old behaviour; the editor shows one long page.
+
+## PDF templates and samples
+
+A PDF has no paragraphs or styles, only positioned text. At upload it is converted to **Word in the
+background** (`services/pdf2word.py`, `Template.word_file` / `Sample.word_file`); nothing is shown to the
+user. From then on the Word version drives everything above: clauses, the template look, Download.
+
+- Lines are joined into paragraphs (a gap clearly bigger than the document's normal line gap starts a new
+  one); each gets the alignment, indent, font, size, weight and **colour** its lines have on the page
+  (justified = lines run to the right edge; centred = middle of the text block).
+- Right-aligned lines that follow each other stay one block with line breaks (a signature: *name ↵ role*)
+  and are never headings; nor is a line with a `[[blank]]` or a signature label (*LESSOR*, *For …*,
+  *Witness*, *Authorised Signatory*), so a signature block doesn't become clauses of its own.
+- **Side-by-side columns** (a signature row: *advocate | client | client*, name over role; *Date | Place*)
+  are found from the wide gaps inside the lines and the word groups lining up over consecutive lines, and
+  become a borderless table, one column each.
+- The top margin is where the first line that isn't header text starts (a title near the top counts).
+- A line starting in lower case carries on the sentence before it (never a new paragraph or a heading); a
+  signature label (*Sd/-*, *LESSOR*, *For …*) is never a heading.
+- A logo with the firm's details beside it becomes a two-column header (logo cell + text cell), lines the
+  PDF wrapped joined again (*KUMAR & ASSOCIATES* on one line), with their size, weight and colour.
+- Short bold or larger lines become headings (in the document's own font), so clauses split as in a Word
+  upload; tables become Word tables; an image at the top of the first page becomes the header logo; text
+  repeating at the same place at the top / bottom of the pages becomes the header / footer (on a one-page
+  PDF: text beside the logo, and the bottom band).
+- Clauses are read from the Word version (the page's own text; Docling is the fallback when it splits
+  into no clauses).
+- A **scanned PDF** (no text layer) gets no Word version and keeps the alignment-only behaviour.
+- After the converter improves: `manage.py refresh_template_layout --rebuild-word` makes PDF templates'
+  Word versions again, `--samples` PDF samples' (upload a sample again if its clauses now split differently).
+- A clause shown under its heading never repeats the heading as its first line (`wordform.drop_leading_heading`;
+  the editor and Preview drop such a first paragraph from older drafts too).
+- Borderless tables in a PDF are not detected as tables (they stay text).
+
+## Layout from the template or sample (alignment only)
+
+Drafts without a Word form (older drafts, scanned PDFs) still get the alignment pass below.
 
 A generated draft lays out like the template or sample it came from (`drafting/services/layout.py`):
 
@@ -62,7 +207,8 @@ A generated draft lays out like the template or sample it came from (`drafting/s
 
 ## Tables
 
-The draft editor keeps tables (`@tiptap/extension-table`, ruled grid). The comparison engine reads a table
+Word tables reach the AI as table rows (`| a | b |`, `services/parser.py`), like a PDF's tables from
+Docling, and generated table rows become a table again (`tasks._table_html`). The draft editor keeps tables (`@tiptap/extension-table`, ruled grid). The comparison engine reads a table
 row as one line with its cells separated by tabs (style `Table Row`), so a changed cell shows as a change in
 that row; when a clause is rebuilt (accepting some changes, importing a returned file) consecutive rows
 become a table again (`export/htmlwrite.py`). Merged cells and column widths are not kept through a rebuild.

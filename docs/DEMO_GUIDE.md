@@ -134,7 +134,7 @@ Everyone works in one firm and one team, headed by Rajesh. The other logins in t
   - Expect: it goes processing → ready in about 30–60 s.
   - The other pages stay responsive meanwhile.
 - [ ] **Summary** on a prepared document. Expect: the same AMS summary window as on the Documents page opens. Drafting has no separate summarizer any more.
-- [ ] **New draft**, from a case: open SLP(C) No. 12710/2026 → Tasks → **Draft for this task**.
+- [ ] **New draft**, from a case: open SLP(C) No. 12710/2026 → Tasks → **Draft with AI**.
   - Expect: the wizard opens with the case already linked.
   - Pick a reference document, then a template (optional), facts, and Generate. Expect: the editor opens after about 40 s.
 - [ ] **Editor.** Edit a block; use Chat / Refine; check the citations; Save.

@@ -1,4 +1,6 @@
 import datetime
+import hashlib
+import json
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.db.models import Q, Sum
@@ -17,7 +19,7 @@ from core.permissions import RequirePermission
 from core.pagination import SpringStylePagination
 from .serializers import InvoiceSerializer, FirmBillingProfileSerializer, invoice_context
 from .models import (InvoiceItem, InvoiceTaxDetail, FirmBillingProfile, InvoiceRequest,
-                     InvoiceHandling, PaymentInvoice)
+                     InvoiceHandling, PaymentInvoice, InvoiceCreateKey)
 from core.practice import practice_ids, practice_root
 from core.tenant import owned
 from core.finance import (TransitionError, check_invoice_transition, invoice_paid_amounts,
@@ -283,16 +285,49 @@ class CreateInvoiceView(APIView):
     permission_classes = [RequirePermission('INVOICE_ISSUE')]
 
     def post(self, request):
+        key = (request.headers.get('Idempotency-Key') or '').strip()[:100]
+        fingerprint = hashlib.sha256(json.dumps(request.data, sort_keys=True, default=str).encode()).hexdigest()
+        if key:
+            seen = InvoiceCreateKey.objects.filter(advocate_id=request.user.id, key=key).first()
+            if seen is not None:
+                return _replay_invoice(request, seen, fingerprint)
         case, bad = _billable_case(request.user, request.data)
         if bad is not None:
             return bad
         bad = _due_date_bad(request.data)
         if bad is not None:
             return bad
-        invoice, bad = _create_invoice(request.user, request.data, case)
-        if bad is not None:
-            return bad
+        with transaction.atomic():
+            claim = None
+            if key:
+                try:
+                    with transaction.atomic():
+                        claim = InvoiceCreateKey.objects.create(advocate_id=request.user.id, key=key,
+                                                                fingerprint=fingerprint)
+                except IntegrityError:
+                    # A parallel retry claimed the key first: answer as it did.
+                    return _replay_invoice(request, InvoiceCreateKey.objects.filter(
+                        advocate_id=request.user.id, key=key).first(), fingerprint)
+            invoice, bad = _create_invoice(request.user, request.data, case)
+            if bad is not None:
+                transaction.set_rollback(True)      # the key is released with the failed attempt
+                return bad
+            if claim is not None:
+                claim.invoice_id = invoice.id
+                claim.save(update_fields=['invoice_id'])
         return Response(InvoiceSerializer(invoice).data, status=http.HTTP_201_CREATED)
+
+
+def _replay_invoice(request, seen, fingerprint):
+    """A repeated Idempotency-Key: the first attempt's invoice, or a refusal."""
+    if seen is None or seen.fingerprint != fingerprint:
+        return Response({'error': 'This request key was already used for a different invoice.',
+                         'code': 'IDEMPOTENCY_MISMATCH'}, status=http.HTTP_409_CONFLICT)
+    invoice = _base(request).filter(id=seen.invoice_id).first() if seen.invoice_id else None
+    if invoice is None:
+        return Response({'error': 'The first attempt is still being processed. Try again in a moment.',
+                         'code': 'IN_PROGRESS'}, status=http.HTTP_409_CONFLICT)
+    return Response(InvoiceSerializer(invoice).data, status=http.HTTP_200_OK)
 
 
 def _money_error(exc):

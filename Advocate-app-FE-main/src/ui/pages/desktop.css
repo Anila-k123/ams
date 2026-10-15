@@ -1,0 +1,11 @@
+/* Desktop edits waiting for "Save to PactPro" (components/DesktopEditsBar.tsx, docs/DESKTOP_EDITING.md). */
+.desktop-edits {
+  position: fixed; right: var(--s4); bottom: var(--s4); z-index: 900;
+  width: min(440px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s3) var(--s4); background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line-strong); border-left: 4px solid var(--warn); border-radius: var(--r-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.desktop-edits-row { display: flex; align-items: center; gap: var(--s2); }
+.desktop-edits-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.desktop-edits-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

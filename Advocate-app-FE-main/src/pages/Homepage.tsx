@@ -1,25 +1,21 @@
 import { Link } from 'react-router-dom';
-import hmlogo from '../assets/images/LOGO.png';
 import '../ui/pages/auth.css';
 import { Icon } from '../ui/kit';
 import { ThemeToggle } from './Login';
+import BrandLogo from '../ui/BrandLogo';
 
 function Homepage() {
   return (
     <div className="home">
       <span className="tape-strand" aria-hidden="true" />
       <header className="home-top">
-        <div className="pp-art-brand">
-          <span className="seal" aria-hidden="true">P</span>
-          <div><b>PactPro</b><small>Practice management for advocates</small></div>
-        </div>
+        <div className="pp-art-brand"><BrandLogo /></div>
         <div className="row">
           <ThemeToggle />
           <Link className="btn tape" to="/login">Sign in</Link>
         </div>
       </header>
       <main className="home-hero">
-        <img className="home-logo" src={hmlogo} alt="PactPro logo" />
         <div className="rule" aria-hidden="true" />
         <h1>PactPro</h1>
         <p className="home-lead">Cases, hearings, cause lists, drafting and billing for your chambers, in one place.</p>

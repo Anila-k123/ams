@@ -35,6 +35,7 @@ const Clients = lazy(() => import('./Clients'));
 const Expenses = lazy(() => import('./Expenses'));
 const HearingsPage = lazy(() => import('./HearingsPage'));
 const DocumentsPanel = lazy(() => import('./DocumentsPanel'));
+const DocumentEditorPage = lazy(() => import('./DocumentEditorPage'));
 const InvoicesPanel = lazy(() => import('./InvoicesPanel'));
 const ProfilePage = lazy(() => import('./ProfilePage'));
 const ReportsCenter = lazy(() => import('./ReportsCenter'));
@@ -45,6 +46,7 @@ const BackupPage = lazy(() => import('./BackupPage'));
 const UserManagement = lazy(() => import('./UserManagement'));
 const RoleManagement = lazy(() => import('./RoleManagement'));
 const FirmSettings = lazy(() => import('./FirmSettings'));
+const PlanUsage = lazy(() => import('./PlanUsage'));
 const CommunicationDashboard = lazy(() => import('./CommunicationDashboard'));
 const CommunicationSettings = lazy(() => import('./CommunicationSettings'));
 const CommunicationHistory = lazy(() => import('./CommunicationHistory'));
@@ -314,6 +316,7 @@ function AppShell() {
               <Route path="/calendar" element={<Navigate to="/dashboard/hearings" replace />} />
               <Route path="/hearings" element={<PermissionRoute permissions="EVENT_VIEW"><HearingsPage /></PermissionRoute>} />
               <Route path="/documents" element={<PermissionRoute permissions="DOCUMENT_VIEW"><DocumentsPanel /></PermissionRoute>} />
+              <Route path="/documents/:id/edit" element={<PermissionRoute permissions="DOCUMENT_VIEW"><DocumentEditorPage /></PermissionRoute>} />
               <Route path="/invoices" element={<PermissionRoute permissions="INVOICE_VIEW"><InvoicesPanel /></PermissionRoute>} />
               <Route path="/settings" element={<ProfilePage />} />
               <Route path="/reports" element={<PermissionRoute permissions="REPORT_VIEW"><ReportsCenter /></PermissionRoute>} />
@@ -329,6 +332,7 @@ function AppShell() {
               {/* Admin routes are permission-gated, not just hidden from the sidebar (codes match rbac/views.py). */}
               <Route path="/users" element={<PermissionRoute permissions="USER_MANAGE"><UserManagement /></PermissionRoute>} />
               <Route path="/firm/settings" element={<PermissionRoute permissions="SETTINGS_EDIT"><FirmSettings /></PermissionRoute>} />
+              <Route path="/firm/subscription" element={<PermissionRoute permissions="SETTINGS_EDIT"><PlanUsage /></PermissionRoute>} />
               {/* Merged into Team Members; old links still land there. */}
               <Route path="/firm/members" element={<Navigate to="/dashboard/users" replace />} />
               <Route path="/roles" element={<PermissionRoute permissions="ROLE_MANAGE"><RoleManagement /></PermissionRoute>} />

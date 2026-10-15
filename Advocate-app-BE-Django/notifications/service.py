@@ -44,6 +44,9 @@ FAILED_PERMANENTLY = 'FAILED_PERMANENTLY'
 # These are the values the Notifications Center already knows how to label, so
 # emitting anything else would show up as a raw string in the UI.
 EVENT_TYPES = {
+    # Client review (docs/CLIENT_REVIEW.md; widened in clientreview/0002).
+    'CLIENT_REVIEW_REQUEST', 'CLIENT_REVIEW_MESSAGE', 'CLIENT_REVIEW_REMINDER', 'CLIENT_REVIEW_REPLIED',
+    'CLIENT_REVIEW_APPROVED',
     'CLIENT_REGISTERED', 'CASE_CREATED', 'CASE_STATUS_UPDATED', 'CASE_CLOSED',
     'HEARING_SCHEDULED', 'HEARING_REMINDER', 'HEARING_RESCHEDULED',
     'INVOICE_GENERATED', 'INVOICE_SUBMITTED', 'INVOICE_RETURNED',
@@ -52,6 +55,7 @@ EVENT_TYPES = {
     'TASK_SUBMITTED', 'TASK_APPROVED', 'TASK_CHANGES_REQUESTED',
     'DRAFT_REVIEW_REQUESTED', 'DRAFT_REVIEW_DONE',   # drafting/review_requests.py
     'DRAFT_COMMENT',                                 # drafting/comments.py
+    'DOCUMENT_COMMENT',                              # documents/editor.py (@mention in the editor)
     'PASSWORD_RESET',
 }
 

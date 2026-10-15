@@ -51,6 +51,16 @@ def _practice_of(advocate_id):
     return parent or advocate_id
 
 
+def _firm_of(advocate_id):
+    if not advocate_id:
+        return None
+    try:
+        from core.tenant import firm_id_of_advocate
+        return firm_id_of_advocate(advocate_id)
+    except Exception:                                        # noqa: BLE001 - no firm tables yet
+        return None
+
+
 def record(provider='', model='', input_tokens=0, output_tokens=0, *, estimated=False,
            characters=None, duration_ms=None, ok=True):
     """Store one call's usage under the current metering context."""
@@ -61,6 +71,7 @@ def record(provider='', model='', input_tokens=0, output_tokens=0, *, estimated=
         i, o = int(input_tokens or 0), int(output_tokens or 0)
         LLMUsage.objects.create(
             advocate_id=ctx['advocate_id'], practice_id=_practice_of(ctx['advocate_id']),
+            firm_id=_firm_of(ctx['advocate_id']),
             feature=ctx['feature'], operation=ctx['operation'],
             provider=(provider or '')[:32], model=(model or '')[:128],
             input_tokens=i, output_tokens=o, total_tokens=i + o, estimated=bool(estimated),

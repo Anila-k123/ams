@@ -63,11 +63,13 @@ INSTALLED_APPS = [
     'workspace',
     'firms',               # teams grouped into a firm (core/practice.py)
     'platform_admin',      # SaaS platform operators (separate identity, docs/PLATFORM.md)
+    'subscriptions',       # AMS SaaS plans, entitlements, usage (firms paying AMS - NOT firms' client invoices)
     'courtsearch',
     'acts',
     'dictionary',
     'drafting',
     'clientaccess',
+    'clientreview',   # sending documents to clients for review (docs/CLIENT_REVIEW.md)
     'lawcodes',
 ]
 
@@ -164,6 +166,10 @@ TENANCY_MODE = config('TENANCY_MODE', default='legacy')
 if len(sys.argv) > 1 and sys.argv[1] == 'test':
     # Tests don't inherit a developer's .env mode; tenancy tests set it themselves.
     TENANCY_MODE = 'legacy'
+# Phase 8: unapproved (DRAFT / APPROVED-not-published) plans may be given only
+# to firms an operator marked as synthetic test firms, and only on a
+# development / test install (needs DEBUG). Never on in production.
+SUBSCRIPTION_TEST_PLANS = config('SUBSCRIPTION_TEST_PLANS', default=False, cast=bool) and DEBUG
 if TENANCY_MODE not in ('legacy', 'shadow', 'firm'):
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured("TENANCY_MODE must be 'legacy', 'shadow' or 'firm'.")
@@ -226,6 +232,24 @@ COURT_PDF_CACHE_DIR = config(
 # --- Draft PDF export: LibreOffice converts the Word export (drafting/export/pdf.py).
 # Blank = `soffice` on PATH or the usual install folder; without it PDF export is a 503. ---
 LIBREOFFICE_PATH = config('LIBREOFFICE_PATH', default='')
+# Client review (docs/CLIENT_REVIEW.md): clients mark up their copy in the portal's editor. Off for now: they
+# download the document, edit it in their own Word / LibreOffice and upload it back.
+CLIENT_REVIEW_EDITOR = config('CLIENT_REVIEW_EDITOR', default=False, cast=bool)
+LIBREOFFICE_PYTHON = config('LIBREOFFICE_PYTHON', default='')   # its Python (uno), for the template-look redline
+
+# ONLYOFFICE Docs, the planned draft editor (docs/ONLYOFFICE_PLAN.md). ONLYOFFICE_URL is what the browser
+# loads the editor from, ONLYOFFICE_INTERNAL_URL what this backend calls, AMS_INTERNAL_URL how the
+# document server reaches this backend. The JWT secret is the server's services.CoAuthoring.secret.
+ONLYOFFICE_URL = config('ONLYOFFICE_URL', default='').rstrip('/')
+ONLYOFFICE_INTERNAL_URL = config('ONLYOFFICE_INTERNAL_URL', default=ONLYOFFICE_URL).rstrip('/')
+ONLYOFFICE_JWT_SECRET = config('ONLYOFFICE_JWT_SECRET', default='')
+AMS_INTERNAL_URL = config('AMS_INTERNAL_URL', default='').rstrip('/')
+# This backend as users' browsers reach it (the editor loads PactPro's logo from here); defaults to the above.
+AMS_PUBLIC_URL = config('AMS_PUBLIC_URL', default='').rstrip('/')
+DRAFT_EDITOR = config('DRAFT_EDITOR', default='tiptap')
+# PactPro logo / name / loading screen in the editor: only with a licensed Developer Edition (else a
+# "Paid feature" warning shows on every open).
+ONLYOFFICE_WHITE_LABEL = config('ONLYOFFICE_WHITE_LABEL', default=False, cast=bool)
 
 # --- AI assistant's name (what it calls itself; the frontend shows
 # src/constants/assistant.ts). ---
@@ -448,4 +472,4 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Kolkata'
 
 # Let the frontend read download filenames (DOCX export).
-CORS_EXPOSE_HEADERS = ['Content-Disposition', 'X-Redline-Inserted', 'X-Redline-Deleted']
+CORS_EXPOSE_HEADERS = ['Content-Disposition', 'X-Redline-Inserted', 'X-Redline-Deleted', 'X-Redline-Layout']

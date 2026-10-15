@@ -82,7 +82,8 @@ test('upload a document in the browser; preview and download use signed links', 
   const dialog = page.getByRole('dialog')
   await dialog.locator('input[type=file]').setInputFiles(file)
   await dialog.getByRole('button', { name: /^Upload/ }).click()
-  await expect(page.getByText(`plaint-${run()}.pdf`).first()).toBeVisible()
+  // The file name shows in the dialog before the upload finishes: wait for the result.
+  await expect(dialog.getByText('1/1 uploaded')).toBeVisible({ timeout: 30_000 })
   const docs = await (await api(request, 'get', '/api/documents/list')).json()
   const doc = (Array.isArray(docs) ? docs : docs.content || docs.results).find((d: { originalName?: string; documentName?: string }) =>
     (d.originalName || d.documentName || '').includes(run()))

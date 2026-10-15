@@ -7,6 +7,7 @@ import { useLoading } from '../contexts/LoadingContext';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { Icon } from '../ui/kit';
+import BrandLogo from '../ui/BrandLogo';
 
 /* Shared by the sign-in flow pages (forgot, verify, reset, set-password). */
 
@@ -31,22 +32,19 @@ export function AuthFrame({ children, brand }: { children: ReactNode; brand?: { 
       <aside className="auth-art">
         <span className="tape-strand" aria-hidden="true" />
         <div className="pp-art-brand">
-          {mark}
-          {brand
-            ? <div><b>{brand.name}</b><small>Client portal</small></div>
-            : <div><b>PactPro</b><small>Practice management for advocates</small></div>}
+          {/* The client portal shows the firm's own name and logo; everywhere else PactPro's logo. */}
+          {brand ? <>{mark}<div><b>{brand.name}</b><small>Client portal</small></div></> : <BrandLogo />}
         </div>
         <div className="pp-art-mid">
           <div className="rule" aria-hidden="true" />
-          <blockquote>Justice delayed is justice denied.</blockquote>
-          <cite>Legal maxim</cite>
+          <blockquote>The Smarter Way to Manage Your Legal Practice.</blockquote>
         </div>
         <div className="pp-art-foot"><span>{brand ? 'Client portal, powered by PactPro' : 'Advocate Management System'}</span><span>Madras High Court and subordinate courts</span></div>
       </aside>
       <main className="auth-form">
         <div className="pp-auth-tools"><ThemeToggle /></div>
         <div className="auth-card">
-          <div className="pp-mobile-brand">{mark}<b>{brand ? brand.name : 'PactPro'}</b></div>
+          <div className="pp-mobile-brand">{brand ? <>{mark}<b>{brand.name}</b></> : <BrandLogo />}</div>
           {children}
         </div>
       </main>

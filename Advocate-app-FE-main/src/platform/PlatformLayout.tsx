@@ -9,6 +9,7 @@ import '../ui/pages/platform.css'
 export const PLATFORM_NAV = [
   { to: '/platform/dashboard', label: 'Dashboard', permission: 'firm.read' },
   { to: '/platform/firms', label: 'Firms', permission: 'firm.read' },
+  { to: '/platform/plans', label: 'Plans', permission: 'firm.read' },
   { to: '/platform/audit', label: 'Audit', permission: 'audit.read' },
 ]
 

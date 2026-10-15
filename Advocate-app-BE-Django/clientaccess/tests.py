@@ -128,8 +128,10 @@ class GateSweepTest(ClientTestBase):
         # Stricter than the sweep above: each drafting route must reach the gate and
         # get its 403 (a 404 would mean the path was never really exercised).
         headers = auth(self.anita)
+        # Public views (no AMS login: the ONLYOFFICE file / save callback, checked by signed link) are
+        # outside the gate, as in the sweep above.
         paths = sorted({_concrete(r) for r, cb in _walk(get_resolver().url_patterns)
-                        if r.startswith('api/drafting/') and 'format' not in r})
+                        if r.startswith('api/drafting/') and 'format' not in r and not _is_public(cb)})
         self.assertGreater(len(paths), 20)
         wrong = []
         for path in paths:

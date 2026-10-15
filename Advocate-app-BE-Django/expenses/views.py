@@ -29,6 +29,18 @@ def _case_id(data):
 
 
 def _apply(expense, data, request):
+    """Copy the form onto `expense`. Returns an error Response, or None.
+
+    A case the user's team can't reach is refused (404), never dropped: it used
+    to be set to None silently, so another team could "add an expense" to a case
+    (saved unlinked in their own practice), and an edit could quietly unlink an
+    expense from its own case and change that case's totals."""
+    cid = _case_id(data)
+    case = None
+    if cid not in (None, ''):
+        case = owned(Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)), request.user).first()
+        if case is None:
+            return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
     expense.title = data.get('title', expense.title)
     if 'amount' in data:
         expense.amount = data.get('amount')
@@ -39,11 +51,10 @@ def _apply(expense, data, request):
     expense.reference_number = data.get('referenceNumber')
     expense.payment_date = data.get('paymentDate') or None
     expense.expense_type = data.get('expenseType') or expense.expense_type or 'CLIENT_CASE'
-    cid = _case_id(data)
-    if cid is not None:
-        case = owned(Case.objects.filter(id=cid, advocate_id__in=practice_ids(request.user)), request.user).first()
+    if case is not None:
         expense.case = case
-        expense.client = case.client if case else None
+        expense.client = case.client
+    return None
 
 
 class ExpenseListView(APIView):
@@ -131,7 +142,9 @@ class CreateExpenseView(APIView):
         if msg:
             return error_response({'amount': msg})
         expense = Expense(advocate_id=request.user.id)
-        _apply(expense, data, request)
+        bad = _apply(expense, data, request)
+        if bad is not None:
+            return bad
         expense.save()
         recalc_case_totals(expense.case_id)
         return Response(ExpenseSerializer(expense).data, status=status.HTTP_201_CREATED)
@@ -149,7 +162,9 @@ class UpdateExpenseView(APIView):
             if msg:
                 return error_response({'amount': msg})
         old_case_id = expense.case_id
-        _apply(expense, request.data, request)
+        bad = _apply(expense, request.data, request)
+        if bad is not None:
+            return bad
         expense.save()
         # Moved to another case: both cases' totals change.
         for cid in {old_case_id, expense.case_id}:

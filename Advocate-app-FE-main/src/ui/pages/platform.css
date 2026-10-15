@@ -1,8 +1,10 @@
 /* SaaS Platform Admin (src/platform). Red Tape tokens only. A distinct top bar
    so operators never confuse this console with a firm workspace. */
 .pf-shell { min-height: 100vh; background: var(--paper); color: var(--ink); }
-.pf-top { display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: var(--ink); color: var(--paper); }
-.pf-top .pf-brand { font-weight: 700; letter-spacing: .02em; }
+/* Always dark (the sidebar colour), so the white-and-red logo reads in both themes. */
+.pf-top { display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: var(--side-bg); color: #F2F4F7; }
+.pf-top .pf-brand { display: inline-flex; align-items: center; }
+.pf-top .pf-brand .brand-logo { height: 40px; }
 .pf-top .pf-badge { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; opacity: .85; }
 .pf-top nav { display: flex; gap: 4px; flex: 1; }
 .pf-top nav a { color: inherit; text-decoration: none; padding: 6px 10px; border-radius: 6px; opacity: .8; }

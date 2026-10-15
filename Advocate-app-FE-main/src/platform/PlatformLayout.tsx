@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Button } from '../ui/kit'
+import BrandLogo from '../ui/BrandLogo'
 import { usePlatformAuth } from './PlatformAuth'
 import '../ui/pages/platform.css'
 
@@ -20,7 +21,7 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
   return (
     <div className="pf-shell">
       <header className="pf-top">
-        <span className="pf-brand">AMS</span>
+        <span className="pf-brand"><BrandLogo onDark /></span>
         <span className="pf-badge">Platform admin</span>
         <nav aria-label="Platform">
           {PLATFORM_NAV.filter((n) => can(n.permission)).map((n) => (

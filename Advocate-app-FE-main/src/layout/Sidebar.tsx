@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import Icon from '../ui/Icon';
 import { NAV, activeItem, groupOf, type NavItem, type NavGroup, type Perm, type CountKey } from './nav';
+import BrandMark from '../ui/BrandMark';
+import BrandLogo from '../ui/BrandLogo';
 
 const OPEN_KEY = 'navOpen';
 
@@ -76,10 +78,11 @@ export default function Sidebar({ can, counts, hot, rail, firmName, firmLogo, on
   return (
     <aside className="side" aria-label="Main navigation">
       <div className="brand">
+        {/* Collapsed icon rail: the firm's logo, else the PactPro "P" mark. */}
         {firmLogo
-          ? <img className="seal firm-logo" src={firmLogo} alt="" />
-          : <span className="seal" aria-hidden="true">P</span>}
-        <div><b>PactPro</b>{firmName && <small className="ellipsis">{firmName}</small>}</div>
+          ? <img className="seal firm-logo rail-only" src={firmLogo} alt="" />
+          : <BrandMark className="rail-only" />}
+        <div><BrandLogo />{firmName && <small className="ellipsis">{firmName}</small>}</div>
       </div>
 
 

@@ -20,6 +20,9 @@ from rbac import firm_roles as fr
 
 from . import invitations, services
 from .models import FirmInvitation, FirmMembership
+from subscriptions import catalogue as plans
+from subscriptions.enforce import entitled
+from subscriptions.service import require
 
 USER_MANAGE = [RequirePermission('USER_MANAGE')]
 
@@ -46,6 +49,7 @@ class StaffInvitationsView(APIView):
         wanted = (request.query_params.get('status') or '').upper()
         return Response([_inv_map(i) for i in rows if not wanted or i.status == wanted])
 
+    @entitled(plans.SEATS)              # a pending invitation holds a seat (subscriptions.service.seats_used)
     def post(self, request):
         firm = tenant.resolve_firm(request.user)
         role_ids = [int(x) for x in (request.data.get('roleIds') or [])]
@@ -80,7 +84,11 @@ class StaffInvitationActionView(APIView):
             return Response({'error': 'Invitation not found'}, status=404)
         try:
             if action == 'resend':
-                inv, _t = invitations.resend(inv)
+                # Resending an expired invitation makes it hold a seat again.
+                with transaction.atomic():
+                    if inv.status != 'PENDING':
+                        require(request.user, plans.SEATS)
+                    inv, _t = invitations.resend(inv)
             elif action == 'revoke':
                 inv = invitations.revoke(inv)
             else:
@@ -124,6 +132,8 @@ class MemberLifecycleView(APIView):
             if FirmMembership.objects.filter(advocate_id=m.advocate_id, status=FirmMembership.ACTIVE).exists():
                 return Response({'error': 'This person is active in another firm.'}, status=409)
             with transaction.atomic():
+                if m.kind == FirmMembership.STAFF:
+                    require(request.user, plans.SEATS)    # a returning member needs a free seat
                 FirmMembership.objects.filter(id=m.id).update(status=FirmMembership.ACTIVE, left_at=None)
             from core.session import security_event
             security_event('MEMBERSHIP_REACTIVATED', request, actor=request.user, firm_id=firm.id,

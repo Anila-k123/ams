@@ -8,6 +8,52 @@ from rest_framework.response import Response
 from .files import FileDownloadMixin
 
 
+def _drafting_op(request, operation):
+    """Subscription: AI drafting must be in the firm's plan, and each AI drafting
+    operation is reserved against the monthly allowance (an Idempotency-Key
+    can't be reused). Returns the Reservation: the caller settles it (a failed
+    operation gives the count back). Raises EntitlementDenied (403)."""
+    from subscriptions import catalogue as plans
+    from subscriptions.service import meter, require_feature
+    require_feature(request.user, plans.DRAFTING)
+    return meter(request.user, plans.DRAFTING_OPS, request_key=request.headers.get('Idempotency-Key') or None,
+                 source=operation[:40])
+
+
+def _drafting_feature(request):
+    """AI drafting set-up (templates, samples, playbooks, translation) uses the
+    model too: it needs the drafting feature in the firm's plan. Not counted
+    against the monthly operations (which operations count is a commercial
+    decision, docs/SUBSCRIPTIONS.md); its tokens are metered as usual."""
+    from subscriptions import catalogue as plans
+    from subscriptions.service import require_feature
+    require_feature(request.user, plans.DRAFTING)
+
+
+def _needs_drafting(fn):
+    """View method decorator: _drafting_feature() first."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, request, *args, **kwargs):
+        _drafting_feature(request)
+        return fn(self, request, *args, **kwargs)
+    return wrapper
+
+
+def _settled(reservation, call):
+    """Run a synchronous metered action and settle its reservation: an error or
+    an error response gives the count back, anything else keeps it."""
+    try:
+        response = call()
+    except Exception:
+        reservation.fail()
+        raise
+    code = getattr(response, 'status_code', 200)
+    (reservation.fail if code >= 400 else reservation.succeed)()
+    return response
+
+
 def _metered_action(operation):
     """Meter an on-demand drafting action (metering/usage.py) as the signed-in
     user: chat edit and refine make several model calls per click, and all of
@@ -21,10 +67,14 @@ def _metered_action(operation):
             from .models import DraftSession
             from .providers.privacy import fact_names, names_for_masking
             ref = int(pk) if str(pk or '').isdigit() else None
+            reservation = _drafting_op(request, operation)
             facts = DraftSession.objects.filter(id=ref).values_list('facts', flat=True).first() if ref else None
-            with metering('draft', operation, getattr(request.user, 'id', None),
-                          ref_type='draft', ref_id=ref), names_for_masking(fact_names(facts)):
-                return fn(self, request, pk, *args, **kwargs)
+
+            def run():
+                with metering('draft', operation, getattr(request.user, 'id', None),
+                              ref_type='draft', ref_id=ref), names_for_masking(fact_names(facts)):
+                    return fn(self, request, pk, *args, **kwargs)
+            return _settled(reservation, run)
         return wrapper
     return deco
 from .models import Template, Sample, DraftSession, Playbook, PlaybookClause, PlaybookRisk
@@ -124,6 +174,7 @@ class TemplateViewSet(FirmSetupMixin, FileDownloadMixin, viewsets.ModelViewSet):
             return TemplateUploadSerializer
         return TemplateSerializer
 
+    @_needs_drafting
     def create(self, request, *args, **kwargs):
         """Save the uploaded file, then parse + name its clause slots in the
         BACKGROUND (process_template). Returns immediately with status=processing so
@@ -178,6 +229,7 @@ class SampleViewSet(FileDownloadMixin, ProtectedDeleteMixin, viewsets.ModelViewS
             qs = qs.filter(project_id=project_id)
         return qs
 
+    @_needs_drafting
     def create(self, request, *args, **kwargs):
         """Dedup guard: if a document with the same (name, contract_type, variant)
         already exists, return it instead of re-uploading + re-processing a copy.
@@ -223,6 +275,7 @@ class SampleViewSet(FileDownloadMixin, ProtectedDeleteMixin, viewsets.ModelViewS
     # (documents/summarizer.py), one summary per AMS document.
 
     @action(detail=True, methods=['post'])
+    @_needs_drafting
     def translate(self, request, pk=None):
         """Kick off translation into the chosen target language. Async — poll the
         sample (GET /samples/{id}/) until translation_status is 'ready'/'failed'."""
@@ -290,8 +343,15 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         """Create the session, dispatch draft generation, return the full session."""
         serializer = self.get_serializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        session = serializer.save()
+        reservation = _drafting_op(request, 'draft.generate')
+        try:
+            session = serializer.save()
+        except Exception:
+            reservation.fail()
+            raise
         # Generate the draft blocks in the background; client polls status.
+        # The generation settles the reservation (tasks.generate_draft).
+        reservation.attach(f'draft:{session.id}')
         from .tasks import generate_draft
         _dispatch(generate_draft, session.id)
         return Response(DraftSessionSerializer(session, context={'request': request}).data, status=status.HTTP_201_CREATED)
@@ -565,6 +625,7 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
         """
         from .tasks import generate_draft
         session = self.get_object()
+        before = session.status
         # One conditional UPDATE, so two clicks (or two tabs) start one run.
         # The current blocks stay until the new draft is complete (tasks.generate_draft).
         claimed = DraftSession.objects.filter(id=session.id).exclude(
@@ -572,6 +633,12 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
             status=DraftSession.Status.PENDING)
         if not claimed:
             return Response({'detail': 'Already generating.'}, status=status.HTTP_409_CONFLICT)
+        try:
+            reservation = _drafting_op(request, 'draft.regenerate')     # counted only for a run that really starts
+        except Exception:
+            DraftSession.objects.filter(id=session.id).update(status=before)
+            raise
+        reservation.attach(f'draft:{session.id}')
         _dispatch(generate_draft, session.id)
         return Response({'id': session.id, 'status': DraftSession.Status.PENDING})
 
@@ -608,6 +675,10 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
                 {'detail': 'No playbook attached. Pass playbook_id.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # An on-demand AI drafting action: counted like the others, settled by
+        # the analyse_risks task (ref risk:<id>).
+        reservation = _drafting_op(request, 'draft.risk')
+        reservation.attach(f'risk:{session.id}')
         session.risk_status = 'idle'
         session.save(update_fields=['risk_status'])
         _dispatch(analyse_risks_task, session.id)
@@ -667,6 +738,7 @@ class PlaybookViewSet(FirmSetupMixin, viewsets.ModelViewSet):
         from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
         return [MultiPartParser(), FormParser(), JSONParser()]
 
+    @_needs_drafting
     def create(self, request, *args, **kwargs):
         """Create the Playbook (+ upload documents), then enqueue processing if method=document."""
         from .tasks import process_playbook
@@ -695,6 +767,7 @@ class PlaybookViewSet(FirmSetupMixin, viewsets.ModelViewSet):
         return Response(out.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='reprocess')
+    @_needs_drafting
     def reprocess(self, request, pk=None):
         """Re-run the extraction + synthesis pipeline (e.g. after adding more documents)."""
         from .tasks import process_playbook
@@ -721,6 +794,7 @@ class PlaybookViewSet(FirmSetupMixin, viewsets.ModelViewSet):
         return Response(PlaybookRiskSerializer(risks, many=True).data)
 
     @action(detail=True, methods=['post'], url_path='add-documents')
+    @_needs_drafting
     def add_documents(self, request, pk=None):
         """Upload additional source documents to an existing playbook."""
         from .models import PlaybookDocument

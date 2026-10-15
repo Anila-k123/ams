@@ -1,6 +1,6 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { TextField } from '../../ui/forms'
+import { Check, SelectField, TextField } from '../../ui/forms'
 import { Button, PageHead, Panel } from '../../ui/kit'
 import { emailError } from '../../utils/validators'
 import { errorText, platformApi, uuid } from '../api'
@@ -23,6 +23,17 @@ export default function FirmCreate() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<Result | null>(null)
+  const [plans, setPlans] = useState<{ code: string; name: string; state: string; assignable: string }[]>([])
+  const [testPlans, setTestPlans] = useState(false)
+  const [testFirm, setTestFirm] = useState(false)
+  useEffect(() => {
+    platformApi.get('/plans').then((r) => setPlans(Array.isArray(r.data) ? r.data : [])).catch(() => setPlans([]))
+    platformApi.get('/subscription-policy').then((r) => setTestPlans(r.data?.testPlansEnabled === true)).catch(() => setTestPlans(false))
+  }, [])
+  // Only published plans for a real firm; unapproved (draft / approved) plans
+  // only for a synthetic test firm where this install allows them. The server
+  // checks the same rule.
+  const planOptions = plans.filter((p) => p.assignable === 'yes' || (testFirm && p.assignable === 'test'))
   // One key per form: a double click or a retry after a timeout returns the same firm.
   const key = useRef(uuid())
 
@@ -48,7 +59,7 @@ export default function FirmCreate() {
         city: form.city, state: form.state }).filter(([, v]) => v))
       const r = await platformApi.post('/firms', {
         name: form.name.trim(), slug: form.slug, adminName: form.adminName.trim(), adminEmail: form.adminEmail.trim(),
-        planCode: form.planCode.trim(), contact,
+        planCode: form.planCode.trim(), contact, ...(testFirm ? { testFirm: true } : {}),
       }, { headers: { 'Idempotency-Key': key.current } })
       setResult(r.data)
     } catch (err) {
@@ -98,8 +109,16 @@ export default function FirmCreate() {
             <TextField label="Identifier (slug)" required value={form.slug} error={err('slug')}
               hint="Permanent, lowercase, used in operator screens."
               onChange={(e) => { setSlugTouched(true); set('slug', e.target.value.toLowerCase()) }} />
-            <TextField label="Plan code" value={form.planCode} onChange={(e) => set('planCode', e.target.value)}
-              hint="Optional. Recorded only; plans are enforced in a later release." />
+            <SelectField label="Plan" value={form.planCode} onChange={(e) => set('planCode', e.target.value)}
+              options={[{ value: '', label: 'Choose later (plan pending)' }, ...planOptions
+                .map((p) => ({ value: p.code, label: p.assignable === 'yes' ? p.name : `${p.name} - ${p.state.toLowerCase()}, test only` }))]}
+              hint={planOptions.length === 0 && !testFirm
+                ? 'No plan has been approved and published yet. The firm can sign in but add nothing until a plan is assigned from its Subscription section.'
+                : 'Without a plan the firm can sign in but add nothing until one is assigned from its Subscription section.'} />
+            {testPlans && (
+              <Check label="Synthetic test firm (may use unapproved plans; development / test installs only)"
+                checked={testFirm} onChange={(e) => { setTestFirm(e.target.checked); set('planCode', '') }} />
+            )}
           </div>
         </Panel>
         <Panel title="First administrator">

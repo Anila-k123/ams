@@ -26,12 +26,44 @@ from .tools import _scope, acting_as, allowed   # team scope; role permissions
 from . import tools as T
 
 
-def _metered(gen, advocate_id):
-    """Run the answer stream under a chat metering context. Set inside the
-    generator, not around it in the view: the stream is consumed after the
-    view has returned, when a context set there would already be gone."""
-    with metering('chat', 'chat.answer', advocate_id, ref_type='chat'):
-        yield from gen
+def _frame_type(frame):
+    """'text' / 'done' / 'error' ... of one SSE frame ('data: {json}')."""
+    import json
+    try:
+        return json.loads(frame[len('data:'):].strip()).get('type') if frame.startswith('data:') else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _metered(gen, advocate_id, reservation=None):
+    """Run the answer stream under a chat metering context, and settle the
+    request's quota reservation by how it ended. Set inside the generator, not
+    around it in the view: the stream is consumed after the view has returned,
+    when a context set there would already be gone.
+
+    Quota: an answer (or a part of one) was sent -> SUCCEEDED. The stream ended
+    in an error before any answer text (provider down, timeout, refused) or
+    raised -> FAILED, the request is given back. The browser went away -> CANCELLED,
+    stays counted (the provider was already asked). Provider tokens are recorded
+    by metering either way and are never given back."""
+    answered = errored = False
+    try:
+        with metering('chat', 'chat.answer', advocate_id, ref_type='chat'):
+            for frame in gen:
+                kind = _frame_type(frame) if isinstance(frame, str) else None
+                answered = answered or kind in ('text', 'action', 'link')
+                errored = errored or kind == 'error'
+                yield frame
+    except GeneratorExit:
+        if reservation:
+            reservation.cancel()
+        raise
+    except Exception:
+        if reservation:
+            reservation.fail()
+        raise
+    if reservation:
+        (reservation.fail if errored and not answered else reservation.succeed)()
 
 
 class AssistantChatView(APIView):
@@ -46,9 +78,18 @@ class AssistantChatView(APIView):
             def _empty():
                 yield 'data: {"type": "error", "message": "Please type a question."}\n\n'
             return StreamingHttpResponse(_empty(), content_type='text/event-stream')
+        # Subscription: Lisa must be in the firm's plan; each request is reserved
+        # against the monthly allowance (an Idempotency-Key can't be reused) and
+        # settled by _metered when the answer ends.
+        from subscriptions import catalogue as plans
+        from subscriptions.service import meter, require_feature
+        require_feature(request.user, plans.ASSISTANT)
+        reservation = meter(request.user, plans.AI_REQUESTS,
+                            request_key=request.headers.get('Idempotency-Key') or None, source='assistant.chat')
         history = clean_history(request.data.get('history'))
         focus = clean_focus_ids(request.data.get('focusCaseIds'))
-        resp = StreamingHttpResponse(_metered(stream_answer(question, request.user, history, focus), aid),
+        resp = StreamingHttpResponse(_metered(stream_answer(question, request.user, history, focus), aid,
+                                              reservation),
                                      content_type='text/event-stream')
         resp['Cache-Control'] = 'no-cache'
         resp['X-Accel-Buffering'] = 'no'  # disable proxy buffering so tokens flush live

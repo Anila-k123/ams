@@ -557,6 +557,14 @@ For the team operating AMS, at `/platform` (separate sign-in with an authenticat
 
 ---
 
+## 22b. SaaS Subscriptions & Usage Limits (Phase 8)
+
+- Plans with features, seat / case / client / storage limits and monthly AI, drafting and summary allowances; per-firm overrides with reason and expiry. Seeded plans (Trial, Basic, Professional, Enterprise) are unapproved examples until a platform owner approves and publishes them (Platform -> Plans, with revisions); Legacy keeps pre-existing firms unrestricted.
+- New firms without a published plan start *plan pending* (read-only); AI requests are reserved and given back when the provider fails.
+- Server-side enforcement with clear messages; expired, cancelled or billing-suspended firms become read-only (nothing deleted, sign-in works).
+- Platform console Subscription panel (plan change, trial extension, status, overrides, usage correction, history); firm **Plan & Usage** page.
+- Separate from the invoices a firm sends its clients; no payments taken. See `docs/SUBSCRIPTIONS.md`.
+
 ## 23. Real-Time Updates (WebSocket)
 
 - **STOMP over WebSocket** provider on the frontend with subscription hooks (`useWebSocket`, `useNotificationListener`).

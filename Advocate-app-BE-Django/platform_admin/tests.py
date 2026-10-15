@@ -195,9 +195,15 @@ class InvitationAndLifecycleTests(_Base):
         super().setUp()
         self.token = self.op_token()
         self.firms = {}
+        # A firm needs an approved, published plan to add people (without one it
+        # is PENDING); the seeded example plan stands in for one here.
+        from subscriptions import catalogue as C
+        from subscriptions.models import Plan
+        C.ensure_plans()
+        Plan.objects.filter(code='PROFESSIONAL').update(state=Plan.PUBLISHED)
         for key in 'ABC':
             r = self.jpost('/api/platform/firms', {'name': f'Firm {key}', 'slug': f'firm-{key.lower()}',
-                                                           'adminEmail': f'admin@{key.lower()}.test'},
+                                                   'adminEmail': f'admin@{key.lower()}.test', 'planCode': 'PROFESSIONAL'},
                       **bearer(self.token))
             self.firms[key] = Firm.objects.get(public_id=r.json()['firm']['publicId'])
         self.tokens = {k: re.findall(r'token=([A-Za-z0-9_\-]+)', m.body)[0]

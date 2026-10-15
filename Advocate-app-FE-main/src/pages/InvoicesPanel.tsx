@@ -392,7 +392,8 @@ export default function InvoicesPanel() {
         await withLoading(api.put(`/api/invoices/requests/${mode.request.id}`, body), "Sending to Accounts...");
         done = "Sent to accounts.";
       } else if (canIssue) {
-        await withLoading(api.post("/api/invoices/create", body), "Generating Invoice...");
+        await withLoading(api.post("/api/invoices/create", body, { headers: { "Idempotency-Key": invoiceKey.current } }), "Generating Invoice...");
+        invoiceKey.current = newRequestKey();
       } else {
         await withLoading(api.post("/api/invoices/requests", body), "Sending to Accounts...");
         done = "Sent to accounts to issue.";
@@ -454,6 +455,8 @@ export default function InvoicesPanel() {
 
   // Same key on a retry, so a timed-out save is not recorded twice.
   const paymentKey = useRef(newRequestKey());
+  // Same for issuing an invoice: a retried "Generate" returns the first invoice.
+  const invoiceKey = useRef(newRequestKey());
 
   const savePayment = async () => {
     if (!paying || payAmount <= 0) return;

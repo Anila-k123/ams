@@ -63,6 +63,7 @@ class Command(BaseCommand):
         if o['once']:
             self.stdout.write('{}: one-shot scan + drain'.format(self._stamp()))
             self._run('scan_notifications')
+            self._run('subscription_sweep')
             self._run('process_notifications')
             return
 
@@ -83,6 +84,7 @@ class Command(BaseCommand):
                 now = time.monotonic()
                 if now - last_scan >= scan_every:
                     self._run('scan_notifications')
+                    self._run('subscription_sweep')     # trials that ended -> EXPIRED (no data touched)
                     last_scan = now
                 if now - last_drain >= drain_every:
                     self._run('process_notifications')

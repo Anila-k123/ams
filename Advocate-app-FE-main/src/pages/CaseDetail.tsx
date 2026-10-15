@@ -25,6 +25,7 @@ import { copyText } from "../utils/clipboard";
 import DuplicateEventDialog from "../components/DuplicateEventDialog";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 import { amountError, blockSignKeys, dueDateError, todayISO } from "../utils/validators";
+import { newRequestKey } from "../utils/requestKey";
 
 type TabKey = "overview" | "parties" | "hearings" | "events" | "orders" | "docs" | "tasks" | "billing" | "notes" | "related" | "acts" | "court" | "timeline";
 
@@ -443,6 +444,8 @@ export default function CaseDetail() {
   // Add expense / invoice / hearing modals
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  // Same key on a retry, so a timed-out "add invoice" never issues two.
+  const invoiceKey = useRef(newRequestKey());
   const [showHearingModal, setShowHearingModal] = useState(false);
   const [dupEvent, setDupEvent] = useState<any>(null);   // the hearing a new one would repeat (409)
   // "hearing" → the Hearings tab (type locked to HEARING); "event" → the Events
@@ -747,9 +750,11 @@ export default function CaseDetail() {
       // Without INVOICE_ISSUE the invoice goes to accounts to check and issue.
       const issue = hasPermission("INVOICE_ISSUE");
       await withLoading(
-        api.post(issue ? "/api/invoices/create" : "/api/invoices/requests", body),
+        issue ? api.post("/api/invoices/create", body, { headers: { "Idempotency-Key": invoiceKey.current } })
+              : api.post("/api/invoices/requests", body),
         issue ? "Adding invoice..." : "Sending to accounts..."
       );
+      invoiceKey.current = newRequestKey();
       setShowInvoiceModal(false);
       setInvoiceForm({ invoiceDate: "", dueDate: "", particulars: [{ description: "", amount: "" }] });
       fetchFinancials();

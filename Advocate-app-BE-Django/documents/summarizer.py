@@ -156,6 +156,51 @@ def summarize(row):
         row.save(update_fields=['status', 'error', 'updated_at'])
         return
 
+    # Subscription: the firm's plan must include AI summaries, and each run is
+    # counted (ai.summaries.month). Checked here, where every path ends up -
+    # upload, Regenerate summary, and the scheduled summarize_documents.
+    reservation, refused = _reserve_summary(doc)
+    if refused:
+        row.status = DocumentSummary.FAILED
+        row.error = refused
+        row.save(update_fields=['status', 'error', 'updated_at'])
+        return
+    try:
+        _summarize_text(row, doc, text)
+    except BaseException:
+        reservation.fail()
+        raise
+    (reservation.succeed if row.status == DocumentSummary.READY else reservation.fail)()
+
+
+def _reserve_summary(doc):
+    """(Reservation, None), or (no-op Reservation, why not). One count per run:
+    a retry of a failed run counts again only because the failure gave the
+    count back; a run already in progress for this version is not started
+    twice; a deliberate re-summary of a version already summarised counts as a
+    new request."""
+    import uuid
+    from subscriptions import catalogue as plans
+    from subscriptions.service import EntitlementDenied, Reservation, SubscriptionError, consume
+    if getattr(settings, 'TENANCY_MODE', 'legacy') != 'firm':
+        return Reservation(), None
+    from core.tenant import firm_id_of_advocate
+    firm_id = getattr(doc, 'firm_id', None) or firm_id_of_advocate(doc.advocate_id)
+    key = f'summary:{doc.id}:v{doc.version or 1}'
+    try:
+        try:
+            return consume(firm_id, plans.AI_SUMMARIES, advocate_id=doc.advocate_id, request_key=key,
+                           source='summary.document'), None
+        except SubscriptionError as exc:
+            if exc.code != 'IDEMPOTENCY_KEY_USED':
+                return Reservation(), 'A summary of this document is already being prepared.'
+            return consume(firm_id, plans.AI_SUMMARIES, advocate_id=doc.advocate_id,
+                           request_key=f'{key}:{uuid.uuid4().hex[:12]}', source='summary.document'), None
+    except EntitlementDenied as exc:
+        return Reservation(), exc.decision.message()
+
+
+def _summarize_text(row, doc, text):
     user_prompt = (
         f"Document name: {doc.document_name}\n"
         f"Category (advocate-provided, may be wrong): {doc.category or 'unknown'}\n\n"

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { TextArea, TextField } from '../../ui/forms'
+import { TextArea } from '../../ui/forms'
 import { Button, Chip, EmptyState, PageHead, Panel, Skel, StatusChip } from '../../ui/kit'
 import { confirm, Modal } from '../../ui/overlays'
 import { errorText, platformApi } from '../api'
 import { usePlatformAuth } from '../PlatformAuth'
+import FirmSubscription from './FirmSubscription'
 import { deliveryLabel } from '../../utils/delivery'
 
 type Invitation = {
@@ -38,8 +39,6 @@ export default function FirmDetail() {
   const [busy, setBusy] = useState(false)
   const [suspendOpen, setSuspendOpen] = useState(false)
   const [reason, setReason] = useState('')
-  const [planOpen, setPlanOpen] = useState(false)
-  const [plan, setPlan] = useState('')
 
   const load = useCallback(() => {
     platformApi.get(`/firms/${id}`).then((r) => setFirm(r.data)).catch((e) => setError(errorText(e, "Couldn't load the firm.")))
@@ -73,10 +72,6 @@ export default function FirmDetail() {
   const resend = (inv: Invitation) => act(() => platformApi.post(`/firms/${id}/invitations/${inv.id}/resend`),
     `A new invitation link was sent to ${inv.email}.`)
 
-  const savePlan = () => act(async () => {
-    await platformApi.patch(`/firms/${id}`, { planCode: plan.trim() }); setPlanOpen(false)
-  }, 'Plan updated.')
-
   if (!firm) {
     return error ? <div className="callout bad" role="alert">{error}</div>
       : <div className="stack"><Skel h={28} w="40%" /><Skel h={120} /></div>
@@ -101,8 +96,7 @@ export default function FirmDetail() {
       )}
 
       <div className="cols" style={{ gap: 16 }}>
-        <Panel title="Identity and plan" actions={can('firm.update') ? <Button size="sm" variant="ghost"
-          onClick={() => { setPlan(firm.planCode || ''); setPlanOpen(true) }}>Change plan</Button> : undefined}>
+        <Panel title="Identity and plan">
           <dl className="pf-dl">
             <dt>Legal name</dt><dd>{firm.name}</dd>
             <dt>Identifier</dt><dd>{firm.slug}</dd>
@@ -141,6 +135,8 @@ export default function FirmDetail() {
           )}
         </Panel>
       </div>
+
+      <FirmSubscription firmId={id} onChanged={load} />
 
       <Panel title="Administrator invitation">
         {!inv ? <EmptyState icon="info" title="No administrator invitation" /> : (
@@ -183,11 +179,6 @@ export default function FirmDetail() {
           <Button variant="danger" onClick={suspend} disabled={reason.trim().length < 3}>Continue</Button></>}>
         <TextArea label="Reason" required value={reason} onChange={(e) => setReason(e.target.value)}
           hint="Recorded in the platform audit log." rows={3} />
-      </Modal>
-      <Modal open={planOpen} onClose={() => setPlanOpen(false)} title="Change plan" size="narrow"
-        footer={<><Button variant="ghost" onClick={() => setPlanOpen(false)}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={savePlan}>Save</Button></>}>
-        <TextField label="Plan code" value={plan} onChange={(e) => setPlan(e.target.value)} maxLength={40} />
       </Modal>
     </div>
   )

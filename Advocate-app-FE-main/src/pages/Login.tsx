@@ -7,6 +7,7 @@ import { useLoading } from '../contexts/LoadingContext';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { Icon } from '../ui/kit';
+import BrandLogo from '../ui/BrandLogo';
 
 /* Shared by the sign-in flow pages (forgot, verify, reset, set-password). */
 
@@ -26,21 +27,17 @@ export function AuthFrame({ children }: { children: ReactNode }) {
     <div className="auth">
       <aside className="auth-art">
         <span className="tape-strand" aria-hidden="true" />
-        <div className="pp-art-brand">
-          <span className="seal" aria-hidden="true">P</span>
-          <div><b>PactPro</b><small>Practice management for advocates</small></div>
-        </div>
+        <div className="pp-art-brand"><BrandLogo /></div>
         <div className="pp-art-mid">
           <div className="rule" aria-hidden="true" />
-          <blockquote>Justice delayed is justice denied.</blockquote>
-          <cite>Legal maxim</cite>
+          <blockquote>The Smarter Way to Manage Your Legal Practice.</blockquote>
         </div>
         <div className="pp-art-foot"><span>Advocate Management System</span><span>Madras High Court and subordinate courts</span></div>
       </aside>
       <main className="auth-form">
         <div className="pp-auth-tools"><ThemeToggle /></div>
         <div className="auth-card">
-          <div className="pp-mobile-brand"><span className="seal" aria-hidden="true">P</span><b>PactPro</b></div>
+          <div className="pp-mobile-brand"><BrandLogo /></div>
           {children}
         </div>
       </main>

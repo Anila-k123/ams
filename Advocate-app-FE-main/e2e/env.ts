@@ -25,6 +25,8 @@ export const E2E_DB = 'pactpro_e2e'
 export const backendEnv: Record<string, string> = {
   DB_NAME: E2E_DB,
   TENANCY_MODE: 'firm',
+  // E2E firms are synthetic: they may use the unapproved example plans (docs/SUBSCRIPTIONS.md).
+  SUBSCRIPTION_TEST_PLANS: 'True',
   TENANCY_COLUMNS: 'True',
   DEBUG: 'True',
   ALLOWED_HOSTS: 'localhost,127.0.0.1',

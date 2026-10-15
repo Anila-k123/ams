@@ -43,6 +43,9 @@ other in file order (01 creates firm A, 03 creates firms B and C).
 | `04-security` | TOTP replay, password-only and wrong code, READONLY operator, disabled operator, operators see no legal records, password reset and member/firm suspension end sessions, forged / `alg:none` tokens, cross-firm role assignment, junior restrictions, last admin via API, signed link purpose + expiry, CORS, concurrent invitation acceptance, concurrent uploads |
 | `05-drafting-sessions` | edit in the editor, save, versions, restore, Word export, earlier versions kept, another firm can't open/save/export, session ended elsewhere -> sign-in |
 | `06-reliability` | one payment under 5 identical requests, simultaneous payments vs balance, simultaneous invoice numbers, 3 queue processors at once, crashed-processor recovery, refused uploads leave no file |
+| `07-subscriptions` | operator plan change and history, client limit with a clear message, expired trial read-only and restored by an extension, plans are unapproved drafts (a real firm can't get one: provisioning refused / plan pending), only owners approve, Plans screen, a Lisa request key can't be reused, firms can read but not change their plan |
+
+E2E firms are synthetic: the E2E backend runs with `SUBSCRIPTION_TEST_PLANS=True` and creates firms with the "Synthetic test firm" box / `testFirm: true`, so they may use the unapproved example plans (`docs/SUBSCRIPTIONS.md`).
 
 ## Not covered by the browser run (and why)
 

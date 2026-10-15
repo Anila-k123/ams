@@ -21,7 +21,8 @@ async function provision(request: APIRequestContext, key: string): Promise<Firm>
   const email = `admin-${run}@${key.toLowerCase()}.e2e.test`
   const r = await request.post(`${API}/api/platform/firms`, {
     headers: { ...bearer(op), 'Idempotency-Key': `${run}-${key}` },
-    data: { name: `Firm ${key} ${run}`, slug: `e2e-${key.toLowerCase()}-${run}`, adminEmail: email, adminName: `Admin ${key}` },
+    data: { name: `Firm ${key} ${run}`, slug: `e2e-${key.toLowerCase()}-${run}`, adminEmail: email, adminName: `Admin ${key}`,
+      planCode: 'PROFESSIONAL', testFirm: true },
   })
   expect(r.status(), await r.text()).toBe(201)
   const uuid = (await r.json()).firm.publicId

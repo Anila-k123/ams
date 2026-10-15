@@ -53,10 +53,21 @@ class ManagedModelTestRunner(DiscoverRunner):
         for m in self.unmanaged_models:
             m._meta.managed = True
         settings.MIGRATION_MODULES = _NoMigrations()
+        # Uploaded / filed documents go to a throw-away folder for the whole run.
+        # Tests that forgot their own override_settings used to write into the
+        # real DOCUMENT_UPLOAD_DIR (orphan .docx files from draft filing tests,
+        # reported by `reconcile_usage --storage`). A test's own override still wins.
+        import tempfile
+        self._real_upload_dir = settings.DOCUMENT_UPLOAD_DIR
+        self._upload_dir = tempfile.mkdtemp(prefix='ams-test-uploads-')
+        settings.DOCUMENT_UPLOAD_DIR = self._upload_dir
         super().setup_test_environment(*args, **kwargs)
 
     def teardown_test_environment(self, *args, **kwargs):
         super().teardown_test_environment(*args, **kwargs)
+        import shutil
+        settings.DOCUMENT_UPLOAD_DIR = self._real_upload_dir
+        shutil.rmtree(self._upload_dir, ignore_errors=True)
         # Restore, so a runner reused in one process cannot leave models
         # marked managed and tempt a later migration into touching them.
         for m in self.unmanaged_models:

@@ -48,6 +48,13 @@ def exception_handler(exc, context):
     from rest_framework import status
     from rest_framework.response import Response
     from rest_framework.views import exception_handler as drf_default
+    from subscriptions.service import EntitlementDenied, SubscriptionError
+    if isinstance(exc, EntitlementDenied):
+        # The firm's subscription doesn't allow this (feature, limit, or an
+        # inactive subscription). Machine-readable for the UI.
+        return Response(exc.payload(), status=status.HTTP_403_FORBIDDEN)
+    if isinstance(exc, SubscriptionError):
+        return Response({'error': str(exc), 'code': exc.code}, status=exc.status)
     if isinstance(exc, TenantError):
         return Response({'error': str(exc) or 'Not available in your firm.'},
                         status=status.HTTP_403_FORBIDDEN)

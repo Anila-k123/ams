@@ -64,6 +64,10 @@ Session separation: the operator token lives in **sessionStorage** (`amsPlatform
 read or sent by the console, and the server refuses each token on the other API (audiences `ams` / `ams-platform`).
 `PlatformRoute` sends anyone without an operator session - including a signed-in firm user - to `/platform/login`.
 
+## Subscriptions (Phase 8)
+
+Plans, entitlements, overrides and usage per firm: see `SUBSCRIPTIONS.md`. Changing a firm's subscription needs `subscription.manage` (OWNER) and a reason; `planCode` on the firm PATCH is refused (`USE_SUBSCRIPTION`). Plans themselves (Platform -> Plans, `/platform/plans`) are approved, published, retired and revised only with `plan.publish` (OWNER), each step in the platform audit. New firms: `planCode` must be a published plan; without one the firm starts **plan pending**. `testFirm: true` (synthetic firms on development / test installs with `SUBSCRIPTION_TEST_PLANS`) unlocks draft plans.
+
 ## Later phases
 
 Firm.`plan_code` is stored for Phase 8 (subscriptions); nothing enforces it.

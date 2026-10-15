@@ -45,6 +45,7 @@ const BackupPage = lazy(() => import('./BackupPage'));
 const UserManagement = lazy(() => import('./UserManagement'));
 const RoleManagement = lazy(() => import('./RoleManagement'));
 const FirmSettings = lazy(() => import('./FirmSettings'));
+const PlanUsage = lazy(() => import('./PlanUsage'));
 const CommunicationDashboard = lazy(() => import('./CommunicationDashboard'));
 const CommunicationSettings = lazy(() => import('./CommunicationSettings'));
 const CommunicationHistory = lazy(() => import('./CommunicationHistory'));
@@ -329,6 +330,7 @@ function AppShell() {
               {/* Admin routes are permission-gated, not just hidden from the sidebar (codes match rbac/views.py). */}
               <Route path="/users" element={<PermissionRoute permissions="USER_MANAGE"><UserManagement /></PermissionRoute>} />
               <Route path="/firm/settings" element={<PermissionRoute permissions="SETTINGS_EDIT"><FirmSettings /></PermissionRoute>} />
+              <Route path="/firm/subscription" element={<PermissionRoute permissions="SETTINGS_EDIT"><PlanUsage /></PermissionRoute>} />
               {/* Merged into Team Members; old links still land there. */}
               <Route path="/firm/members" element={<Navigate to="/dashboard/users" replace />} />
               <Route path="/roles" element={<PermissionRoute permissions="ROLE_MANAGE"><RoleManagement /></PermissionRoute>} />

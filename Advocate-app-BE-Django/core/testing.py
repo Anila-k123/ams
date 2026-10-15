@@ -108,6 +108,10 @@ def make_firm(key, status='ACTIVE'):
     from firms.models import Firm, FirmSettings
     firm = Firm.objects.create(name=f'Firm {key}', slug=f'firm-{key.lower()}-{next(_counter)}', status=status)
     FirmSettings.objects.create(firm=firm, display_name=firm.name)
+    # Every firm has an explicit subscription (a firm without one is refused);
+    # test firms stand for existing practices: Legacy, nothing limited.
+    from subscriptions.service import assign_legacy
+    assign_legacy(firm, reason='test fixture')
     return firm
 
 

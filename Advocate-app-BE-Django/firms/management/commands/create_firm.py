@@ -66,6 +66,13 @@ class Command(BaseCommand):
         if not o['yes']:
             self.stdout.write(self.style.WARNING('Dry run. Re-run with --yes to create.'))
             return
+        from django.conf import settings
+        if settings.TENANCY_MODE != 'legacy':
+            # This only builds pre-tenancy teams (no firms.Firm, no subscription).
+            # With tenancy on, new firms come only from the platform console
+            # (provisioning: explicit plan or PENDING, docs/SUBSCRIPTIONS.md).
+            raise CommandError('create_firm is for legacy mode only. Create the firm in the platform console '
+                               '(Firms -> New firm).')
 
         with transaction.atomic():
             admin, made = self._advocate(o['admin_name'], admin_email, o['password'],

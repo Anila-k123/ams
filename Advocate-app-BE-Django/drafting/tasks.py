@@ -8,6 +8,7 @@ Model/DB imports are done lazily inside each task so this module stays import-li
 and avoids circular imports with the app's models/providers/services.
 """
 
+import functools
 import json
 import logging
 import re
@@ -22,6 +23,45 @@ def _clean_heading(heading):
     return re.sub(r'\s+', ' ', heading or '').strip()
 
 logger = logging.getLogger(__name__)
+
+
+def _settles_quota(kind):
+    """Settle the subscription reservation the view handed to this job (ref
+    '<kind>:<session id>', subscriptions.service.settle_ref) by how the run
+    ended: a finished result keeps the count; a final failure gives it back.
+    A failure that Celery will retry, or a run that found nothing to claim,
+    leaves it reserved (the next run, or the stale sweep, settles it)."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(self, session_id, *args, **kwargs):
+            try:
+                return fn(self, session_id, *args, **kwargs)
+            finally:
+                try:
+                    _settle_session(kind, session_id, self)
+                except Exception:
+                    logger.exception('quota settle failed for %s %s', kind, session_id)
+        return wrapper
+    return deco
+
+
+def _settle_session(kind, session_id, task):
+    from subscriptions.service import settle_ref
+    from .models import DraftSession
+    row = DraftSession.objects.filter(id=session_id).values('status', 'risk_status').first()
+    if row is None:
+        return settle_ref(f'{kind}:{session_id}', False)
+    if kind == 'draft':
+        final = settings.CELERY_TASK_ALWAYS_EAGER or task.request.retries >= (task.max_retries or 0)
+        if row['status'] == DraftSession.Status.READY:
+            settle_ref(f'draft:{session_id}', True)
+        elif row['status'] == DraftSession.Status.FAILED and final:
+            settle_ref(f'draft:{session_id}', False)
+    elif kind == 'risk':
+        if row['risk_status'] == 'ready':
+            settle_ref(f'risk:{session_id}', True)
+        elif row['risk_status'] in ('failed', 'idle'):
+            settle_ref(f'risk:{session_id}', False)
 
 
 def _metered(feature, operation, model_name, owner_field=None, ref_type=''):
@@ -1191,6 +1231,7 @@ def translate_sample(self, sample_id: int, target_lang: str = 'en'):
 
 @shared_task(bind=True, max_retries=3)
 @_metered('draft', 'draft.generate', 'DraftSession', 'created_by_id', 'draft')
+@_settles_quota('draft')
 def generate_draft(self, session_id: int):
     """Retrieve/rewrite clauses → call LLM → verify citations → persist DraftBlocks.
 
@@ -1434,6 +1475,7 @@ def process_playbook(self, playbook_id: int):
 
 @shared_task(bind=True, max_retries=2)
 @_metered('draft', 'draft.risk', 'DraftSession', 'created_by_id', 'draft')
+@_settles_quota('risk')
 def analyse_risks(self, session_id: int):
     """Clause-centric risk analysis: for every PlaybookClause, find the nearest
     DraftBlock and ask the LLM to flag deviations from the playbook position.

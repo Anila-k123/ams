@@ -22,6 +22,11 @@ type Captured = { url?: string; method?: string; headers: Record<string, any>; d
 function fakeServer(reply: (c: Captured) => { status: number; data: any }) {
   const calls: Captured[] = []
   platformApi.defaults.adapter = async (config: any) => {
+    // The plan list (Create firm's plan picker) is reference data, not a call under test.
+    if (config.method === 'get' && config.url === '/plans') return { data: [], status: 200, statusText: 'OK', headers: {}, config }
+    if (config.method === 'get' && config.url === '/subscription-policy') {
+      return { data: { testPlansEnabled: false }, status: 200, statusText: 'OK', headers: {}, config }
+    }
     const c: Captured = { url: config.url, method: config.method, headers: { ...config.headers }, data: config.data ? JSON.parse(config.data) : undefined }
     calls.push(c)
     const { status, data } = reply(c)
@@ -176,6 +181,8 @@ describe('FirmDetail suspend', () => {
       if (c.url === '/firms/f1') return { status: 200, data: FIRM }
       if (c.url === '/firms/f1/usage') return { status: 200, data: { cases: 1, clients: 1, documents: 0, storageBytes: 0, invoices: 0, roles: 3, pendingInvitations: 0 } }
       if (c.url === '/audit') return { status: 200, data: { results: [], hasMore: false, nextBefore: null } }
+      if (c.url === '/plans') return { status: 200, data: [] }
+      if (c.url === '/firms/f1/subscription') return { status: 404, data: { error: 'n/a' } }
       return { status: 200, data: { ...FIRM, status: 'SUSPENDED' } }
     })
     const ask = vi.spyOn(window, 'confirm').mockReturnValue(confirmAnswer)

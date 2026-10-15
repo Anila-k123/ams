@@ -48,8 +48,10 @@ class PlatformOperator(models.Model):
 # What each operator role may do. Data access is never on this list: no role
 # can read a firm's business records.
 PERMISSIONS = {
+    # subscription.manage (a firm's plan, trials, overrides, usage corrections) and
+    # plan.publish (approve / publish / retire / revise commercial plans): owners only.
     PlatformOperator.OWNER: {'firm.read', 'firm.create', 'firm.update', 'firm.lifecycle',
-                             'invite.manage', 'audit.read'},
+                             'invite.manage', 'audit.read', 'subscription.manage', 'plan.publish'},
     PlatformOperator.SUPPORT: {'firm.read', 'firm.update', 'firm.lifecycle', 'invite.manage', 'audit.read'},
     PlatformOperator.READONLY: {'firm.read', 'audit.read'},
 }

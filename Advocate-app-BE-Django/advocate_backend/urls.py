@@ -10,6 +10,7 @@ urlpatterns = [
     path('api/health', health),
     path('api/', include('accounts.urls')),
     path('api/', include('firms.urls')),
+    path('api/', include('subscriptions.urls')),      # before platform_admin: its firms/<id>/<action> would catch /subscription
     path('api/', include('platform_admin.urls')),
     path('api/', include('clients.urls')),
     path('api/', include('metering.urls')),

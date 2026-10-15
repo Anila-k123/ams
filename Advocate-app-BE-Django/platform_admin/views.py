@@ -139,7 +139,7 @@ class FirmsView(_Platform):
             firm, inv, _token, created = provisioning.provision_firm(
                 name=d.get('name'), slug=d.get('slug'), admin_email=d.get('adminEmail'),
                 admin_name=d.get('adminName') or '', plan_code=d.get('planCode') or '',
-                operator=request.user, idempotency_key=key)
+                operator=request.user, idempotency_key=key, test_firm=d.get('testFirm') is True)
         except provisioning.ProvisioningError as exc:
             audit(request, 'FIRM_CREATE', success=False, detail={'code': exc.code, 'slug': d.get('slug')})
             return Response({'error': str(exc), 'code': exc.code}, status=exc.status)
@@ -154,7 +154,9 @@ class FirmsView(_Platform):
                     if cleaned.get(k):
                         setattr(s, field, str(cleaned[k])[:s._meta.get_field(field).max_length or 500])
                 s.save()
-            audit(request, 'FIRM_CREATE', firm_id=firm.id, detail={'slug': firm.slug, 'invitation': inv.id})
+            audit(request, 'FIRM_CREATE', firm_id=firm.id, detail={'slug': firm.slug, 'invitation': inv.id,
+                                                                    'planCode': (d.get('planCode') or '').upper() or None,
+                                                                    'testFirm': d.get('testFirm') is True})
         if inv is not None:
             # The email was attempted when provisioning committed: report what
             # happened (SENT / FAILED / CONSOLE), not the state before sending.
@@ -190,7 +192,9 @@ class FirmDetailView(_Platform):
                 return Response({'error': 'Give the firm a name (2-200 characters).'}, status=400)
             changed['name'] = name
         if 'planCode' in request.data:
-            changed['plan_code'] = str(request.data.get('planCode') or '')[:40]
+            # The plan is the subscription's (it keeps Firm.plan_code in step).
+            return Response({'error': "Change the plan from the firm's Subscription section.",
+                             'code': 'USE_SUBSCRIPTION'}, status=400)
         if changed:
             Firm.objects.filter(id=f.id).update(**changed)
         s, _ = FirmSettings.objects.get_or_create(firm=f, defaults={'display_name': f.name})

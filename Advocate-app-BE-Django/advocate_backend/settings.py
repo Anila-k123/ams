@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'workspace',
     'firms',               # teams grouped into a firm (core/practice.py)
     'platform_admin',      # SaaS platform operators (separate identity, docs/PLATFORM.md)
+    'subscriptions',       # AMS SaaS plans, entitlements, usage (firms paying AMS - NOT firms' client invoices)
     'courtsearch',
     'acts',
     'dictionary',
@@ -164,6 +165,10 @@ TENANCY_MODE = config('TENANCY_MODE', default='legacy')
 if len(sys.argv) > 1 and sys.argv[1] == 'test':
     # Tests don't inherit a developer's .env mode; tenancy tests set it themselves.
     TENANCY_MODE = 'legacy'
+# Phase 8: unapproved (DRAFT / APPROVED-not-published) plans may be given only
+# to firms an operator marked as synthetic test firms, and only on a
+# development / test install (needs DEBUG). Never on in production.
+SUBSCRIPTION_TEST_PLANS = config('SUBSCRIPTION_TEST_PLANS', default=False, cast=bool) and DEBUG
 if TENANCY_MODE not in ('legacy', 'shadow', 'firm'):
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured("TENANCY_MODE must be 'legacy', 'shadow' or 'firm'.")

@@ -47,6 +47,8 @@ class _ThreeFirms:
         for key in 'ABC':
             self.firms[key] = Firm.objects.create(name=f'Firm {key}', slug=f'firm-{key.lower()}',
                                                   status=Firm.ACTIVE)
+            from subscriptions.service import assign_legacy     # every firm has a subscription
+            assign_legacy(self.firms[key], reason='test fixture')
         a = self.firms['A']
         self.admin_a = self._member(a, ALL_PERMISSIONS + ('FIRM_WIDE_SCOPE',))
         self.s1 = self._member(a, ALL_PERMISSIONS)
@@ -331,6 +333,10 @@ class TenancyCommandTests(TestCase):
     def test_apply_then_verify(self):
         self.run_cmd('apply_tenancy', mapping=self.mapping, yes=True)
         a, b = Firm.objects.get(slug='firm-a'), Firm.objects.get(slug='firm-b')
+        # Pre-SaaS practices get an explicit Legacy subscription (documented backfill path).
+        from subscriptions.models import FirmSubscription
+        self.assertEqual(sorted(FirmSubscription.objects.filter(firm__in=[a, b]).values_list('plan__code', 'status')),
+                         [('LEGACY', 'ACTIVE'), ('LEGACY', 'ACTIVE')])
         self.case_a.refresh_from_db()
         self.case_b.refresh_from_db()
         self.case_u.refresh_from_db()

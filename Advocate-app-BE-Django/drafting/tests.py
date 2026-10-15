@@ -2336,6 +2336,28 @@ class ServerTrackedChangeTest(TestCase):
         # Without the clause, the repeated line can't be pinned to one place.
         self.assertFalse(apply_tracked(data, sign, 'Signed in my presence. The Client.')[1])
 
+    def test_lines_joined_by_the_model_still_place_the_word_change(self):
+        """Lisa's text came back with two of the clause's lines joined by a space (draft #114, the enrolment
+        number): the words go back onto the file's lines and only the changed number is marked."""
+        import io as _io
+
+        from docx import Document
+        from docx.oxml.ns import qn
+        from .docfile import apply_tracked
+        doc = Document()
+        doc.add_paragraph('Signed in My Presence. The Client.')
+        doc.add_paragraph('Sd/S. Meenakshi, Advocate Enrolment No. MS/2210/2014 Place: Chennai')
+        buf = _io.BytesIO()
+        doc.save(buf)
+        before = 'Signed in My Presence. The Client.\nSd/S. Meenakshi, Advocate Enrolment No. MS/2210/2014 Place: Chennai'
+        after = 'Signed in My Presence. The Client. Sd/S. Meenakshi, Advocate Enrolment No. MS/2223/2026 Place: Chennai'
+        out, ok = apply_tracked(buf.getvalue(), before, after)
+        self.assertTrue(ok)
+        body = Document(_io.BytesIO(out)).element.body
+        self.assertEqual(len(list(body.iter(qn('w:p')))), 2)       # still two paragraphs
+        self.assertEqual([''.join(t.text for t in d.iter(qn('w:delText'))) for d in body.iter(qn('w:del'))], ['10/2014'])
+        self.assertEqual([''.join(t.text for t in i.iter(qn('w:t'))) for i in body.iter(qn('w:ins'))], ['23/2026'])
+
     def test_endpoint_writes_redline_and_refuses_when_it_cannot_place_it(self):
         from .docfile import clause_texts, review_state
         from .models import DraftFile

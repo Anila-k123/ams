@@ -601,6 +601,28 @@ def _clause_paragraphs(doc, block_id):
     return []
 
 
+def _onto_lines(b_lines, after):
+    """`after` cut into as many lines as `b_lines`, each new word going to the line of the old word it
+    matches or follows. The model often joins two lines with a space (or splits one) while changing a
+    word; a tracked change can't merge or split paragraphs, so the words go back onto the file's lines.
+    None when `b_lines` has no words."""
+    import difflib
+    old = [(w, n) for n, line in enumerate(b_lines) for w in line.split()]
+    if not old:
+        return None
+    new = after.split()
+    out = [[] for _ in b_lines]
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=[w for w, _ in old], b=new, autojunk=False).get_opcodes():
+        if tag == 'equal':
+            for k in range(j2 - j1):
+                out[old[i1 + k][1]].append(new[j1 + k])
+        elif tag in ('replace', 'insert'):
+            line = old[i1][1] if i1 < len(old) else old[-1][1]
+            out[line].extend(new[j1:j2])
+    # Lines whose words didn't change keep their own spacing.
+    return [b if b.split() == words else ' '.join(words) for b, words in zip(b_lines, out)]
+
+
 def apply_tracked(data, before, after, author=AI_AUTHOR, block_id=None):
     """The Word file with the change from `before` to `after` (a clause's text) written as tracked
     changes by `author`, for the person who decides to accept or reject in the editor.
@@ -629,6 +651,9 @@ def apply_tracked(data, before, after, author=AI_AUTHOR, block_id=None):
             continue
         if tag == 'replace' and i2 - i1 == j2 - j1:       # reworded lines: each stays in its paragraph
             pairs += list(zip(b_lines[i1:i2], a_lines[j1:j2]))
+        elif i2 > i1 and j2 > j1 and (lines := _onto_lines(b_lines[i1:i2], ' '.join(a_lines[j1:j2]))):
+            # Lines joined or split by the model: its words back onto the file's lines, one change each.
+            pairs += [(b, a) for b, a in zip(b_lines[i1:i2], lines) if b != a]
         else:                                              # lines added / removed: only if it fits one paragraph
             pairs.append(('\n'.join(b_lines[i1:i2]), '\n'.join(a_lines[j1:j2])))
     if not pairs:

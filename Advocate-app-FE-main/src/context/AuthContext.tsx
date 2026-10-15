@@ -61,12 +61,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (e.key !== 'token' && e.key !== null) return
       const now = localStorage.getItem('token')
       if (now === session.token) return
-      if (!now) window.location.href = '/login'
+      if (!now) window.location.href = session.role === 'CLIENT' ? '/client/login' : '/login'
       else window.location.reload()
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
-  }, [session.token])
+  }, [session.token, session.role])
 
   const updateProfile = useCallback<AuthState['updateProfile']>((patch) => {
     if (patch.fullName !== undefined) localStorage.setItem('fullName', patch.fullName)

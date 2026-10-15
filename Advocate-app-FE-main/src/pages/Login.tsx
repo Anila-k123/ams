@@ -1,7 +1,7 @@
 import '../ui/pages/auth.css';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useId, useState, type ReactNode, type InputHTMLAttributes } from 'react';
-import api from '../api/client';
+import api, { apiUrl } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLoading } from '../contexts/LoadingContext';
 import { useToast } from '../contexts/ToastContext';
@@ -21,26 +21,32 @@ export function ThemeToggle() {
 }
 
 // Two-column frame: ink art panel with the red tape strand, form on paper.
-export function AuthFrame({ children }: { children: ReactNode }) {
+// `brand` (the client portal) puts the firm's own name and logo in place of PactPro's.
+export function AuthFrame({ children, brand }: { children: ReactNode; brand?: { name: string; logoUrl: string | null } | null }) {
+  const mark = brand?.logoUrl
+    ? <img className="pp-brand-logo" src={apiUrl(brand.logoUrl)} alt="" />
+    : <span className="seal" aria-hidden="true">{brand ? brand.name.trim()[0]?.toUpperCase() : 'P'}</span>;
   return (
     <div className="auth">
       <aside className="auth-art">
         <span className="tape-strand" aria-hidden="true" />
         <div className="pp-art-brand">
-          <span className="seal" aria-hidden="true">P</span>
-          <div><b>PactPro</b><small>Practice management for advocates</small></div>
+          {mark}
+          {brand
+            ? <div><b>{brand.name}</b><small>Client portal</small></div>
+            : <div><b>PactPro</b><small>Practice management for advocates</small></div>}
         </div>
         <div className="pp-art-mid">
           <div className="rule" aria-hidden="true" />
           <blockquote>Justice delayed is justice denied.</blockquote>
           <cite>Legal maxim</cite>
         </div>
-        <div className="pp-art-foot"><span>Advocate Management System</span><span>Madras High Court and subordinate courts</span></div>
+        <div className="pp-art-foot"><span>{brand ? 'Client portal, powered by PactPro' : 'Advocate Management System'}</span><span>Madras High Court and subordinate courts</span></div>
       </aside>
       <main className="auth-form">
         <div className="pp-auth-tools"><ThemeToggle /></div>
         <div className="auth-card">
-          <div className="pp-mobile-brand"><span className="seal" aria-hidden="true">P</span><b>PactPro</b></div>
+          <div className="pp-mobile-brand">{mark}<b>{brand ? brand.name : 'PactPro'}</b></div>
           {children}
         </div>
       </main>
@@ -95,8 +101,8 @@ function LoginModule() {
         login(response.data, formData.email);
         applyTheme(response.data.theme || 'light');
         success('Login successful!');
-        // /dashboard renders the client view for CLIENT users (DashboardForRole).
-        navigate('/dashboard');
+        // A client who used the staff page still lands in their portal.
+        navigate(response.data.role === 'CLIENT' ? '/client' : '/dashboard');
       } else {
         error(response.data.error || 'Login failed!');
       }
@@ -131,7 +137,7 @@ function LoginModule() {
           {buttonLoading ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-      <p className="small muted auth-foot">Client? Use the link in your invitation email. <Link className="link" to="/">Back to home</Link></p>
+      <p className="small muted auth-foot">Client? <Link className="link" to="/client/login">Sign in to the client portal</Link>. <Link className="link" to="/">Back to home</Link></p>
     </AuthFrame>
   );
 }

@@ -301,3 +301,28 @@ class KeptOutOfFirmListsTest(ClientTestBase):
         self.assertNotIn(self.anita.id, practice_ids(self.senior))
         self.assertEqual(self.anita.parent_advocate_id, None)
         self.assertEqual(set(self.anita.permission_codes()), set())
+
+
+class PortalLinkTest(ClientTestBase):
+    """Portal links live under /client and carry a signed firm key, so the sign-in
+    page can show the firm's name and logo before anyone signs in."""
+
+    def test_invite_and_portal_links_carry_the_firm_key(self):
+        self.senior.office_name = 'Kumar & Associates'
+        self.senior.office_logo_path = 'uploads/branding/logo_1.png'
+        self.senior.save(update_fields=['office_name', 'office_logo_path'])
+        body = self.client.post(f'/api/clients/{self.client_b.id}/logins', {'email': 'new@other.test'},
+                                content_type='application/json', **auth(self.senior)).json()
+        self.assertRegex(body['inviteUrl'], r'/client/set-password\?f=[^&]+&token=')
+        self.assertRegex(body['portalUrl'], r'/client/login\?f=')
+        self.assertIn(body['portalUrl'], mail.outbox[-1].body)
+        key = re.search(r'f=([^&]+)', body['portalUrl']).group(1)
+        from urllib.parse import unquote
+        brand = self.client.get('/api/client-auth/branding', {'f': unquote(key)})
+        self.assertEqual(brand.status_code, 200)
+        self.assertEqual(brand.json(), {'name': 'Kumar & Associates',
+                                        'logoUrl': '/api/profile/files/branding/logo_1.png'})
+
+    def test_branding_refuses_a_made_up_key(self):
+        for key in ('', '1', f'{self.senior.id:x}:forged'):
+            self.assertEqual(self.client.get('/api/client-auth/branding', {'f': key}).status_code, 404)

@@ -4,11 +4,13 @@ import { apiUrl } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { Check } from "../ui/forms";
 import { AuthAlert, AuthFrame } from "../pages/Login";
+import { usePortalBrand } from "./portalBrand";
 
-/** /set-password?token= — a client sets their password from the emailed one-time link,
+/** /client/set-password?f=&token= — a client sets their password from the emailed one-time link,
  *  then is signed in exactly as by the normal login. */
 export default function SetPassword() {
   const navigate = useNavigate();
+  const brand = usePortalBrand();
   const { login } = useAuth();
   const [params] = useSearchParams();
   const token = params.get("token") || "";
@@ -29,7 +31,7 @@ export default function SetPassword() {
       const data: any = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Could not set the password.");
       login({ ...data, role: data.role || "CLIENT", fullName: data.fullName || "" }, data.email);
-      navigate("/dashboard", { replace: true });   // also drops the one-time token from history
+      navigate("/client", { replace: true });   // also drops the one-time token from history
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -38,10 +40,10 @@ export default function SetPassword() {
   };
 
   return (
-    <AuthFrame>
+    <AuthFrame brand={brand}>
       <div className="pp-kicker">Client portal invitation</div>
       <h1>Set your password</h1>
-      <p className="muted auth-lead">Your advocate has created a login for you to follow your cases: hearing dates, documents and invoices.</p>
+      <p className="muted auth-lead">{brand?.name || "Your advocate"} has created a login for you to follow your cases: hearing dates, documents and invoices.</p>
       <form className="stack" onSubmit={submit}>
         {!token && <AuthAlert>This link is incomplete. Open it from your email again.</AuthAlert>}
         {error && <AuthAlert>{error}</AuthAlert>}

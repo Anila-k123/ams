@@ -8,8 +8,8 @@ import { ThemeToggle, PasswordField } from "../pages/Login";
 import { changePassword, clientDownload, clientGet, fmtDate, inr } from "./clientApi";
 import "../ui/pages/portal.css";
 
-// What a Client-role user sees after signing in at the normal /login (rendered for
-// /dashboard/* instead of the firm app). Read-only: everything comes from /api/client/*,
+// What a Client-role user sees after signing in: the client portal, /client/*
+// (sign-in is /client/login). Read-only: everything comes from /api/client/*,
 // which only ever returns this client's own matters; the backend refuses every firm
 // endpoint for client users (clientaccess/gate.py), so this view is not the safeguard.
 
@@ -61,17 +61,17 @@ function Home({ account }: { account: any }) {
         {(o) => (
           <>
             <div className="figures pt-figs">
-              <Link to="/dashboard/cases" className="figure"><div className="lbl">Active cases</div><div className="val">{o.activeCases}</div></Link>
-              <Link to="/dashboard/invoices" className="figure"><div className="lbl">Outstanding fees</div><div className="val">{inr(o.outstandingAmount)}</div>
+              <Link to="/client/cases" className="figure"><div className="lbl">Active cases</div><div className="val">{o.activeCases}</div></Link>
+              <Link to="/client/invoices" className="figure"><div className="lbl">Outstanding fees</div><div className="val">{inr(o.outstandingAmount)}</div>
                 <div className="meta">{o.outstandingInvoices} invoice{o.outstandingInvoices === 1 ? "" : "s"} due</div></Link>
-              <Link to="/dashboard/documents" className="figure"><div className="lbl">Shared documents</div><div className="val">{o.sharedDocuments}</div></Link>
+              <Link to="/client/documents" className="figure"><div className="lbl">Shared documents</div><div className="val">{o.sharedDocuments}</div></Link>
             </div>
             <div className="section-title pt-st"><h2>Upcoming hearings</h2></div>
             <div className="panel"><div className="list">
               {o.upcomingHearings.length === 0
                 ? <EmptyState icon="calendar" title="No hearings scheduled" text="Your advocate will add the next date after the court lists it." />
                 : o.upcomingHearings.map((h: any) => (
-                  <Link key={h.id} to={`/dashboard/cases/${h.caseId}`} className="list-item">
+                  <Link key={h.id} to={`/client/cases/${h.caseId}`} className="list-item">
                     <Stamp date={h.date} />
                     <div className="grow">
                       <div className="mono small">{h.caseNumber}</div>
@@ -100,7 +100,7 @@ function Cases() {
           : (
             <div className="cols g-2">
               {cases.map((c: any) => (
-                <Link key={c.id} to={`/dashboard/cases/${c.id}`} className="panel pp-case-card">
+                <Link key={c.id} to={`/client/cases/${c.id}`} className="panel pp-case-card">
                   <div className="row between"><span className="mono small muted">{c.caseNumber}</span><StatusChip status={c.status} /></div>
                   <h3 className="pt-case-title">{c.caseTitle}</h3>
                   <div className="faint small">{[c.caseType, c.courtLevel].filter(Boolean).join(" · ")}</div>
@@ -124,7 +124,7 @@ function CaseDetail() {
     <Loadable state={state}>
       {(c) => (
         <>
-          <Link to="/dashboard/cases" className="link small">My cases</Link>
+          <Link to="/client/cases" className="link small">My cases</Link>
           <div className="docket pt-docket">
             <div className="no">{c.caseNumber}</div>
             <h1>{c.caseTitle}</h1>
@@ -382,7 +382,7 @@ export default function ClientApp() {
         </div>
         <nav className="portal-nav" aria-label="Portal">
           {NAV.map(([to, label]) => (
-            <NavLink key={to} to={to ? `/dashboard/${to}` : "/dashboard"} end={to === ""}>{label}</NavLink>
+            <NavLink key={to} to={to ? `/client/${to}` : "/client"} end={to === ""}>{label}</NavLink>
           ))}
         </nav>
       </header>
@@ -395,7 +395,7 @@ export default function ClientApp() {
           <Route path="documents" element={<Documents />} />
           <Route path="messages" element={<Messages />} />
           <Route path="account" element={<Account account={account} />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/client" replace />} />
         </Routes>
       </main>
       {(firm.address || firm.email) && (

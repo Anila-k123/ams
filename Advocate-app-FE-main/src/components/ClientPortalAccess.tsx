@@ -42,7 +42,7 @@ export default function ClientPortalAccess({ client, isOpen, onClose, toast, onC
     setBusy(true);
     try {
       const r = await api.post(`/api/clients/${client.id}/logins`, { email: toEmail, fullName });
-      setLastLink({ url: r.data.inviteUrl, emailSent: r.data.emailSent, email: r.data.email });
+      setLastLink({ url: r.data.inviteUrl, portalUrl: r.data.portalUrl, emailSent: r.data.emailSent, email: r.data.email });
       if (r.data.emailSent) toast?.success(`Set-password link emailed to ${r.data.email}.`);
       else toast?.warning("Email could not be sent — copy the link below and share it with the client.");
       load();
@@ -63,8 +63,8 @@ export default function ClientPortalAccess({ client, isOpen, onClose, toast, onC
     }
   };
 
-  const copy = async () => {
-    if (await copyText(lastLink.url)) toast?.success("Link copied.");
+  const copy = async (url: string = lastLink.url) => {
+    if (await copyText(url)) toast?.success("Link copied.");
     else toast?.error("Could not copy — select the link and copy it.");
   };
 
@@ -148,8 +148,17 @@ export default function ClientPortalAccess({ client, isOpen, onClose, toast, onC
               </span>
               <div className="row" style={{ gap: 6 }}>
                 <input className="input grow mono xs" readOnly value={lastLink.url} onFocus={(e) => e.target.select()} aria-label="Invite link" />
-                <Button size="sm" icon="copy" onClick={copy}>Copy</Button>
+                <Button size="sm" icon="copy" onClick={() => copy()}>Copy</Button>
               </div>
+              {lastLink.portalUrl && (
+                <>
+                  <span>After that, the client signs in here (share it or bookmark it for them):</span>
+                  <div className="row" style={{ gap: 6 }}>
+                    <input className="input grow mono xs" readOnly value={lastLink.portalUrl} onFocus={(e) => e.target.select()} aria-label="Client portal sign-in link" />
+                    <Button size="sm" icon="copy" onClick={() => copy(lastLink.portalUrl)}>Copy</Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

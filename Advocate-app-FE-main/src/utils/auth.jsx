@@ -85,6 +85,8 @@ export function logoutAndRedirect(showAlert = true, reason = "") {
 
 // Helper function — clear storage & redirect
 function performLogout() {
+  // A client goes back to the portal's sign-in, staff to theirs.
+  const home = localStorage.getItem("role") === "CLIENT" ? "/client/login" : "/login";
   localStorage.removeItem("token");
   localStorage.removeItem("email");
   localStorage.removeItem("role");
@@ -95,5 +97,5 @@ function performLogout() {
   // (AuthContext listens for it) to sign out too. The full page load below
   // drops every in-memory cache (documents, dashboard).
   try { sessionStorage.clear(); } catch { /* storage unavailable */ }
-  window.location.href = "/login";
+  window.location.href = home;
 }

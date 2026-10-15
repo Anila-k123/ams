@@ -104,6 +104,7 @@ API base: `VITE_API_BASE` (default `http://127.0.0.1:8080`, see `src/api/client.
 - **Copy to clipboard:** always use `copyText()` from `src/utils/clipboard.ts`, never `navigator.clipboard` directly. The office opens AMS over plain http on the LAN, where `navigator.clipboard` does not exist; the helper falls back to `execCommand("copy")` and returns whether it worked.
 - **Platform console** (`src/platform/`, routes `/platform/*`): its own axios client and sessionStorage token (`platform/api.ts`); never import the firm `api/client` default or read localStorage `token` there, and firm pages never use `platformApi`. Guard pages with `PlatformRoute permission=...`.
 - **UI tests:** `npm test` (Vitest, jsdom, `vitest.config.ts`, setup `src/test/setup.ts`, tests in `src/__tests__/`). Wrap pages that use `AuthFrame` in `ThemeProvider`; mock the firm API with `vi.mock('../api/client')`.
+- **Client portal routes:** clients sign in at `/client/login` and use `/client/*` (`client/ClientApp.tsx`); staff use `/login` and `/dashboard`, and each side is redirected to its own home (`App.tsx`). Portal links are built only by `clientaccess.views.portal_url` (it adds the signed firm key `?f=` that brands the sign-in page); never hand-build `/client/...` links in the backend.
 - **Hover hints:** use the native `title` attribute (plus `aria-label` on icon-only buttons); there is no tooltip component.
 
 ## Conventions

@@ -47,7 +47,7 @@ const FEATURES: { title: string; text: string; icon: ReactNode }[] = [
 // login.css draws the diagonal, the red band and the photo.
 export function AuthFrame({ children }: { children: ReactNode }) {
   return (
-    <div className="lg">
+    <div className="lg-auth">
       <span className="lg-hero-bg" aria-hidden="true" />
       <span className="lg-band" aria-hidden="true" />
       <span className="lg-glow" aria-hidden="true" />

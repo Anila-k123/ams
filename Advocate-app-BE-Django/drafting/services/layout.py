@@ -69,22 +69,10 @@ def pdf_paragraphs(file_path, tol=6.0):
                 lines = [ln for ln in page.extract_text_lines() if (ln.get('text') or '').strip()]
                 if not lines:
                     continue
-                xs0 = sorted(ln['x0'] for ln in lines)
-                xs1 = sorted(ln['x1'] for ln in lines)
-                left = xs0[len(xs0) // 10]                 # 10th percentile: ignore stray marks
-                right = xs1[-(len(xs1) // 10) - 1]
-                width = max(right - left, 1)
+                from .pdf2word import _line_align, text_edges
+                left, right = text_edges(lines, page.width)
                 for ln in lines:
-                    gap_l, gap_r = ln['x0'] - left, right - ln['x1']
-                    if gap_l > tol * 3 and abs(gap_l - gap_r) <= tol * 2:
-                        align = 'center'
-                    elif gap_l > width * 0.25 and gap_r <= tol:
-                        align = 'right'
-                    elif gap_l <= tol and gap_r <= tol:
-                        align = 'justify'
-                    else:
-                        align = 'left'
-                    out.append((ln['text'].strip(), align))
+                    out.append((ln['text'].strip(), _line_align(ln, left, right, tol)))
     except Exception:
         return []
     return out

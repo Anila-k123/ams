@@ -9,6 +9,7 @@ import { fieldOptions, resolveFormFields } from './constants/legal'
 import { amsApi, amsCaseLabel, type AmsCase, type AmsLink } from './api/ams'
 import AmsCasePicker from './components/AmsCasePicker'
 import SlotFieldInput from './components/SlotFieldInput'
+import PartiesEditor, { emptyParty, partyLines, type Party } from './components/PartiesEditor'
 import AddDocumentsDialog from './components/AddDocumentsDialog'
 import NewDraftScratch from './NewDraftScratch'
 import { BeginChoices } from './components/NewDraftDialog'
@@ -75,6 +76,8 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
 
   // Step 2 — generation inputs.
   const [facts, setFacts] = useState<Record<string, string>>({})
+  // Parties to the document, with their roles (any number), as in "Type the facts directly".
+  const [parties, setParties] = useState<Party[]>([emptyParty(), emptyParty()])
   const [prompt, setPrompt] = useState('')
   const [llm] = useState('gemini')  // Gemini-only for now
   const [applyBnsCodes, setApplyBnsCodes] = useState(false)
@@ -151,6 +154,17 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
     setSubmitting(true); setError('')
     const mergedFacts: Record<string, string> = { ...facts }
     if (prompt.trim()) mergedFacts.instructions = prompt.trim()
+    // Parties with their roles: the AI binds each name to its role in the reference document,
+    // whatever order the document names them in. The first two also fill Party A / Party B, which
+    // older code still reads.
+    const lines = partyLines(parties)
+    if (lines.length) mergedFacts.parties = lines.join('\n')
+    const named = parties.filter(p => p.name.trim())
+    named.slice(0, 2).forEach((p, i) => {
+      const key = i === 0 ? 'party_a' : 'party_b'
+      mergedFacts[`${key}_name`] = p.name.trim()
+      if (p.entity.trim()) mergedFacts[`${key}_type`] = p.entity.trim()
+    })
     try {
       const session = await draftingApi.createSession({
         template: selectedTemplate?.id ?? null,
@@ -168,8 +182,19 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
     }
   }
 
-  // The full case-facts form: baseline fields + the template's own extras.
-  const slotFields = resolveFormFields(selectedTemplate)
+  // The case-facts form: baseline fields + the template's own extras; the parties have their own
+  // editor (name, entity type, role, … for any number of parties).
+  const slotFields = resolveFormFields(selectedTemplate, { includeParties: false })
+  const partyOptions = [amsLink?.prefill.party_a_name, amsLink?.prefill.party_b_name]
+    .filter((v, i, a): v is string => !!v && a.indexOf(v) === i)
+
+  // A linked case fills the first two parties' names (its client and opposite party), never
+  // overwriting a name already typed.
+  useEffect(() => {
+    if (!amsLink) return
+    const names = [amsLink.prefill.party_a_name, amsLink.prefill.party_b_name]
+    setParties(ps => ps.map((row, i) => (names[i] && !row.name ? { ...row, name: names[i] as string } : row)))
+  }, [amsLink])
 
   // Apply AMS prefill to the fields this form actually has (a select only if the
   // value is one of its options), never overwriting what the lawyer typed.
@@ -315,6 +340,9 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
           {/* Step 2 — Facts & Prompt */}
           {step === 2 && (
             <div className="form-grid">
+              <div className="full">
+                <PartiesEditor parties={parties} onChange={setParties} options={partyOptions} listId="nd-party-names" />
+              </div>
               {slotFields.map(field => (
                 <SlotFieldInput key={field.key} field={field} value={facts[field.key] ?? ''}
                   badge={fromAms(field.key) ? 'from case details' : undefined}
@@ -347,6 +375,7 @@ function NewDraftReference({ navigate }: { navigate: ReturnType<typeof useNaviga
                   {amsLink && <><dt>Case</dt><dd><span className="mono">{amsCaseLabel(amsLink.case)}</span>{amsLink.task && ` · Task: ${amsLink.task.title}`}</dd></>}
                   <dt>Reference documents</dt><dd>{selectedDocs.map(d => <div key={d.id}>{d.name}</div>)}</dd>
                   <dt>Template</dt><dd>{selectedTemplate ? selectedTemplate.name : 'No template (rewrite the documents)'}</dd>
+                  {partyLines(parties).map((line, i) => <FactRow key={`p${i}`} label={`Party ${i + 1}`} value={line} />)}
                   {slotFields.map(f => <FactRow key={f.key} label={f.label} value={facts[f.key]} />)}
                   <dt>Instructions</dt><dd style={{ whiteSpace: 'pre-wrap' }}>{prompt.trim() || 'None'}</dd>
                   <dt>Section numbers</dt><dd>{applyBnsCodes ? 'BNS/BNSS' : 'As in the documents'}</dd>

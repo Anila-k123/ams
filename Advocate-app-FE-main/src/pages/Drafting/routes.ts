@@ -7,6 +7,9 @@ export const DRAFTING = {
   samples: '/dashboard/drafting/samples',
   playbooks: '/dashboard/drafting/playbooks',
   draft: (id: number | string) => `/draft/${id}`,
+  // The draft page with the PactPro editor started at once: the user already chose it at Open
+  // (or it's where Open falls back to); see docs/DESKTOP_EDITING.md.
+  draftEditor: (id: number | string) => `/draft/${id}?editor=1`,
   sampleTool: (id: number | string, tool: string) => `/samples/${id}/${tool}`,
 }
 

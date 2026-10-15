@@ -17,14 +17,26 @@ class DocumentSerializer(serializers.ModelSerializer):
     client = serializers.SerializerMethodField()
     # Shared with the client in the client portal.
     clientVisible = serializers.BooleanField(source='client_visible', read_only=True)
+    # The latest review with the client (docs/CLIENT_REVIEW.md): {id, status, waitingOn} or None.
+    clientReview = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = [
             'id', 'documentName', 'originalName', 'storedName', 'filePath', 'fileSize',
             'fileType', 'category', 'description', 'version', 'downloadCount', 'status',
-            'uploadDate', 'updatedAt', 'caseEntity', 'client', 'clientVisible',
+            'uploadDate', 'updatedAt', 'caseEntity', 'client', 'clientVisible', 'clientReview',
         ]
+
+    def get_clientReview(self, obj):
+        from clientreview.models import ClientReview, ClientReviewRound
+        review = ClientReview.objects.filter(document_id=obj.id).exclude(status=ClientReview.CANCELLED).first()
+        if review is None:
+            return None
+        current = review.current_round()
+        waiting = 'client' if (review.status == ClientReview.OPEN and current
+                               and current.status == ClientReviewRound.SENT) else             'firm' if review.status == ClientReview.OPEN else None
+        return {'id': review.id, 'status': review.status, 'waitingOn': waiting}
 
     def get_caseEntity(self, obj):
         if not obj.case_id:

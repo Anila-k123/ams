@@ -15,6 +15,8 @@ import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/court.css";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
 import { dueDateError, todayISO } from "../utils/validators";
+import { useTaskDocument, taskDocumentLabel } from "../components/TaskDocument";
+import { useOpenWith } from "../components/OpenWithDialog";
 
 const FILTERS = [
   { value: "inprogress", label: "In progress" },
@@ -106,10 +108,13 @@ export default function TasksPage() {
   const [openId, setOpenId] = useState<any>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const openWith = useOpenWith();   // docs/DESKTOP_EDITING.md
 
   const canAssign = hasPermission("TASK_ASSIGN");
   const { withLoading } = useLoading();
   const toast = useToast();
+  // "Write in editor" / "Continue document": the task's own document, or a new one (components/TaskDocument).
+  const taskDoc = useTaskDocument();
   const { success, error } = toast;
 
   const fetchTasks = useCallback(async () => {
@@ -251,15 +256,6 @@ export default function TasksPage() {
   };
 
   // Open a document in a new tab
-  const viewDocument = async (docId: any) => {
-    try {
-      const res = await api.get(`/api/documents/preview/${docId}`, { responseType: "blob" });
-      window.open(URL.createObjectURL(res.data), "_blank");
-    } catch (err) {
-      console.error("Preview error:", err);
-      error("Could not open document.");
-    }
-  };
 
   const caseOptions = cases.map((c) => ({ value: c.id, label: `${c.caseNumber} — ${c.caseTitle}` }));
   const assigneeOptions = assignees.map((a) => ({ value: a.id, label: a.fullName || a.email }));
@@ -365,6 +361,8 @@ export default function TasksPage() {
 
   return (
     <div className="court">
+      {openWith.dialog}
+      {taskDoc.dialog}
       <PageHead title="Tasks"
         sub="Assignments, research, drafting and follow-ups across all matters. Review work that has been submitted to you and keep deadlines visible."
         actions={hasPermission("TASK_CREATE") && (
@@ -440,10 +438,10 @@ export default function TasksPage() {
                 <div className="label court-label">Attached</div>
                 <div className="row wrap">
                   {openTask.draftSessionId && (
-                    <button type="button" className="btn sm" onClick={() => navigate(DRAFTING.draft(openTask.draftSessionId))}><Icon name="pen" size="sm" />Open draft</button>
+                    <button type="button" className="btn sm" onClick={() => void openWith.openDocument("draft", openTask.draftSessionId, DRAFTING.draftEditor(openTask.draftSessionId))}><Icon name="pen" size="sm" />Open draft</button>
                   )}
                   {openTask.documents?.map((d: any) => (
-                    <button key={d.id} type="button" className="btn sm" onClick={() => viewDocument(d.id)} title={`View ${d.name}`}><Icon name="eye" size="sm" />{d.name}</button>
+                    <button key={d.id} type="button" className="btn sm" onClick={() => taskDoc.openAttached(openTask, d.id)} title={`Open ${d.name}`}><Icon name="eye" size="sm" />{d.name}</button>
                   ))}
                 </div>
               </div>
@@ -464,15 +462,27 @@ export default function TasksPage() {
               </div>
             )}
 
-            {isOpen(openTask) && hasPermission("DRAFT_CREATE") && (
-              <button type="button" className="btn court-self-start" onClick={() => navigate(newDraftUrl({ caseId: openTask.caseId, taskId: openTask.id }))}>
-                <Icon name="pen" size="sm" />Draft for this task
-              </button>
+            {isOpen(openTask) && (hasPermission("DRAFT_CREATE") || hasPermission("DOCUMENT_UPLOAD")) && (
+              <div className="row wrap" style={{ gap: 8 }}>
+                {hasPermission("DRAFT_CREATE") && (
+                  <button type="button" className="btn" title="The AI drafts it from a template or reference documents"
+                    onClick={() => navigate(newDraftUrl({ caseId: openTask.caseId, taskId: openTask.id }))}>
+                    <Icon name="sparkle" size="sm" />Draft with AI
+                  </button>
+                )}
+                {hasPermission("DOCUMENT_UPLOAD") && (
+                  <button type="button" className="btn" disabled={taskDoc.busy}
+                    title="Work on this task's document (a new Word document, attached to the task, if it has none)"
+                    onClick={() => void taskDoc.openTaskDocument(openTask)}>
+                    <Icon name="edit" size="sm" />{taskDoc.busy ? "Opening…" : taskDocumentLabel(openTask)}
+                  </button>
+                )}
+              </div>
             )}
 
             <SubmissionHistory task={openTask} myId={myId} canAssign={canAssign} toast={toast}
-              onDone={() => fetchTasks()} onViewDocument={viewDocument}
-              onOpenDraft={() => navigate(DRAFTING.draft(openTask.draftSessionId))} />
+              onDone={() => fetchTasks()} onViewDocument={(id: number) => taskDoc.openAttached(openTask, id)}
+              onOpenDraft={() => void openWith.openDocument("draft", openTask.draftSessionId, DRAFTING.draftEditor(openTask.draftSessionId))} />
           </div>
         )}
       </Drawer>

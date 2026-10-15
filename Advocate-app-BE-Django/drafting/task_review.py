@@ -40,6 +40,9 @@ def approve_blockers(task):
                 out.append('Your suggestions on the draft are still waiting for the author\'s decision.')
             else:
                 out.append('Decide on every change in the draft\'s review before approving (Review on the draft).')
+        # Edited in ONLYOFFICE: the same rule for the Word file's own tracked changes and comments.
+        from .onlyoffice import file_review_blockers
+        out.extend(file_review_blockers(session))
     return sorted(set(out))
 
 
@@ -61,7 +64,11 @@ def submit_blocker(session):
                                     decider_id=session.created_by_id)
     if waiting.exists():
         return 'Accept or decline the suggestions on this draft first (Review on the draft), then submit.'
-    return None
+    # Edited in ONLYOFFICE: undecided tracked changes in the Word file block submitting too (open
+    # comments don't: a question for the reviewer may stay open).
+    from .onlyoffice import file_review_blockers
+    changes = [b for b in file_review_blockers(session) if 'tracked change' in b]
+    return changes[0] if changes else None
 
 
 def before_submit(session, user):

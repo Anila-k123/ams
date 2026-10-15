@@ -172,6 +172,14 @@ The Case Detail screen is a full workspace with an inline-editable header (title
 
 **Endpoints:** `GET /api/clients`, `/my-clients`, `/archived`, `/search`, `/handlers`, `/<id>`; `POST /api/clients/create`, `/restore/<id>`; `PUT /api/clients/update/<id>`; `DELETE /api/clients/delete/<id>`. (Guarded by `CLIENT_VIEW`.)
 
+### Client portal (`/client`)
+
+- Clients have their own front door: **`/client/login`** (sign in with their email), **`/client/set-password`** (from the invite), **`/client/forgot-password`** → `/client/verify-otp` → `/client/reset-password` (the staff reset pages with the firm's branding, ending back on `/client/login`) and the portal pages under `/client` (`/client/cases`, `/client/invoices`, `/client/documents`, `/client/messages`, `/client/account`). Staff keep `/login`.
+- **Firm name and logo on the sign-in page.** Portal links carry a signed firm key (`?f=`, `clientaccess/views.py` `portal_key` / `portal_url`); the page reads `GET /api/client-auth/branding?f=` (public: office name and logo only, unknown key = 404) and remembers the key in the browser, so a bookmarked `/client/login` keeps the firm's look. The name and logo are the practice owner's **Profile → Office** name and logo. Without a key the page shows a generic "Client portal".
+- Each side goes to its own home: a client who signs in at `/login` lands in `/client`; staff details at `/client/login` aren't signed in there but pointed to `/login`; a client opening `/dashboard` is sent to `/client`, staff opening `/client` to `/dashboard`. Signing out (or a session ending) returns a client to `/client/login`.
+- The invite email and **Clients → Portal access** give both links: the one-time set-password link (72 hours) and the permanent sign-in link to bookmark. Invite links sent before this (`/set-password?token=`) still work: they redirect to `/client/set-password`.
+- The backend split is unchanged: `clientaccess/gate.py` still refuses every firm API to client users, whatever URL the browser is on.
+
 ---
 
 ## 5a. Format validation

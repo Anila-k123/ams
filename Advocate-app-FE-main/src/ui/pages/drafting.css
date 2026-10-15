@@ -305,3 +305,49 @@
 .pp-editor-paper .ProseMirror th { background: var(--surface-2); font-weight: 600; }
 .pp-editor-paper .ProseMirror td p, .pp-editor-paper .ProseMirror th p { margin: 0; }
 .pp-editor-paper .ProseMirror .selectedCell { background: var(--info-soft); }
+
+/* A Word template / sample's header and footer around the draft (drafting/wordform.py): shown where
+   they print, not editable; Download keeps them exactly as in the file. */
+.pp-word-band { color: inherit; font-size: 0.85em; opacity: 0.9; user-select: none; cursor: default; }
+.pp-word-band { box-sizing: border-box; }
+.pp-word-band.head { border-bottom: 1px dashed var(--line); padding-bottom: 6px; margin-bottom: 0; }
+.pp-word-band.foot { border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 16px;
+  display: flex; flex-direction: column; justify-content: flex-end; }
+.pp-word-band p { margin: 0; }
+.pp-word-band img { max-height: 72px; max-width: 100%; vertical-align: middle; }
+.pp-word-band table { width: 100%; border-collapse: collapse; }
+.pp-word-band td { vertical-align: top; padding: 0 4px; }
+
+/* Preview: the formatted document, read-only (DraftPage previewHtml). Tables as in the editor. */
+.paper-sheet.preview .pp-doc-html p { margin: 0 0 8px; }
+.paper-sheet.preview .pp-doc-html table { border-collapse: collapse; width: 100%; margin: 8px 0; table-layout: fixed; }
+.paper-sheet.preview .pp-doc-html td, .paper-sheet.preview .pp-doc-html th { border: 1px solid var(--line-strong); padding: 4px 8px; vertical-align: top; }
+.paper-sheet.preview .pp-doc-html th { background: var(--surface-2); font-weight: 600; }
+.paper-sheet.preview .pp-doc-html td p, .paper-sheet.preview .pp-doc-html th p { margin: 0; }
+
+/* Template shapes the editor can't draw (stamp boxes): told once above the page. */
+.dr-shapes-note { margin: 6px auto 0; max-width: 210mm; padding: 4px 10px; border: 1px dashed var(--line); border-radius: 4px; }
+
+/* ONLYOFFICE editor (docs/ONLYOFFICE_PLAN.md): fills the middle pane. */
+.dr-oo { display: flex; flex-direction: column; height: 100%; min-height: 70vh; }
+.dr-oo > .dr-oo-host { flex: 1; min-height: 70vh; display: flex; flex-direction: column; }
+.dr-oo-host > *, .dr-oo iframe { flex: 1; min-height: 70vh; border: 0; }
+.dr-oo-error { margin: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 4px; color: var(--bad); background: var(--bad-soft); }
+/* PactPro's loading screen over the editor until the document is ready (no ONLYOFFICE splash). */
+.dr-oo { position: relative; }
+.dr-oo-loading { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center;
+  gap: 12px; padding-top: 48px; background: var(--paper); }
+.dr-oo-sheet { width: min(560px, 90%); padding: 40px 48px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 4px; display: flex; flex-direction: column; gap: 12px; }
+.dr-oo-line { height: 10px; border-radius: 3px; background: var(--surface-3); width: 100%; animation: dr-oo-pulse 1.4s ease-in-out infinite; }
+.dr-oo-line.w40 { width: 40%; } .dr-oo-line.w60 { width: 60%; margin: 0 auto 8px; } .dr-oo-line.w70 { width: 70%; } .dr-oo-line.w80 { width: 80%; }
+@keyframes dr-oo-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .dr-oo-line { animation: none; } }
+/* A document (not a draft) in the editor: the page head, then the editor filling the rest. */
+.dr-doc-editor { display: flex; flex-direction: column; height: calc(100vh - 96px); min-height: 520px; }
+.dr-doc-editor-body { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; background: var(--surface); }
+.dr-doc-editor-body .dr-oo, .dr-doc-editor-body .dr-oo-host, .dr-doc-editor-body .dr-oo-host > * { height: 100%; min-height: 0; }
+
+/* Draft open in a desktop editor (docs/DESKTOP_EDITING.md): the editor area shows this instead. */
+.dr-desktop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s3);
+  min-height: 320px; padding: var(--s5); text-align: center; border: 1px dashed var(--line); border-radius: var(--r-md); }

@@ -211,18 +211,34 @@ class DocumentDetailView(APIView):
         doc = owned(Document.objects.filter(id=pk, advocate_id__in=practice_ids(request.user)), request.user).first()
         if doc is None:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
-        # Rows first, in one transaction; the files go only once that has
-        # committed, so a failed delete never leaves a row without its file.
-        # No DB foreign key to the summary/version tables, so clean up explicitly.
-        files = [(doc.file_path, doc.stored_name)] + [
-            (v.file_path, v.stored_name) for v in DocumentVersion.objects.filter(document_id=pk)]
-        with transaction.atomic():
-            doc.delete()
-            DocumentSummary.objects.filter(document_id=pk).delete()
-            DocumentVersion.objects.filter(document_id=pk).delete()
+        remove_document(doc)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+def remove_document(doc):
+    """Delete a document: its rows (summary, versions, and every side table keyed by its id: task
+    attachments, the editor's state, desktop working copies / locks) in one transaction, then its files.
+    Used by Delete and by the blank-document clean-up (documents/blank.py)."""
+    from workspace.models import CaseTaskDocument
+    from .dav import drop_work
+    from .models import DesktopLock, DocumentEditState, DocumentVersionChanges
+    pk = doc.id
+    # Rows first, in one transaction; the files go only once that has
+    # committed, so a failed delete never leaves a row without its file.
+    # No DB foreign key to the summary/version tables, so clean up explicitly.
+    files = [(doc.file_path, doc.stored_name)] + [
+        (v.file_path, v.stored_name) for v in DocumentVersion.objects.filter(document_id=pk)]
+    with transaction.atomic():
+        doc.delete()
+        DocumentSummary.objects.filter(document_id=pk).delete()
+        DocumentVersion.objects.filter(document_id=pk).delete()
+        CaseTaskDocument.objects.filter(document_id=pk).delete()
+        DocumentEditState.objects.filter(document_id=pk).delete()
+        DocumentVersionChanges.objects.filter(document_id=pk).delete()
+        DesktopLock.objects.filter(kind='doc', obj_id=pk).delete()
         # remove_stored_file only ever deletes inside the documents folder.
         transaction.on_commit(lambda: [remove_stored_file(p, n) for p, n in files])
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    drop_work('doc', pk)                               # a working copy in media storage, if any
 
 
 def _summary_payload(row):

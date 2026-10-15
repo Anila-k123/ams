@@ -2,7 +2,7 @@ import '../ui/pages/auth.css';
 import '../ui/pages/login.css';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useId, useState, type ReactNode, type InputHTMLAttributes } from 'react';
-import api from '../api/client';
+import api, { apiUrl } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
 import { useLoading } from '../contexts/LoadingContext';
 import { useToast } from '../contexts/ToastContext';
@@ -45,7 +45,8 @@ const FEATURES: { title: string; text: string; icon: ReactNode }[] = [
 
 // Sign-in frame: navy hero (what PactPro does) beside the sign-in card.
 // login.css draws the diagonal, the red band and the photo.
-export function AuthFrame({ children }: { children: ReactNode }) {
+// `brand` (the client portal) puts the firm's own name and logo in place of PactPro's.
+export function AuthFrame({ children, brand }: { children: ReactNode; brand?: { name: string; logoUrl: string | null } | null }) {
   return (
     <div className="lg-auth">
       <span className="lg-hero-bg" aria-hidden="true" />
@@ -82,10 +83,20 @@ export function AuthFrame({ children }: { children: ReactNode }) {
       <main className="lg-side">
         <div className="lg-tools"><ThemeToggle /></div>
         <div className="lg-card auth-card">
-          <div className="lg-brand">
-            <img src={logo} alt="PactPro" width={720} height={294} />
-            <div className="lg-tagline">Smarter Practice. Stronger Outcomes.</div>
-          </div>
+          {brand ? (
+            <div className="lg-brand">
+              {brand.logoUrl
+                ? <img className="pp-brand-logo" src={apiUrl(brand.logoUrl)} alt="" />
+                : <span className="seal" aria-hidden="true">{brand.name.trim()[0]?.toUpperCase()}</span>}
+              <b className="lg-firm">{brand.name}</b>
+              <div className="lg-tagline">Client portal</div>
+            </div>
+          ) : (
+            <div className="lg-brand">
+              <img src={logo} alt="PactPro" width={720} height={294} />
+              <div className="lg-tagline">Smarter Practice. Stronger Outcomes.</div>
+            </div>
+          )}
           {children}
         </div>
       </main>
@@ -145,8 +156,8 @@ function LoginModule() {
         login(response.data, formData.email);
         applyTheme(response.data.theme || 'light');
         success('Login successful!');
-        // /dashboard renders the client view for CLIENT users (DashboardForRole).
-        navigate('/dashboard');
+        // A client who used the staff page still lands in their portal.
+        navigate(response.data.role === 'CLIENT' ? '/client' : '/dashboard');
       } else {
         error(response.data.error || 'Login failed!');
       }
@@ -184,7 +195,7 @@ function LoginModule() {
         </button>
       </form>
       <div className="lg-or" aria-hidden="true">OR</div>
-      <p className="auth-foot">Client? Use the link in your invitation email. <Link className="link" to="/">Back to home</Link></p>
+      <p className="auth-foot">Client? <Link className="link" to="/client/login">Sign in to the client portal</Link>. <Link className="link" to="/">Back to home</Link></p>
     </AuthFrame>
   );
 }

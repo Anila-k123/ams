@@ -239,7 +239,7 @@ class CaseTasksView(APIView):
 
     def get(self, request, case_id):
         qs = visible_tasks(request.user).filter(case_id=case_id)
-        return Response(CaseTaskSerializer(qs, many=True).data)
+        return Response(CaseTaskSerializer(qs, many=True, context={'request': request}).data)
 
     def post(self, request, case_id):
         if not _owns_case(request, case_id):
@@ -262,7 +262,7 @@ class CaseTasksView(APIView):
             assigned_by_id=request.user.id,
         )
         _notify_assignment(task, request.user)
-        return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 class MyTasksAllView(APIView):
@@ -272,7 +272,7 @@ class MyTasksAllView(APIView):
 
     def get(self, request):
         qs = visible_tasks(request.user).order_by('completed', 'deadline', 'id')
-        return Response(CaseTaskSerializer(qs, many=True).data)
+        return Response(CaseTaskSerializer(qs, many=True, context={'request': request}).data)
 
 
 class CreateTaskView(APIView):
@@ -303,7 +303,7 @@ class CreateTaskView(APIView):
             assigned_by_id=request.user.id,
         )
         _notify_assignment(task, request.user)
-        return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 class AssignableAdvocatesView(APIView):
@@ -336,7 +336,7 @@ class AssignTaskView(APIView):
         task.assigned_by_id = request.user.id
         task.save(update_fields=['assigned_to_id', 'assigned_by_id'])
         _notify_assignment(task, request.user)
-        return Response(CaseTaskSerializer(task).data)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data)
 
 
 class TaskDocumentsView(APIView):
@@ -361,8 +361,8 @@ class TaskDocumentsView(APIView):
         # submits once, with the report, after its files are attached.
         if request.data.get('submit', True) is not False:
             from . import review
-            review.submit(task, request.user, note='Attached a document for review.')
-        return Response(CaseTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+            review.submit(task, request.user, note='Attached a document for review.', documents=[int(document_id)])
+        return Response(CaseTaskSerializer(task, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
 
 class DeleteTaskDocumentView(APIView):
@@ -396,7 +396,7 @@ class ToggleCaseTaskView(APIView):
                              'submitRequired': True}, status=status.HTTP_400_BAD_REQUEST)
         task.completed = not task.completed
         task.save(update_fields=['completed'])
-        return Response(CaseTaskSerializer(task).data)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data)
 
 
 class SubmitTaskView(APIView):
@@ -419,19 +419,11 @@ class SubmitTaskView(APIView):
         if task.review_status == review.APPROVED or task.cancelled:
             return Response({'error': 'This task is already closed.'},
                             status=status.HTTP_400_BAD_REQUEST)
-        note = (request.data.get('note') or '').strip()
-        if not note:
-            return Response({'error': 'Say what was done.'}, status=status.HTTP_400_BAD_REQUEST)
-        hours = request.data.get('hours')
-        try:
-            hours = round(float(hours), 2) if hours not in (None, '') else None
-        except (TypeError, ValueError):
-            return Response({'error': 'hours must be a number'}, status=status.HTTP_400_BAD_REQUEST)
-        if hours is not None and not (0 < hours <= 999):
-            return Response({'error': 'hours must be between 0 and 999'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        review.submit(task, request.user, note=note, hours=hours)
-        return Response(CaseTaskSerializer(task).data)
+        code, err = submit_task(task, request.user, request.data.get('note'), request.data.get('hours'),
+                                request.data.get('documentIds'))
+        if err:
+            return Response({'error': err}, status=code)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data)
 
 
 class ReviewTaskView(APIView):
@@ -452,24 +444,64 @@ class ReviewTaskView(APIView):
         if task.review_status != review.SUBMITTED:
             return Response({'error': 'This task has not been submitted for review.'},
                             status=status.HTTP_400_BAD_REQUEST)
-        action = (request.data.get('action') or '').strip()
-        note = (request.data.get('note') or '').strip()
-        # The draft's review rounds (drafting/task_review.py, docs/DRAFT_REVIEW.md).
-        from drafting import task_review
-        if action == 'approve':
-            blockers = task_review.approve_blockers(task)
-            if blockers:
-                return Response({'error': ' '.join(blockers)}, status=status.HTTP_400_BAD_REQUEST)
-            review.approve(task, request.user, note)
-        elif action == 'request_changes':
-            if not note:
-                return Response({'error': 'Say what needs to change.'}, status=status.HTTP_400_BAD_REQUEST)
-            review.request_changes(task, request.user, note)
-            task_review.on_changes_requested(task, request.user, note)
-        else:
-            return Response({'error': 'action must be approve or request_changes'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        return Response(CaseTaskSerializer(task).data)
+        code, err = review_task(task, request.user, request.data.get('action'), request.data.get('note'))
+        if err:
+            return Response({'error': err}, status=code)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data)
+
+
+def submit_task(task, user, note, hours, document_ids=None):
+    """The assignee hands a task in (the page's Submit work, the desktop add-ons): (status, error or None).
+    The caller has checked the task is in the user's practice."""
+    from . import review
+    if not review.needs_review(task) or not review.is_assignee(task, user):
+        return 403, 'Only the person this task is assigned to can submit it.'
+    if task.review_status == review.APPROVED or task.cancelled:
+        return 400, 'This task is already closed.'
+    note = (note or '').strip()
+    if not note:
+        return 400, 'Say what was done.'
+    try:
+        hours = round(float(hours), 2) if hours not in (None, '') else None
+    except (TypeError, ValueError):
+        return 400, 'hours must be a number'
+    if hours is not None and not (0 < hours <= 999):
+        return 400, 'hours must be between 0 and 999'
+    # Which attached documents are handed in (the Submit dialog's ticks); default: all of them.
+    if document_ids is not None:
+        try:
+            document_ids = [int(i) for i in document_ids]
+        except (TypeError, ValueError):
+            return 400, 'documentIds must be a list of ids'
+    review.submit(task, user, note=note, hours=hours, documents=document_ids)
+    return 200, None
+
+
+def review_task(task, user, action, note):
+    """The reviewer approves or sends back (the page, the document editor, the desktop add-ons):
+    (status, error or None)."""
+    from . import review
+    if not review.can_review(task, user):
+        return 403, 'You cannot review this task.'
+    if task.review_status != review.SUBMITTED:
+        return 400, 'This task has not been submitted for review.'
+    action = (action or '').strip()
+    note = (note or '').strip()
+    # The draft's review rounds (drafting/task_review.py, docs/DRAFT_REVIEW.md).
+    from drafting import task_review
+    if action == 'approve':
+        blockers = task_review.approve_blockers(task)
+        if blockers:
+            return 400, ' '.join(blockers)
+        review.approve(task, user, note)
+    elif action == 'request_changes':
+        if not note:
+            return 400, 'Say what needs to change.'
+        review.request_changes(task, user, note)
+        task_review.on_changes_requested(task, user, note)
+    else:
+        return 400, 'action must be approve or request_changes'
+    return 200, None
 
 
 def task_owner_id(task):
@@ -506,7 +538,7 @@ class UpdateTaskPriorityView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         task.priority = priority
         task.save(update_fields=['priority'])
-        return Response(CaseTaskSerializer(task).data)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data)
 
 
 class CancelTaskView(APIView):
@@ -526,7 +558,7 @@ class CancelTaskView(APIView):
         cancelled = request.data.get('cancelled', True)
         task.cancelled = bool(cancelled)
         task.save(update_fields=['cancelled'])
-        return Response(CaseTaskSerializer(task).data)
+        return Response(CaseTaskSerializer(task, context={'request': request}).data)
 
 
 class DeleteCaseTaskView(APIView):

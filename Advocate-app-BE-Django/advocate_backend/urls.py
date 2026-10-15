@@ -3,6 +3,7 @@ paths match the frontend EXACTLY, including bare collection paths with no traili
 slash (e.g. GET /api/clients).
 """
 
+from documents.dav import dav_view
 from django.urls import path, include
 from core.views import health
 
@@ -17,6 +18,9 @@ urlpatterns = [
     path('api/', include('cases.urls')),
     path('api/', include('events.urls')),
     path('api/', include('documents.urls')),
+    # Desktop editing over WebDAV (documents/dav.py): signed token, no AMS login (Word can't log in).
+    path('dav/<str:token>/', dav_view),
+    path('dav/<str:token>/<path:name>', dav_view),
     path('api/', include('dashboard.urls')),
     path('api/', include('notifications.urls')),
     path('api/', include('rbac.urls')),
@@ -39,4 +43,5 @@ urlpatterns = [
     # would otherwise collide with AMS's /api/clients.
     path('api/drafting/', include('drafting.urls')),
     path('api/', include('clientaccess.urls')),
+    path('api/', include('clientreview.urls')),
 ]

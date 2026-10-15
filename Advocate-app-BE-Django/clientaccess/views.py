@@ -18,6 +18,7 @@ import secrets
 import uuid
 
 from django.conf import settings
+from django.core import signing
 from django.core.mail import send_mail
 from django.db import transaction
 from django.http import FileResponse, HttpResponse
@@ -86,13 +87,40 @@ def _audit(request, client, verb, title, entity_type=None, entity_id=None):
         log.exception('client audit failed')
 
 
+# The firm key in portal links (/client/login?f=...): names whose name and logo
+# the sign-in page shows before anyone has signed in. Signed so it can't be
+# walked through ids to list every firm; it reveals only what is public anyway.
+_PORTAL_SALT = 'ams.client.portal'
+
+
+def portal_key(owner_id):
+    return signing.Signer(salt=_PORTAL_SALT).sign(format(owner_id, 'x'))
+
+
+def owner_from_key(key):
+    try:
+        return Advocate.objects.filter(id=int(signing.Signer(salt=_PORTAL_SALT).unsign(key or ''), 16)).first()
+    except (signing.BadSignature, ValueError):
+        return None
+
+
+def portal_url(client, path='login', **query):
+    """A link into the client portal, carrying the firm key for the branding."""
+    from urllib.parse import urlencode
+    owner = scope.firm_owner(client) if client else None
+    # Firm key first: the one-time token stays the link's last part.
+    qs = urlencode({**({'f': portal_key(owner.id)} if owner is not None else {}), **query})
+    return f"{settings.CLIENT_APP_URL.rstrip('/')}/client/{path}" + (f'?{qs}' if qs else '')
+
+
 def issue_invite(client_user):
     """A fresh one-time set-password link; older unused links stop working."""
     now = timezone.now()
     ClientInvite.objects.filter(client_user=client_user, used_at__isnull=True).update(used_at=now)
     raw = secrets.token_urlsafe(32)
     ClientInvite.objects.create(client_user=client_user, token_hash=_hash(raw), expires_at=now + INVITE_TTL)
-    return f"{settings.CLIENT_APP_URL.rstrip('/')}/set-password?token={raw}"
+    client = Client.objects.filter(id=client_user.client_id).first()
+    return portal_url(client, 'set-password', token=raw)
 
 
 def _send(to, subject, body):
@@ -334,6 +362,21 @@ class SetPasswordView(APIView):
                          'theme': advocate.theme})
 
 
+class PortalBrandingView(APIView):
+    """GET /api/client-auth/branding?f=<firm key> -> {name, logoUrl} for the
+    client sign-in page. Public: only the office name and logo (already public
+    files) are returned; an unknown key is a 404."""
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        owner = owner_from_key(request.query_params.get('f'))
+        if owner is None:
+            return Response({'error': 'Unknown portal link.'}, status=404)
+        return Response({'name': owner.office_name or owner.full_name,
+                         'logoUrl': _branding_url(owner.office_logo_path)})
+
+
 # --- firm side --------------------------------------------------------------------
 
 def _scoped_client(user, client_id):
@@ -417,9 +460,11 @@ class ClientLoginsView(_FirmView):
         sent = _send(email, f'Your login for {firm.get("name") or "your advocate"}',
                      f'Hello {advocate.full_name},\n\n{firm.get("advocateName") or "Your advocate"} has created a login '
                      f'for you to follow your cases, hearings, invoices and shared documents.\n\n'
-                     f'Set your password within 72 hours:\n{url}\n')
+                     f'Set your password within 72 hours:\n{url}\n\n'
+                     f'After that, sign in any time at:\n{portal_url(client)}\n')
         # The link is returned so the advocate can share it another way if email is down.
-        return Response({**_login_row(link), 'inviteUrl': url, 'emailSent': sent}, status=201)
+        return Response({**_login_row(link), 'inviteUrl': url, 'portalUrl': portal_url(client), 'emailSent': sent},
+                        status=201)
 
 
 def _client_membership(advocate_id, client, active):

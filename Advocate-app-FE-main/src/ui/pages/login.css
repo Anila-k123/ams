@@ -125,6 +125,10 @@
 }
 .lg-brand { text-align: center; margin-bottom: clamp(8px, 2.24vh, 24px); }
 .lg-brand img { display: block; margin: 0 auto; width: min(224px, 80%, 21.6vh); height: auto; }
+/* Client portal: the firm's own logo (any shape, on a light tile) or its initial, and its name. */
+.lg-brand .pp-brand-logo { width: auto; max-width: min(200px, 70%); height: clamp(48px, 9vh, 88px); padding: 6px; }
+.lg-brand .seal { width: 56px; height: 56px; margin: 0 auto; border-radius: 50%; background: var(--tape); color: #fff; display: grid; place-items: center; font: 600 22px/1 var(--f-display); }
+.lg-firm { display: block; margin-top: 10px; font: 500 22px/1.2 var(--f-display); }
 .lg-tagline {
   display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4.8px;
   font-size: clamp(11px, 1.4vh, 12px); letter-spacing: .02em; color: #1E2F48; white-space: nowrap;

@@ -7,6 +7,16 @@ from .filing import DraftAmsTaskView, SendToAmsView
 from .comments import CommentDeleteView, CommentReplyView, CommentResolveView, CommentsView
 from .casefile import CaseFileView
 from .incoming import ImportChangesView
+from .onlyoffice import (
+    CallbackView as OnlyOfficeCallbackView, EditorConfigView, FileView as OnlyOfficeFileView, LogoView as OnlyOfficeLogoView,
+    ApplyView as OnlyOfficeApplyView, PlaceholdersView, SaveView as OnlyOfficeSaveView,
+    ChangesFileView as OnlyOfficeChangesFileView, CompareFileView as OnlyOfficeCompareFileView,
+    CompareSourceView as OnlyOfficeCompareView, HistoryDataView as OnlyOfficeHistoryDataView,
+    HistoryView as OnlyOfficeHistoryView, RestoreView as OnlyOfficeRestoreView,
+    VersionFileView as OnlyOfficeVersionFileView, FinaliseView as OnlyOfficeFinaliseView,
+    PdfaView as OnlyOfficePdfaView, RedlineView as OnlyOfficeRedlineView, MentionUsersView as OnlyOfficeMentionUsersView,
+    MentionNotifyView as OnlyOfficeMentionNotifyView, StateView as OnlyOfficeStateView,
+)
 from .review_requests import (
     ForMyReviewView, MyReviewStatusView, ReviewersView, ReviewRequestCancelView, ReviewRequestDoneView, ReviewRequestsView,
 )
@@ -65,4 +75,29 @@ urlpatterns = [
     # (merge phase 07, in-process: drafting/filing.py).
     path('drafts/<int:pk>/send-to-ams/', SendToAmsView.as_view(), name='draft-send-to-ams'),
     path('drafts/<int:pk>/ams-task/', DraftAmsTaskView.as_view(), name='draft-ams-task'),
+    # ONLYOFFICE editor (drafting/onlyoffice.py, docs/ONLYOFFICE_PLAN.md): the signed editor config for
+    # the page; the file and save callback for the document server (signed links, no AMS login).
+    path('draft-sessions/<int:pk>/onlyoffice/', EditorConfigView.as_view(), name='draft-onlyoffice'),
+    path('draft-sessions/<int:pk>/onlyoffice/save/', OnlyOfficeSaveView.as_view(), name='draft-onlyoffice-save'),
+    path('draft-sessions/<int:pk>/onlyoffice/state/', OnlyOfficeStateView.as_view(), name='draft-onlyoffice-state'),
+    path('draft-sessions/<int:pk>/onlyoffice/apply/', OnlyOfficeApplyView.as_view(), name='draft-onlyoffice-apply'),
+    path('draft-sessions/<int:pk>/onlyoffice/placeholders/', PlaceholdersView.as_view(),
+         name='draft-onlyoffice-placeholders'),
+    # The editor's own version history, restore and compare.
+    path('draft-sessions/<int:pk>/onlyoffice/history/', OnlyOfficeHistoryView.as_view(), name='draft-onlyoffice-history'),
+    path('draft-sessions/<int:pk>/onlyoffice/history/<int:version>/', OnlyOfficeHistoryDataView.as_view(),
+         name='draft-onlyoffice-history-data'),
+    path('draft-sessions/<int:pk>/onlyoffice/restore/', OnlyOfficeRestoreView.as_view(), name='draft-onlyoffice-restore'),
+    path('draft-sessions/<int:pk>/onlyoffice/compare/', OnlyOfficeCompareView.as_view(), name='draft-onlyoffice-compare'),
+    path('draft-sessions/<int:pk>/onlyoffice/finalise/', OnlyOfficeFinaliseView.as_view(), name='draft-onlyoffice-finalise'),
+    path('draft-sessions/<int:pk>/onlyoffice/pdfa/', OnlyOfficePdfaView.as_view(), name='draft-onlyoffice-pdfa'),
+    path('draft-sessions/<int:pk>/onlyoffice/redline/', OnlyOfficeRedlineView.as_view(), name='draft-onlyoffice-redline'),
+    path('draft-sessions/<int:pk>/onlyoffice/users/', OnlyOfficeMentionUsersView.as_view(), name='draft-onlyoffice-users'),
+    path('draft-sessions/<int:pk>/onlyoffice/notify/', OnlyOfficeMentionNotifyView.as_view(), name='draft-onlyoffice-notify'),
+    path('onlyoffice/version/<int:pk>/<int:version>/', OnlyOfficeVersionFileView.as_view(), name='onlyoffice-version'),
+    path('onlyoffice/changes/<int:pk>/<int:version>/', OnlyOfficeChangesFileView.as_view(), name='onlyoffice-changes'),
+    path('onlyoffice/compare/<int:pk>/<str:name>', OnlyOfficeCompareFileView.as_view(), name='onlyoffice-compare-file'),
+    path('onlyoffice/file/<int:pk>/', OnlyOfficeFileView.as_view(), name='onlyoffice-file'),
+    path('onlyoffice/logo.svg', OnlyOfficeLogoView.as_view(), name='onlyoffice-logo'),
+    path('onlyoffice/callback/<int:pk>/', OnlyOfficeCallbackView.as_view(), name='onlyoffice-callback'),
 ]

@@ -99,21 +99,34 @@ def previous_snapshot(task):
             .values_list('draft_snapshot', flat=True).first())
 
 
-def submit(task, by, note='', hours=None, draft_snapshot=None, changes=None):
+def submitted_documents(task, ids=None):
+    """[{id, version, name}] of the task's attached documents (only `ids`, when given), as they are now."""
+    from .models import CaseTaskDocument
+    attached = list(CaseTaskDocument.objects.filter(task_id=task.id).values_list('document_id', flat=True))
+    if ids is not None:
+        wanted = {int(i) for i in ids}
+        attached = [d for d in attached if d in wanted]
+    docs = {d.id: d for d in Document.objects.filter(id__in=attached)}
+    return [{'id': d, 'version': docs[d].version or 1, 'name': docs[d].document_name or docs[d].original_name or ''}
+            for d in attached if d in docs]
+
+
+def submit(task, by, note='', hours=None, draft_snapshot=None, changes=None, documents=None):
     """Mark a delegated task as submitted for review, with the assignee's report.
 
     No-op for self-assigned tasks, for someone other than the assignee, and for
     approved tasks. Every submission is kept (TaskSubmission), so resubmitting
     after changes were requested adds a round rather than replacing the last.
     A draft submission also stores its snapshot and what changed since the
-    previous one (see compare_drafts).
+    previous one (see compare_drafts). `documents`: the attached document ids handed in (default: all of them).
     """
     if not needs_review(task) or not is_assignee(task, by) or task.review_status == APPROVED:
         return False
     from .models import TaskSubmission
     TaskSubmission.objects.create(task_id=task.id, submitted_by_id=by.id,
                                   note=(note or '').strip(), hours=hours,
-                                  draft_snapshot=draft_snapshot, changes=changes)
+                                  draft_snapshot=draft_snapshot, changes=changes,
+                                  documents=submitted_documents(task, documents))
     task.review_status = SUBMITTED
     task.submitted_at = timezone.now()
     task.save(update_fields=['review_status', 'submitted_at'])
@@ -128,9 +141,14 @@ def approve(task, by, note=None):
     task.reviewed_by_id, task.reviewed_at = by.id, timezone.now()
     task.completed = True
     task.save(update_fields=['review_status', 'review_note', 'reviewed_by_id', 'reviewed_at', 'completed'])
-    from .models import CaseTaskDocument
-    doc_ids = CaseTaskDocument.objects.filter(task_id=task.id).values_list('document_id', flat=True)
-    Document.objects.filter(id__in=list(doc_ids)).update(status='APPROVED')
+    # Only what the approved (latest) submission handed in; older submissions without a record: all attached.
+    from .models import CaseTaskDocument, TaskSubmission
+    latest = TaskSubmission.objects.filter(task_id=task.id).first()
+    if latest is not None and latest.documents is not None:
+        doc_ids = [d['id'] for d in latest.documents]
+    else:
+        doc_ids = list(CaseTaskDocument.objects.filter(task_id=task.id).values_list('document_id', flat=True))
+    Document.objects.filter(id__in=doc_ids).update(status='APPROVED')
     _notify(task.assigned_to_id, task, by, 'TASK_APPROVED', 'Approved: {}', '{} has approved this task.')
 
 

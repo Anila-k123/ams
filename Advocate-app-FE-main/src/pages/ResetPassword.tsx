@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { Icon } from '../ui/kit';
 import { AuthAlert, AuthFrame, PasswordField } from './Login';
+import { usePortalFlow } from '../client/portalBrand';
 
 const PWD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&*!?_+=-])[A-Za-z\d@#$%^&*!?_+=-]{8,32}$/;
 
@@ -18,6 +19,7 @@ const labels = [
 function ResetPassword() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { brand, base, signIn } = usePortalFlow();
   const email = (location.state as any)?.email || '';
   const otp = (location.state as any)?.otp || '';
 
@@ -54,7 +56,7 @@ function ResetPassword() {
       const res = await api.post('/api/auth/reset-password', { email, otp, newPassword: password });
       if (res.data.success) {
         success('Password reset successful! Please log in with your new password.');
-        navigate('/login');
+        navigate(signIn);
       } else {
         setPwdError(res.data.error || 'Failed to reset password.');
       }
@@ -66,8 +68,8 @@ function ResetPassword() {
   }
 
   return (
-    <AuthFrame>
-      <Link className="link small" to="/verify-otp" state={{ email }}>Back</Link>
+    <AuthFrame brand={brand}>
+      <Link className="link small" to={`${base}/verify-otp`} state={{ email }}>Back</Link>
       <h1 className="auth-h-gap">Choose a new password</h1>
       {email && <p className="muted auth-lead">For <b className="mono">{email}</b>.</p>}
       <form onSubmit={handleSubmit} className="stack">

@@ -53,7 +53,7 @@ Feature reference: [DRAFT_EXPORT.md](DRAFT_EXPORT.md) (versions, redline, compar
 | # | Do | ✅ Expect |
 |---|---|---|
 | 2.1 | Sidebar **Tasks**. Click the task **Draft lease deed for Kannan**. | A side panel opens with the task's details. |
-| 2.2 | In the panel click **Draft for this task**. | The new-draft screen opens, already linked to Kannan's case and the task. |
+| 2.2 | In the panel click **Draft with AI**. | The new-draft screen opens, already linked to Kannan's case and the task. |
 | 2.3 | If asked how to begin, pick **Start from reference documents** and continue. | The wizard's first step, *Documents*. |
 | 2.4 | Click **Add documents** → tab **Upload new** → **Choose a file to upload** → pick `Sample_Residential_Lease_Deed_Chennai.docx`. | The dialog closes; the document is listed (it says it's processing, then ready). |
 | 2.5 | Click **Continue**. On the template step click **Skip, no template**. | The details step. |
@@ -334,7 +334,7 @@ reviewer may do follows the firm rule: *whoever has authority decides, everyone 
 | # | Do | ✅ Expect |
 |---|---|---|
 | 8.0 | *(Once.)* **Window A (Rajesh):** **Drafting → Firm Templates → Upload template** → name `Legal Notice – Rent Arrears`, **Agreement type** `Legal Notice` → choose `docs/demo-files/Template_Legal_Notice_Rent_Arrears.docx`. | The template is listed and reaches **Ready**. |
-| 8.1 | **Drafting → Drafts** → **New draft** → **Type the facts directly** → **Agreement type** `Legal Notice` → **Continue** → title `Legal Notice – Rent Arrears`, parties `K. Kannan` (role `Landlord`) and `R. Arun Prakash` (role `Tenant`), **Purpose** `Demand payment of Rs. 80,000 rent arrears for August and September 2026 from the tenant, and give notice to vacate the premises by 31 October 2026 if the arrears are not paid within 15 days.`, **Extra instructions** `Rent is Rs. 40,000 a month under the lease deed dated 1 April 2026. Send by registered post with acknowledgement due.` → **Generate draft** (full field list: DEMO_REDLINE.md, section 7, *Making a notice*). Fill *Date of Notice* and *Arrears Amount*. | A notice with clauses *1. The Tenancy* … *7. Costs*, and **Request review** in the top bar (it has no task). |
+| 8.1 | **Drafting → Drafts** → **New draft** → **Type the facts directly** → **Agreement type** `Legal Notice` → **Continue** → parties `K. Kannan` (role `Landlord`) and `R. Arun Prakash` (role `Tenant`), **Purpose** `Demand payment of Rs. 80,000 rent arrears for August and September 2026 from the tenant, and give notice to vacate the premises by 31 October 2026 if the arrears are not paid within 15 days.`, **Extra instructions** `Rent is Rs. 40,000 a month under the lease deed dated 1 April 2026. Send by registered post with acknowledgement due.` → **Generate draft** (full field list: DEMO_REDLINE.md, section 7, *Making a notice*). Fill *Date of Notice* and *Arrears Amount*. | A notice with clauses *1. The Tenancy* … *7. Costs*, and **Request review** in the top bar (it has no task). |
 | 8.2 | Open the **lease draft** from chapters 2–7 instead, and look at its top bar. | **No** Request review button: a task's draft is reviewed through the task. `[Q1]` Go back to the notice. |
 | 8.3 | Click **Request review**. Open the **Reviewer** list. | Colleagues of Rajesh's team only, e.g. *Priya Nair*; only a senior is marked *(can correct)*. Nobody from another team or firm. `[Q2]` |
 | 8.4 | Pick **Priya Nair**. | A note: *Priya Nair can suggest changes; you accept or decline them.* |

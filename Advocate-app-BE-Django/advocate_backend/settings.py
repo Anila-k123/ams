@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     'dictionary',
     'drafting',
     'clientaccess',
+    'clientreview',   # sending documents to clients for review (docs/CLIENT_REVIEW.md)
     'lawcodes',
 ]
 
@@ -231,6 +232,24 @@ COURT_PDF_CACHE_DIR = config(
 # --- Draft PDF export: LibreOffice converts the Word export (drafting/export/pdf.py).
 # Blank = `soffice` on PATH or the usual install folder; without it PDF export is a 503. ---
 LIBREOFFICE_PATH = config('LIBREOFFICE_PATH', default='')
+# Client review (docs/CLIENT_REVIEW.md): clients mark up their copy in the portal's editor. Off for now: they
+# download the document, edit it in their own Word / LibreOffice and upload it back.
+CLIENT_REVIEW_EDITOR = config('CLIENT_REVIEW_EDITOR', default=False, cast=bool)
+LIBREOFFICE_PYTHON = config('LIBREOFFICE_PYTHON', default='')   # its Python (uno), for the template-look redline
+
+# ONLYOFFICE Docs, the planned draft editor (docs/ONLYOFFICE_PLAN.md). ONLYOFFICE_URL is what the browser
+# loads the editor from, ONLYOFFICE_INTERNAL_URL what this backend calls, AMS_INTERNAL_URL how the
+# document server reaches this backend. The JWT secret is the server's services.CoAuthoring.secret.
+ONLYOFFICE_URL = config('ONLYOFFICE_URL', default='').rstrip('/')
+ONLYOFFICE_INTERNAL_URL = config('ONLYOFFICE_INTERNAL_URL', default=ONLYOFFICE_URL).rstrip('/')
+ONLYOFFICE_JWT_SECRET = config('ONLYOFFICE_JWT_SECRET', default='')
+AMS_INTERNAL_URL = config('AMS_INTERNAL_URL', default='').rstrip('/')
+# This backend as users' browsers reach it (the editor loads PactPro's logo from here); defaults to the above.
+AMS_PUBLIC_URL = config('AMS_PUBLIC_URL', default='').rstrip('/')
+DRAFT_EDITOR = config('DRAFT_EDITOR', default='tiptap')
+# PactPro logo / name / loading screen in the editor: only with a licensed Developer Edition (else a
+# "Paid feature" warning shows on every open).
+ONLYOFFICE_WHITE_LABEL = config('ONLYOFFICE_WHITE_LABEL', default=False, cast=bool)
 
 # --- AI assistant's name (what it calls itself; the frontend shows
 # src/constants/assistant.ts). ---
@@ -453,4 +472,4 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Kolkata'
 
 # Let the frontend read download filenames (DOCX export).
-CORS_EXPOSE_HEADERS = ['Content-Disposition', 'X-Redline-Inserted', 'X-Redline-Deleted']
+CORS_EXPOSE_HEADERS = ['Content-Disposition', 'X-Redline-Inserted', 'X-Redline-Deleted', 'X-Redline-Layout']

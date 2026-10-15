@@ -41,11 +41,41 @@ forwards `/api/` to the backend.
 | Git | any | git-scm.com | `apt install git` |
 | Tesseract OCR | any | UB-Mannheim build (scraper host only) | `apt install tesseract-ocr` |
 | Redis | 6+ | Memurai, or Redis in WSL/Docker | `apt install redis-server` |
-| LibreOffice | 7.6+ | `winget install TheDocumentFoundation.LibreOffice` (draft PDF export; set `LIBREOFFICE_PATH` if not in Program Files) | `apt install libreoffice-writer` |
+| LibreOffice | 7.6+ | **`tools\install-libreoffice.ps1`** (see 1a) | **`sudo bash tools/install-libreoffice.sh`** (see 1a) |
 | Web server | — | IIS + URL Rewrite + ARR modules | `apt install nginx` |
 | Service wrapper | — | [NSSM](https://nssm.cc) | systemd (built in) |
 
 Allow ~5 GB disk for the Python venv (torch/transformers for drafting).
+
+### 1a. LibreOffice: PDF export (required)
+
+AMS makes PDFs with LibreOffice, run on the **server** as a separate program (users need nothing):
+**Download → PDF** of drafts and redlines, and the **View** print preview of Word templates and samples.
+Without it those two show an error / a text-only view; everything else works. LibreOffice is free (MPL
+2.0), fine to install alongside a commercial product. The scripts install it if missing, add the fonts
+templates use, and finish with a real test conversion (`manage.py check_pdf_export`, once the backend venv
+exists: step 5). Safe to run again.
+
+```bat
+powershell -ExecutionPolicy Bypass -File tools\install-libreoffice.ps1          :: install if missing + check
+powershell -ExecutionPolicy Bypass -File tools\install-libreoffice.ps1 -Check   :: only report
+```
+Windows uses `winget` (run as an administrator for a machine-wide install; without winget, install from
+libreoffice.org and run with `-Check`). Windows already has the fonts templates use (Times New Roman, Arial,
+Calibri, Nirmala UI for Indian scripts). If LibreOffice is not in Program Files the script sets
+`LIBREOFFICE_PATH` in the backend `.env`. The redline of an ONLYOFFICE draft in its own look also needs
+LibreOffice's Python (`python.exe` beside `soffice.exe` on Windows, included; `python3-uno` on Linux, installed by
+the script below); set `LIBREOFFICE_PYTHON` only if it's elsewhere. Without it the redline falls back to the
+standard layout.
+
+```bash
+sudo bash tools/install-libreoffice.sh               # Writer (no GUI) + Liberation / DejaVu / Noto fonts + check
+sudo bash tools/install-libreoffice.sh --ms-fonts    # also Microsoft's Times New Roman / Arial (closest to Word)
+bash tools/install-libreoffice.sh --check            # only report
+```
+Linux (Debian / Ubuntu, apt). Liberation fonts have the same widths as Times New Roman / Arial, so line breaks
+match Word; Noto covers Tamil, Hindi and other Indian scripts. Install any other font a firm's templates use,
+or LibreOffice substitutes it.
 
 ---
 
@@ -182,6 +212,14 @@ venv\Scripts\waitress-serve --listen=127.0.0.1:8080 --threads=8 advocate_backend
 Linux: `venv/bin/gunicorn advocate_backend.wsgi:application -b 127.0.0.1:8080 -w 3 --timeout 300`
 
 Open `http://127.0.0.1:8080/api/health` — a response means it is up.
+
+Then check PDF export (LibreOffice, step 1a):
+
+```bat
+venv\Scripts\python manage.py check_pdf_export
+```
+Linux: `venv/bin/python manage.py check_pdf_export`. Expected: *LibreOffice: <path>* and *PDF export works
+(… s)*. It exits with an error and says what is missing when PDFs would fail: fix that before going live.
 
 > With `CELERY_TASK_ALWAYS_EAGER=True` (the stopgap), each web process starts its
 > own drafting worker — keep a **single** process in that mode (waitress is
@@ -368,6 +406,8 @@ Linux: `ufw allow 'Nginx Full' && ufw enable`
 - [ ] Display board / cause list load (scraper running, `COURT_API_BASE` correct)
 - [ ] A test email/invoice notification arrives (MAIL_* + scheduler)
 - [ ] A drafting job completes (Celery + Redis + drafting keys)
+- [ ] `manage.py check_pdf_export` says *PDF export works*; a draft's **Download → PDF** opens
+- [ ] **View** on a Word template shows it as it prints (letterhead, layout), not a text-only view
 - [ ] Services restart after a reboot
 
 ## Updating an existing deployment
@@ -376,7 +416,10 @@ Linux: `ufw allow 'Nginx Full' && ufw enable`
 git pull
 venv\Scripts\pip install -r requirements.txt
 venv\Scripts\python manage.py migrate
+venv\Scripts\python manage.py refresh_template_layout
+venv\Scripts\python manage.py check_pdf_export
 ```
-Rebuild the frontend with the same `VITE_API_BASE`, replace the web root's
+(`refresh_template_layout`: existing templates get the template look; no AI call. `check_pdf_export`: PDFs
+still work; if not, run `tools\install-libreoffice.ps1`.) Rebuild the frontend with the same `VITE_API_BASE`, replace the web root's
 contents (keep `web.config`), then restart `AMS-Backend`, `AMS-Scheduler`,
 `AMS-Celery` (Linux: `systemctl restart ams-backend ams-scheduler ams-celery`).

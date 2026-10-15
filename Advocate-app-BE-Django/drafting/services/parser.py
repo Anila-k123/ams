@@ -35,7 +35,7 @@ def extract_clauses(file_path: str) -> list[dict]:
     raise ValueError(f'Unsupported file type: {suffix}')
 
 
-def extract_template_slots(file_path: str) -> list[dict]:
+def extract_template_slots(file_path: str, word_path: str | None = None) -> list[dict]:
     """Parse an uploaded template document into clause-skeleton slots (body_json).
 
     Each slot drives one generated block: `label` names it, `description` is the
@@ -45,10 +45,30 @@ def extract_template_slots(file_path: str) -> list[dict]:
     template's look (alignment, font, size, colour, emphasis).
     """
     from .layout import layout_for, source_paragraphs
-    clauses = extract_clauses(file_path)
+    from .headings import heading_kind, split_heading
+    from ..wordform import clause_forms
+    clauses = clauses_of(file_path, word_path)
+    splits = [split_heading(c) for c in clauses]
     paragraphs = source_paragraphs(file_path)      # Word: as set; PDF: inferred from position
+    # Word files: where each clause sits and how its paragraphs look (drafting/wordform.py).
+    # `word_path`: the Word version of a PDF template (services/pdf2word.py), whose look the draft follows.
+    word = word_path or (file_path if str(file_path).lower().endswith('.docx') else None)
+    forms = clause_forms(word, [c['text'] for c in clauses], [h for h, _ in splits]) if word \
+        else [None] * len(clauses)
+    # A PDF's letterhead read as a clause (it repeats on every page, so the Word version keeps it in
+    # its header, not in any clause): not a clause to draft.
+    banner = ''
+    if word_path:
+        from ..wordform import page_form
+        pf = page_form(word_path) or {}
+        banner = re.sub(r'<[^>]+>|&[a-z]+;', ' ', (pf.get('header_html') or '') + ' ' + (pf.get('footer_html') or ''))
+        banner = re.sub(r'[^a-z0-9]+', ' ', re.sub(r'src="[^"]*"', '', banner).lower())
     slots = []
-    for c in clauses:
+    for c, form, (heading, body) in zip(clauses, forms, splits):
+        if word_path and form is None:
+            first = re.sub(r'[^a-z0-9]+', ' ', (c['text'].split('\n')[0] or '').lower()).strip()
+            if first and first in banner and len(c['text'].split('\n')) <= 3:
+                continue
         # A signature/execution block has no section title — keep its label empty (never
         # derive one from "IN WITNESS WHEREOF…") so the draft shows no spurious heading.
         sig = is_signature_block(c['text'])
@@ -57,12 +77,34 @@ def extract_template_slots(file_path: str) -> list[dict]:
             'type': 'signature' if sig else c['clause_type'],
             'label': '' if sig else (clause_label(c['text']) or _derive_heading(c['text'])),
             'description': c['text'],
+            # The clause's own heading (exact, numbering kept; '' when it has none), its body, and
+            # whether the heading is fixed wording or carries case details (services/headings.py).
+            'heading': heading,
+            'body': body,
+            'heading_kind': heading_kind(heading),
         }
         if c.get('style'):
             slot['style'] = c['style']
         merge_layout(slot, layout_for(c['text'], paragraphs))
+        if form:
+            slot['form'] = form
         slots.append(slot)
     return slots
+
+
+def clauses_of(file_path, word_path=None):
+    """A template / sample's clauses. A PDF with a Word version (services/pdf2word.py) is read from that:
+    its text is the page's own (Docling can drop letters on some fonts) and its clauses line up exactly
+    with the file Download writes into. Docling stays the fallback when the Word version splits into
+    no clauses."""
+    if word_path and str(file_path).lower().endswith('.pdf'):
+        try:
+            clauses = extract_clauses(word_path)
+            if len(clauses) > 1:
+                return clauses
+        except Exception:                                         # noqa: BLE001
+            logger.exception('clauses from the Word version of %s failed', file_path)
+    return extract_clauses(file_path)
 
 
 def merge_layout(slot, layout):
@@ -286,11 +328,22 @@ def _parse_docx(file_path: str) -> list[dict]:
             if text:
                 blocks.append(('p', text, para))
         elif tag.endswith('}tbl'):
+            # Table rows as Markdown rows (| a | b |, a |---| rule under the first), the same shape a
+            # PDF's tables get from Docling, so generation keeps them as a table (tasks._table_html).
             table = Table(child, doc)
+            n = 0
             for row in table.rows:
-                cells = [c.text.strip() for c in row.cells if c.text.strip()]
-                if cells:
-                    blocks.append(('tbl', ' — '.join(cells), None))
+                seen, cells = set(), []
+                for c in row.cells:                      # a merged cell is listed once per column it spans
+                    if id(c._tc) in seen:
+                        continue
+                    seen.add(id(c._tc))
+                    cells.append(' '.join(c.text.split()).replace('|', '/'))
+                if any(cells):
+                    blocks.append(('tbl', '| ' + ' | '.join(cells) + ' |', None))
+                    if n == 0:
+                        blocks.append(('tbl', '|' + '|'.join('---' for _ in cells) + '|', None))
+                    n += 1
 
     # The clause-level list = the numbering id with the most top-level (ilvl 0)
     # items. Splitting on it handles clauses that have no title (the number sits
@@ -435,6 +488,12 @@ def _docx_is_heading(text: str, para, primary_numid=None) -> bool:
     # ALL-CAPS heading line without list numbering (common in older templates).
     if _is_allcaps_heading(t):
         return True
+    # A short, wholly bold, title-shaped line with a typed number ("1. PREMISES", "2. Term"): how most
+    # firm templates mark their clauses without Word heading styles.
+    runs = [r for r in para.runs if (r.text or '').strip()]
+    if (runs and all(r.bold for r in runs) and len(t) <= 80 and len(t.split()) <= 10
+            and t[-1] not in '.,;:' and re.match(r'^\(?\d{1,3}(\.\d{1,3})*[.)]?\s+\S', t)):
+        return True
     return False
 
 
@@ -459,6 +518,9 @@ def _group_docx_items(items: list[tuple]) -> list[dict]:
             'clause_type': _classify_clause(combined),
             'position': len(clauses),
             'text': combined,
+            # The detected heading (a Word heading / bold numbered title / ALL-CAPS line): kept apart
+            # from the body from here to the download (services/headings.py).
+            'heading': (heading or '').strip(),
         }
         style: dict = {}
         if heading_para is not None:

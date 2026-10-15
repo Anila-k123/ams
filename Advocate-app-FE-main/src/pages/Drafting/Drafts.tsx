@@ -9,6 +9,7 @@ import { confirm } from '../../ui/overlays'
 import Icon from '../../ui/Icon'
 import { draftingApi, type DraftReviewRequest, type DraftSession, type MyReviewStatus, type ReviewProgress } from './api/drafting'
 import NewDraftDialog from './components/NewDraftDialog'
+import { useOpenWith } from '../../components/OpenWithDialog'
 
 // What a draft's status means to the user. The stored `status` only tracks the
 // AI generation job ("ready" = the AI finished), so a finished draft is further
@@ -38,6 +39,9 @@ const fmtDateTime = (v?: string | null) => v
  *  Rows open into their DraftPage once generation has finished. */
 export default function Drafts() {
   const navigate = useNavigate()
+  // Open = the desktop editor on this computer, a choice, or the PactPro editor (docs/DESKTOP_EDITING.md).
+  const openWith = useOpenWith()
+  const openDraft = (id: number) => void openWith.openDocument('draft', id, DRAFTING.draftEditor(id))
   const toast = useToast()
   const [sessions, setSessions] = useState<DraftSession[]>([])  // all draft sessions
   const [loading, setLoading] = useState(true)                  // true until the initial fetch resolves
@@ -131,7 +135,7 @@ export default function Drafts() {
     {
       key: 'act', label: <span className="sr-only">Actions</span>, align: 'right', render: r => (
         <div className="row" style={{ justifyContent: 'flex-end', gap: 4 }} onClick={e => e.stopPropagation()}>
-          {r.status === 'ready' && <button type="button" className="btn sm" onClick={() => navigate(DRAFTING.draft(r.id))}>Open</button>}
+          {r.status === 'ready' && <button type="button" className="btn sm" onClick={() => openDraft(r.id)}>Open</button>}
           <button type="button" className="btn ghost sm icon" aria-label={`Delete draft ${r.id}`} title="Delete"
             onClick={() => confirmDelete(r)}><Icon name="trash" size="sm" /></button>
         </div>
@@ -141,6 +145,7 @@ export default function Drafts() {
 
   return (
     <div>
+      {openWith.dialog}
       <PageHead title="Drafts"
         sub="Drafts generated from your case documents and templates. Every citation links back to its source."
         actions={<>
@@ -165,7 +170,7 @@ export default function Drafts() {
                   </div>
                   {r.progress && <div className="small"><ProgressLine p={r.progress} author={r.requested_by_name} /></div>}
                 </div>
-                <button type="button" className="btn sm primary" onClick={() => navigate(DRAFTING.draft(r.session))}>Review</button>
+                <button type="button" className="btn sm primary" onClick={() => openDraft(r.session)}>Review</button>
               </li>
             ))}
           </ul>
@@ -194,7 +199,7 @@ export default function Drafts() {
         initialSort={{ key: 'id', dir: 'desc' }}
         caption="Drafts"
         onRow={r => {
-          if (r.status === 'ready') navigate(DRAFTING.draft(r.id))
+          if (r.status === 'ready') openDraft(r.id)
           else toast.info(r.status === 'failed' ? `Draft #${r.id} failed.` : `Draft #${r.id} is still generating.`)
         }}
         empty={{

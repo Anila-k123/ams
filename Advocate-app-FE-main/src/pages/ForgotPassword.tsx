@@ -4,9 +4,11 @@ import api from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { Icon } from '../ui/kit';
 import { AuthFrame } from './Login';
+import { usePortalFlow } from '../client/portalBrand';
 
 function ForgotPassword() {
   const navigate = useNavigate();
+  const { brand, base, signIn } = usePortalFlow();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -33,12 +35,12 @@ function ForgotPassword() {
 
   if (sent) {
     return (
-      <AuthFrame>
+      <AuthFrame brand={brand}>
         <div role="status">
           <div className="pp-success-ic"><Icon name="mail" size="lg" /></div>
           <h1>Check your email</h1>
           <p className="muted auth-lead">We've sent a 6-digit verification code to <b className="mono">{email.trim()}</b>. It expires in a few minutes; check spam if it isn't in your inbox.</p>
-          <button type="button" className="btn primary pp-full" onClick={() => navigate('/verify-otp', { state: { email } })}>Enter the code</button>
+          <button type="button" className="btn primary pp-full" onClick={() => navigate(`${base}/verify-otp`, { state: { email } })}>Enter the code</button>
           <p className="small muted auth-foot">Wrong email? <button type="button" className="link auth-linkbtn" onClick={() => setSent(false)}>Use a different one</button></p>
         </div>
       </AuthFrame>
@@ -46,8 +48,8 @@ function ForgotPassword() {
   }
 
   return (
-    <AuthFrame>
-      <Link className="link small" to="/login">Back to sign in</Link>
+    <AuthFrame brand={brand}>
+      <Link className="link small" to={signIn}>Back to sign in</Link>
       <h1 className="auth-h-gap">Reset your password</h1>
       <p className="muted auth-lead">Enter the email you sign in with. We'll send a 6-digit verification code to it.</p>
       <form onSubmit={handleSubmit} className="stack">

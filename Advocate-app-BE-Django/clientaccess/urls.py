@@ -15,6 +15,7 @@ urlpatterns = [
     path('client/messages', views.ClientMessagesView.as_view()),
     # Public: set a password from the emailed one-time link.
     path('client-auth/set-password', views.SetPasswordView.as_view()),
+    path('client-auth/branding', views.PortalBrandingView.as_view()),
     # Firm side.
     path('clients/<int:client_id>/logins', views.ClientLoginsView.as_view()),
     path('clients/<int:client_id>/logins/<int:login_id>', views.ClientLoginDetailView.as_view()),

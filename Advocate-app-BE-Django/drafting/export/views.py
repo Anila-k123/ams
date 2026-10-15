@@ -59,7 +59,22 @@ class DraftDocxExportView(APIView):
         from drafting.access import viewable_sessions
         session = get_object_or_404(viewable_sessions(request.user).select_related('template'), pk=pk)
         branding = branding_for(request.user) if request.query_params.get('branding') == '1' else None
-        return file_response(request, render_session_docx(session, branding), export_filename(session))
+        # A draft from a Word template / sample is written into that file (drafting/wordform.py),
+        # keeping its letterhead, fonts and layout; others get the house-style document.
+        from drafting.wordform import render_draft_docx
+        data = render_draft_docx(session, branding)
+        # Edited in ONLYOFFICE and not finalised: the copy carries a DRAFT watermark (?watermark=0 for none).
+        from drafting import onlyoffice
+        if onlyoffice.enabled() and request.query_params.get('watermark') != '0':
+            from drafting.models import DraftFile
+            df = DraftFile.objects.filter(session=session).first()
+            if df is not None and not df.final_at:
+                from drafting.docfile import add_watermark
+                try:
+                    data = add_watermark(data)
+                except Exception:                         # noqa: BLE001 - never lose a download over this
+                    log.exception('Could not add the DRAFT watermark to draft %s', session.id)
+        return file_response(request, data, export_filename(session))
 
 
 class DraftRedlineExportView(APIView):

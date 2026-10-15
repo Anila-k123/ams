@@ -35,6 +35,7 @@ const Clients = lazy(() => import('./Clients'));
 const Expenses = lazy(() => import('./Expenses'));
 const HearingsPage = lazy(() => import('./HearingsPage'));
 const DocumentsPanel = lazy(() => import('./DocumentsPanel'));
+const DocumentEditorPage = lazy(() => import('./DocumentEditorPage'));
 const InvoicesPanel = lazy(() => import('./InvoicesPanel'));
 const ProfilePage = lazy(() => import('./ProfilePage'));
 const ReportsCenter = lazy(() => import('./ReportsCenter'));
@@ -315,6 +316,7 @@ function AppShell() {
               <Route path="/calendar" element={<Navigate to="/dashboard/hearings" replace />} />
               <Route path="/hearings" element={<PermissionRoute permissions="EVENT_VIEW"><HearingsPage /></PermissionRoute>} />
               <Route path="/documents" element={<PermissionRoute permissions="DOCUMENT_VIEW"><DocumentsPanel /></PermissionRoute>} />
+              <Route path="/documents/:id/edit" element={<PermissionRoute permissions="DOCUMENT_VIEW"><DocumentEditorPage /></PermissionRoute>} />
               <Route path="/invoices" element={<PermissionRoute permissions="INVOICE_VIEW"><InvoicesPanel /></PermissionRoute>} />
               <Route path="/settings" element={<ProfilePage />} />
               <Route path="/reports" element={<PermissionRoute permissions="REPORT_VIEW"><ReportsCenter /></PermissionRoute>} />

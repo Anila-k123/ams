@@ -104,7 +104,7 @@ Use any draft that already has a few versions, e.g. **Draft #116** (the lease de
 ## 2. Junior drafts with the AI (Window B — junior)
 
 1. Go to **Tasks**. The new task is there with **You** as assignee.
-2. Click the **pencil icon** (*Draft for this task*). The new-draft screen opens already linked to the case and task.
+2. Click the **✨ icon** (*Draft with AI*). The new-draft screen opens already linked to the case and task.
 3. **Documents:** click **Add Documents**, upload `docs/demo-files/Sample_Residential_Lease_Deed_Chennai.docx` (or pick it if already uploaded) → **Next**.
 4. **Template:** pick a template, or **Skip — no template** → **Continue**.
 5. **Details:** fill party names (*Kannan* / the tenant), rent, term, start date, and an instruction such as
@@ -250,7 +250,6 @@ Demand, Notice to Vacate, Costs). Blanks like `[[Arrears Amount]]` become fields
 
 | Field | Enter |
 |---|---|
-| **Document title** | `Legal Notice – Rent Arrears` |
 | **Parties** (party 1) | Name `K. Kannan` · Role `Landlord` · Address `No. 12, Anna Salai, Chennai 600002` |
 | **Parties** (party 2, **+ Add party**) | Name `R. Arun Prakash` · Role `Tenant` · Address `Flat 3B, Lakshmi Apartments, T. Nagar, Chennai 600017` |
 | **Purpose** (required) | `Demand payment of Rs. 80,000 rent arrears for August and September 2026 from the tenant, and give notice to vacate the premises by 31 October 2026 if the arrears are not paid within 15 days.` |
@@ -373,7 +372,7 @@ make your own returned file instead (8A.2 below): the import works the same, onl
 > Say: *"Whatever comes back by email, every change they made is decided here, with reasons, and their
 > questions sit beside the words they're about."*
 
-## 8. New in this round: test guide (Import, Restore, two people saving, layout, tables)
+## 8. New in this round: test guide (Import, Restore, two people saving, template look, tables)
 
 Each part says what to do and what you should see. Run them on the dev instance (http://localhost:5174)
 after the one-time setup.
@@ -384,13 +383,14 @@ after the one-time setup.
 cd Advocate-app-FE-main
 npm install                                                     :: new package @tiptap/extension-table
 cd ..\Advocate-app-BE-Django
-venv\Scripts\python.exe manage.py migrate drafting              :: up to 0010_round_external_from
-venv\Scripts\python.exe manage.py refresh_template_layout       :: existing templates learn their alignment
+venv\Scripts\python.exe manage.py migrate                       :: drafting up to 0012_word_version
+venv\Scripts\python.exe manage.py refresh_template_layout       :: existing templates: clause places + look
 ```
 
-The last command prints one line per template, e.g. *#70 Notice: layout refreshed for 8 slots*, then
-*N template(s) refreshed, M skipped*. A template is skipped when its file isn't on that machine, or when it
-now splits into a different number of clauses (re-upload that one). Restart the backend after `migrate`, and
+The last command prints one line per template, e.g. *#70 Notice: 8 slots refreshed, 8 placed in the Word
+file*, then *N template(s) refreshed, M skipped*. A PDF template also gets its Word version
+(*"… (Word version made from the PDF)"*). A template is skipped when its file isn't on that machine, or when
+it now splits into a different number of clauses (re-upload that one). Restart the backend after `migrate`, and
 hard-refresh the browser (Ctrl+F5) so the new screens load.
 
 Logins: **Rajesh Kumar** (senior, owner of the notice) and **Priya Nair** (junior), as in sections 1–7. Use
@@ -536,63 +536,231 @@ top bar within about 30 seconds.
 
 ---
 
-### 8D. Drafts follow the template's alignment
+### 8D. Drafts look like their Word template (letterhead, fonts, layout)
 
-**What it is.** A new draft lays out like its template: each clause's usual alignment (e.g. justified body),
-plus lines that stand out (a centred title, a left "From:/To:" block, a right-aligned date or signature).
-Before this fix, everything came out left-aligned, or all one way.
+**What it is.** A draft made from a Word template now **opens in the template's own look** (fonts, sizes,
+colours, alignment, indents, spacing, tables, the template's header and footer with its logo, the page
+size) and **Download / Save to case write the draft into the original Word file**, so the downloaded file
+is the template itself with the new text: letterhead, footer, numbering, table styles and signature
+block exactly as the firm made them. The AI only writes the text.
 
-Template used: **Notice** (#70, the rent-arrears notice uploaded from
-`demo-files/Template_Legal_Notice_Rent_Arrears.docx`). Its layout: title centred, *From/To* block left,
-clause bodies justified, closing lines left.
+**Demo template:** [`demo-files/Template_Lease_With_Letterhead.docx`](demo-files/Template_Lease_With_Letterhead.docx)
+(a lease on *Kumar & Associates* letterhead):
 
-1. Make sure 8.0's `refresh_template_layout` ran (or upload the template again: new uploads get it
-   automatically).
-2. **Drafting → Drafts → New draft → Type the facts directly → Agreement type `Legal Notice`** → fill the
-   parties and instructions as in section 7 → **Generate draft**.
-3. Expected in the editor:
-   - *LEGAL NOTICE* line: centred;
-   - *BY REGISTERED POST…*, *From:*, the advocate lines, *To:*, the tenant lines: left;
-   - *Sub: …*, *Sir / Madam,*, *Under instructions…*: justified;
-   - every numbered clause's body (*The Tenancy*, *The Default*, …): justified;
-   - *Yours faithfully*, the advocate's name, *Enrolment No.*: left.
-   Click into a justified paragraph: the **Justify** button in the editor toolbar is highlighted.
-4. **Download → Word (.docx)** and **Download → PDF**: the same alignment as in the editor.
-5. Old drafts (made before this fix) do not change; only new drafts follow the template.
+| In the file | Look |
+|---|---|
+| Header | maroon **K&A** seal (logo) on the left; **KUMAR & ASSOCIATES** (Georgia, 18 pt, maroon), *Advocates & Legal Consultants*, address line, all right-aligned |
+| Footer | *Kumar & Associates, Advocates · Privileged & Confidential*, small, grey, centred |
+| Title | **LEASE AGREEMENT**, 16 pt bold maroon, centred; *(Residential premises, Chennai)* italic, centred |
+| Opening paragraph | Times New Roman 12, justified, `[[blanks]]` for names and addresses |
+| Clause headings | **1. PREMISES** … **6. TERMINATION**, bold maroon, left |
+| Clause bodies | justified, indented 0.75 cm, 1.15 line spacing |
+| 4. Schedule of payments | a 3-column table *Period / Rent (Rs.) / Due on*, bold header row |
+| End | *IN WITNESS WHEREOF…*, then the two signature lines right-aligned, bold |
 
-**With a PDF template** (NDA, MSA, Vakalathnama on the test instance): a PDF stores no alignment, so it is
-worked out from where each line sits on the page (centred title, edge-to-edge = justified, right-aligned
-date). Generate a draft from one and compare with the PDF. A scanned PDF gives nothing (editor default).
+**8D.1 Upload the template** (Window A, Rajesh)
 
-### 8E. Drafts made from a sample follow the sample's alignment
+1. **Drafting → Firm Templates → Upload template**.
+2. **Template name:** `Lease (Kumar & Associates letterhead)` · **Agreement type:** `Lease Agreement` ·
+   **Choose the template file:** `docs/demo-files/Template_Lease_With_Letterhead.docx`.
+3. Wait until the row shows **Ready** (a few seconds; the AI names the clauses).
+4. Click **View** on the row. Expected: the template **as it prints**, a PDF page view with the K&A seal and
+   letterhead at the top, the footer at the bottom, maroon headings, justified text, the table, every page
+   (not a plain-text version). The first View of a Word template takes a few seconds (it is made into a
+   PDF once); later Views are instant.
+5. In the same dialog, **Download original** saves the Word file you uploaded.
+6. Same on **Drafting → Samples**: **View** a Word
+   sample shows it as it prints too.
 
-1. **New draft → Start from reference documents** → pick a Word sample whose body is justified with a
-   centred title (or upload one: any agreement .docx with justified text) → generate.
-2. Expected: the title centred, the body justified, the signature block as in the sample. Before this fix,
-   sample drafts had no alignment at all.
+**8D.2 Make a draft from it**
+
+1. **Drafting → Drafts → New draft → Type the facts directly**.
+2. **Agreement type:** `Lease Agreement` (the template above is used by default; or pick it under *Follow a
+   specific template?*) → **Continue**.
+3. Fill the brief:
+
+   | Field | Enter |
+   |---|---|
+   | Party 1 | Name `K. Kannan` · Role `Lessor` · Address `No. 12, Anna Salai, Chennai 600002` |
+   | Party 2 | Name `R. Arun Prakash` · Role `Lessee` · Address `Flat 3B, Lakshmi Apartments, T. Nagar, Chennai 600017` |
+   | Purpose | `Lease of the flat at T. Nagar for residence, 11 months from 1 November 2026, rent Rs. 40,000 a month, deposit Rs. 2,40,000.` |
+   | Extra instructions | `Two months' notice to terminate. Rent by bank transfer by the 5th.` |
+
+4. **Generate draft** and wait for it to open.
+
+**8D.3 Check the editor** (expected)
+
+| Where | You should see |
+|---|---|
+| Top of the paper | the template's **header**: the maroon K&A seal and *KUMAR & ASSOCIATES* with the address, set apart by a dashed line. Hover: *"The template's header"*. You can't click into it or edit it. |
+| Bottom of the paper | the **footer** *Privileged & Confidential* line, below a dashed line |
+| The paper | A4 width with the template's margins (wider than other drafts) |
+| First clause | the template's own title **LEASE AGREEMENT** as its heading (centred, bold, maroon), then *(Residential premises, Chennai)* (centred, italic: a fixed line, kept as in the template), then the opening paragraph with the parties filled in. **No other title** above it, and no AI-made heading like *"Lease Agreement Introduction"* |
+| Clause headings | the template's own, with their numbers: **1. PREMISES**, **2. TERM** … bold, maroon, left |
+| Clause bodies | Times New Roman, justified, indented, slightly wider line spacing |
+| 4. Schedule of payments | a grid with *Period / Rent (Rs.) / Due on*, bold header row |
+| Signature lines | right-aligned, bold |
+
+Click into a body paragraph: the **Justify** button in the toolbar is lit. Type in a body paragraph: the new
+words keep the paragraph's font and indent.
+
+**Save**, then click **Preview** (top bar, next to Edit). Expected: the same page read-only: header and footer,
+**LEASE AGREEMENT** centred and maroon, the subtitle, numbered maroon headings, justified indented bodies, the
+schedule as a grid; filled blanks show their values, empty ones a highlighted `[Label]`. (Preview shows the
+saved draft: save first to see unsaved edits.)
+
+**8D.4 Download keeps the template exactly**
+
+1. **Download** (top bar). Expected: **no "Add firm letterhead" tick** in the menu (the template has its own
+   letterhead), and the note *"PDF and Word keep the template's own letterhead, fonts and layout."*
+2. **Word (.docx)** → open the file in Word (or LibreOffice). Expected:
+   - the **header** is the template's (seal + firm name + address), on **every page**; the footer on every
+     page;
+   - the same page size and margins as the template;
+   - the title, headings, fonts, colours, indents, spacing and table style exactly as in the template;
+   - the **new text** (names, addresses, rent Rs. 40,000, 11 months…) in place of the template's wording;
+     blanks you did not fill still show as `[Label]`;
+   - nothing printed twice (no second heading, no "1. 1."), and no firm letterhead added on top.
+3. **PDF** → the same, as a PDF.
+4. Compare side by side with `Template_Lease_With_Letterhead.docx`: only the clause text differs.
+
+**8D.5 Edits carry into the download**
+
+1. In the editor: change the rent in *3. Rent and deposit*, make one word **bold**, centre one paragraph →
+   **Save**.
+2. **Download → Word**: the new rent, the bold word and the centred paragraph are there, still in the
+   template's font and indent.
+3. Delete a whole paragraph of a clause → Save → Download: it is gone from the file too (and the rest of
+   the clause keeps its look).
+
+**8D.6 Save to case / Submit to task**
+
+**Save to case** (or *Submit to task* on a task draft) files the same template-form Word file on the case:
+open it from the case's **Documents**: letterhead, footer and layout as in 8D.4.
+
+**8D.6b Headings are the template's own, once**
+
+Every clause heading is the template's own text, numbering included (*1. PREMISES*), shown once above the
+clause, never repeated as the body's first line and never an AI-made name. A heading that carries case
+details (e.g. a court line *IN THE COURT OF [[Court Name]], CHENNAI* in a Vakalathnama) is filled with your
+case's details (*IN THE COURT OF THE CITY CIVIL COURT, CHENNAI*); a detail the facts don't give stays a
+blank listed in **Placeholders**: type it there and leave the field to put it into the heading. Dotted
+leaders after a filled value (*…of 2025………JURISDICTION*) stay dots, not `[[Details]]` fields.
+
+**8D.7 Fixed lines, boxes and bracket columns (test with a Vakalatnama .docx with stamp boxes)**
+
+1. Upload a Word Vakalatnama with stamp boxes and a `))` cause-title column as a firm template; draft from it
+   with your case facts (court, suit number, parties).
+2. Editor:
+   - fixed wording (*VAKALATNAMA*, *Accepted by me:*, *Versus*) appears **once**, exactly as the template;
+   - the court / place lines show **your** court only: the template's old court (*JUNAGADH…*) is not kept beside it;
+   - *Dated:* / *Place:* appear once, filled;
+   - no lines made only of `))`; party lines keep their tab gap (*K. Kannan )) &nbsp;&nbsp; PLAINTIFF*);
+   - lines kept word for word show the template's bold words;
+   - above the page: *"The template has 2 drawn boxes or shapes … stay in place in Download"*.
+3. Download → open in Word: the stamp boxes and the `))` bracket column are where the template has them, the
+   Place / Signature line keeps its tab gap, unchanged lines keep their bold words.
+
+**8D.8 Old templates and old drafts**
+
+- A template uploaded **before** this change gets the look after `manage.py refresh_template_layout`
+  (8.0); new drafts from it then follow it. The **Notice** template (#70) on dev is already refreshed: a new
+  notice draft opens with the title centred, the address block left and the clauses justified.
+- Drafts made **before** this change don't change: they keep the plain editor and the house-style download
+  with the optional firm letterhead.
 
 ---
 
-### 8F. Tables stay tables
+### 8E. Drafts made from a Word sample look like the sample
 
-**What it is.** The editor now keeps tables (a ruled grid). Before, any table in a template, sample or
-draft turned into plain lines on the first save.
+**What it is.** The same for **Start from reference documents**: the first (base) Word document's look is
+used for the draft and its download.
 
-1. Use a template or sample that has a table (e.g. a lease with a rent schedule: *Month | Rent*). Generate a
-   draft. Expected: the table shows as a grid in the editor.
-2. **Save**, reload the page. Expected: still a grid (before: lines of text).
-3. Edit a cell (e.g. 40,000 → 45,000) → Save → **Compare** with the previous version. Expected: the change is
+1. **Drafting → Drafts → New draft → Start from reference documents**.
+2. **Add Documents** → upload `docs/demo-files/Template_Lease_With_Letterhead.docx` (any Word agreement with a
+   letterhead works) → wait for **Ready** → select it (if you pick several, the **first** one picked is the
+   base whose look is used) → **Next**.
+3. **Template:** **Skip — no template** → **Continue** → **Parties** (same cards as *Type the facts
+   directly*: Name, Entity type, **Role**, Represented by, Address; **+ Add party** for more): `K. Kannan` ·
+   Individual · Role `Lessor`, and `R. Arun Prakash` · Individual · Role `Lessee` → an instruction (as in
+   8D.2) → **Generate draft**. The **Role** tells the AI who is who, whatever order the reference names the
+   parties in; the **Review** step lists each party with its role.
+4. Expected: the same checks as **8D.3** and **8D.4**: header and footer around the paper, the sample's
+   fonts, alignment, indents, table, and Download written into the sample file with its letterhead (no
+   firm-letterhead tick).
+
+---
+
+### 8F. PDF templates and samples (converted to Word in the background)
+
+**What it is.** A PDF has no styles, only positioned text. When a PDF template or sample is uploaded, AMS now
+**makes a Word version of it in the background** (no message, no extra step) and uses that for everything
+in 8D / 8E: the clauses, the look in the editor and the download. The original PDF is kept as uploaded.
+
+**Demo file:** [`demo-files/Template_Lease_With_Letterhead.pdf`](demo-files/Template_Lease_With_Letterhead.pdf)
+(the same lease as a PDF).
+
+**8F.1 PDF template**
+
+1. **Firm Templates → Upload template** → name `Lease (PDF letterhead)`, Agreement type `Lease Agreement (PDF)`
+   → choose `Template_Lease_With_Letterhead.pdf` → wait for **Ready** (longer than a Word file: about a
+   minute; the PDF is read and converted).
+2. New draft → Type the facts directly → **Agreement type** `Lease Agreement (PDF)` → same brief as 8D.2 →
+   **Generate draft**.
+3. Expected, as in 8D.3:
+   - the header with the **K&A seal** and *KUMAR & ASSOCIATES / Advocates & Legal Consultants / address*
+     (taken from the top of the PDF's pages), and the footer line;
+   - the title centred and bold; clause headings bold; bodies justified and indented; the schedule as a
+     grid; signature lines right-aligned;
+   - **no clause called "Advocates & Legal Consultants"**: letterhead text is header, not a clause;
+   - the header as in the PDF: the seal on the left, *KUMAR & ASSOCIATES* (maroon) / *Advocates & Legal
+     Consultants* / the address on the right, each on one line; no empty band above it;
+   - the title and clause headings **maroon** as in the PDF, each heading **once** (not repeated as the
+     first line);
+   - a signature **row** in the PDF (*Sd/- … Advocate | Sd/- … Client*) comes out as side-by-side columns (a
+     borderless table), not one merged line; no empty band at the top of the page;
+   - the signature lines at the end right-aligned as two blocks (*[[Lessor Name]] / LESSOR*, *[[Lessee Name]]
+     / LESSEE*), part of the last clause, not clauses of their own.
+4. **Download → Word / PDF**: the Word version filled in, with that header and footer (no firm-letterhead
+   tick).
+
+**8F.2 PDF sample**: as 8E, uploading the `.pdf` instead of the `.docx`. Same expectations.
+
+**8F.3 What to expect from other PDFs** (e.g. your own agreements)
+
+| PDF | Result |
+|---|---|
+| Made from Word (text you can select) | Good: paragraphs, alignment, indents, bold headings, bordered tables, a logo at the top |
+| Fonts | The PDF's font family and sizes where it names them (Times, Arial…); others fall back to the document's main font |
+| Tables **without borders** | Not recognised as tables (they come out as lines of text) |
+| **Scanned** (an image; text not selectable) | No Word version: the draft keeps the editor default look and the old alignment guess; Download gives the house style with the optional firm letterhead |
+| Very complex layouts (columns, text boxes, watermarks) | Approximate: text and order are right, layout is simplified |
+
+For an exact look, ask the client / colleague for the **Word** file and upload that.
+
+---
+
+### 8G. Tables stay tables
+
+**What it is.** The editor keeps tables (a ruled grid). Tables in **Word** templates / samples now reach the
+draft as tables too (before, only PDF tables did; Word tables became lines like *Month — Rent*).
+
+1. Draft from the lease template (8D) or any template / sample with a table. Expected: *Schedule of
+   payments* shows as a grid in the editor.
+2. **Save**, reload the page. Expected: still a grid.
+3. Edit a cell (e.g. a rent figure) → Save → **Compare** with the previous version. Expected: the change is
    shown in that table row.
-4. **Download → Word (.docx)**: the table is a Word table.
+4. **Download → Word (.docx)**: on a template-look draft (8D) the table is the **template's** table (same
+   style, header row, borders) with the new cells; on other drafts a plain ruled Word table.
 5. Suggestions keep it: as a reviewer in suggest mode, change one cell → **Send suggestions**; as the owner,
-   **Accept** it → **Finish review**. Expected: still a grid, with only that cell changed.
+   **Accept** it → **Finish review**. Expected: still a grid, only that cell changed.
 6. Import keeps it: in a downloaded Word copy change one cell (8A.2), import, accept. Expected: still a grid.
-7. Known limits: merged cells and column widths are not kept when a clause is rebuilt; there is no
-   "insert table" button yet (tables come from the template, sample or an imported file).
+7. Known limits: merged cells and column widths are not kept when a clause is rebuilt in the editor (the
+   download into the template keeps the template's own widths); no "insert table" button yet.
 
 ---
 
-### 8G. Quick checklist
+### 8H. Quick checklist
 
 | # | Feature | Pass when |
 |---|---|---|
@@ -603,9 +771,15 @@ draft turned into plain lines on the first save.
 | 5 | Restore | Old text back; *Before restoring* + *Restored* versions; undo works |
 | 6 | Save, different clauses | Both changes kept, "colleague's changes" message |
 | 7 | Save, same clause | Red "Not saved" bar, nothing overwritten |
-| 8 | Template alignment | Notice: title centred, From/To left, bodies justified |
-| 9 | Sample alignment | Draft follows the sample's alignment |
-| 10 | Tables | Grid survives save, compare, suggestions, import, Word download |
+| 7a | View on Firm Templates | Word template shown as it prints (letterhead, logo, layout); Download original saves the .docx |
+| 8 | Word template look (editor) | Header with logo, footer, fonts, colours, alignment, indents, table as in the template |
+| 9 | Word template download | Downloaded Word / PDF = the template file with the new text; no firm-letterhead tick |
+| 10 | Edits in the download | Changed text, bold, alignment and deleted paragraphs carried into the file |
+| 11 | Word sample look | 8D checks pass for a draft from a Word sample |
+| 12 | PDF template / sample | Logo + letterhead in the header, layout as the PDF, no letterhead "clause" |
+| 13 | Scanned PDF | Still works, plain look, firm-letterhead tick offered |
+| 14 | Old template refreshed | Notice (#70): new draft opens centred / left / justified as the template |
+| 15 | Tables | Grid survives save, compare, suggestions, import, Word download |
 
 ## 9. Optional extras (if time allows)
 

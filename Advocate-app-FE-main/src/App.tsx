@@ -6,6 +6,7 @@ import { isTokenExpired, logoutAndRedirect } from './utils/auth';
 import { useAuth } from './context/AuthContext';
 import { PermissionProvider } from './contexts/PermissionContext';
 import PermissionRoute from './components/PermissionRoute';
+import DesktopEditsBar from './components/DesktopEditsBar';
 
 // Lazy-loaded route-level pages
 const Homepage = lazy(() => import('./pages/Homepage'));
@@ -19,6 +20,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 // public page that sets a password from an invite link.
 const ClientApp = lazy(() => import('./client/ClientApp'));
 const SetPassword = lazy(() => import('./client/SetPassword'));
+const ClientLogin = lazy(() => import('./client/ClientLogin'));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
 const PlatformApp = lazy(() => import('./platform/PlatformApp'));
 // Full-screen drafting pages (outside the sidebar shell).
@@ -35,18 +37,28 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// Client-role users get the client-only view (the backend enforces this too).
+// Clients live under /client, staff everywhere else (the backend enforces the
+// split too: clientaccess/gate.py). Each side is sent to its own home.
 function DashboardForRole() {
   const { isClient } = useAuth();
-  return isClient ? <ClientApp /> : <Dashboard />;
+  return isClient ? <Navigate to="/client" replace /> : <Dashboard />;
 }
 function CasesForRole() {
   const { isClient } = useAuth();
-  return isClient ? <Navigate to="/dashboard" replace /> : <Cases />;
+  return isClient ? <Navigate to="/client" replace /> : <Cases />;
 }
 function NotForClient({ children }: { children: ReactNode }) {
   const { isClient } = useAuth();
-  return isClient ? <Navigate to="/dashboard" replace /> : <>{children}</>;
+  return isClient ? <Navigate to="/client" replace /> : <>{children}</>;
+}
+function ClientRoute() {
+  const { token, isClient } = useAuth();
+  if (!token || isTokenExpired(token)) return <Navigate to={`/client/login${window.location.search}`} replace />;
+  return isClient ? <ClientApp /> : <Navigate to="/dashboard" replace />;
+}
+// Invite links sent before the portal moved to /client.
+function OldSetPassword() {
+  return <Navigate to={`/client/set-password${window.location.search}`} replace />;
 }
 
 function PageFallback() {
@@ -69,7 +81,14 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/verify-otp" element={<VerifyOtp />} />
             <Route path="/reset-password" element={<ResetPassword />} />
-            <Route path="/set-password" element={<SetPassword />} />
+            <Route path="/set-password" element={<OldSetPassword />} />
+            {/* Client portal: its own sign-in and pages */}
+            <Route path="/client/login" element={<ClientLogin />} />
+            <Route path="/client/set-password" element={<SetPassword />} />
+            <Route path="/client/forgot-password" element={<ForgotPassword />} />
+            <Route path="/client/verify-otp" element={<VerifyOtp />} />
+            <Route path="/client/reset-password" element={<ResetPassword />} />
+            <Route path="/client/*" element={<ClientRoute />} />
             <Route path="/accept-invite" element={<AcceptInvite />} />
             {/* Platform operators: separate session, never the firm token */}
             <Route path="/platform/*" element={<PlatformApp />} />
@@ -84,6 +103,8 @@ function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
+        {/* Desktop edits waiting for "Save to PactPro", on every page (docs/DESKTOP_EDITING.md). */}
+        <DesktopEditsBar />
       </ErrorBoundary>
     </Router>
   );

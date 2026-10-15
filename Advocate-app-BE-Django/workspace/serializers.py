@@ -62,6 +62,8 @@ class CaseTaskSerializer(serializers.ModelSerializer):
             'createdAt': s.created_at.isoformat() if s.created_at else None,
             # What a draft revision changed; the snapshot itself stays server-side.
             'changes': s.changes,
+            # What was handed in, at which version (null: recorded before this existed).
+            'documents': s.documents,
         } for s in TaskSubmission.objects.filter(task_id=obj.id).defer('draft_snapshot')]
 
     def _name(self, advocate_id):
@@ -126,8 +128,23 @@ class CaseTaskSerializer(serializers.ModelSerializer):
         if not ids:
             return []
         docs = {d.id: d for d in Document.objects.filter(id__in=ids)}
-        return [{'id': did, 'name': docs[did].document_name if did in docs else f'Document #{did}'}
-                for did in ids]
+        # For "Continue document" and the Submit dialog: which can be worked on in the editor, the version the
+        # reviewer will see, and whether this user has edits not saved to PactPro yet (docs/DESKTOP_EDITING.md).
+        from documents.editor import kind_of
+        from documents.models import DesktopWork
+        request = self.context.get('request')
+        user_id = getattr(getattr(request, 'user', None), 'id', None)
+        pending = set(DesktopWork.objects.filter(kind='doc', obj_id__in=ids, user_id=user_id)
+                      .values_list('obj_id', flat=True)) if user_id else set()
+        out = []
+        for did in ids:
+            d = docs.get(did)
+            if d is None:                                  # deleted from Documents: nothing to open
+                continue
+            out.append({'id': did, 'name': d.document_name if d else f'Document #{did}',
+                        'fileName': d.original_name if d else '', 'version': (d.version or 1) if d else None,
+                        'editable': bool(d and kind_of(d)[1]), 'pendingWork': did in pending})
+        return out
 
 
 class CasePartySerializer(serializers.ModelSerializer):

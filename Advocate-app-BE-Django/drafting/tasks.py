@@ -146,7 +146,10 @@ def process_sample(self, sample_id: int):
         sample.status = Sample.Status.PROCESSING
         sample.save(update_fields=['status'])
 
-        clauses = extract_clauses(sample.file.path)
+        from .services.parser import clauses_of
+        from .services.headings import split_heading
+        word = _ensure_word_version(sample)
+        clauses = clauses_of(sample.file.path, word)
         embeddings = get_embeddings()
 
         # Idempotent re-run: clear any clauses (and library entries) from a prior attempt.
@@ -162,6 +165,7 @@ def process_sample(self, sample_id: int):
                 clause_type=clause_data['clause_type'],
                 position=clause_data['position'],
                 text=clause_data['text'],
+                heading=split_heading(clause_data)[0][:500],
                 embedding=embedding,
             ))
         SampleClause.objects.bulk_create(to_create)
@@ -195,6 +199,31 @@ def process_sample(self, sample_id: int):
         raise self.retry(exc=exc, countdown=60)
 
 
+def _ensure_word_version(obj):
+    """A PDF template / sample gets a Word version, made in the background (services/pdf2word.py):
+    the draft then takes its look from it and Download writes into it. Returns the Word file's path
+    (or None: a Word upload needs none; a scanned PDF can't be converted). Never fails the upload."""
+    from django.core.files.base import ContentFile
+    name = (obj.file.name or '').lower() if obj.file else ''
+    if not name.endswith('.pdf'):
+        return None
+    try:
+        if obj.word_file and obj.word_file.name:
+            return obj.word_file.path
+        from .services.pdf2word import pdf_to_docx
+        data = pdf_to_docx(obj.file.path)
+        if not data:
+            return None
+        import os
+        base = os.path.splitext(os.path.basename(obj.file.name))[0]
+        obj.word_file.save(f'{base}.docx', ContentFile(data), save=False)
+        obj.save(update_fields=['word_file'])
+        return obj.word_file.path
+    except Exception:                                             # noqa: BLE001
+        logger.exception('Word version of %s %s failed', type(obj).__name__, obj.pk)
+        return None
+
+
 @shared_task(bind=True, max_retries=3)
 @_metered('draft', 'draft.prepare_template', 'Template', 'created_by_id', 'template')
 def process_template(self, template_id: int):
@@ -210,7 +239,8 @@ def process_template(self, template_id: int):
         template.status = Template.Status.PROCESSING
         template.save(update_fields=['status'])
 
-        slots = extract_template_slots(template.file.path)
+        word = _ensure_word_version(template)
+        slots = extract_template_slots(template.file.path, word_path=word)
         slots = name_slots(slots, doc_label=template.document_type or template.name or 'agreement',
                            model='gemini')
         template.body_json = slots
@@ -418,6 +448,23 @@ def _label_for_blank(before: str, after: str) -> str:
     return 'Details'
 
 
+# Words a blank follows directly ("dated......", "No......", "Rs......"): dots there are a field.
+_FIELD_WORDS = {'dated', 'date', 'dt', 'no', 'rs', 'on', 'at', 'of', 'by', 'to', 'the', 'and', 'between',
+                'mr', 'mrs', 'ms', 'shri', 'sri', 'smt', 'thiru', 'aged', 'age', 'place', 'name', 's/o', 'd/o',
+                'w/o', 'residing', 'sum', 'this', 'for', 'from', 'in', 'under', 'vide', 'with'}
+
+
+def _is_leader(run: str, before: str) -> bool:
+    """Dots attached to the text before them ("O.S. No. 145 of 2024........JURISDICTION", "Chennai......")
+    are a printed leader that fills the line after a value, not a blank to fill. Dots after a space or
+    after a field word ("dated......", "No. ......") are a blank. Underscores are always a blank."""
+    if not run.startswith(('.', '…')) or not before or before[-1].isspace():
+        return False
+    word = re.findall(r"[A-Za-z0-9/]+\.?$", before)
+    token = word[0].rstrip('.').lower() if word else ''
+    return bool(token) and token not in _FIELD_WORDS
+
+
 def _fill_blank_placeholders(blocks) -> None:
     """Turn any leftover blank run (underscores / dotted leaders) into a labelled [[…]]
     placeholder, so the editor renders a fillable chip instead of a raw blank. Runs after
@@ -427,6 +474,8 @@ def _fill_blank_placeholders(blocks) -> None:
             before, after = s[:m.start()], s[m.end():]
             if is_html:
                 before, after = re.sub(r'<[^>]+>', ' ', before), re.sub(r'<[^>]+>', ' ', after)
+            if _is_leader(m.group(0), before):
+                return m.group(0)                     # printed dots after a filled value: not a blank
             return '[[' + _label_for_blank(before, after) + ']]'
         return _BLANK_RUN.sub(repl, s)
 
@@ -435,6 +484,65 @@ def _fill_blank_placeholders(blocks) -> None:
             b.text = sub(b.text, False)
         if b.content_html and _BLANK_RUN.search(b.content_html):
             b.content_html = sub(b.content_html, True)
+
+
+def _kind(heading):
+    from .services.headings import heading_kind
+    return heading_kind(heading)
+
+
+def _slot_parts(slot):
+    """A template slot's (heading, body, kind): stored at upload (services/headings.py), or, for a
+    slot processed before that, split from its text by the same rules."""
+    if 'heading' in slot:
+        return slot.get('heading') or '', slot.get('body') or slot.get('description', ''), slot.get('heading_kind') or ''
+    from .services.headings import heading_kind, split_heading
+    heading, body = split_heading({'text': slot.get('description', '')})
+    return heading, body, heading_kind(heading)
+
+
+def _sample_heading(clause):
+    """A reference document clause's (heading, body): the heading detected at upload, else split by the
+    same rules (rows made before headings were stored)."""
+    from .services.headings import split_heading
+    if clause.heading:
+        lines = (clause.text or '').split('\n')
+        first = next((i for i, x in enumerate(lines) if x.strip()), None)
+        if first is not None and lines[first].strip() == clause.heading.strip():
+            return clause.heading.strip(), '\n'.join(lines[first + 1:]).strip('\n')
+    return split_heading({'text': clause.text})
+
+
+_HEADING_SYSTEM = (
+    "You fill in the case details of ONE heading line of a legal document. Keep its wording, word "
+    "order, numbering, punctuation and capitalisation exactly. Replace only the case details in it "
+    "(court, case number, year, names, places, dates) with the ones the case facts give. Where the "
+    "facts don't give a detail, write a labelled blank [[Short Label]] in its place. Never add or drop "
+    "other words. Return only the heading line, nothing else."
+)
+
+
+def _fill_variable_headings(llm, blocks, specs, facts_text):
+    """Headings that carry case details ("IN THE COURT OF [[Court Name]], CHENNAI", "O.S. No. 145 of
+    2024") get only those details filled from the facts, by a short separate call per heading; fixed
+    headings are left exactly as the template has them (services/headings.py). Never fails the draft:
+    a heading that can't be filled stays as it is."""
+    wanted = {s['position']: s['heading'] for s in specs if s.get('heading_kind') == 'variable' and s.get('heading')}
+    for block in blocks:
+        heading = wanted.get(block.position)
+        if not heading:
+            continue
+        try:
+            out = llm.complete(system=_HEADING_SYSTEM,
+                               user=f"HEADING: {heading}\n\nCASE FACTS:\n{facts_text}\n\nThe heading with this case's details:",
+                               max_tokens=200)
+        except Exception:                                         # noqa: BLE001
+            logger.exception('variable heading not filled for clause %s', block.position)
+            continue
+        line = next((x.strip() for x in _strip_markdown(out or '').splitlines() if x.strip()), '')
+        line = line.strip('"').strip()
+        if line and len(line) <= max(240, len(heading) * 2):
+            block.heading = _clean_heading(line)[:255]
 
 
 def _clause_heading(text: str) -> str:
@@ -709,7 +817,12 @@ def _generate_blocks(session, llm, system_prompt, specs, verify_citation, struct
                 text=raw.strip(), source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None,
             )
         block.text = _strip_markdown(block.text)  # never let Markdown (**bold**, #) leak into the doc
+        if s.get('heading'):
+            # The heading is shown apart; a model that wrote it anyway doesn't print it twice.
+            from .wordform import drop_leading_heading
+            block.text = drop_leading_heading(block.text, s['heading'])
         _apply_template_style(block, s.get('style'))
+        _apply_word_form(block, s.get('form'), s.get('src_ref'))
         blocks.append(block)
     return blocks, failures
 
@@ -811,6 +924,49 @@ def _tables_to_html(blocks) -> None:
             b.content_html = _styled_html(b.text, {}, None)
 
 
+def _apply_word_form(block, form: dict | None, ref: str | None):
+    """Lay the generated text into the Word source's own paragraph formatting (drafting/wordform.py),
+    and remember where the clause sits in that file so Download can write into the original."""
+    if not form or not ref:
+        return
+    from .wordform import body_paras, drop_layout_lines, styled_lines_html
+    # A clause shown under a heading takes the file's OWN heading ("1. PREMISES", "LEASE AGREEMENT"),
+    # not the name the AI gave the slot at upload ("Lease Agreement Introduction"): that is what the
+    # template says, and Download keeps that heading paragraph as it is.
+    heading_apart = bool((block.heading or '').strip())
+    if heading_apart:
+        # The model often starts its text with the heading too; shown apart, it would print twice.
+        from .wordform import drop_leading_heading
+        block.text = drop_leading_heading(block.text, block.heading)
+    # Fixed wording is the model's job (_LINE_RULE): putting template lines back by rule kept stale
+    # case details ("JUNAGADH DISTRICT") next to the model's own. Bracket / dash-only lines are layout
+    # the download keeps from the file; the model's copies of them go.
+    block.text = drop_layout_lines(block.text)
+    block.content_html = styled_lines_html(block.text, form, lambda rows: _table_html(rows, _esc_html))
+    style = dict(block.style_json or {})
+    every = [p for p in form.get('paras', []) if not p.get('table')]
+    if form.get('heading') and every and every[0] not in body_paras(form):
+        style['heading'] = every[0]['fmt']
+    style['src'] = {'file': ref, 'range': form['range'], 'heading': form.get('heading') or ''}
+    if form.get('shapes'):
+        style['src']['shapes'] = form['shapes']
+    block.style_json = style
+
+
+# Line-by-line rule for clauses laid into a Word / PDF source (word form).
+_LINE_RULE = (
+    "LINES — Keep the reference clause's line structure. Copy every line that carries no case "
+    "details (titles, labels such as 'Dated:', 'Place:', 'Accepted by me:', fixed wording, 'Versus') "
+    "EXACTLY as written, once. Rewrite only the lines that carry case details (court, place, case "
+    "number, names, dates, amounts), replacing the example values IN that line, never adding a second "
+    "version of it. Do not turn labels (e.g. 'Welfare stamp', 'Required judicial Stamp') into "
+    "sentences, and do not write lines made only of brackets, dashes or dots.\n")
+
+
+def _esc_html(s):
+    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
 def _apply_template_style(block, style: dict | None):
     """Bake the captured DOCX template style onto a generated block: body paragraph
     style into content_html, heading style into style_json (for the editor)."""
@@ -849,7 +1005,7 @@ def _draft_template_mode(session, llm, emb, facts_text, sample_ids, style_direct
         "come from the case facts. Where a case fact supplies such a value, use it and REPLACE "
         "the corresponding example value found in the sample. The sample's own names, addresses "
         "and amounts are only examples — do not keep them when the case facts give the real value.\n"
-        "4a. DEFINED TERMS — Keep every defined term EXACTLY as written and NEVER expand it into its "
+        + _LINE_RULE + "4a. DEFINED TERMS — Keep every defined term EXACTLY as written and NEVER expand it into its "
         "literal value. This covers party role labels ('Disclosing Party', 'Receiving Party', "
         "'Party', 'Parties', 'Company') AND defined concepts ('Effective Date', 'Term', "
         "'Confidential Information', and any capitalised term the agreement defines). Write 'the "
@@ -897,6 +1053,7 @@ def _draft_template_mode(session, llm, emb, facts_text, sample_ids, style_direct
         slot_label = slot.get('label', '')
         slot_desc = slot.get('description', slot_label)
         slot_type = slot.get('type', 'clause')
+        heading, body, kind = _slot_parts(slot)
 
         # Stage B — retrieve top-k candidate clauses (with ids) across all documents.
         query_vec = emb.embed(slot_desc)
@@ -913,20 +1070,24 @@ def _draft_template_mode(session, llm, emb, facts_text, sample_ids, style_direct
 
         user_prompt = (
             f"CLAUSE TO DRAFT: {slot_label}\n"
-            f"SCOPE / PURPOSE OF THIS CLAUSE: {slot_desc}\n\n"
+            + (f"CLAUSE HEADING (a label only: it is shown above the clause; do NOT write it): {heading}\n"
+               if heading else '')
+            + f"SCOPE / PURPOSE OF THIS CLAUSE (its body in the template): {body}\n\n"
             f"AVAILABLE CASE FACTS (use ONLY those relevant to this clause; ignore the rest):\n{facts_text}\n\n"
             f"CANDIDATE SOURCE CLAUSES (reference for language/structure — adapt, do not copy "
             f"verbatim; cite at most one id you actually used, else null):\n{candidate_block}\n\n"
-            f"Now draft only the \"{slot_label}\" clause and return the JSON object described above:"
+            f"Now draft only the body of the \"{slot_label}\" clause and return the JSON object described above:"
         )
-        # No separate display heading: the LLM-invented slot name can be wrong/awkward, and
-        # the drafted clause already carries its own real heading/number in its text. Leave
-        # the block heading empty so the clause's own heading shows, not an invented label.
-        specs.append({'position': position, 'block_type': slot_type, 'heading': '',
+        # The block heading is the template's OWN heading (not the AI's slot name); the model
+        # writes only the body (services/headings.py).
+        specs.append({'position': position, 'block_type': slot_type, 'heading': heading, 'heading_kind': kind,
                       'user_prompt': user_prompt, 'by_id': {c.id: c for c in candidates},
-                      'source_text': slot_desc, 'style': slot.get('style')})
+                      'source_text': body, 'style': slot.get('style'),
+                      'form': slot.get('form'), 'src_ref': f'template:{session.template.id}'})
 
-    return _generate_blocks(session, llm, system_prompt, specs, verify_citation, structured=True)
+    blocks, failures = _generate_blocks(session, llm, system_prompt, specs, verify_citation, structured=True)
+    _fill_variable_headings(llm, blocks, specs, facts_text)
+    return blocks, failures
 
 
 def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directive=''):
@@ -954,7 +1115,7 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
         "2. PARTY-SPECIFIC details — names, addresses, dates, monetary amounts, durations — come "
         "from the case facts. Where a fact supplies such a value, use it and REPLACE the clause's "
         "example value. Keep the clause's own example values only where the facts don't supply one.\n"
-        "2a. DEFINED TERMS — Keep every defined term EXACTLY as written and NEVER expand it into its "
+        + _LINE_RULE + "2a. DEFINED TERMS — Keep every defined term EXACTLY as written and NEVER expand it into its "
         "literal value. This covers party role labels ('Disclosing Party', 'Receiving Party', "
         "'Party', 'Parties', 'Company') AND defined concepts ('Effective Date', 'Term', "
         "'Confidential Information', and any capitalised term the agreement defines). Write 'the "
@@ -1003,13 +1164,21 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
     primary = Sample.objects.filter(id=primary_id).first()
     paragraphs = source_paragraphs(primary.file.path) if primary and primary.file else []
     whole = document_layout(paragraphs)
+    # A Word base document: each clause follows its own paragraphs there (drafting/wordform.py).
+    from .wordform import _word_path, clause_forms
+    word = _word_path(primary) if primary else None
+    forms = clause_forms(word, [c.text for c in clauses], [_sample_heading(c)[0] for c in clauses]) if word \
+        else [None] * len(clauses)
+    src_ref = f'sample:{primary.id}' if word else None
     specs, dividers = [], []
     for position, clause in enumerate(clauses):
         lay = layout_for(clause.text, paragraphs) or whole
         clause_style = {'body': {'align': lay['align']}, 'lines': lay['lines']} if lay else None
         # Sample mode keeps the document's OWN heading (from the clause text), not an
         # LLM-invented name — the drafted text already carries the real title/numbering.
-        heading = _clause_heading(clause.text)
+        # The clause's own heading (detected at upload; older rows split by the same rules), kept
+        # apart: the model rewrites only the body (services/headings.py).
+        heading, body = _sample_heading(clause)
         block_type = clause.clause_type or 'clause'
 
         # A bare heading / label line (e.g. "8 GENERAL", "ACCEPTED AND AGREED:",
@@ -1027,6 +1196,7 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
                 session=session, position=position, block_type=block_type, heading=_clean_heading(heading or _single),
                 text=clause.text, source=DraftBlock.Source.GENERATED, verified=False, similarity_score=None)
             _apply_template_style(divider, clause_style)
+            _apply_word_form(divider, forms[position], src_ref)
             dividers.append(divider)
             continue
 
@@ -1045,20 +1215,25 @@ def _draft_sample_mode(session, llm, emb, facts_text, sample_ids, style_directiv
             ref_block = ''
 
         user_prompt = (
-            # Full clause text — this is the clause being rewritten, so it must NOT be
+            # Full clause body — this is the clause being rewritten, so it must NOT be
             # truncated (a cut mid-clause loses content and leaves dangling sentences
-            # the model "completes" with spurious placeholders).
-            f"CLAUSE TO REWRITE (id={clause.id}, heading: {heading}):\n{clause.text}\n\n"
+            # the model "completes" with spurious placeholders). Its heading is only a label.
+            (f"CLAUSE HEADING (a label only: it is shown above the clause; do NOT write it): {heading}\n"
+             if heading else '')
+            + f"CLAUSE TO REWRITE (id={clause.id}), its body:\n{body}\n\n"
             f"AVAILABLE CASE FACTS (use ONLY those relevant to this clause; ignore the rest):\n{facts_text}"
             f"{ref_block}\n\n"
-            "Rewrite this clause to reflect the case facts and return the JSON object described above:"
+            "Rewrite this clause body to reflect the case facts and return the JSON object described above:"
         )
         # Base clause + references are the citation candidates.
         specs.append({'position': position, 'block_type': block_type, 'heading': heading,
-                      'user_prompt': user_prompt, 'source_text': clause.text, 'style': clause_style,
+                      'heading_kind': _kind(heading),
+                      'user_prompt': user_prompt, 'source_text': body, 'style': clause_style,
+                      'form': forms[position], 'src_ref': src_ref,
                       'by_id': {clause.id: clause, **{r.id: r for r in refs}}})
 
     blocks, failures = _generate_blocks(session, llm, system_prompt, specs, verify_citation, structured=True)
+    _fill_variable_headings(llm, blocks, specs, facts_text)
     # Headings come from the ORIGINAL clause (set above), so a clause keeps its title
     # ("6 TERM") even when the LLM drops the heading line from its body-only rewrite.
     # Merge the heading-only dividers back in document order.
@@ -1104,7 +1279,7 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
         "use them and REPLACE any example values in the reference clause. Where a fact isn't provided, leave a "
         "LABELLED placeholder in the form [[Short Label]] that names the value (e.g. "
         "[[Date of Execution]], [[Employee Address]]); never use blank underscores.\n"
-        "3a. DEFINED TERMS — Keep every defined term EXACTLY as written and NEVER expand it into its literal "
+        + _LINE_RULE + "3a. DEFINED TERMS — Keep every defined term EXACTLY as written and NEVER expand it into its literal "
         "value. This covers party role labels ('Disclosing Party', 'Receiving Party', 'Party', 'Parties', "
         "'Company') AND defined concepts ('Effective Date', 'Term', 'Confidential Information', and any "
         "capitalised defined term). Write 'the Receiving Party' (NOT a name/address), 'the Effective Date' (NOT "
@@ -1133,6 +1308,7 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
         slot_label = slot.get('label', '')
         slot_desc = slot.get('description', slot_label)
         slot_type = slot.get('type', 'clause')
+        heading, body, kind = _slot_parts(slot)
 
         # Retrieve the closest library clauses for this slot (contract_type-scoped).
         query_vec = emb.embed(slot_desc)
@@ -1147,16 +1323,22 @@ def _draft_library_mode(session, llm, emb, facts_text, style_directive=''):
 
         user_prompt = (
             f"CLAUSE TO DRAFT: {slot_label}\n"
-            f"SCOPE / PURPOSE OF THIS CLAUSE: {slot_desc}\n\n"
+            + (f"CLAUSE HEADING (a label only: it is shown above the clause; do NOT write it): {heading}\n"
+               if heading else '')
+            + f"SCOPE / PURPOSE OF THIS CLAUSE (its body in the template): {body}\n\n"
             f"AVAILABLE CASE FACTS (use ONLY those relevant to this clause; ignore the rest):\n{facts_text}\n\n"
             f"REFERENCE CLAUSES (from the firm's clause library — adapt, do not copy verbatim):\n{ref_block}\n\n"
-            f"Now draft only the \"{slot_label}\" clause (body text only):"
+            f"Now draft only the body of the \"{slot_label}\" clause (body text only):"
         )
-        specs.append({'position': position, 'block_type': slot_type, 'heading': slot_label,
-                      'user_prompt': user_prompt, 'by_id': {}, 'style': slot.get('style')})
+        # The block heading is the template's OWN heading ('' when the clause has none).
+        specs.append({'position': position, 'block_type': slot_type, 'heading': heading, 'heading_kind': kind,
+                      'user_prompt': user_prompt, 'by_id': {}, 'style': slot.get('style'),
+                      'form': slot.get('form'), 'src_ref': f'template:{session.template.id}'})
 
     # Library mode has no citation verification — blocks are recorded as generated.
-    return _generate_blocks(session, llm, system_prompt, specs, verify_citation=None, structured=False)
+    blocks, failures = _generate_blocks(session, llm, system_prompt, specs, verify_citation=None, structured=False)
+    _fill_variable_headings(llm, blocks, specs, facts_text)
+    return blocks, failures
 
 
 def _verified_block(session, position, block_type, heading, raw, by_id, verify_citation):

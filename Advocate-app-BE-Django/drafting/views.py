@@ -639,6 +639,10 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
             DraftSession.objects.filter(id=session.id).update(status=before)
             raise
         reservation.attach(f'draft:{session.id}')
+        # A Word file edited in ONLYOFFICE belongs to the old text: the new draft gets a new one, made from
+        # the blocks once they are ready (the editor doesn't open a draft while it is generating).
+        from .models import DraftFile
+        DraftFile.objects.filter(session=session).delete()
         _dispatch(generate_draft, session.id)
         return Response({'id': session.id, 'status': DraftSession.Status.PENDING})
 

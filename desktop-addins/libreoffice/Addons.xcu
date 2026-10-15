@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PactPro menu and toolbar in Writer, Calc and Impress. The script URLs name the installed file
+     (pactpro.oxt): keep that file name when building (desktop-addins/build.py). -->
+<oor:component-data xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                    oor:name="Addons" oor:package="org.openoffice.Office">
+  <node oor:name="AddonUI">
+    <node oor:name="OfficeMenuBar">
+      <node oor:name="com.pactpro.libreoffice.menu" oor:op="replace">
+        <prop oor:name="Title" oor:type="xs:string"><value>PactPro</value></prop>
+        <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+        <node oor:name="Submenu">
+          <node oor:name="m0" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$pactpro_window?language=Python&amp;location=user:uno_packages</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value>PactPro window…</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m1" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$save_to_pactpro?language=Python&amp;location=user:uno_packages</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value>Save to PactPro</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m2" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$discard_edits?language=Python&amp;location=user:uno_packages</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value>Discard edits (back to the PactPro version)</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m3" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>private:separator</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value></value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m4" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$submit_to_task?language=Python&amp;location=user:uno_packages</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value>Submit to task…</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m5" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>private:separator</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value></value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m6" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$approve_task?language=Python&amp;location=user:uno_packages</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value>Approve task…</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+          <node oor:name="m7" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$request_changes?language=Python&amp;location=user:uno_packages</value></prop>
+            <prop oor:name="Title" oor:type="xs:string"><value>Request changes…</value></prop>
+            <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+            <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+          </node>
+        </node>
+      </node>
+    </node>
+    <node oor:name="OfficeToolBar">
+      <node oor:name="com.pactpro.libreoffice.toolbar" oor:op="replace">
+        <node oor:name="t0" oor:op="replace">
+          <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$pactpro_window?language=Python&amp;location=user:uno_packages</value></prop>
+          <prop oor:name="Title" oor:type="xs:string"><value>PactPro</value></prop>
+          <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+          <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+        </node>
+        <node oor:name="t1" oor:op="replace">
+          <prop oor:name="URL" oor:type="xs:string"><value>vnd.sun.star.script:pactpro.oxt|python|pactpro.py$save_to_pactpro?language=Python&amp;location=user:uno_packages</value></prop>
+          <prop oor:name="Title" oor:type="xs:string"><value>Save to PactPro</value></prop>
+          <prop oor:name="Target" oor:type="xs:string"><value>_self</value></prop>
+          <prop oor:name="Context" oor:type="xs:string"><value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.presentation.PresentationDocument</value></prop>
+        </node>
+      </node>
+    </node>
+  </node>
+</oor:component-data>

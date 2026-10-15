@@ -151,6 +151,8 @@ class DraftSessionSerializer(serializers.ModelSerializer):
     access = serializers.SerializerMethodField()
     # Empty fields left (drives Incomplete / Complete on the Drafts list).
     unfilled_count = serializers.SerializerMethodField()
+    # The Word template / sample the draft follows: page, header / footer, own letterhead (wordform.py).
+    word_form = serializers.SerializerMethodField()
 
     class Meta:
         model = DraftSession
@@ -160,7 +162,7 @@ class DraftSessionSerializer(serializers.ModelSerializer):
             'client', 'project', 'facts', 'mode', 'llm', 'status',
             'playbook', 'risk_status', 'risk_report', 'apply_bns_codes',
             'case_id', 'ams_task_id', 'ams_document_id', 'ams_document_version', 'ams_synced_at',
-            'reference_documents', 'unfilled_count', 'created_at', 'updated_at', 'blocks',
+            'reference_documents', 'unfilled_count', 'word_form', 'created_at', 'updated_at', 'blocks',
         )
         read_only_fields = ('status', 'celery_task_id', 'risk_status', 'risk_report',
                             'ams_document_id', 'ams_document_version', 'ams_synced_at')
@@ -227,23 +229,32 @@ class DraftSessionSerializer(serializers.ModelSerializer):
         """Names of all reference documents on the session, in id order."""
         return [s.name for s in obj.samples.all()]
 
+    def get_word_form(self, obj):
+        """The Word template / sample this draft follows: its page size and margins, header and
+        footer (shown around the draft in the editor) and whether it has its own letterhead (then
+        Download offers no firm letterhead). None for drafts without a Word source."""
+        from .wordform import page_form, session_source
+        ref, path = session_source(obj)
+        form = page_form(path) if path else None
+        if not form:
+            return None
+        return {**form, 'source': ref.split(':')[0]}
+
     def get_reference_documents(self, obj):
-        """The template + samples this draft was built from, as {kind, id, name, url}
-        for the editor's Reference-documents panel (absolute file URLs)."""
+        """The template + samples this draft was built from, as {kind, id, name, url, preview}
+        for the editor's Reference-documents panel. Links go through the login (drafting/files.py:
+        uploads are not served from /media): `url` is the file, `preview` the file as it prints."""
+        from .files import preview_url
         req = self.context.get('request')
-
-        def _url(f):
-            if not f:
-                return None
-            return req.build_absolute_uri(f.url) if req else f.url
-
         docs = []
         if obj.template_id and obj.template.file:
-            docs.append({'kind': 'template', 'id': obj.template_id,
-                         'name': obj.template.name, 'url': _url(obj.template.file)})
+            docs.append({'kind': 'template', 'id': obj.template_id, 'name': obj.template.name,
+                         'url': file_url(req, 'template', obj.template),
+                         'preview': preview_url(req, 'template', obj.template)})
         for s in obj.samples.all():
             if s.file:
-                docs.append({'kind': 'sample', 'id': s.id, 'name': s.name, 'url': _url(s.file)})
+                docs.append({'kind': 'sample', 'id': s.id, 'name': s.name, 'url': file_url(req, 'sample', s),
+                             'preview': preview_url(req, 'sample', s)})
         return docs
 
 

@@ -85,6 +85,8 @@ class Command(BaseCommand):
                 if now - last_scan >= scan_every:
                     self._run('scan_notifications')
                     self._run('subscription_sweep')     # trials that ended -> EXPIRED (no data touched)
+                    self._run('remove_blank_documents')   # new documents abandoned for a day (documents/blank.py)
+                    self._run('remind_client_reviews')    # documents waiting on the client past their reply-by date
                     last_scan = now
                 if now - last_drain >= drain_every:
                     self._run('process_notifications')

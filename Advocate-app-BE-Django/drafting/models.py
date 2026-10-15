@@ -66,6 +66,9 @@ class Template(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.READY)
     # Optional source file an uploaded template was parsed from.
     file = models.FileField(upload_to='templates/', null=True, blank=True)
+    # A PDF upload's Word version, made in the background (services/pdf2word.py): the draft's look
+    # and its Download come from it (drafting/wordform.py). Empty for Word uploads.
+    word_file = models.FileField(upload_to='templates/word/', null=True, blank=True)
     # JSON list of {key, label, required, hint} describing case-fact inputs
     slot_schema = models.JSONField(default=list)
     # JSON list of clause-skeleton blocks the generation engine iterates over
@@ -125,6 +128,8 @@ class Sample(models.Model):
     contract_type = models.CharField(max_length=100, blank=True)  # e.g. 'nda'
     variant = models.CharField(max_length=20, blank=True, default='any')  # mutual/one_way/any
     file = models.FileField(upload_to='samples/')
+    # As Template.word_file: the Word version of a PDF sample.
+    word_file = models.FileField(upload_to='samples/word/', null=True, blank=True)
     # Nullable so playbook-generated samples (no client context) can be stored.
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, related_name='samples', null=True, blank=True)
     project = models.ForeignKey(Project, on_delete=models.SET_NULL, related_name='samples', null=True, blank=True)
@@ -181,6 +186,9 @@ class SampleClause(models.Model):
     clause_type = models.CharField(max_length=100)  # e.g. 'definition', 'confidentiality_obligation'
     position = models.PositiveIntegerField()
     text = models.TextField()
+    # The clause's detected heading (services/headings.py; '' = none): a draft shows it apart and the
+    # AI rewrites only the body. Older rows are split when used.
+    heading = models.CharField(max_length=500, blank=True, default='')
     # 768-dim vector (nomic-embed-text-v1); null until process_sample embeds it.
     embedding = VectorField(dimensions=768, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -392,6 +400,48 @@ class DraftVersion(models.Model):
         db_table = '"drf"."draft_version"'
         ordering = ['number']
         constraints = [models.UniqueConstraint(fields=['session', 'number'], name='draft_version_unique_number')]
+
+
+class DraftFile(models.Model):
+    """The draft as a Word file, edited in ONLYOFFICE (docs/ONLYOFFICE_PLAN.md). Made from the draft
+    the first time it opens there; from then on this file is the draft for Download / Save to case.
+    `key` is ONLYOFFICE's document key: new for every version, or editors get a cached old copy, and
+    carrying a random part because test and dev share one document server (their ids overlap)."""
+    session = models.OneToOneField(DraftSession, on_delete=models.CASCADE, related_name='word')
+    file = models.FileField(upload_to='drafts/word/')
+    version = models.PositiveIntegerField(default=1)
+    key = models.CharField(max_length=128)
+    editing = models.BooleanField(default=False)          # someone has it open (callback status 1)
+    # Finalised: the approved text, locked (everyone gets a read-only editor) until whoever decides
+    # reopens it. final_sha256 proves the filed / PDF-A copy is exactly this file.
+    final_at = models.DateTimeField(null=True, blank=True)
+    final_by_id = models.BigIntegerField(null=True, blank=True)
+    final_sha256 = models.CharField(max_length=64, blank=True)
+    updated_by_id = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = '"drf"."draft_file"'
+
+
+class DraftFileVersion(models.Model):
+    """Every saved version of a DraftFile, kept as it was (Versions / Restore in later phases)."""
+    draft_file = models.ForeignKey(DraftFile, on_delete=models.CASCADE, related_name='versions')
+    version = models.PositiveIntegerField()
+    file = models.FileField(upload_to='drafts/word/versions/')
+    # For the editor's version history (docs/ONLYOFFICE_PLAN.md): the document key this version had, and
+    # what the save callback reported (changes zip + history), so the editor can highlight its changes.
+    key = models.CharField(max_length=128, blank=True)
+    changes = models.FileField(upload_to='drafts/word/changes/', null=True, blank=True)
+    history = models.JSONField(default=dict, blank=True)
+    created_by_id = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = '"drf"."draft_file_version"'
+        ordering = ['version']
+        constraints = [models.UniqueConstraint(fields=['draft_file', 'version'], name='draft_file_version_unique')]
 
 
 class DraftReviewRequest(models.Model):

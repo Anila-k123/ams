@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 
 from core.testing import ALL_PERMISSIONS, auth, make_advocate
 
-from .models import Client, DraftSession, Playbook, Project, Sample, Template
+from .models import Client, DraftFile, DraftSession, Playbook, Project, Sample, Template
 
 
 @override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
@@ -1486,3 +1486,1072 @@ class DurationFactsBriefTest(TestCase):
         self.assertIn('no fixed end; it continues until terminated by notice',
                       _facts_brief({'term_years': 'until terminated'}))
         self.assertNotIn('Term years', _facts_brief({'term_years': '2'}))
+
+
+def _letterhead_template_docx():
+    """A Word template with a letterhead (logo + firm name in the header), a footer, a centred title,
+    bold clause headings, an indented coloured body, a table and a right-aligned signature."""
+    import io
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Cm, Pt, RGBColor
+    from PIL import Image
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width, sec.left_margin = Cm(21), Cm(2.2)
+    doc.styles['Normal'].font.name = 'Times New Roman'
+    doc.styles['Normal'].paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    logo = io.BytesIO()
+    Image.new('RGB', (120, 40), (163, 35, 43)).save(logo, format='PNG')
+    logo.seek(0)
+    sec.header.paragraphs[0].add_run().add_picture(logo, width=Cm(3))
+    sec.header.add_paragraph('KUMAR & ASSOCIATES, Advocates')
+    sec.footer.paragraphs[0].text = 'No. 12, Anna Salai, Chennai 600002'
+    t = doc.add_paragraph('LEASE AGREEMENT')
+    t.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    t.runs[0].bold, t.runs[0].font.size = True, Pt(16)
+    for head, body in (('1. RENT', 'The Lessee shall pay a monthly rent of Rs. 40,000 on or before the 5th day.'),
+                       ('2. TERM', 'This lease is for a term of eleven months from 1 April 2026.')):
+        doc.add_paragraph(head).runs[0].bold = True
+        b = doc.add_paragraph(body)
+        b.paragraph_format.left_indent = Cm(1)
+        b.runs[0].font.color.rgb = RGBColor(0x1F, 0x3A, 0x5F)
+    doc.add_paragraph('3. SCHEDULE OF PAYMENTS').runs[0].bold = True
+    tbl = doc.add_table(rows=2, cols=2)
+    tbl.style = 'Table Grid'
+    for i, (a, b) in enumerate((('Month', 'Rent'), ('April 2026', 'Rs. 40,000'))):
+        tbl.cell(i, 0).text, tbl.cell(i, 1).text = a, b
+    doc.add_paragraph('Rent includes maintenance.')
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+class WordFormTest(TestCase):
+    """drafting/wordform.py: a draft from a Word template looks like it in the editor, and Download
+    writes into the original file (letterhead, header, footer, page, formatting kept)."""
+
+    def setUp(self):
+        from .models import DraftBlock
+        from .services.parser import extract_template_slots
+        from .tasks import _apply_word_form
+        self.owner = make_advocate(permissions=DRAFTER)
+        self.template = Template.objects.create(
+            name='Lease', file=SimpleUploadedFile('lease.docx', _letterhead_template_docx()))
+        self.slots = extract_template_slots(self.template.file.path)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready',
+                                                   template=self.template)
+        for n, slot in enumerate(self.slots):
+            text = slot['description'].replace('Rs. 40,000 on', 'Rs. 45,000 on')
+            if 'SCHEDULE' in text:
+                text = ('3. SCHEDULE OF PAYMENTS\n| Month | Rent |\n|---|---|\n| April 2026 | Rs. 45,000 |\n'
+                        '| May 2026 | Rs. 45,000 |\nRent includes maintenance.')
+            block = DraftBlock(session=self.session, position=n, block_type='clause', heading='', text=text,
+                               source='generated')
+            _apply_word_form(block, slot.get('form'), f'template:{self.template.id}')
+            block.save()
+
+    def test_slots_know_their_place_and_look(self):
+        self.assertEqual([s['label'] for s in self.slots], ['LEASE AGREEMENT', 'RENT', 'TERM', 'SCHEDULE OF PAYMENTS'])
+        self.assertTrue(all(s.get('form') for s in self.slots))
+        # Word tables reach generation as table rows (| a | b |), like a PDF's.
+        self.assertIn('| Month | Rent |', self.slots[3]['description'])
+
+    def test_editor_opens_in_the_template_look(self):
+        rent = self.session.blocks.get(position=1)
+        self.assertIn("font-family:'Times New Roman'", rent.content_html)
+        self.assertIn('margin-left:28.4pt', rent.content_html)            # the 1 cm indent
+        self.assertIn('color:#1F3A5F', rent.content_html)
+        self.assertIn('<table>', self.session.blocks.get(position=3).content_html)
+        self.assertIn('text-align:center', self.session.blocks.get(position=0).content_html)   # the title
+        data = self.client.get(f'/api/drafting/draft-sessions/{self.session.id}/', **auth(self.owner)).json()
+        form = data['word_form']
+        self.assertEqual((form['source'], form['has_letterhead'], form['page']['width_mm']), ('template', True, 210.0))
+        self.assertIn('<img src="data:image/png;base64,', form['header_html'])
+        self.assertIn('Anna Salai', form['footer_html'])
+
+    def test_download_writes_into_the_original(self):
+        import io
+        from docx import Document
+        resp = self.client.get(f'/api/drafting/drafts/{self.session.id}/export/docx/?branding=1', **auth(self.owner))
+        self.assertEqual(resp.status_code, 200)
+        doc = Document(io.BytesIO(b''.join(resp.streaming_content) if hasattr(resp, 'streaming_content')
+                                  else resp.content))
+        body = [p for p in doc.paragraphs if p.text.strip()]
+        self.assertEqual(body[0].text, 'LEASE AGREEMENT')                  # outside the clauses: untouched
+        self.assertTrue(body[0].runs[0].bold)
+        rent = next(p for p in body if 'monthly rent' in p.text)
+        self.assertIn('Rs. 45,000', rent.text)
+        self.assertAlmostEqual(rent.paragraph_format.left_indent.cm, 1.0, places=1)
+        self.assertEqual(str(rent.runs[0].font.color.rgb), '1F3A5F')
+        rows = [[c.text for c in r.cells] for r in doc.tables[0].rows]
+        self.assertEqual(rows, [['Month', 'Rent'], ['April 2026', 'Rs. 45,000'], ['May 2026', 'Rs. 45,000']])
+        self.assertEqual(doc.tables[0].style.name, 'Table Grid')
+        sec = doc.sections[0]
+        self.assertEqual(len(sec.header._element.findall('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip')), 1)
+        self.assertEqual([p.text for p in sec.header.paragraphs if p.text], ['KUMAR & ASSOCIATES, Advocates'])
+        self.assertEqual(sec.footer.paragraphs[0].text, 'No. 12, Anna Salai, Chennai 600002')
+        # Its own letterhead: the firm letterhead asked for (?branding=1) is not added on top.
+        self.assertEqual(len(sec.header.paragraphs), 2)
+
+    def test_draft_without_word_source_keeps_house_style(self):
+        from .wordform import render_draft_docx
+        plain = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        from .models import DraftBlock
+        DraftBlock.objects.create(session=plain, position=0, block_type='clause', heading='Rent', text='',
+                                  content_html='<p>Rent is Rs. 1.</p>', source='generated')
+        self.assertTrue(render_draft_docx(plain).startswith(b'PK'))
+        self.assertIsNone(self.client.get(f'/api/drafting/draft-sessions/{plain.id}/', **auth(self.owner)).json()['word_form'])
+
+
+class PdfToWordTest(TestCase):
+    """services/pdf2word.py: a PDF becomes a Word file with its layout (needs LibreOffice to make the PDF)."""
+
+    def test_round_trip(self):
+        import io
+        import os
+        import tempfile as tf
+        from unittest import skip  # noqa: F401
+        from docx import Document
+        from .export.pdf import PdfUnavailable, docx_to_pdf
+        from .services.pdf2word import pdf_to_docx
+        try:
+            pdf = docx_to_pdf(_letterhead_template_docx())
+        except PdfUnavailable:
+            self.skipTest('LibreOffice is not installed')
+        path = os.path.join(tf.mkdtemp(), 'lease.pdf')
+        with open(path, 'wb') as f:
+            f.write(pdf)
+        doc = Document(io.BytesIO(pdf_to_docx(path)))
+        body = [p for p in doc.paragraphs if p.text.strip()]
+        title = next(p for p in body if p.text == 'LEASE AGREEMENT')
+        self.assertEqual(int(title.alignment), 1)                          # centred
+        self.assertTrue(any(p.style.name.startswith('Heading') and 'RENT' in p.text for p in body))
+        self.assertEqual(len(doc.tables), 1)
+        self.assertEqual(len(doc.sections[0].header._element.findall(
+            './/{http://schemas.openxmlformats.org/drawingml/2006/main}blip')), 1)   # the logo
+        self.assertIn('KUMAR & ASSOCIATES', ' '.join(p.text for p in doc.sections[0].header.paragraphs))
+
+    def test_scan_gives_none(self):
+        import os
+        import tempfile as tf
+        from PIL import Image
+        from .services.pdf2word import pdf_to_docx
+        path = os.path.join(tf.mkdtemp(), 'scan.pdf')
+        Image.new('RGB', (600, 800), (255, 255, 255)).save(path, 'PDF')
+        self.assertIsNone(pdf_to_docx(path))
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+class TemplatePrintViewTest(TestCase):
+    """View on Firm Templates / Samples: the file as it prints (drafting/files.py preview)."""
+
+    def setUp(self):
+        self.user = make_advocate(permissions=ALL_PERMISSIONS)
+
+    def get(self, url):
+        resp = self.client.get(url, **auth(self.user))
+        body = b''.join(resp.streaming_content) if hasattr(resp, 'streaming_content') else resp.content
+        return resp, body
+
+    def test_word_template_is_shown_as_a_pdf(self):
+        t = Template.objects.create(name='Lease', created_by_id=self.user.id,
+                                    file=SimpleUploadedFile('lease.docx', _letterhead_template_docx()))
+        data = self.client.get(f'/api/drafting/templates/{t.id}/', **auth(self.user)).json()
+        self.assertIn(f'/api/drafting/templates/{t.id}/preview/', data['preview'])
+        resp, body = self.get(data['preview'])
+        if resp.status_code == 503:                                   # no LibreOffice on this machine
+            self.assertIn('LibreOffice', resp.json()['error'])
+            return
+        self.assertEqual((resp.status_code, resp['Content-Type']), (200, 'application/pdf'))
+        self.assertTrue(body.startswith(b'%PDF'))
+        again, body2 = self.get(data['preview'])                      # kept, not made again
+        self.assertEqual(body, body2)
+
+    def test_pdf_template_is_sent_as_it_is(self):
+        pdf = b'%PDF-1.4\n%fake\n'
+        t = Template.objects.create(name='NDA', created_by_id=self.user.id, file=SimpleUploadedFile('nda.pdf', pdf))
+        resp, body = self.get(f'/api/drafting/templates/{t.id}/preview/')
+        self.assertEqual((resp.status_code, body), (200, pdf))
+
+
+class WordFormHeadingTest(TestCase):
+    """Headings are kept apart from bodies (services/headings.py): the template's own heading, never the
+    AI's slot name; fixed headings stay, variable ones are filled."""
+
+    def test_slot_parts_use_the_templates_own_heading(self):
+        from .tasks import _slot_parts
+        slot = {'label': 'Lease Agreement Introduction', 'description': 'LEASE AGREEMENT\nThis Lease is made.',
+                'heading': 'LEASE AGREEMENT', 'body': 'This Lease is made.', 'heading_kind': 'fixed'}
+        self.assertEqual(_slot_parts(slot), ('LEASE AGREEMENT', 'This Lease is made.', 'fixed'))
+        old = {'label': 'Premises', 'description': '1. PREMISES\nThe Lessor lets the flat.'}     # before headings
+        self.assertEqual(_slot_parts(old), ('1. PREMISES', 'The Lessor lets the flat.', 'fixed'))
+
+    def test_heading_kinds(self):
+        from .services.headings import heading_kind
+        self.assertEqual(heading_kind('VERSUS'), 'fixed')
+        self.assertEqual(heading_kind('4. SCHEDULE OF PAYMENTS'), 'fixed')        # the clause number is not a detail
+        self.assertEqual(heading_kind('IN THE COURT OF [[Court Name]], CHENNAI'), 'variable')
+        self.assertEqual(heading_kind('IN THE COURT OF THE PRINCIPAL DISTRICT COURT, CHENNAI'), 'variable')
+        self.assertEqual(heading_kind('O.S. No. 145 of 2024'), 'variable')
+        self.assertEqual(heading_kind(''), '')
+
+    def test_variable_heading_filled_fixed_left(self):
+        from types import SimpleNamespace
+        from .tasks import _fill_variable_headings
+        llm = mock.Mock()
+        llm.complete.return_value = 'IN THE COURT OF THE CITY CIVIL COURT, CHENNAI'
+        blocks = [SimpleNamespace(position=0, heading='IN THE COURT OF [[Court Name]], CHENNAI'),
+                  SimpleNamespace(position=1, heading='VERSUS')]
+        specs = [{'position': 0, 'heading': blocks[0].heading, 'heading_kind': 'variable'},
+                 {'position': 1, 'heading': 'VERSUS', 'heading_kind': 'fixed'}]
+        _fill_variable_headings(llm, blocks, specs, 'Court: City Civil Court, Chennai')
+        self.assertEqual(blocks[0].heading, 'IN THE COURT OF THE CITY CIVIL COURT, CHENNAI')
+        self.assertEqual(blocks[1].heading, 'VERSUS')
+        self.assertEqual(llm.complete.call_count, 1)                                 # only the variable one
+
+
+class WordLinesTest(TestCase):
+    """Word-form lines: unchanged lines keep their runs, layout lines and drawn shapes stay in the
+    download, nothing is put back by rule."""
+
+    def _docx(self):
+        import base64
+        import tempfile
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph('VAKALATNAMA')
+        p = doc.add_paragraph('I, ')
+        p.add_run('K. Kannan').bold = True
+        p.add_run(' being the Plaintiff')
+        doc.add_paragraph('))\t))')
+        png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==')
+        img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        img.write(png)
+        img.close()
+        boxed = doc.add_paragraph('Welfare stamp')
+        boxed.add_run().add_picture(img.name)
+        doc.add_paragraph('Dated: ____')
+        f = tempfile.NamedTemporaryFile(suffix='.docx', delete=False)
+        f.close()
+        doc.save(f.name)
+        return f.name
+
+    def _session(self, text, form):
+        from types import SimpleNamespace
+
+        from .tasks import _apply_word_form
+        block = SimpleNamespace(text=text, heading='', content_html='', style_json={}, position=0)
+        _apply_word_form(block, form, 'template:1')
+        blocks = SimpleNamespace(all=lambda: [block], order_by=lambda *_: [block])
+        return block, SimpleNamespace(blocks=blocks)
+
+    def test_layout_lines_dropped_and_nothing_put_back(self):
+        from .wordform import drop_layout_lines
+        self.assertEqual(drop_layout_lines('A\n))\n-----\n))\tPLAINTIFF'), 'A\n))\tPLAINTIFF')
+        path = self._docx()
+        from .wordform import clause_forms
+        form = clause_forms(path, ['VAKALATNAMA\nI, ____ being'])[0]
+        self.assertEqual(form['shapes'], 1)
+        block, _ = self._session('I, K. Kannan being the Plaintiff\nDated: 9 October 2026', form)
+        self.assertNotIn('VAKALATNAMA', block.text)            # a template line the model left out is not forced back
+        self.assertEqual(block.style_json['src']['shapes'], 1)
+
+    def test_unchanged_line_keeps_runs_and_shapes_survive(self):
+        import io
+
+        from docx import Document
+        from docx.oxml.ns import qn
+
+        from .wordform import clause_forms, render_into_original
+        path = self._docx()
+        form = clause_forms(path, ['VAKALATNAMA\nI, ____ being'])[0]
+        block, session = self._session(
+            'VAKALATNAMA\nI, K. Kannan being the Plaintiff\n))\nWelfare stamp affixed as per law\nDated: 9 October 2026', form)
+        self.assertIn('<strong>K. Kannan</strong>', block.content_html)   # editor: bold words of an unchanged line
+        self.assertNotIn('<p>))</p>', block.content_html)
+        out = Document(io.BytesIO(render_into_original(session, path)))
+        texts = [p.text for p in out.paragraphs]
+        self.assertEqual(texts.count('))\t))'), 1)                         # layout line from the file, once
+        self.assertNotIn('))', [t.strip() for t in texts])
+        kannan = next(p for p in out.paragraphs if 'Kannan' in p.text)
+        self.assertTrue(any(r.bold and r.text == 'K. Kannan' for r in kannan.runs))
+        self.assertEqual(len(out.element.body.findall('.//' + qn('w:drawing'))), 1)   # the box survives
+        self.assertIn('Dated: 9 October 2026', texts)
+
+
+class TemplateLookFixesTest(TestCase):
+    """Fixes from testing a PDF sample: no repeated heading line, colours kept, signature lines."""
+
+    def test_heading_shown_apart_is_not_repeated_in_the_text(self):
+        from types import SimpleNamespace
+        from .tasks import _apply_word_form
+        form = {'range': [3, 4], 'heading': '1. PREMISES', 'paras': [
+            {'i': 3, 'key': '1 premises', 'fmt': {'bold': True, 'color': '#7A1F2B'}, 'text': '1. PREMISES'},
+            {'i': 4, 'key': 'the lessor lets to the lessee the', 'fmt': {'align': 'justify'},
+             'text': 'The Lessor lets to the Lessee the premises at [[Premises Address]].'}]}
+        block = SimpleNamespace(text='1. PREMISES\nThe Lessor lets to the Lessee the flat at T. Nagar.',
+                                heading='1. PREMISES', content_html='', style_json={})
+        _apply_word_form(block, form, 'sample:1')
+        self.assertEqual(block.text, 'The Lessor lets to the Lessee the flat at T. Nagar.')
+        self.assertNotIn('PREMISES', block.content_html)
+        self.assertEqual(block.style_json['heading']['color'], '#7A1F2B')
+
+    def test_pdf_colours(self):
+        from .services.pdf2word import _hex
+        self.assertEqual(_hex((0.478, 0.122, 0.169)), '7A1F2B')     # RGB
+        self.assertIsNone(_hex((0,)))                                 # black
+        self.assertIsNone(_hex((0, 0, 0, 1)))                         # CMYK black
+        self.assertEqual(_hex((0, 0.75, 0.6, 0.52)), '7A1F31')        # CMYK maroon
+        self.assertIsNone(_hex('pattern'))
+
+    def test_signature_lines_are_not_headings(self):
+        from .services.pdf2word import _SIGNATURE_LINE
+        for line in ('LESSOR', 'LESSEE', 'For Kumar & Associates', 'Witness 1', 'Authorised Signatory'):
+            self.assertTrue(_SIGNATURE_LINE.match(line), line)
+        self.assertFalse(_SIGNATURE_LINE.match('1. PREMISES'))
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix='drafting-test-'))
+class ReferenceDocumentLinksTest(TestCase):
+    """The draft page's Reference documents open: links go through the login, never /media."""
+
+    def test_links_load_for_the_owner(self):
+        owner = make_advocate(permissions=ALL_PERMISSIONS)
+        sample = Sample.objects.create(name='Lease', uploaded_by_id=owner.id,
+                                       file=SimpleUploadedFile('lease.pdf', b'%PDF-1.4\n%x\n'))
+        session = DraftSession.objects.create(created_by_id=owner.id, facts={}, status='ready')
+        session.samples.add(sample)
+        doc = self.client.get(f'/api/drafting/draft-sessions/{session.id}/', **auth(owner)).json()['reference_documents'][0]
+        self.assertNotIn('/media/', doc['url'])
+        self.assertIn(f'/api/drafting/samples/{sample.id}/file/', doc['url'])
+        self.assertIn(f'/api/drafting/samples/{sample.id}/preview/', doc['preview'])
+        for url in (doc['url'], doc['preview']):
+            resp = self.client.get(url, **auth(owner))
+            body = b''.join(resp.streaming_content) if hasattr(resp, 'streaming_content') else resp.content
+            self.assertEqual((resp.status_code, body[:5]), (200, b'%PDF-'))
+            self.assertEqual(self.client.get(url).status_code, 401)        # never without the login
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class OnlyOfficeTest(TestCase):
+    """ONLYOFFICE as the editor (drafting/onlyoffice.py): signed config, signed file link, save callback."""
+
+    def setUp(self):
+        self.media = tempfile.mkdtemp()
+        self.media_override = override_settings(MEDIA_ROOT=self.media)
+        self.media_override.enable()
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.session.blocks.create(position=0, block_type='clause', heading='', text='First clause.', source='generated')
+
+    def tearDown(self):
+        self.media_override.disable()
+
+    def _config(self, who=None):
+        return self.client.get(f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/', **auth(who or self.owner))
+
+    def test_desktop_editing_over_webdav(self):
+        """Word opens the draft over WebDAV (documents/dav.py): its Save is a new version, and the PactPro
+        editor is read-only while Word holds the lock."""
+        links = self.client.get(f'/api/desktop-links?kind=draft&id={self.session.id}', **auth(self.owner)).json()
+        self.assertTrue(links['editable'])
+        self.assertTrue(links['office'].startswith('ms-word:ofe|u|'))
+        path = '/dav/' + links['url'].split('/dav/', 1)[1]
+        data = self.client.get(path).content
+        self.assertEqual(data[:2], b'PK')
+        self.assertEqual(self.client.generic('LOCK', path).status_code, 200)
+        self.assertEqual(self._config().json()['role'], 'view')
+        self.assertEqual(self.client.generic('PUT', path, data).status_code, 204)
+        self.assertEqual(self.client.generic('PUT', path, data).status_code, 204)
+        self.assertEqual(DraftFile.objects.get(session=self.session).version, 1)   # working copy only
+        self.assertEqual(self.client.generic('UNLOCK', path).status_code, 204)
+        self.assertEqual(self._config().json()['role'], 'decide')                 # own edits: go on with them
+        resp = self.client.post(f'/api/desktop-work/draft/{self.session.id}', {'action': 'save'},
+                                content_type='application/json', **auth(self.owner))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(DraftFile.objects.get(session=self.session).version, 2)
+        self.assertEqual(self._config().json()['role'], 'decide')
+
+    def test_redline_between_word_versions(self):
+        """Download → Redline on an ONLYOFFICE draft: tracked changes between two Word versions, or to now."""
+        import io as _io
+
+        from docx import Document as _Doc
+        from .docfile import apply_tracked
+        from .onlyoffice import store_version
+        self._config()
+        df = DraftFile.objects.get(session=self.session)
+        with df.file.open('rb') as f:
+            data, ok = apply_tracked(f.read(), 'First clause.', 'First clause, as amended.')
+        self.assertTrue(ok)
+        store_version(df, data, self.owner.id)                               # v2: the clause reads amended
+        url = f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/redline/'
+        # Without LibreOffice: the standard-layout redline from each version's clause text.
+        from .export.libre_redline import RedlineUnavailable
+        with mock.patch('drafting.export.libre_redline.compare_docx', side_effect=RedlineUnavailable('none')):
+            resp = self.client.get(url, {'from': 1, 'to': 2}, **auth(self.owner))
+        self.assertEqual(resp.status_code, 200, resp.content[:300])
+        self.assertEqual(resp['X-Redline-Layout'], 'standard')
+        self.assertGreater(int(resp['X-Redline-Inserted']), 0)
+        self.assertIn('_redline_v1-v2_', resp['Content-Disposition'])
+        body = _Doc(_io.BytesIO(resp.content)).element.body.xml
+        self.assertIn('w:ins', body)
+        self.assertIn('amended', body)
+        # With LibreOffice: its Compare Document on the two Word files, in the draft's own look.
+        with mock.patch('drafting.export.libre_redline.compare_docx',
+                        return_value=(b'PK compared', {'inserted': 3, 'deleted': 1})) as compare:
+            now = self.client.get(url, **auth(self.owner))                  # default: the version before, to now
+        self.assertEqual(now.status_code, 200)
+        self.assertEqual((now.content, now['X-Redline-Layout'], now['X-Redline-Inserted']), (b'PK compared', 'template', '3'))
+        self.assertIn('_redline_v1-current_', now['Content-Disposition'])
+        older, newer, _author = compare.call_args[0]
+        self.assertEqual(older[:2], b'PK')                                    # the two Word files themselves
+        self.assertNotEqual(older, newer)
+        self.assertEqual(self.client.get(url, {'from': 99}, **auth(self.owner)).status_code, 404)
+        stranger = make_advocate(permissions=ALL_PERMISSIONS)
+        self.assertEqual(self.client.get(url, **auth(stranger)).status_code, 404)
+
+    def _callback(self, body, token=None, link=None):
+        import json
+
+        import jwt
+        from django.conf import settings
+        link = link or self._config().json()['config']['editorConfig']['callbackUrl'].split('?t=')[1]
+        signed = jwt.encode({'payload': body}, token or settings.ONLYOFFICE_JWT_SECRET, algorithm='HS256')
+        return self.client.post(f'/api/drafting/onlyoffice/callback/{self.session.id}/?t={link}',
+                                data=json.dumps(body), content_type='application/json',
+                                HTTP_AUTHORIZATION=f'Bearer {signed}')
+
+    @override_settings(DRAFT_EDITOR='tiptap')
+    def test_off_unless_switched_on(self):
+        self.assertEqual(self._config().json(), {'enabled': False})
+
+    def test_config_is_signed_and_the_file_link_works(self):
+        import jwt
+        from django.conf import settings
+        data = self._config().json()
+        self.assertTrue(data['enabled'])
+        cfg = data['config']
+        signed = jwt.decode(cfg['token'], settings.ONLYOFFICE_JWT_SECRET, algorithms=['HS256'])
+        self.assertEqual(signed['document']['key'], cfg['document']['key'])
+        self.assertEqual(cfg['editorConfig']['mode'], 'edit')
+        path = cfg['document']['url'].replace('http://ams.test', '')
+        resp = self.client.get(path)                                  # the document server: no AMS login
+        self.assertEqual((resp.status_code, resp.content[:2]), (200, b'PK'))
+        bad = path.split('?t=')[0] + '?t=forged'
+        self.assertEqual(self.client.get(bad).status_code, 404)
+
+    def test_other_users_get_404(self):
+        stranger = make_advocate(permissions=ALL_PERMISSIONS)
+        self.assertEqual(self._config(stranger).status_code, 404)
+
+    def test_pactpro_save_callback_saves_a_new_version_and_changes_the_key(self):
+        from .models import DraftFile
+        self._config()
+        df = DraftFile.objects.get(session=self.session)
+        old_key = df.key
+        with df.file.open('rb') as f:
+            saved = f.read()                                          # a real Word file, as ONLYOFFICE sends
+        with mock.patch('drafting.onlyoffice.requests.get') as get:
+            get.return_value = mock.Mock(content=saved, raise_for_status=lambda: None)
+            resp = self._callback({'key': old_key, 'status': 6, 'url': 'http://oo.test/cache/x.docx',
+                                   'users': [str(self.owner.id)], 'userdata': 'pactpro'})
+        self.assertEqual(resp.json(), {'error': 0})
+        df.refresh_from_db()
+        self.assertEqual(df.version, 2)
+        self.assertNotEqual(df.key, old_key)
+        self.assertEqual(df.versions.count(), 2)
+        with df.file.open('rb') as f:
+            self.assertEqual(f.read(), saved)
+
+    def test_closing_or_the_editors_own_save_is_not_a_version(self):
+        """Only PactPro's Save makes a version; closing the editor or its own Save keeps a working copy."""
+        from documents.dav import work_of
+        from .models import DraftFile
+        self._config()
+        df = DraftFile.objects.get(session=self.session)
+        with df.file.open('rb') as f:
+            saved = f.read()
+        with mock.patch('drafting.onlyoffice.requests.get') as get:
+            get.return_value = mock.Mock(content=saved + b'', raise_for_status=lambda: None)
+            self._callback({'key': df.key, 'status': 6, 'url': 'http://oo.test/x', 'users': [str(self.owner.id)],
+                            'forcesavetype': 1})
+            self._callback({'key': df.key, 'status': 2, 'url': 'http://oo.test/x', 'users': [str(self.owner.id)]})
+        df.refresh_from_db()
+        self.assertEqual((df.version, df.editing), (1, False))
+        self.assertIsNotNone(work_of('draft', self.session.id, self.owner.id))
+        # Reopening: the owner goes on with their working copy, editable.
+        cfg = self._config().json()
+        self.assertEqual(cfg['role'], 'decide')
+        self.assertTrue(cfg['pendingWork'])
+        self.assertIn('&work=1', cfg['config']['document']['url'])
+        # PactPro's Save (editor not open): the working copy becomes one version.
+        resp = self.client.post(f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/save/', **auth(self.owner))
+        self.assertEqual(resp.json()['version'], 2)
+        self.assertIsNone(work_of('draft', self.session.id))
+
+    def test_callback_rejects_a_wrong_signature(self):
+        from .models import DraftFile
+        self._config()
+        df = DraftFile.objects.get(session=self.session)
+        resp = self._callback({'key': df.key, 'status': 2, 'url': 'http://x'}, token='wrong-secret-wrong-secret-wrong!!')
+        self.assertEqual(resp.status_code, 403)
+        df.refresh_from_db()
+        self.assertEqual(df.version, 1)
+
+    def test_editing_status_and_download_uses_the_file(self):
+        from .models import DraftFile
+        self._config()
+        df = DraftFile.objects.get(session=self.session)
+        self._callback({'key': df.key, 'status': 1, 'users': [str(self.owner.id)]})
+        df.refresh_from_db()
+        self.assertTrue(df.editing)
+        with mock.patch('drafting.onlyoffice._command', return_value={'error': 4}):
+            resp = self.client.get(f'/api/drafting/drafts/{self.session.id}/export/docx/?watermark=0', **auth(self.owner))   # the stored file, no DRAFT mark
+        with df.file.open('rb') as f:
+            self.assertEqual(resp.content, f.read())
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class OnlyOfficePhase2Test(TestCase):
+    """Clause markers in the file, text copied back on save, placeholders filled in the file."""
+
+    def setUp(self):
+        self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+        self.media_override.enable()
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.b1 = self.session.blocks.create(position=0, block_type='clause', heading='PARTIES', source='generated',
+                                             text='This deed is made by [[Client Name]] of Chennai.')
+        self.b2 = self.session.blocks.create(position=1, block_type='clause', heading='', source='generated',
+                                             text='Rent is payable monthly.')
+
+    def tearDown(self):
+        self.media_override.disable()
+
+    def _file(self):
+        from .onlyoffice import ensure_file
+        df = ensure_file(self.session, self.owner)
+        with df.file.open('rb') as f:
+            return df, f.read()
+
+    def test_every_clause_has_a_marker_and_blanks_become_form_fields(self):
+        from .docfile import clause_texts, fields, placeholders
+        _, data = self._file()
+        texts = clause_texts(data)
+        self.assertEqual(set(texts), {self.b1.id, self.b2.id})
+        # An empty field reads as its [[Label]] blank (for Lisa, search, compare)...
+        self.assertIn('This deed is made by [[Client Name]] of Chennai.', texts[self.b1.id])
+        # ...and is a form field in the file, not [[...]] text.
+        self.assertEqual(fields(data), {'Client Name': {'count': 1, 'value': ''}})
+        self.assertEqual(placeholders(data), [])
+
+    def test_editor_placeholder_span_is_written_as_a_token(self):
+        from .docfile import placeholders
+        self.b1.content_html = '<p>Made by <span data-placeholder="Client Name" data-value="">[Client Name]</span> and ' \
+                               '<span data-placeholder="Witness" data-value="R. Ravi">R. Ravi</span>.</p>'
+        self.b1.save()
+        _, data = self._file()
+        from .docfile import clause_texts, fields
+        self.assertEqual(fields(data), {'Client Name': {'count': 1, 'value': ''}})
+        self.assertEqual(placeholders(data), [])
+        self.assertIn('Made by [[Client Name]] and R. Ravi.', clause_texts(data)[self.b1.id])
+
+    def test_saved_file_text_goes_back_into_the_clauses(self):
+        from .docfile import fill_fields
+        from .onlyoffice import store_version
+        df, data = self._file()
+        edited, _ = fill_fields(data, {'Client Name': 'K. Kannan'})
+        store_version(df, edited, self.owner.id)
+        self.b1.refresh_from_db()
+        self.b2.refresh_from_db()
+        self.assertEqual(self.b1.text, 'This deed is made by K. Kannan of Chennai.')   # heading kept apart
+        self.assertTrue(self.b1.is_edited)
+        self.assertEqual(self.b2.text, 'Rent is payable monthly.')
+        self.assertFalse(self.b2.is_edited)
+
+    def test_token_split_across_runs_is_replaced_keeping_the_first_runs_format(self):
+        import io as _io
+
+        from docx import Document
+        from .docfile import fill_placeholder, placeholders
+        doc = Document()
+        p = doc.add_paragraph('Name: ')
+        p.add_run('[[Cli').bold = True
+        p.add_run('ent Name]]')
+        p.add_run(' signs.')
+        buf = _io.BytesIO()
+        doc.save(buf)
+        out, n = fill_placeholder(buf.getvalue(), 'Client Name', 'K. Kannan')
+        self.assertEqual(n, 1)
+        para = Document(_io.BytesIO(out)).paragraphs[0]
+        self.assertEqual(para.text, 'Name: K. Kannan signs.')
+        self.assertTrue(para.runs[1].bold and para.runs[1].text == 'K. Kannan')
+        self.assertEqual(placeholders(out), [])
+
+    def test_placeholder_endpoints(self):
+        url = f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/placeholders/'
+        self.assertEqual(self.client.get(url, **auth(self.owner)).json()['placeholders'], [])     # no file yet
+        self._file()
+        self.assertEqual(self.client.get(url, **auth(self.owner)).json()['placeholders'],
+                         [{'label': 'Client Name', 'count': 1, 'value': '', 'kind': 'field'}])
+        resp = self.client.post(url, {'label': 'Client Name', 'value': 'K. Kannan'}, content_type='application/json',
+                                **auth(self.owner))
+        self.assertEqual(resp.json()['filled'], 1)
+        self.assertIn('key', resp.json()['config']['document'])
+        # Filled, and still listed with its value so it can be changed later.
+        self.assertEqual(self.client.get(url, **auth(self.owner)).json()['placeholders'],
+                         [{'label': 'Client Name', 'count': 1, 'value': 'K. Kannan', 'kind': 'field'}])
+        changed = self.client.post(url, {'values': {'Client Name': 'K. Kannan & Sons'}}, content_type='application/json',
+                                   **auth(self.owner))
+        self.assertEqual(changed.json()['filled'], 1)
+        self.b1.refresh_from_db()
+        self.assertIn('K. Kannan & Sons', self.b1.text)
+        self.assertIn('K. Kannan', self.b1.text)
+        stranger = make_advocate(permissions=ALL_PERMISSIONS)
+        self.assertEqual(self.client.post(url, {'label': 'X', 'value': 'Y'}, content_type='application/json',
+                                          **auth(stranger)).status_code, 404)
+
+    def test_unedited_file_without_markers_is_made_again(self):
+        from django.core.files.base import ContentFile
+        from .docfile import clause_texts
+        from .models import DraftFile
+        df = DraftFile(session=self.session, key='old', version=1)
+        df.file.save('old.docx', ContentFile(self._plain_docx()), save=True)
+        new_df, data = self._file()
+        self.assertNotEqual(new_df.pk, df.pk)
+        self.assertTrue(clause_texts(data))
+
+    @staticmethod
+    def _plain_docx():
+        import io as _io
+
+        from docx import Document
+        buf = _io.BytesIO()
+        Document().save(buf)
+        return buf.getvalue()
+
+
+class HiddenMarkersTest(TestCase):
+    """Clause markers stay invisible: new files, and files saved back with a frame / label."""
+
+    def test_framed_marker_is_hidden_again(self):
+        import io as _io
+
+        from docx import Document
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        from .docfile import W15, clause_texts, hide_markers
+        doc = Document()
+        p = doc.add_paragraph('Rent is payable monthly.')
+        sdt, pr, content = OxmlElement('w:sdt'), OxmlElement('w:sdtPr'), OxmlElement('w:sdtContent')
+        alias, tag = OxmlElement('w:alias'), OxmlElement('w:tag')
+        alias.set(qn('w:val'), 'Clause 7')
+        tag.set(qn('w:val'), 'pactpro:block:7')
+        pr.extend([alias, tag])
+        sdt.extend([pr, content])
+        p._p.addprevious(sdt)
+        content.append(p._p)
+        buf = _io.BytesIO()
+        doc.save(buf)
+        out = hide_markers(buf.getvalue())
+        pr = Document(_io.BytesIO(out)).element.body.find(f'{qn("w:sdt")}/{qn("w:sdtPr")}')
+        self.assertIsNone(pr.find(qn('w:alias')))
+        self.assertEqual(pr.find(f'{{{W15}}}appearance').get(f'{{{W15}}}val'), 'hidden')
+        self.assertEqual(clause_texts(out), {7: ['Rent is payable monthly.']})
+        self.assertIs(hide_markers(out), out)                        # nothing left to change
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class OnlyOfficeReviewTest(TestCase):
+    """Phase 3: editor roles, open tracked changes / comments in the Word file block approval."""
+
+    def setUp(self):
+        self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+        self.media_override.enable()
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.session.blocks.create(position=0, block_type='clause', heading='', source='generated', text='Rent is Rs. 40,000.')
+
+    def tearDown(self):
+        self.media_override.disable()
+
+    def _role_of(self, who):
+        resp = self.client.get(f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/', **auth(who))
+        return resp.json() if resp.status_code == 200 else resp.status_code
+
+    def _reviewer(self, authority):
+        from .models import DraftReviewRequest
+        who = make_advocate(permissions=ALL_PERMISSIONS)
+        DraftReviewRequest.objects.create(session=self.session, requested_by_id=self.owner.id, reviewer_id=who.id,
+                                          authority=authority)
+        return who
+
+    def test_roles(self):
+        owner = self._role_of(self.owner)
+        self.assertEqual(owner['role'], 'decide')
+        perms = owner['config']['document']['permissions']
+        self.assertEqual((perms['edit'], perms['review'], perms['comment']), (True, True, True))
+        self.assertTrue(owner['config']['editorConfig']['customization']['layout']['toolbar']['collaboration'])
+
+        suggester = self._role_of(self._reviewer('suggest'))
+        self.assertEqual(suggester['role'], 'suggest')
+        perms = suggester['config']['document']['permissions']
+        self.assertEqual((perms['edit'], perms['review']), (False, True))           # review-only: edits are tracked
+        self.assertEqual(suggester['config']['editorConfig']['mode'], 'edit')
+
+        self.assertEqual(self._role_of(self._reviewer('binding'))['role'], 'decide')
+        self.assertEqual(self._role_of(make_advocate(permissions=ALL_PERMISSIONS)), 404)
+
+    def _file_with(self, tracked=0, comments=0, resolved=0):
+        """The draft's Word file with tracked insertions and comment threads (some resolved)."""
+        import io as _io
+        import zipfile
+
+        from .onlyoffice import ensure_file, store_version
+        df = ensure_file(self.session, self.owner)
+        with df.versions.order_by('version').first().file.open('rb') as f:     # the file as first made
+            data = f.read()
+        src = zipfile.ZipFile(_io.BytesIO(data))
+        out = _io.BytesIO()
+        w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        w15 = 'http://schemas.microsoft.com/office/word/2012/wordml'
+        with zipfile.ZipFile(out, 'w') as z:
+            for item in src.infolist():
+                body = src.read(item.filename)
+                if item.filename == 'word/document.xml' and tracked:
+                    ins = ''.join(f'<w:ins w:id="{90 + n}" w:author="Lisa" w:date="2026-10-12T00:00:00Z"><w:r><w:t>x</w:t></w:r></w:ins>'
+                                  for n in range(tracked))
+                    body = body.replace(b'</w:body>', f'<w:p>{ins}</w:p></w:body>'.encode())
+                z.writestr(item, body)
+            if comments:
+                z.writestr('word/comments.xml', f'<w:comments xmlns:w="{w}">' + ''.join(
+                    f'<w:comment w:id="{n}" w:author="R"><w:p><w:r><w:t>q</w:t></w:r></w:p></w:comment>'
+                    for n in range(comments)) + '</w:comments>')
+                z.writestr('word/commentsExtended.xml', f'<w15:commentsEx xmlns:w15="{w15}">' + ''.join(
+                    f'<w15:commentEx w15:paraId="{n:08X}" w15:done="{1 if n < resolved else 0}"/>'
+                    for n in range(comments)) + '</w15:commentsEx>')
+        store_version(df, out.getvalue(), self.owner.id)
+
+    def test_review_state_counts_open_changes_and_threads(self):
+        from .docfile import review_state
+        from .models import DraftFile
+        self._file_with(tracked=2, comments=3, resolved=1)
+        with DraftFile.objects.get(session=self.session).file.open('rb') as f:
+            self.assertEqual(review_state(f.read()), {'changes': 2, 'comments': 2})
+
+    def test_open_changes_block_submit_and_approve(self):
+        from .onlyoffice import file_review_blockers
+        from .task_review import submit_blocker
+        self.assertEqual(file_review_blockers(self.session), [])                  # no file yet
+        self._file_with(tracked=1, comments=1)
+        blockers = file_review_blockers(self.session)
+        self.assertEqual(len(blockers), 2)
+        self.assertIn('tracked change', submit_blocker(self.session))
+        self._file_with(comments=1)                                                # changes decided, a question open
+        self.assertIsNone(submit_blocker(self.session))                            # open comments don't block submitting
+        self.assertEqual(len(file_review_blockers(self.session)), 1)               # ...but do block approving
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class ServerTrackedChangeTest(TestCase):
+    """Lisa's Apply on the Community edition: written into the Word file as tracked changes by PactPro AI."""
+
+    RENT = 'The Lessee shall pay a monthly rent of Rs. 40,000 on or before the 5th day of each month.'
+
+    def setUp(self):
+        self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+        self.media_override.enable()
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.block = self.session.blocks.create(position=0, block_type='clause', heading='', source='generated',
+                                                text=self.RENT)
+        self.session.blocks.create(position=1, block_type='clause', heading='', source='generated',
+                                   text='A deposit of Rs. 2,40,000 is paid.')
+
+    def tearDown(self):
+        self.media_override.disable()
+
+    def test_split_runs_keep_formatting_and_only_the_change_is_marked(self):
+        import io as _io
+
+        from docx import Document
+        from docx.oxml.ns import qn
+        from .docfile import AI_AUTHOR, apply_tracked, review_state
+        doc = Document()
+        p = doc.add_paragraph('Rent is Rs. ')
+        p.add_run('40,').bold = True
+        p.add_run('000 a month.')
+        buf = _io.BytesIO()
+        doc.save(buf)
+        out, ok = apply_tracked(buf.getvalue(), 'Rent is Rs. 40,000 a month.', 'Rent is Rs. 45,000 a month.')
+        self.assertTrue(ok)
+        body = Document(_io.BytesIO(out)).element.body
+        dele, ins = body.find('.//' + qn('w:del')), body.find('.//' + qn('w:ins'))
+        self.assertEqual(''.join(t.text for t in dele.iter(qn('w:delText'))), '0')
+        self.assertEqual(''.join(t.text for t in ins.iter(qn('w:t'))), '5')
+        self.assertEqual(ins.get(qn('w:author')), AI_AUTHOR)
+        self.assertEqual(review_state(out)['changes'], 2)
+        # Accepted view (what the draft's clause text shows): the new amount.
+        from .docfile import _para_text
+        self.assertEqual(_para_text(body.find('.//' + qn('w:p'))), 'Rent is Rs. 45,000 a month.')
+
+    def test_endpoint_writes_redline_and_refuses_when_it_cannot_place_it(self):
+        from .docfile import clause_texts, review_state
+        from .models import DraftFile
+        url = f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/apply/'
+        resp = self.client.post(url, {'before': self.RENT, 'after': self.RENT.replace('40,000', '45,000')},
+                                content_type='application/json', **auth(self.owner))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertIn('key', resp.json()['config']['document'])
+        with DraftFile.objects.get(session=self.session).file.open('rb') as f:
+            data = f.read()
+        self.assertEqual(review_state(data)['changes'], 2)
+        self.assertIn('Rs. 45,000', clause_texts(data)[self.block.id][0])
+        self.block.refresh_from_db()
+        self.assertIn('45,000', self.block.text)
+        gone = self.client.post(url, {'before': 'Text that is not in the draft.', 'after': 'Other text.'},
+                                content_type='application/json', **auth(self.owner))
+        self.assertEqual(gone.status_code, 409)
+        stranger = make_advocate(permissions=ALL_PERMISSIONS)
+        self.assertEqual(self.client.post(url, {'before': 'a', 'after': 'b'}, content_type='application/json',
+                                          **auth(stranger)).status_code, 404)
+
+    def test_several_changes_in_one_request_make_one_version(self):
+        """Lisa's "Apply all": every change in one pass, one version; ones that can't be placed are counted."""
+        from .docfile import review_state
+        from .models import DraftFile
+        url = f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/apply/'
+        self.client.get(f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/', **auth(self.owner))
+        before = DraftFile.objects.get(session=self.session).version
+        resp = self.client.post(url, {'changes': [
+            {'before': self.RENT, 'after': self.RENT.replace('40,000', '45,000')},
+            {'before': 'Text that is not in the draft.', 'after': 'Other text.'},
+        ]}, content_type='application/json', **auth(self.owner))
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual((resp.json()['applied'], resp.json()['skipped']), (1, 1))
+        df = DraftFile.objects.get(session=self.session)
+        self.assertEqual(df.version, before + 1)
+        with df.file.open('rb') as f:
+            self.assertEqual(review_state(f.read())['changes'], 2)
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class OnlyOfficeHistoryTest(TestCase):
+    """The editor's own version history, restore and compare, fed by PactPro."""
+
+    def setUp(self):
+        self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+        self.media_override.enable()
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.session.blocks.create(position=0, block_type='clause', heading='', source='generated', text='Rent is Rs. 40,000.')
+        from .onlyoffice import ensure_file
+        self.df = ensure_file(self.session, self.owner)
+
+    def tearDown(self):
+        self.media_override.disable()
+
+    def _save_v2(self):
+        from .docfile import apply_tracked
+        from .onlyoffice import store_version
+        with self.df.file.open('rb') as f:
+            data, _ = apply_tracked(f.read(), 'Rent is Rs. 40,000.', 'Rent is Rs. 45,000.')
+        self.df = store_version(self.df, data, self.owner.id, changes=b'PK-zip',
+                                history={'serverVersion': '9.4.0', 'changes': [{'created': '2026-10-13 10:00:00'}]})
+
+    def _url(self, tail=''):
+        return f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/{tail}'
+
+    def test_history_list_and_one_version_with_highlighting(self):
+        import jwt
+        from django.conf import settings
+        self._save_v2()
+        listing = self.client.get(self._url('history/'), **auth(self.owner)).json()
+        self.assertEqual(listing['currentVersion'], 2)
+        self.assertEqual([h['version'] for h in listing['history']], [1, 2])
+        self.assertEqual(listing['history'][1]['serverVersion'], '9.4.0')
+        self.assertNotEqual(listing['history'][0]['key'], listing['history'][1]['key'])
+        one = self.client.get(self._url('history/2/'), **auth(self.owner)).json()
+        self.assertEqual(one['previous']['key'], listing['history'][0]['key'])
+        self.assertIn('changesUrl', one)
+        self.assertEqual(jwt.decode(one['token'], settings.ONLYOFFICE_JWT_SECRET, algorithms=['HS256'])['version'], 2)
+        # The document server fetches the files with the signed links, no login.
+        for link in (one['url'], one['previous']['url'], one['changesUrl']):
+            resp = self.client.get(link.replace('http://ams.test', ''))
+            self.assertEqual(resp.status_code, 200, link)
+        self.assertEqual(self.client.get(one['url'].replace('http://ams.test', '').split('?')[0] + '?t=x').status_code, 404)
+
+    def test_restore_makes_a_new_version_and_only_who_decides(self):
+        from .models import DraftReviewRequest
+        self._save_v2()
+        suggester = make_advocate(permissions=ALL_PERMISSIONS)
+        DraftReviewRequest.objects.create(session=self.session, requested_by_id=self.owner.id,
+                                          reviewer_id=suggester.id, authority='suggest')
+        self.assertEqual(self.client.post(self._url('restore/'), {'version': 1}, content_type='application/json',
+                                          **auth(suggester)).status_code, 403)
+        resp = self.client.post(self._url('restore/'), {'version': 1}, content_type='application/json', **auth(self.owner))
+        self.assertEqual(resp.status_code, 200)
+        self.df.refresh_from_db()
+        self.assertEqual(self.df.version, 3)                                   # nothing lost: v2 stays in history
+        self.session.blocks.first().refresh_from_db()
+        self.assertIn('40,000', self.session.blocks.first().text)
+
+    def test_compare_with_a_version_or_an_uploaded_file(self):
+        import jwt
+        from django.conf import settings
+        self._save_v2()
+        by_version = self.client.post(self._url('compare/'), {'version': 1}, content_type='application/json',
+                                      **auth(self.owner)).json()
+        self.assertEqual(by_version['c'], 'compare')
+        self.assertIn('/onlyoffice/version/', by_version['url'])
+        with self.df.file.open('rb') as f:
+            returned = SimpleUploadedFile('returned.docx', f.read())
+        uploaded = self.client.post(self._url('compare/'), {'file': returned}, **auth(self.owner)).json()
+        payload = jwt.decode(uploaded['token'], settings.ONLYOFFICE_JWT_SECRET, algorithms=['HS256'])
+        self.assertEqual(payload['url'], uploaded['url'])
+        self.assertEqual(self.client.get(uploaded['url'].replace('http://ams.test', '')).status_code, 200)
+        bad = self.client.post(self._url('compare/'), {'file': SimpleUploadedFile('x.pdf', b'%PDF')}, **auth(self.owner))
+        self.assertEqual(bad.status_code, 400)
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class OnlyOfficeFinaliseTest(TestCase):
+    """Finalise / reopen, PDF/A, @mentions, and the DRAFT watermark on copies of an unfinished draft."""
+
+    def setUp(self):
+        self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+        self.media_override.enable()
+        self.owner = make_advocate(permissions=ALL_PERMISSIONS)
+        self.session = DraftSession.objects.create(created_by_id=self.owner.id, facts={}, status='ready')
+        self.session.blocks.create(position=0, block_type='clause', heading='', source='generated', text='Rent is Rs. 40,000.')
+        from .onlyoffice import ensure_file
+        self.df = ensure_file(self.session, self.owner)
+
+    def tearDown(self):
+        self.media_override.disable()
+
+    def _url(self, tail):
+        return f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/{tail}'
+
+    def test_finalise_locks_and_reopen_unlocks(self):
+        from .docfile import apply_tracked
+        from .onlyoffice import store_version
+        # Open tracked changes refuse finalising.
+        with self.df.file.open('rb') as f:
+            data, _ = apply_tracked(f.read(), 'Rent is Rs. 40,000.', 'Rent is Rs. 45,000.')
+        store_version(self.df, data, self.owner.id)
+        refused = self.client.post(self._url('finalise/'), **auth(self.owner))
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn('tracked change', refused.json()['error'])
+        # Clean file: finalised, everyone read-only, saves no longer taken.
+        with self.df.versions.order_by('version').first().file.open('rb') as f:
+            store_version(self.df, f.read(), self.owner.id)
+        done = self.client.post(self._url('finalise/'), **auth(self.owner))
+        self.assertEqual(done.status_code, 200, done.content)
+        self.assertEqual(len(done.json()['final']['sha256']), 64)
+        state = self.client.get(self._url(''), **auth(self.owner)).json()
+        self.assertEqual(state['role'], 'view')
+        self.assertEqual(state['config']['editorConfig']['mode'], 'view')
+        self.assertEqual(self.client.post(self._url('apply/'), {'before': 'Rent', 'after': 'Fee'},
+                                          content_type='application/json', **auth(self.owner)).status_code, 403)
+        # Reopen: editable again with a fresh key.
+        old_key = state['config']['document']['key']
+        reopened = self.client.delete(self._url('finalise/'), **auth(self.owner)).json()
+        self.assertIsNone(reopened['final'])
+        self.assertNotEqual(reopened['config']['document']['key'], old_key)
+        self.assertEqual(self.client.get(self._url(''), **auth(self.owner)).json()['role'], 'decide')
+
+    def test_pdfa_comes_from_the_document_server(self):
+        with mock.patch('drafting.onlyoffice.convert', return_value=b'%PDF-1.4 pdfaid') as conv:
+            resp = self.client.get(self._url('pdfa/'), **auth(self.owner))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(conv.call_args[0][1], 'pdfa')
+        self.assertIn('PDF-A', resp['Content-Disposition'])
+
+    def test_mentions_offer_and_notify_only_people_on_the_draft(self):
+        from .models import DraftReviewRequest
+        reviewer = make_advocate(permissions=ALL_PERMISSIONS)
+        outsider = make_advocate(permissions=ALL_PERMISSIONS)
+        DraftReviewRequest.objects.create(session=self.session, requested_by_id=self.owner.id,
+                                          reviewer_id=reviewer.id, authority='suggest')
+        users = self.client.get(self._url('users/'), **auth(self.owner)).json()['users']
+        self.assertEqual([u['email'] for u in users], [reviewer.email])
+        with mock.patch('notifications.service.notify') as notify:
+            resp = self.client.post(self._url('notify/'), {'emails': [reviewer.email, outsider.email], 'message': 'Check this'},
+                                    content_type='application/json', **auth(self.owner))
+        self.assertEqual(resp.json()['notified'], 1)
+        self.assertEqual(notify.call_args[0][0], reviewer.id)
+
+    def test_download_has_draft_watermark_until_final(self):
+        import io as _io
+        from docx import Document
+
+        def marks(resp):
+            doc = Document(_io.BytesIO(resp.content))
+            return sum(b'PactProWatermark' in __import__('lxml').etree.tostring(s.header._element) for s in doc.sections)
+
+        url = f'/api/drafting/drafts/{self.session.id}/export/docx/'
+        self.assertEqual(marks(self.client.get(url, **auth(self.owner))), 1)
+        self.assertEqual(marks(self.client.get(url + '?watermark=0', **auth(self.owner))), 0)
+        self.client.post(self._url('finalise/'), **auth(self.owner))
+        self.assertEqual(marks(self.client.get(url, **auth(self.owner))), 0)
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class OnlyOfficeStateTest(TestCase):
+    """The page's Save button follows saves made in the editor itself: it polls the stored version."""
+
+    def test_version_goes_up_with_each_stored_save(self):
+        from .onlyoffice import ensure_file, store_version
+        with override_settings(MEDIA_ROOT=tempfile.mkdtemp()):
+            owner = make_advocate(permissions=ALL_PERMISSIONS)
+            session = DraftSession.objects.create(created_by_id=owner.id, facts={}, status='ready')
+            session.blocks.create(position=0, block_type='clause', heading='', source='generated', text='Text.')
+            url = f'/api/drafting/draft-sessions/{session.id}/onlyoffice/state/'
+            self.assertEqual(self.client.get(url, **auth(owner)).json()['version'], 0)   # no file yet
+            df = ensure_file(session, owner)
+            self.assertEqual(self.client.get(url, **auth(owner)).json()['version'], 1)
+            with df.file.open('rb') as f:
+                store_version(df, f.read(), owner.id)                             # e.g. Ctrl+S in the editor
+            self.assertEqual(self.client.get(url, **auth(owner)).json()['version'], 2)
+            self.assertEqual(self.client.get(url, **auth(make_advocate(permissions=ALL_PERMISSIONS))).status_code, 404)
+
+
+@override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
+                   ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
+class PlaceholdersApplyAllTest(TestCase):
+    """The panel's "Apply to document": every value typed so far, in one version (one editor reload)."""
+
+    def test_several_values_one_version_empty_ones_stay_blank(self):
+        from .models import DraftFile
+        from .onlyoffice import ensure_file
+        with override_settings(MEDIA_ROOT=tempfile.mkdtemp()):
+            owner = make_advocate(permissions=ALL_PERMISSIONS)
+            session = DraftSession.objects.create(created_by_id=owner.id, facts={}, status='ready')
+            session.blocks.create(position=0, block_type='clause', heading='', source='generated',
+                                  text='Made on [[Agreement Date]] by [[Lessor Name]] at [[Place]].')
+            ensure_file(session, owner)
+            url = f'/api/drafting/draft-sessions/{session.id}/onlyoffice/placeholders/'
+            resp = self.client.post(url, {'values': {'Agreement Date': '1 November 2026', 'Lessor Name': 'K. Kannan',
+                                                     'Place': '  ', 'Gone': 'x'}},
+                                    content_type='application/json', **auth(owner))
+            self.assertEqual(resp.status_code, 200, resp.content)
+            self.assertEqual((resp.json()['filled'], resp.json()['missing']), (2, ['Gone']))
+            df = DraftFile.objects.get(session=session)
+            self.assertEqual(df.version, 2)                                       # one new version for all
+            from .docfile import fields
+            with df.file.open('rb') as f:
+                state = fields(f.read())
+            self.assertEqual((state['Agreement Date']['value'], state['Place']['value']), ('1 November 2026', ''))
+            empty = self.client.post(url, {'values': {'Place': ''}}, content_type='application/json', **auth(owner))
+            self.assertEqual(empty.status_code, 400)

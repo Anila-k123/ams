@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button, Chip, PopMenu, type IconName, type MenuItem } from "../ui/kit";
 import { Switch } from "../ui/forms";
 import "../ui/pages/clients.css";
+import { clientReviewLabel } from "./ClientReviewDrawer";
 
 const ICONS: Record<string, IconName> = {
   pdf: "file", doc: "file", docx: "file", txt: "note",
@@ -42,14 +43,19 @@ export interface DocHandlers {
   onDownload: (doc: any) => void;
   onDelete?: (doc: any) => void;
   onEdit?: (doc: any) => void;
+  onOpenEditor?: (doc: any) => void;   // open in the document editor (ONLYOFFICE)
   onSummary?: (doc: any) => void;
   onVersions?: (doc: any) => void;
   onShareToggle?: (doc: any) => void;
   onUseInDraft?: (doc: any) => void;
+  onClientReview?: (doc: any) => void;   // send to the client for review / follow it (docs/CLIENT_REVIEW.md)
 }
 
 // Shared in the client portal? Only offered when the doc is on a case or client.
 export const canShare = (doc: any, h: DocHandlers) => !!(h.onShareToggle && (doc.caseEntity || doc.client));
+
+// Files the document editor opens (documents/editor.py _TYPES): Word, Excel, PowerPoint, ODF, text, PDF.
+export const EDITOR_EXTS = new Set(['docx', 'odt', 'rtf', 'txt', 'doc', 'xlsx', 'ods', 'csv', 'xls', 'pptx', 'odp', 'ppt', 'pdf']);
 
 export function docMenu(doc: any, h: DocHandlers): MenuItem[] {
   // Drafting reads PDF and Word files only.
@@ -57,6 +63,8 @@ export function docMenu(doc: any, h: DocHandlers): MenuItem[] {
   const items: MenuItem[] = [
     { label: "Preview", icon: "eye", onClick: () => h.onPreview(doc) },
     { label: "Download", icon: "download", onClick: () => h.onDownload(doc) },
+    ...(h.onOpenEditor && EDITOR_EXTS.has(fileExt(doc).toLowerCase())
+      ? [{ label: "Open in editor", icon: "edit" as const, onClick: () => h.onOpenEditor!(doc) }] : []),
   ];
   if (h.onSummary) items.push({ label: "AI summary", icon: "sparkle", onClick: () => h.onSummary!(doc) });
   if (h.onVersions) items.push({ label: "Versions / upload new", icon: "history", onClick: () => h.onVersions!(doc) });
@@ -64,6 +72,10 @@ export function docMenu(doc: any, h: DocHandlers): MenuItem[] {
   if (h.onEdit) items.push({ label: "Edit details", icon: "edit", onClick: () => h.onEdit!(doc) });
   if (canShare(doc, h)) {
     items.push({ label: doc.clientVisible ? "Stop sharing with client" : "Share with client", icon: "globe", onClick: () => h.onShareToggle!(doc) });
+  }
+  if (h.onClientReview && (doc.caseEntity || doc.client)) {
+    items.push({ label: doc.clientReview?.status === "OPEN" ? "Client review…" : "Send to client for review…", icon: "send",
+      onClick: () => h.onClientReview!(doc) });
   }
   if (h.onDelete) items.push("-", { label: "Delete", icon: "trash", danger: true, onClick: () => h.onDelete!(doc) });
   return items;
@@ -102,6 +114,7 @@ export default function DocumentCard(props: DocHandlers & { doc: any; className?
           <div className="row between xs faint" style={{ marginTop: 6, gap: 6 }}>
             <span>{formatBytes(doc.fileSize)}, {shortDate(doc.uploadDate)}</span>
             {doc.clientVisible && <Chip tone="ok">Shared</Chip>}
+            {clientReviewLabel(doc.clientReview) && <Chip tone={clientReviewLabel(doc.clientReview)!.tone}>{clientReviewLabel(doc.clientReview)!.text}</Chip>}
             {doc.status === "ARCHIVED" && <Chip>Archived</Chip>}
           </div>
         </div>

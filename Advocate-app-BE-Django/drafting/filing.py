@@ -76,9 +76,6 @@ class SendToAmsView(APIView):
     permission_classes = [RequirePermission('DRAFT_VIEW')]
 
     def post(self, request, pk):
-        from .export.docx import render_session_docx, session_title
-        from .export.views import branding_for, export_filename
-
         session = get_object_or_404(own_sessions(request.user).select_related('template', 'project'), pk=pk)
         user = request.user
 
@@ -96,72 +93,85 @@ class SendToAmsView(APIView):
             session.client, session.project = link_case(case)
             session.save(update_fields=['client', 'project'])
 
-        case = _case_for(session, user)
-        if case is None:
-            return Response({'error': 'Link a case first.'}, status=400)
-        if not session.blocks.exists():
-            return Response({'error': 'The draft is empty.'}, status=400)
-        task = _task_for(session, case, user)
-        if session.ams_task_id and task is None:
-            return Response({'error': 'Task not found on this case.'}, status=404)
-        own_task = task is not None and review.is_assignee(task, user)
-        if 'DOCUMENT_UPLOAD' not in request._advocate_permissions and not own_task:
-            return Response({'error': 'You do not have permission to upload documents.'}, status=403)
-        # Review rounds (task_review.py): the reviewer's suggestions must be decided first.
-        if own_task:
-            blocker = task_review.submit_blocker(session)
-            if blocker:
-                return Response({'error': blocker}, status=400)
+        status, payload = file_draft(session, user, note=request.data.get('note'))
+        return Response(payload, status=status)
 
-        data = render_session_docx(session, branding_for(user))
-        upload = SimpleUploadedFile(export_filename(session), data, content_type=DOCX_TYPE)
-        name = session_title(session) or f'Draft {session.id}'
-        ref = str(session.id)
-        with transaction.atomic():
-            # Locked so two quick re-sends can't both create "version 1".
-            doc = (Document.objects.select_for_update()
-                   .filter(external_ref=ref, case_id=case.id, advocate_id__in=practice_ids(user))
-                   .order_by('id').first())
-            if doc is None:
-                doc = create_document(user, upload, document_name=name, category='Draft',
-                                      description='Drafted in PactPro Drafting', case=case,
-                                      client=case.client, external_ref=ref)
-            else:
-                add_version(doc, upload, user, note='Updated from Drafting')
-                if name != doc.document_name:        # the draft may have been renamed
-                    doc.document_name = name
-                    doc.save(update_fields=['document_name'])
-            if task is not None:
-                if own_task:
-                    task_review.before_submit(session, user)
-                CaseTaskDocument.objects.get_or_create(
-                    task_id=task.id, document_id=doc.id, defaults={'advocate_id': user.id})
-                # Snapshot the draft, and compare it with the last one submitted,
-                # so the reviewer sees what this revision changed.
-                snapshot = [{'heading': b.heading or '', 'text': b.text or ''}
-                            for b in session.blocks.order_by('position')]
-                filed = 'Draft "{}" filed as version {}.'.format(name, doc.version)
-                own_note = (request.data.get('note') or '').strip()
-                review.submit(task, user, note=filed + ('\n' + own_note if own_note else ''),
-                              draft_snapshot=snapshot,
-                              changes=review.compare_drafts(review.previous_snapshot(task), snapshot))
-            session.ams_document_id = doc.id
-            session.ams_document_version = doc.version
-            session.ams_synced_at = timezone.now()
-            session.save(update_fields=['ams_document_id', 'ams_document_version', 'ams_synced_at'])
-            # Name the AMS document version in words: a bare "(v2)" next to the draft's own
-            # "v3" read as a second draft number.
-            save_version(session, DraftVersion.Kind.SENT,
-                         '{} · filed as document v{}'.format(
-                             'Submitted for review' if task is not None else 'Saved to PactPro', doc.version),
-                         user.id)
-            if task is not None and own_task:
-                task_review.after_submit(session, task, user)
+
+def file_draft(session, user, note='', hours=None):
+    """Save to case / Submit to task: the draft filed on its case as a document (a new version if filed
+    before) and, on the draft's task, handed in for review with `note` (and `hours`). Shared by the draft
+    page (SendToAmsView) and the desktop add-ons (documents/dav.py). Returns (http status, body)."""
+    from .export.docx import session_title
+    from .export.views import branding_for, export_filename
+
+    case = _case_for(session, user)
+    if case is None:
+        return 400, {'error': 'Link a case first.'}
+    if not session.blocks.exists():
+        return 400, {'error': 'The draft is empty.'}
+    task = _task_for(session, case, user)
+    if session.ams_task_id and task is None:
+        return 404, {'error': 'Task not found on this case.'}
+    own_task = task is not None and review.is_assignee(task, user)
+    if 'DOCUMENT_UPLOAD' not in user.permission_codes() and not own_task:
+        return 403, {'error': 'You do not have permission to upload documents.'}
+    # Review rounds (task_review.py): the reviewer's suggestions must be decided first.
+    if own_task:
+        blocker = task_review.submit_blocker(session)
+        if blocker:
+            return 400, {'error': blocker}
+
+    from .wordform import render_draft_docx
+    data = render_draft_docx(session, branding_for(user))
+    upload = SimpleUploadedFile(export_filename(session), data, content_type=DOCX_TYPE)
+    name = session_title(session) or f'Draft {session.id}'
+    ref = str(session.id)
+    with transaction.atomic():
+        # Locked so two quick re-sends can't both create "version 1".
+        doc = (Document.objects.select_for_update()
+               .filter(external_ref=ref, case_id=case.id, advocate_id__in=practice_ids(user))
+               .order_by('id').first())
+        if doc is None:
+            doc = create_document(user, upload, document_name=name, category='Draft',
+                                  description='Drafted in PactPro Drafting', case=case,
+                                  client=case.client, external_ref=ref)
+        else:
+            add_version(doc, upload, user, note='Updated from Drafting')
+            if name != doc.document_name:        # the draft may have been renamed
+                doc.document_name = name
+                doc.save(update_fields=['document_name'])
         if task is not None:
-            task.refresh_from_db()
-        return Response({'documentId': doc.id, 'version': doc.version, 'taskLinked': task is not None,
-                         'syncedAt': session.ams_synced_at, 'amsCaseId': case.id,
-                         'reviewStatus': task.review_status if task is not None else None})
+            if own_task:
+                task_review.before_submit(session, user)
+            CaseTaskDocument.objects.get_or_create(
+                task_id=task.id, document_id=doc.id, defaults={'advocate_id': user.id})
+            # Snapshot the draft, and compare it with the last one submitted,
+            # so the reviewer sees what this revision changed.
+            snapshot = [{'heading': b.heading or '', 'text': b.text or ''}
+                        for b in session.blocks.order_by('position')]
+            filed = 'Draft "{}" filed as version {}.'.format(name, doc.version)
+            own_note = (note or '').strip()
+            review.submit(task, user, note=filed + ('\n' + own_note if own_note else ''), hours=hours,
+                          draft_snapshot=snapshot, documents=[doc.id],
+                          changes=review.compare_drafts(review.previous_snapshot(task), snapshot))
+        session.ams_document_id = doc.id
+        session.ams_document_version = doc.version
+        session.ams_synced_at = timezone.now()
+        session.save(update_fields=['ams_document_id', 'ams_document_version', 'ams_synced_at'])
+        # Name the AMS document version in words: a bare "(v2)" next to the draft's own
+        # "v3" read as a second draft number.
+        save_version(session, DraftVersion.Kind.SENT,
+                     '{} · filed as document v{}'.format(
+                         'Submitted for review' if task is not None else 'Saved to PactPro', doc.version),
+                     user.id)
+        if task is not None and own_task:
+            task_review.after_submit(session, task, user)
+    if task is not None:
+        task.refresh_from_db()
+    return 200, {'documentId': doc.id, 'version': doc.version, 'taskLinked': task is not None,
+                 'syncedAt': session.ams_synced_at, 'amsCaseId': case.id,
+                 'reviewStatus': task.review_status if task is not None else None}
+
 
 
 class DraftAmsTaskView(APIView):

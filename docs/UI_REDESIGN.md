@@ -77,6 +77,17 @@ How the groups behave:
    - Dialogs come from `Modal`/`Drawer`, which trap focus and close on Escape.
 7. **Responsive:** check the page at 1440, 1024, 768 and 390 px. There should be no horizontal page scroll; wide tables scroll inside `.table-wrap`.
 
+## Sign-in pages
+
+`AuthFrame` (`src/pages/Login.tsx`, styles `src/ui/pages/login.css`) is the frame for every sign-in flow page: login, forgot / verify / reset password, accept invitation, client set-password, and the platform console sign-in.
+- **Left:** a navy hero with the desk photo (`assets/images/login-desk.webp`), the headline, eight feature cards and a footer line.
+- **Diagonal:** a red band runs down the diagonal. Its position is set by the `--lg-top` / `--lg-bot` CSS variables.
+- **Right:** a white card with the PactPro logo (`assets/images/pactpro-logo.webp`) and the tagline as text.
+- **Themes:** the card keeps its light palette in both themes so the logo stays readable.
+- **Below 1024 px:** only the card is shown, with a red top edge.
+
+To change the desk photo, replace `assets/images/login-desk.webp`; no code changes are needed.
+
 ## Themes
 
 Light is the default; dark comes from the user menu or the top-bar button.

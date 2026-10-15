@@ -1,0 +1,187 @@
+/* Sizes are tuned for a laptop at 100% zoom (they were 25% larger before,
+   which only looked right at 80% zoom). */
+
+/* Sign-in frame (AuthFrame): navy hero with the desk photo on the left, a red
+   diagonal band, and the sign-in card on a light panel. Used by every sign-in
+   flow page (login, forgot / verify / reset password, accept invitation,
+   client set-password, platform console). The card keeps a fixed light palette
+   in both themes so the navy-and-red logo always reads; the panel around it
+   follows the theme. */
+
+.lg {
+  --lg-navy: #061E37;
+  --lg-deep: #031629;
+  --lg-red: #CB1029;
+  --lg-red-hi: #E3263F;
+  --lg-ink: #09213B;
+  --lg-muted: #5F6F86;
+  --lg-field: #EDF3FD;
+  --lg-line: #CFD8E4;
+  --lg-link: #0866C2;
+  /* The diagonal: where the hero's right edge meets the top and the bottom of
+     the screen (from the approved design, 1672 px wide). */
+  --lg-top: 50%;
+  --lg-bot: 70%;
+  --lg-band: 2.6%;
+  position: relative; min-height: 100vh; overflow: hidden;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 37%);
+  background: #F4F6FA; color: var(--lg-ink);
+}
+[data-theme="dark"] .lg { background: #0E1E30; }
+
+/* ---- background layers ---- */
+.lg-hero-bg, .lg-band, .lg-glow { position: absolute; inset: 0; pointer-events: none; }
+.lg-hero-bg {
+  clip-path: polygon(0 0, var(--lg-top) 0, var(--lg-bot) 100%, 0 100%);
+  background: var(--lg-deep);
+}
+/* The desk photo sits against the diagonal (clipped with the hero) and fades
+   into the navy towards the text. */
+.lg-hero-bg::before {
+  content: ''; position: absolute; top: 0; bottom: 0;
+  left: calc(var(--lg-top) - 460px); width: calc(var(--lg-bot) - var(--lg-top) + 470px);
+  background: url('../../assets/images/login-desk.webp') center / cover no-repeat;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 42%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 42%);
+  opacity: .9;
+}
+.lg-hero-bg::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(3, 22, 41, .25) 0%, rgba(3, 22, 41, .05) 45%, rgba(3, 22, 41, .55) 100%);
+}
+/* The red band: a solid stripe following the hero's diagonal, with a fine
+   light edge on its right like the design. */
+.lg-band {
+  background: linear-gradient(170deg, #B00B22 0%, var(--lg-red) 45%, var(--lg-red-hi) 100%);
+  clip-path: polygon(var(--lg-top) 0, calc(var(--lg-top) + var(--lg-band)) 0,
+                     calc(var(--lg-bot) + var(--lg-band)) 100%, var(--lg-bot) 100%);
+  filter: drop-shadow(-6px 0 11.2px rgba(0, 0, 0, .35));
+}
+.lg-band::after {
+  content: ''; position: absolute; inset: 0;
+  background: rgba(255, 255, 255, .55);
+  clip-path: polygon(calc(var(--lg-top) + var(--lg-band)) 0, calc(var(--lg-top) + var(--lg-band) + .35%) 0,
+                     calc(var(--lg-bot) + var(--lg-band) + .35%) 100%, calc(var(--lg-bot) + var(--lg-band)) 100%);
+}
+/* Soft pink wedge in the bottom-right corner. */
+.lg-glow {
+  background: linear-gradient(135deg, rgba(240, 190, 200, .0) 0%, rgba(236, 160, 176, .45) 100%);
+  clip-path: polygon(100% 42%, 100% 100%, 80% 100%);
+}
+[data-theme="dark"] .lg-glow { opacity: .35; }
+
+/* ---- hero ---- */
+.lg-hero {
+  position: relative; z-index: 1; color: #fff;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: clamp(16px, 4vh, 44.8px) clamp(22.4px, 3.6vw, 60.8px);
+  max-width: 720px;
+}
+.lg-dash { width: 44.8px; height: 3px; background: #F3223D; margin-bottom: clamp(8px, 2.08vh, 20.8px); }
+.lg-hero h2 {
+  font: 600 clamp(22.4px, min(2.64vw, 4.8vh), 46.4px)/1.1 var(--f-display);
+  letter-spacing: -.015em; margin: 0 0 clamp(8px, 1.84vh, 17.6px); max-width: 10.6em; color: #fff;
+}
+.lg-hero h2 em { font-style: normal; color: #F32643; }
+.lg-lead { font-size: clamp(13px, min(0.9vw, 1.7vh), 15px); line-height: 1.55; color: #D3DAE4; max-width: 34em; margin: 0 0 clamp(11.2px, 2.56vh, 24px); }
+.lg-feats { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(6.4px, 1.2vh, 11.2px); max-width: 608px; }
+.lg-feat {
+  border: 1px solid rgba(150, 190, 230, .28); border-radius: 9.6px; padding: clamp(7.2px, 1.2vh, 11.2px) 10.4px clamp(8px, 1.36vh, 12.8px);
+  background: linear-gradient(150deg, rgba(28, 64, 98, .55), rgba(3, 24, 46, .6));
+  backdrop-filter: blur(4.8px);
+}
+.lg-ic {
+  width: clamp(27.2px, 4.32vh, 41.6px); height: clamp(27.2px, 4.32vh, 41.6px); border-radius: 6.4px; display: grid; place-items: center;
+  margin-bottom: clamp(5.6px, 1.12vh, 11.2px);
+  background: rgba(3, 18, 36, .75); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
+.lg-ic svg { width: 72%; height: 72%; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.lg-ic .w { stroke: #EEF4FB; }
+.lg-ic .r { stroke: #FF3D57; }
+.lg-feat strong { display: block; font-size: clamp(12px, 1.5vh, 13px); line-height: 1.3; margin-bottom: clamp(3.2px, .8vh, 6.4px); }
+.lg-feat .lg-txt { display: block; font-size: clamp(11px, 1.4vh, 12px); line-height: 1.4; color: #B9C7D8; }
+.lg-foot {
+  display: flex; align-items: center; gap: 17.6px; flex-wrap: wrap;
+  margin-top: clamp(11.2px, 2.4vh, 24px); padding-top: clamp(8px, 1.44vh, 14.4px); border-top: 1px solid rgba(120, 140, 160, .45);
+  font-size: 12px; color: #B7C3D2; max-width: 608px;
+}
+.lg-foot span { display: inline-flex; align-items: center; gap: 8px; }
+.lg-foot i { width: 1px; height: 17.6px; background: rgba(120, 140, 160, .6); }
+.lg-foot svg { width: 14.4px; height: 14.4px; fill: none; stroke: #C9D3E0; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---- form side ---- */
+.lg-side { position: relative; z-index: 2; display: grid; place-items: center; padding: clamp(35.2px, 5.6vh, 51.2px) clamp(16px, 2.4vw, 44.8px) clamp(12.8px, 3.2vh, 38.4px) 0; }
+.lg-tools { position: absolute; top: 12.8px; right: 12.8px; z-index: 3; }
+.lg-tools .icon-btn { color: var(--lg-ink); }
+[data-theme="dark"] .lg-tools .icon-btn { color: #E7EDF5; }
+
+.lg-card {
+  width: min(100%, 457.6px); background: #fff; color: var(--lg-ink);
+  border-radius: 19.2px; padding: clamp(14.4px, 3.36vh, 35.2px) clamp(19.2px, 2.4vw, 40px) clamp(12.8px, 2.88vh, 28.8px);
+  box-shadow: 0 19.2px 56px rgba(18, 38, 63, .12), 0 2px 4.8px rgba(18, 38, 63, .04);
+}
+.lg-brand { text-align: center; margin-bottom: clamp(8px, 2.24vh, 24px); }
+.lg-brand img { display: block; margin: 0 auto; width: min(224px, 80%, 21.6vh); height: auto; }
+/* Client portal: the firm's own logo (any shape, on a light tile) or its initial, and its name. */
+.lg-brand .pp-brand-logo { width: auto; max-width: min(200px, 70%); height: clamp(48px, 9vh, 88px); padding: 6px; }
+.lg-brand .seal { width: 56px; height: 56px; margin: 0 auto; border-radius: 50%; background: var(--tape); color: #fff; display: grid; place-items: center; font: 600 22px/1 var(--f-display); }
+.lg-firm { display: block; margin-top: 10px; font: 500 22px/1.2 var(--f-display); }
+.lg-tagline {
+  display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4.8px;
+  font-size: clamp(11px, 1.4vh, 12px); letter-spacing: .02em; color: #1E2F48; white-space: nowrap;
+}
+.lg-tagline::before, .lg-tagline::after { content: ''; width: 20.8px; height: 1px; background: #1E2F48; flex: none; }
+
+/* The card's inner content: headings, fields, links, in the card's own palette. */
+.lg-card h1 { font: 600 clamp(20.8px, min(2.08vw, 3.68vh), 35.2px)/1.1 var(--f-display); letter-spacing: -.01em; color: var(--lg-ink); margin: 0 0 clamp(3.2px, 0.8vh, 8px); }
+.lg-card .muted, .lg-card .auth-lead { color: var(--lg-muted); }
+.lg-card .auth-lead { font-size: clamp(13px, 1.6vh, 14px); margin: 0 0 clamp(9.6px, 2.4vh, 24px); }
+.lg-card .stack { gap: clamp(8px, 1.6vh, 16px); }
+.lg-card .field label { color: var(--lg-ink); font-weight: 600; font-size: 13px; }
+.lg-card .field .req { color: var(--lg-red); }
+.lg-card .input {
+  height: clamp(32px, 4.24vh, 40px); background: var(--lg-field); border: 1px solid var(--lg-line); border-radius: 4.8px;
+  color: #102D48; font-size: 14px;
+}
+.lg-card .input:focus { border-color: #BD1F36; box-shadow: 0 0 0 3px rgba(203, 16, 41, .14); outline: none; }
+.lg-card .link { color: var(--lg-link); text-decoration: underline; text-underline-offset: 2px; }
+.lg-card .callout { color: var(--lg-ink); }
+.lg-card .pp-pw .btn { top: 50%; transform: translateY(-50%); height: 27.2px; color: #15304A; }
+.lg-card .pp-pw .btn:hover { background: rgba(9, 33, 59, .06); }
+
+/* Fields with a leading icon (email, password). */
+.lg-iconfield { position: relative; }
+.lg-iconfield > svg {
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%); z-index: 1;
+  width: 15.2px; height: 15.2px; fill: none; stroke: #112D49; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  pointer-events: none;
+}
+.lg-iconfield .input { padding-left: 36.8px; }
+
+.lg-card .btn.primary.pp-full {
+  height: clamp(33.6px, 4.72vh, 44.8px); border: 0; border-radius: 4.8px; font-size: 15px; font-weight: 600; gap: 9.6px;
+  background: linear-gradient(#E20F31, #AE0B22); color: #fff; box-shadow: 0 4.8px 11.2px rgba(162, 13, 35, .18);
+}
+.lg-card .btn.primary.pp-full:hover { filter: brightness(1.06); }
+.lg-card .btn.primary.pp-full svg { width: 16px; height: 16px; }
+.lg-or { display: flex; align-items: center; gap: 14.4px; margin: clamp(9.6px, 2.24vh, 22.4px) 0 clamp(6.4px, 1.6vh, 16px); color: #68788C; font-size: 11px; letter-spacing: .04em; }
+.lg-or::before, .lg-or::after { content: ''; flex: 1; height: 1px; background: #DCE3ED; }
+.lg-card .auth-foot { text-align: center; color: #5B6B82; font-size: 13px; margin: 0; }
+
+/* ---- smaller screens ---- */
+@media (max-width: 1280px) {
+  .lg { --lg-top: 54%; --lg-bot: 66%; }
+  .lg-feats { gap: 6.4px; }
+  .lg-feat { padding-left: 8px; padding-right: 8px; }
+}
+@media (max-height: 620px) and (min-width: 1025px) {
+  .lg-feat .lg-txt { display: none; }
+}
+@media (max-width: 1024px) {
+  /* Phones and tablets: just the card, on the light panel with a red top edge. */
+  .lg { display: block; border-top: 4px solid var(--lg-red); }
+  .lg-hero, .lg-hero-bg, .lg-band { display: none; }
+  .lg-side { min-height: calc(100vh - 5px); padding: 48px 16px 28px; }
+  .lg-card .input { font-size: 16px; }   /* below 16px, iPhones zoom in on focus */
+  .lg-card { padding: 25.6px 17.6px 22.4px; border-radius: 14.4px; }
+}

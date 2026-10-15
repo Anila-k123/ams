@@ -1,14 +1,17 @@
 /* Sizes are tuned for a laptop at 100% zoom (they were 25% larger before,
    which only looked right at 80% zoom). */
 
-/* Sign-in frame (AuthFrame): navy hero with the desk photo on the left, a red
+/* Sign-in frame (AuthFrame). Root class is .lg-auth, never a bare .lg: the app
+   already uses "lg" as a size class on icons and avatars (Icon size="lg").
+
+   Sign-in frame (AuthFrame): navy hero with the desk photo on the left, a red
    diagonal band, and the sign-in card on a light panel. Used by every sign-in
    flow page (login, forgot / verify / reset password, accept invitation,
    client set-password, platform console). The card keeps a fixed light palette
    in both themes so the navy-and-red logo always reads; the panel around it
    follows the theme. */
 
-.lg {
+.lg-auth {
   --lg-navy: #061E37;
   --lg-deep: #031629;
   --lg-red: #CB1029;
@@ -27,7 +30,7 @@
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 37%);
   background: #F4F6FA; color: var(--lg-ink);
 }
-[data-theme="dark"] .lg { background: #0E1E30; }
+[data-theme="dark"] .lg-auth { background: #0E1E30; }
 
 /* ---- background layers ---- */
 .lg-hero-bg, .lg-band, .lg-glow { position: absolute; inset: 0; pointer-events: none; }
@@ -170,7 +173,7 @@
 
 /* ---- smaller screens ---- */
 @media (max-width: 1280px) {
-  .lg { --lg-top: 54%; --lg-bot: 66%; }
+  .lg-auth { --lg-top: 54%; --lg-bot: 66%; }
   .lg-feats { gap: 6.4px; }
   .lg-feat { padding-left: 8px; padding-right: 8px; }
 }
@@ -179,7 +182,7 @@
 }
 @media (max-width: 1024px) {
   /* Phones and tablets: just the card, on the light panel with a red top edge. */
-  .lg { display: block; border-top: 4px solid var(--lg-red); }
+  .lg-auth { display: block; border-top: 4px solid var(--lg-red); }
   .lg-hero, .lg-hero-bg, .lg-band { display: none; }
   .lg-side { min-height: calc(100vh - 5px); padding: 48px 16px 28px; }
   .lg-card .input { font-size: 16px; }   /* below 16px, iPhones zoom in on focus */

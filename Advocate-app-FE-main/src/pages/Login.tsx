@@ -48,7 +48,7 @@ const FEATURES: { title: string; text: string; icon: ReactNode }[] = [
 // `brand` (the client portal) puts the firm's own name and logo in place of PactPro's.
 export function AuthFrame({ children, brand }: { children: ReactNode; brand?: { name: string; logoUrl: string | null } | null }) {
   return (
-    <div className="lg">
+    <div className="lg-auth">
       <span className="lg-hero-bg" aria-hidden="true" />
       <span className="lg-band" aria-hidden="true" />
       <span className="lg-glow" aria-hidden="true" />

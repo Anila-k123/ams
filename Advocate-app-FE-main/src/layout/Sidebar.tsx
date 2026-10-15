@@ -14,7 +14,7 @@ type Props = {
   hot: CountKey[];
   rail: boolean;                     // icon-only rail (collapsed, or tablet width)
   firmName?: string;
-  firmLogo?: string;                 // the firm's logo (Firm Settings), replaces the seal
+  firmLogo?: string;                 // the firm's logo (Firm Settings); not shown in the sidebar any more
   onNavigate: () => void;            // closes the mobile drawer
 };
 
@@ -23,7 +23,7 @@ function Count({ n, hot }: { n?: number; hot?: boolean }) {
   return <span className={`count${hot ? ' hot' : ''}`}>{n > 99 ? '99+' : n}</span>;
 }
 
-export default function Sidebar({ can, counts, hot, rail, firmName, firmLogo, onNavigate }: Props) {
+export default function Sidebar({ can, counts, hot, rail, firmName, onNavigate }: Props) {
   const { pathname } = useLocation();
   const navRef = useRef<HTMLElement>(null);
   const [open, setOpen] = useState<string>(() => localStorage.getItem(OPEN_KEY) ?? 'court');
@@ -78,11 +78,10 @@ export default function Sidebar({ can, counts, hot, rail, firmName, firmLogo, on
   return (
     <aside className="side" aria-label="Main navigation">
       <div className="brand">
-        {/* Collapsed icon rail: the firm's logo, else the PactPro "P" mark. */}
-        {firmLogo
-          ? <img className="seal firm-logo rail-only" src={firmLogo} alt="" />
-          : <BrandMark className="rail-only" />}
-        <div><BrandLogo />{firmName && <small className="ellipsis">{firmName}</small>}</div>
+        {/* Collapsed icon rail: always the PactPro pillar-P mark (the firm's own
+            name is shown under the logo when the sidebar is open). */}
+        <BrandMark className="rail-only" />
+        <div><BrandLogo onDark />{firmName && <small className="ellipsis">{firmName}</small>}</div>
       </div>
 
 

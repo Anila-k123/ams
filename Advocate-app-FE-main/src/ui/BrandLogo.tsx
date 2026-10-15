@@ -1,9 +1,13 @@
-// The PactPro logo (pillar-P wordmark) in place of the "PactPro" text in the
-// sidebar, sign-in page and homepage header. Sized by height (CSS) so it stays
-// low; shown on a white chip so the navy lettering stays readable on the dark
-// panels and in dark mode.
+// The PactPro logo (pillar-P wordmark) in place of the "PactPro" text.
+// Two versions:
+// - default: the original navy-and-red logo on a white chip (public home page);
+// - onDark: the white-and-red version, transparent, straight on the app's dark
+//   sidebar (inside the app, after sign-in).
+// The sign-in pages use their own full logo (pages/Login.tsx).
 import wordmark from '../assets/images/pactpro-wordmark.webp';
+import wordmarkLight from '../assets/images/pactpro-logo-light.webp';
 
-export default function BrandLogo({ className = '' }: { className?: string }) {
-  return <img className={`brand-logo${className ? ` ${className}` : ''}`} src={wordmark} alt="PactPro" />;
+export default function BrandLogo({ className = '', onDark = false }: { className?: string; onDark?: boolean }) {
+  const cls = `brand-logo${onDark ? ' on-dark' : ''}${className ? ` ${className}` : ''}`;
+  return <img className={cls} src={onDark ? wordmarkLight : wordmark} alt="PactPro" />;
 }

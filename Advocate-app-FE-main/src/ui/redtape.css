@@ -174,13 +174,17 @@ svg.i.lg { width: 22px; height: 22px; }
    the small mark / firm logo shows only on the collapsed icon rail. */
 .brand-logo { display: block; width: auto; box-sizing: border-box; background: #fff; border-radius: 8px; padding: 5px 14px; }
 .brand .brand-logo { height: 38px; }
+/* In the app: the white-and-red logo straight on the dark sidebar, larger. */
+.brand-logo.on-dark { background: none; padding: 0; border-radius: 0; }
+.brand .brand-logo.on-dark { height: 56px; max-width: 100%; object-fit: contain; object-position: left center; }
+.app.collapsed .brand .seal.brand-mark { width: 40px; height: 40px; border-radius: 0; }
 .brand > div { min-width: 0; }
 .brand .rail-only { display: none; }
 .app.collapsed .brand .rail-only { display: block; }
 .pp-art-brand .brand-logo { height: 44px; }
 .pp-mobile-brand .brand-logo { height: 40px; border: 1px solid var(--line); }
 .brand b { font: 500 19px/1 var(--f-display); letter-spacing: -.01em; }
-.brand small { display: block; font-size: 11px; color: var(--side-ink-2); margin-top: 3px; font-family: var(--f-body); }
+.brand small { display: block; font-size: 13.5px; font-weight: 500; color: #C9D0DA; margin-top: 6px; font-family: var(--f-body); letter-spacing: .01em; }
 .side-search { margin: 4px 12px 10px; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--r-md); border: 1px solid #2E333D; background: #20242C; color: var(--side-ink-2); font-size: var(--t-sm); text-align: left; }
 .side-search:hover { color: var(--side-ink); border-color: #3a404b; }
 .side-search kbd { margin-left: auto; }

@@ -208,7 +208,9 @@ describe('firm shell', () => {
     shell('Firm B', 'http://api/logo.png')
     expect(screen.getByText('Firm B')).toBeInTheDocument()
     expect(screen.queryByText('Firm A')).not.toBeInTheDocument()
-    expect(document.querySelector('img.firm-logo')).toHaveAttribute('src', 'http://api/logo.png')
+    // The collapsed rail always shows PactPro's own mark, never the firm's logo.
+    expect(document.querySelector('img.firm-logo')).toBeNull()
+    expect(document.querySelector('img.brand-mark')).toBeInTheDocument()
   })
 
   it('firm administration items need their permissions', () => {

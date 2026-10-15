@@ -84,6 +84,9 @@ function App() {
             {/* Client portal: its own sign-in and pages */}
             <Route path="/client/login" element={<ClientLogin />} />
             <Route path="/client/set-password" element={<SetPassword />} />
+            <Route path="/client/forgot-password" element={<ForgotPassword />} />
+            <Route path="/client/verify-otp" element={<VerifyOtp />} />
+            <Route path="/client/reset-password" element={<ResetPassword />} />
             <Route path="/client/*" element={<ClientRoute />} />
             <Route path="/accept-invite" element={<AcceptInvite />} />
             {/* Platform operators: separate session, never the firm token */}

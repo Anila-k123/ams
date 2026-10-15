@@ -58,7 +58,7 @@ export default function ClientLogin() {
           value={password} onChange={(e) => setPassword(e.target.value)} />
         <div className="row between wrap">
           <span />
-          <Link className="link small" to="/forgot-password">Forgot password?</Link>
+          <Link className="link small" to="/client/forgot-password">Forgot password?</Link>
         </div>
         <button type="submit" className={`btn primary pp-full${busy ? " loading" : ""}`} disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}

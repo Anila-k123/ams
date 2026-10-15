@@ -2,10 +2,12 @@ import { useState, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../api/client';
 import { AuthAlert, AuthFrame } from './Login';
+import { usePortalFlow } from '../client/portalBrand';
 
 function VerifyOtp() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { brand, base } = usePortalFlow();
   const email = (location.state as any)?.email || '';
 
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -50,7 +52,7 @@ function VerifyOtp() {
     try {
       const res = await api.post('/api/auth/verify-otp', { email, otp: code });
       if (res.data.success) {
-        navigate('/reset-password', { state: { email, otp: code } });
+        navigate(`${base}/reset-password`, { state: { email, otp: code } });
       } else {
         setError(res.data.error || 'Invalid code.');
       }
@@ -62,8 +64,8 @@ function VerifyOtp() {
   }
 
   return (
-    <AuthFrame>
-      <Link className="link small" to="/forgot-password">Back</Link>
+    <AuthFrame brand={brand}>
+      <Link className="link small" to={`${base}/forgot-password`}>Back</Link>
       <h1 className="auth-h-gap">Enter verification code</h1>
       <p className="muted auth-lead">Type the 6-digit code we sent to <b className="mono">{email || 'your email'}</b>.</p>
       <form onSubmit={handleSubmit} className="stack">

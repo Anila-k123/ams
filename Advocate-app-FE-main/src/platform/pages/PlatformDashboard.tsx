@@ -35,7 +35,7 @@ export default function PlatformDashboard() {
 
   return (
     <div>
-      <PageHead title="Platform dashboard" sub="Firms on AMS and recent operator activity."
+      <PageHead title="Platform dashboard" sub="Firms on PactPro and recent operator activity."
         actions={can('firm.create') ? <Link className="btn primary" to="/platform/firms/new">Create firm</Link> : undefined} />
       {error && <div className="callout bad" role="alert">{error}</div>}
       <div className="pf-stats" aria-live="polite">

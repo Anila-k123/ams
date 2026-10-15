@@ -525,18 +525,13 @@ export const draftingApi = {
     }
     return api.post<Record<string, unknown>>(`/draft-sessions/${id}/onlyoffice/compare/`, source).then(r => r.data)
   },
-  // Finalise (lock) / reopen; the draft as PDF/A; people to @mention in comments, and notifying them.
+  // Finalise (lock) / reopen; people to @mention in comments, and notifying them.
   finaliseOffice: (id: number) =>
     api.post<{ config: Record<string, unknown>; final: OnlyOfficeFinal | null; canFinalise: boolean }>(
       `/draft-sessions/${id}/onlyoffice/finalise/`).then(r => r.data),
   reopenOffice: (id: number) =>
     api.delete<{ config: Record<string, unknown>; final: OnlyOfficeFinal | null; canFinalise: boolean }>(
       `/draft-sessions/${id}/onlyoffice/finalise/`).then(r => r.data),
-  officePdfa: (id: number) =>
-    api.get<Blob>(`/draft-sessions/${id}/onlyoffice/pdfa/`, { responseType: 'blob' }).then(r => {
-      const m = /filename="([^"]+)"/.exec(r.headers['content-disposition'] || '')
-      return { blob: r.data, filename: m ? m[1] : `draft_${id}_PDF-A.pdf` }
-    }),
   getOfficeUsers: (id: number) =>
     api.get<{ users: { id: string; name: string; email: string }[] }>(`/draft-sessions/${id}/onlyoffice/users/`)
       .then(r => r.data.users),

@@ -97,7 +97,7 @@ You never lose work, but nothing becomes a version until you choose it.
 | 1.2 | When it's ready | The draft page opens with the **PactPro editor** (ONLYOFFICE) in the middle; placeholders, reference documents, Lisa and Review around it. **Open on desktop** is in the toolbar |
 | 1.3 | Look at the document | Exactly the template: **K&A letterhead**, fonts, numbered maroon headings, justified clauses, page size. **No "Clause 123" boxes** around clauses |
 | 1.4 | Look at the top bar | One line: **Compare**, **Download**, **Saved** (greyed), **Open on desktop**, **More**, **Request review**, **Save to case**. Not there any more (the editor has its own): Comment, Versions, Import changes, Suggest. The right side has **Ask Lisa**, **Review** (consistency / playbook) and **Activity**; no Comments tab |
-| 1.4b | Click **More** | *Save options…*, *Finalise (lock the text)*, *PDF/A for filing*, and *Re-draft…* (red, at the bottom) |
+| 1.4b | Click **More** | *Save options…*, *Finalise (lock the text)* and *Re-draft…* (red, at the bottom) |
 | 1.4c | Click **Compare** in the top bar | PactPro's **Compare with…** dialog (an earlier version or a file you received back), the same as the editor's Collaboration → Compare → Document from storage |
 | 1.5 | Drafting → **Drafts** → **Open** on this draft | The **Open with** dialog: *Desktop editor* / *PactPro editor*, *Remember my choice*. Pick **PactPro editor**: the draft page opens with the editor started |
 
@@ -218,14 +218,13 @@ You never lose work, but nothing becomes a version until you choose it.
 | 12.6 | **Compare → File from your computer** | ONLYOFFICE's own picker, same result |
 | 12.7 | **More → Re-draft…**, then **Confirm** in the bar | When ready, the editor shows the **new** AI text |
 
-## 13. Finalise and PDF/A (Priya + Karthik, 5 minutes)
+## 13. Finalise (Priya + Karthik, 5 minutes)
 
 | # | Do | Expect |
 |---|---|---|
 | 13.1 | Leave a tracked change open, **More → Finalise** | Refused, with the count of open changes / comments |
 | 13.2 | Accept / reject all, resolve comments, **More → Finalise** | Chip **Final · Priya · date**; read-only for everyone; Save / Apply / placeholders refused |
 | 13.3 | **Download** | No watermark |
-| 13.4 | **More → PDF/A for filing** | An archival PDF/A |
 | 13.5 | **More → Reopen for editing** | Editable again |
 
 ---

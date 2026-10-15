@@ -646,7 +646,7 @@ class CompareFileView(_SignedFile):
         return self._send(default_storage.open(path), DOCX_TYPE, 'compare.docx')
 
 
-# --- finalise / lock, PDF/A -------------------------------------------------------------------
+# --- finalise / lock ------------------------------------------------------------------------
 
 def final_state(session, user):
     """{'final': {at, by} or None, 'canFinalise': bool} for the draft page."""
@@ -707,42 +707,6 @@ class FinaliseView(APIView):
         record_system_action(session.created_by_id, 'DRAFTING', 'UPDATE', f'Draft {session.id} reopened for editing',
                              entity_type='DRAFT', entity_id=session.id)
         return Response({'config': editor_config(session, request.user), **final_state(session, request.user)})
-
-
-def convert(df, outputtype):
-    """The draft's current file converted by the document server ('pdf', 'pdfa'), as bytes."""
-    import uuid
-    url = f'{settings.AMS_INTERNAL_URL}/api/drafting/onlyoffice/file/{df.session_id}/?t={_link_token(df.session_id)}'
-    payload = {'async': False, 'filetype': 'docx', 'outputtype': outputtype, 'key': uuid.uuid4().hex,
-               'title': f'draft-{df.session_id}.docx', 'url': url}
-    res = requests.post(f'{settings.ONLYOFFICE_INTERNAL_URL}/converter', json={**payload, 'token': _sign(payload)},
-                        headers={'Accept': 'application/json'}, timeout=180).json()
-    if res.get('error') or not res.get('fileUrl'):
-        raise RuntimeError(f'conversion failed: {res}')
-    return requests.get(res['fileUrl'], timeout=120).content
-
-
-class PdfaView(APIView):
-    """GET draft-sessions/<id>/onlyoffice/pdfa/: the draft as PDF/A (archival, for filing in court),
-    converted by the document server. For a finalised draft it is exactly the locked file."""
-
-    def get(self, request, pk):
-        if not enabled():
-            return Response({'error': 'The document editor is not switched on.'}, status=400)
-        from .access import viewable_sessions
-        session = get_object_or_404(viewable_sessions(request.user), pk=pk)
-        df = get_object_or_404(DraftFile, session=session)
-        if df.editing and not df.final_at:
-            df = force_save(df)
-        try:
-            data = convert(df, 'pdfa')
-        except (requests.RequestException, ValueError, RuntimeError) as exc:
-            log.warning('PDF/A of draft %s failed: %s', pk, exc)
-            return Response({'error': 'The PDF/A file could not be made. Try again in a moment.'}, status=503)
-        from .export.views import export_filename
-        resp = HttpResponse(data, content_type='application/pdf')
-        resp['Content-Disposition'] = f'attachment; filename="{export_filename(session)[:-5]}_PDF-A.pdf"'
-        return resp
 
 
 # --- @mentions in comments ---------------------------------------------------------------------

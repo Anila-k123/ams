@@ -2481,7 +2481,7 @@ class OnlyOfficeHistoryTest(TestCase):
 @override_settings(DRAFT_EDITOR='onlyoffice', ONLYOFFICE_URL='http://oo.test', ONLYOFFICE_INTERNAL_URL='http://oo.test',
                    ONLYOFFICE_JWT_SECRET='test-secret-test-secret-test-secret!', AMS_INTERNAL_URL='http://ams.test')
 class OnlyOfficeFinaliseTest(TestCase):
-    """Finalise / reopen, PDF/A, @mentions, and the DRAFT watermark on copies of an unfinished draft."""
+    """Finalise / reopen, @mentions, and the DRAFT watermark on copies of an unfinished draft."""
 
     def setUp(self):
         self.media_override = override_settings(MEDIA_ROOT=tempfile.mkdtemp())
@@ -2525,13 +2525,6 @@ class OnlyOfficeFinaliseTest(TestCase):
         self.assertIsNone(reopened['final'])
         self.assertNotEqual(reopened['config']['document']['key'], old_key)
         self.assertEqual(self.client.get(self._url(''), **auth(self.owner)).json()['role'], 'decide')
-
-    def test_pdfa_comes_from_the_document_server(self):
-        with mock.patch('drafting.onlyoffice.convert', return_value=b'%PDF-1.4 pdfaid') as conv:
-            resp = self.client.get(self._url('pdfa/'), **auth(self.owner))
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(conv.call_args[0][1], 'pdfa')
-        self.assertIn('PDF-A', resp['Content-Disposition'])
 
     def test_mentions_offer_and_notify_only_people_on_the_draft(self):
         from .models import DraftReviewRequest

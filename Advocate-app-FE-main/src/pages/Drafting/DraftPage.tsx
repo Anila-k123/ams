@@ -564,7 +564,7 @@ export default function DraftPage() {
     return () => { gone = true }
   }, [sessionId, officeKey])
   const officeRef = useRef<OfficeEditorHandle>(null)
-  // Finalise (lock the approved text) / Reopen, and the archival PDF/A.
+  // Finalise (lock the approved text) / Reopen.
   const [finalising, setFinalising] = useState(false)
   const toggleFinal = async (lock: boolean) => {
     if (!office) return
@@ -578,20 +578,6 @@ export default function DraftPage() {
       toast.error(errorMessage(e, lock ? 'Could not finalise the draft.' : 'Could not reopen the draft.'))
     } finally {
       setFinalising(false)
-    }
-  }
-  const [pdfaBusy, setPdfaBusy] = useState(false)
-  const downloadPdfa = async () => {
-    setPdfaBusy(true)
-    try {
-      const { blob, filename } = await draftingApi.officePdfa(Number(sessionId))
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob); a.download = filename
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href)
-    } catch (e) {
-      toast.error(errorMessage(e, 'Could not make the PDF/A file.'))
-    } finally {
-      setPdfaBusy(false)
     }
   }
   // The editor's Compare > "Document from storage": an earlier version of this draft, or a Word file
@@ -1006,7 +992,6 @@ export default function DraftPage() {
     ...(office.canFinalise ? [office.final
       ? { label: 'Reopen for editing', icon: 'edit' as const, onClick: () => void toggleFinal(false) }
       : { label: 'Finalise (lock the text)', icon: 'check' as const, onClick: () => void toggleFinal(true) }] : []),
-    { label: 'PDF/A for filing', icon: 'download' as const, onClick: () => void downloadPdfa() },
     ...(!isReviewer ? ['-' as const,
       { label: 'Re-draft…', icon: 'refresh' as const, danger: true, meta: 'regenerate with the same inputs',
         onClick: () => setConfirmRedraft(true) }] : []),
@@ -1571,7 +1556,7 @@ export default function DraftPage() {
         )}
         {office && officeMore.length > 0 && (
           <Button size="sm" icon="more" aria-haspopup="menu" aria-expanded={!!moreAnchor} title="More actions"
-            loading={finalising || pdfaBusy} onClick={e => setMoreAnchor(moreAnchor ? null : e.currentTarget)}>More</Button>
+            loading={finalising} onClick={e => setMoreAnchor(moreAnchor ? null : e.currentTarget)}>More</Button>
         )}
         {moreAnchor && <PopMenu anchor={moreAnchor} items={officeMore} align="right" width={250} onClose={() => setMoreAnchor(null)} />}
         {office?.desktopLock && !desktop && (

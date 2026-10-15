@@ -413,7 +413,7 @@ class DraftFile(models.Model):
     key = models.CharField(max_length=128)
     editing = models.BooleanField(default=False)          # someone has it open (callback status 1)
     # Finalised: the approved text, locked (everyone gets a read-only editor) until whoever decides
-    # reopens it. final_sha256 proves the filed / PDF-A copy is exactly this file.
+    # reopens it. final_sha256 proves the filed copy is exactly this file.
     final_at = models.DateTimeField(null=True, blank=True)
     final_by_id = models.BigIntegerField(null=True, blank=True)
     final_sha256 = models.CharField(max_length=64, blank=True)

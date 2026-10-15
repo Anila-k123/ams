@@ -106,7 +106,7 @@ first if you want to show the **Open with** and **Save** questions from scratch.
 22. **Download → Redline**: from an earlier version to now → a Word file **in the draft's own look**, with the changes
     as tracked changes for the client to accept in Word. [7.6–7.7]
 23. **More → Finalise**: refused while tracked changes are open; accept them → **Final** chip, read-only for
-    everyone. **More → PDF/A for filing**. **More → Reopen**. [13.1–13.5]
+    everyone. **More → Reopen**. [13.1–13.5]
 
 ---
 

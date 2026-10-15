@@ -455,7 +455,8 @@ Both are in the Docs API of every edition, Community included.
   - `DELETE …/finalise/` reopens it, with a new key.
   - The page shows a **Final · name · date** chip; **Finalise** / **Reopen** are in the top bar's **More** menu.
 - **PDF/A** (built): `GET …/onlyoffice/pdfa/` has the document server convert the current file to PDF/A (checked:
-  the file carries the PDF/A id). The page has a **PDF/A** button.
+  the file carries the PDF/A id). **Removed** (15 Oct 2026): not needed for now; Download → PDF covers sharing.
+  If court filing needs PDF/A later, it is a document-server conversion (`outputtype: 'pdfa'`).
 - **DRAFT watermark** (built): Download (Word / PDF) of an ONLYOFFICE draft that isn't final carries a diagonal
   DRAFT watermark (VML in every section header, `docfile.add_watermark`; Word and LibreOffice both draw it).
   `?watermark=0` leaves it out. The editor itself shows no watermark.
@@ -603,7 +604,7 @@ For a draft in ONLYOFFICE the page no longer shows the old editor's own tools, w
 - **Compare** in the top bar opens PactPro's *Compare with…* (`openOfficeCompare`), the same as the editor's Collaboration →
   Compare → Document from storage.
 - **More** (`PopMenu`) holds the occasional actions so the bar fits on one line: Save options…, Finalise / Reopen,
-  PDF/A for filing, Re-draft… (its Confirm still shows in the bar).
+  Re-draft… (its Confirm still shows in the bar).
 - **Kept:** Download, Save, Open on desktop, Request review, Save to case / Submit to task; on the right Ask Lisa, Review
   (Lisa's consistency check and playbook risks) and Activity (review requests).
 Drafts still on the old TipTap editor keep every button as before.

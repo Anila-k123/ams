@@ -203,6 +203,20 @@ control into each block's text. Search, Lisa context, task summaries and the on-
    message box, like the Placeholders panel's Apply) sends every accepted change at once: one version, one
    reload. `docfile.apply_tracked` looks only inside the clause's own marker (`blockId`), places the change
    line by line (a clause is several paragraphs), and reads `[[Label]]` blanks as the file shows them.
+
+   **Ask Lisa = checked edits, not rewrites** (`POST draft-sessions/<id>/assist/`, `services/doc_edits.py`).
+   Rewriting a whole clause and diffing it against the file was fragile (the model joined lines, touched
+   other words) and reached one clause only. Now:
+   - the open document is saved first, so Lisa reads what is on screen: the whole Word file as numbered
+     paragraphs (`docfile.paragraph_listing`), title, letterhead and signature lines included;
+   - she answers with edits `{p, find, replace}`; each is checked before it is shown (the words must be in
+     that paragraph, else it is dropped and counted), and the same words in other paragraphs are found by
+     search and added ("also found here", ticked for values such as numbers and dates);
+   - when the instruction could mean different text (two advocates' enrolment numbers), she asks, with one
+     option per value and "All of them"; the answer is sent back with the instruction;
+   - the card lists every place with a tick box; Accept queues the ticked ones for **Update in document**,
+     which writes them with `docfile.apply_edits` (each found by its paragraph again, never guessed).
+   Refine (formal / concise / grammar) still rewrites clause by clause (`apply_tracked`).
 3. The editor reloads in review mode; the lawyer accepts or rejects with the standard Word controls.
 4. Applies to:
    - Lisa's "rewrite clause";

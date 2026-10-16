@@ -682,6 +682,83 @@ def apply_tracked(data, before, after, author=AI_AUTHOR, block_id=None):
     return out.getvalue(), True
 
 
+# --- Lisa's edits as find / replace on numbered paragraphs (services/doc_edits.py) ----------------
+# The model never rewrites text: it names a paragraph and the exact words to replace there, and every
+# edit is checked against the file before anyone sees it and again when it is written.
+
+def _block_of(p):
+    """The clause id of the marker a paragraph sits in, or None (title, letterhead, signatures)."""
+    for anc in p.iterancestors(qn('w:sdt')):
+        tag = anc.find(f'{qn("w:sdtPr")}/{qn("w:tag")}')
+        val = (tag.get(qn('w:val')) if tag is not None else '') or ''
+        if val.startswith(TAG) and val[len(TAG):].isdigit():
+            return int(val[len(TAG):])
+    return None
+
+
+def paragraph_listing(data):
+    """Every paragraph of the file in order: [{n, text, block_id}]. `text` is what a reader sees, with an
+    empty form field as its [[Label]] blank; `n` is the paragraph's index, the edits' address."""
+    doc = Document(io.BytesIO(data))
+    return [{'n': n, 'text': _para_text(p), 'block_id': _block_of(p)} for n, p in enumerate(_doc_paragraphs(doc))]
+
+
+def _in_file(data):
+    """Turns text as the listing shows it into the paragraph's run text: an empty field reads as its label
+    (the grey hint), a filled one as its value."""
+    shown = {label: f['value'] or label for label, f in fields(data).items()}
+    return lambda s: PLACEHOLDER.sub(lambda m: shown.get(m.group(1).strip(), m.group(0)), s)
+
+
+def apply_edits(data, edits, author=AI_AUTHOR):
+    """Write [{id, n, text, find, replace}] into the file as tracked changes by `author`. Each edit is found
+    by its paragraph: index `n` when that paragraph still reads `text`, else the one paragraph that does,
+    else the one paragraph containing `find`; every occurrence of `find` there is replaced. Returns
+    (bytes, applied ids, skipped ids); an edit that can't be pinned down is skipped, never guessed."""
+    from datetime import datetime, timezone
+    doc = Document(io.BytesIO(data))
+    paras = _doc_paragraphs(doc)
+    shown = [_para_text(p) for p in paras]                # as the edits saw them (kept while editing)
+    in_file = _in_file(data)
+    when = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    applied, skipped = [], []
+    for e in edits:
+        find, replace = in_file(str(e.get('find') or '')), in_file(str(e.get('replace') or ''))
+        if not find or find == replace or '\n' in find:
+            skipped.append(e.get('id'))
+            continue
+        n = e.get('n')
+        if not (isinstance(n, int) and 0 <= n < len(paras) and shown[n] == e.get('text')):
+            same = [i for i, t in enumerate(shown) if t == e.get('text')]
+            if len(same) == 1:
+                n = same[0]
+            else:
+                holding = [i for i, p in enumerate(paras) if find in ''.join(_run_text(r) for r in _text_runs(p))]
+                n = holding[0] if len(holding) == 1 else None
+        if n is None:
+            skipped.append(e.get('id'))
+            continue
+        text = ''.join(_run_text(r) for r in _text_runs(paras[n]))
+        spots = [m.start() for m in re.finditer(re.escape(find), text)]
+        if not spots:
+            skipped.append(e.get('id'))
+            continue
+        pre = 0
+        while pre < min(len(find), len(replace)) and find[pre] == replace[pre]:
+            pre += 1
+        suf = 0
+        while suf < min(len(find), len(replace)) - pre and find[-1 - suf] == replace[-1 - suf]:
+            suf += 1
+        for at in reversed(spots):                         # right to left: earlier offsets stay valid
+            _track_in_paragraph(paras[n], at + pre, at + len(find) - suf, replace[pre:len(replace) - suf], author, when)
+        applied.append(e.get('id'))
+    if not applied:
+        return data, applied, skipped
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue(), applied, skipped
+
+
 # --- DRAFT watermark on copies of a draft that isn't final --------------------------------------
 
 _WATERMARK = (

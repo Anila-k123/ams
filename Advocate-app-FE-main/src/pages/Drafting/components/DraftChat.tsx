@@ -3,15 +3,19 @@ import { ASSISTANT_NAME } from '../../../constants/assistant'
 import { diffWords } from 'diff'
 import { Modal } from '../../../ui/overlays'
 import { Button, PopMenu } from '../../../ui/kit'
+import { Check } from '../../../ui/forms'
 import Icon from '../../../ui/Icon'
 import '../../../ui/lisa.css'
-import { draftingApi, type EditProposal, type RefineResult } from '../api/drafting'
+import { draftingApi, type DocEdit, type EditProposal, type RefineResult } from '../api/drafting'
 
 type Msg =
   | { role: 'user'; text: string }
   | { role: 'assistant'; proposal: EditProposal; status: 'pending' | 'accepted' | 'rejected' }
   | { role: 'refine'; label: string; results: RefineResult[]; model: string; statuses: Record<number, 'pending' | 'accepted' | 'rejected'> }
   | { role: 'error'; text: string }
+  // Ask Lisa on an ONLYOFFICE draft: every place to change (tick to include), or her question first.
+  | { role: 'plan'; editId?: number; summary: string; edits: DocEdit[]; checked: Record<number, boolean>; dropped: number; status: 'pending' | 'accepted' | 'rejected'; elapsedMs: number }
+  | { role: 'question'; instruction: string; question: string; options: string[]; answered?: string }
 
 interface Props {
   sessionId: number
@@ -22,6 +26,7 @@ interface Props {
   facts: Record<string, string>
   getClauses: () => { block_id: number; heading: string; text: string }[]
   onApply: (blockId: number, beforeText: string, afterText: string, heading?: string) => void
+  onApplyEdits?: (edits: DocEdit[]) => void
   // ONLYOFFICE drafts: accepted changes wait for "Update in document" (undefined for the built-in editor,
   // which takes each change straight away).
   pendingUpdates?: number
@@ -91,7 +96,7 @@ function focusedDiff(before: string, after: string, ctx = 10) {
 
 /** Right-pane AI drafting assistant: instruction → located-clause rewrite proposal
  *  (diff) → Accept / Reject / Edit further → patches the clause in the editor. */
-export default function DraftChat({ sessionId, model, focusedId, facts, getClauses, onApply, pendingUpdates, onUpdateDocument, updating }: Props) {
+export default function DraftChat({ sessionId, model, focusedId, facts, getClauses, onApply, onApplyEdits, pendingUpdates, onUpdateDocument, updating }: Props) {
   const office = pendingUpdates !== undefined
   // Persist the transcript per draft so it survives refresh / close-reopen / tab change.
   const msgKey = `pp_chat_${sessionId}`
@@ -161,9 +166,52 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
       return { ...msg, statuses: ns }
     }))
 
+  // ONLYOFFICE drafts: Lisa answers with checked edits for every place (or asks which text is meant).
+  const ask = async (instruction: string, shown: string) => {
+    setMessages(m => [...m, { role: 'user', text: shown }])
+    setSending(true)
+    try {
+      const res = await draftingApi.assist(sessionId, { instruction, model })
+      if (res.kind === 'question') {
+        setMessages(m => [...m, { role: 'question', instruction, question: res.question, options: res.options }])
+      } else {
+        const checked = Object.fromEntries(res.edits.map(e => [e.id, e.checked]))
+        setMessages(m => [...m, { role: 'plan', editId: res.edit_id, summary: res.summary, edits: res.edits, checked,
+          dropped: res.dropped, status: 'pending', elapsedMs: res.elapsed_ms }])
+      }
+    } catch (err) {
+      const e = err as { response?: { status?: number; data?: { detail?: string } } }
+      setMessages(m => [...m, { role: 'error', text: e?.response?.data?.detail || 'Lisa is unavailable right now. Please try again.' }])
+    } finally {
+      setSending(false)
+    }
+  }
+  const answer = (i: number, option: string) => {
+    const msg = messages[i]
+    if (msg?.role !== 'question' || msg.answered) return
+    setMessages(m => m.map((x, idx) => (idx === i && x.role === 'question' ? { ...x, answered: option } : x)))
+    void ask(`${msg.instruction}\n(The user means: ${option})`, option)
+  }
+  const togglePlace = (i: number, id: number) =>
+    setMessages(m => m.map((x, idx) => (idx === i && x.role === 'plan' ? { ...x, checked: { ...x.checked, [id]: !x.checked[id] } } : x)))
+  const decidePlan = async (i: number, status: 'accepted' | 'rejected') => {
+    const msg = messages[i]
+    if (msg?.role !== 'plan' || msg.status !== 'pending') return
+    if (status === 'accepted') onApplyEdits?.(msg.edits.filter(e => msg.checked[e.id]))
+    setMessages(m => m.map((x, idx) => (idx === i && x.role === 'plan' ? { ...x, status } : x)))
+    if (msg.editId) {
+      try { await (status === 'accepted' ? draftingApi.acceptEdit : draftingApi.rejectEdit)(sessionId, msg.editId) } catch { /* history only */ }
+    }
+  }
+
   const send = async () => {
     const instruction = input.trim()
     if (!instruction || sending) return
+    if (office && onApplyEdits) {
+      setInput('')
+      await ask(instruction, instruction)
+      return
+    }
     setMessages(m => [...m, { role: 'user', text: instruction }])
     setInput(''); setSending(true)
     const focused = followupBlock.current ?? focusedId
@@ -241,6 +289,54 @@ export default function DraftChat({ sessionId, model, focusedId, facts, getClaus
         {messages.map((msg, i) => {
           if (msg.role === 'user') return <div key={i} className="lisa-msg me"><div className="lisa-bubble">{msg.text}</div></div>
           if (msg.role === 'error') return <div key={i} className="callout bad" role="alert"><Icon name="warn" size="sm" /><div>{msg.text}</div></div>
+          if (msg.role === 'question') {
+            return ai(i, <>
+              <div>{msg.question}</div>
+              <div className="stack" style={{ gap: 6, marginTop: 8 }}>
+                {msg.options.map(o => (
+                  <button key={o} type="button" className={`dr-chip${msg.answered === o ? ' on' : ''}`}
+                    disabled={!!msg.answered || sending} onClick={() => answer(i, o)}>{o}</button>
+                ))}
+              </div>
+              {!msg.answered && <div className="faint xs" style={{ marginTop: 6 }}>Or type your answer below.</div>}
+            </>)
+          }
+          if (msg.role === 'plan') {
+            if (msg.edits.length === 0) {
+              return ai(i, <>Nothing to change. {msg.summary}</>)
+            }
+            const picked = msg.edits.filter(e => msg.checked[e.id]).length
+            return ai(i, <>
+              <div>{msg.summary || 'Here is the change.'} <strong>{msg.edits.length} place{msg.edits.length === 1 ? '' : 's'}</strong>{msg.status === 'pending' ? ': untick any to leave as it is.' : '.'}</div>
+              <div className="dr-places">
+                {msg.edits.map(e => (
+                  <div key={e.id} className={`dr-place${msg.checked[e.id] ? '' : ' off'}`}>
+                    {msg.status === 'pending'
+                      ? <Check label={<span className="small" style={{ fontWeight: 600 }}>{e.heading || `Paragraph ${e.n + 1}`}{e.extra ? ' · also found here' : ''}</span>}
+                          checked={!!msg.checked[e.id]} onChange={() => togglePlace(i, e.id)} />
+                      : <span className="small" style={{ fontWeight: 600 }}>{e.heading || `Paragraph ${e.n + 1}`}</span>}
+                    <div className="dr-place-text">
+                      {e.before}<del>{e.find}</del><ins>{e.replace}</ins>{e.after}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {msg.dropped > 0 && (
+                <div className="faint xs" style={{ marginTop: 6 }}>{msg.dropped} suggestion{msg.dropped === 1 ? '' : 's'} didn't match the document and {msg.dropped === 1 ? 'was' : 'were'} left out.</div>
+              )}
+              {msg.status === 'pending' ? (
+                <div className="row wrap" style={{ marginTop: 10, gap: 6 }}>
+                  <Button variant="primary" size="sm" icon="check" disabled={!picked} onClick={() => decidePlan(i, 'accepted')}>
+                    Accept{msg.edits.length > 1 ? ` ${picked}` : ''}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => decidePlan(i, 'rejected')}>Reject</Button>
+                </div>
+              ) : (
+                <div style={{ marginTop: 8 }}><span className={`chip ${msg.status === 'accepted' ? 'ok' : ''}`}>{msg.status === 'accepted' ? 'Accepted' : 'Rejected'}</span></div>
+              )}
+              <div className="faint xs mono" style={{ textAlign: 'right', marginTop: 6 }}>{(msg.elapsedMs / 1000).toFixed(1)}s</div>
+            </>)
+          }
           if (msg.role === 'refine') {
             if (msg.results.length === 0) {
               return ai(i, <>No changes needed for <strong>{msg.label.toLowerCase()}</strong>. The document already reads well.</>)

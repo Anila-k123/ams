@@ -149,6 +149,14 @@
 .pp-chat-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: var(--t-sm); }
 .pp-chat-msgs { flex: 1; min-height: 160px; overflow: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 12px; }
 .pp-chat-input { flex: none; border-top: 1px solid var(--line); padding: 8px 12px 12px; }
+/* Ask Lisa on an ONLYOFFICE draft: every place a change goes, each with a tick box. */
+.dr-places { margin-top: 8px; border-top: 1px solid var(--line); }
+.dr-place { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.dr-place.off .dr-place-text { opacity: .5; }
+.dr-place-text { margin-top: 4px; font-size: var(--t-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dr-place-text del { color: var(--bad); background: var(--bad-soft); text-decoration: line-through; }
+.dr-place-text ins { color: var(--ok); background: var(--ok-soft); text-decoration: none; }
+.dr-chip.on { border-color: var(--tape); color: var(--tape); }
 /* ONLYOFFICE drafts: accepted Lisa changes waiting for "Update in document". */
 .dr-update-bar { flex: none; margin: 0 12px 8px; align-items: center; }
 .pp-chat-input .lisa-quick { padding-bottom: 8px; }

@@ -447,12 +447,14 @@ class SaveView(APIView):
 
 
 class ApplyView(APIView):
-    """POST draft-sessions/<id>/onlyoffice/apply/ {before, after} or {changes: [{before, after, blockId}, ...]}: Lisa's
-    accepted changes, written into the Word file on the server as tracked changes by "PactPro AI" (the
-    Community edition has no connector to do it in the open editor). Several changes (Lisa's "Apply all" on a
-    whole-document refine) go in one pass: one version, one editor reload, no requests racing each other.
-    Open edits are saved first; the response has the new editor config and how many were placed / skipped
-    (a clause changed since Lisa read it), so the page reloads the editor with the redline."""
+    """POST draft-sessions/<id>/onlyoffice/apply/: Lisa's accepted changes, written into the Word file on the
+    server as tracked changes by "PactPro AI" (the Community edition has no connector to do it in the open
+    editor). Two kinds, in one pass (one version, one editor reload, no requests racing each other):
+    - {edits: [{id, n, text, find, replace}, ...]}: Ask Lisa's checked find / replace edits (views.assist,
+      services/doc_edits.py), each pinned to its paragraph (docfile.apply_edits);
+    - {changes: [{before, after, blockId}, ...]} or {before, after}: a clause rewritten as a whole (Refine).
+    Open edits are saved first; the response has the new editor config and what was placed / skipped, so
+    the page reloads the editor with the redline."""
 
     def post(self, request, pk):
         if not enabled():
@@ -463,7 +465,8 @@ class ApplyView(APIView):
             return Response({'error': 'You can view this draft but not change it.'}, status=403)
         raw = request.data.get('changes')
         if not isinstance(raw, list):
-            raw = [{'before': request.data.get('before'), 'after': request.data.get('after')}]
+            raw = [{'before': request.data.get('before'), 'after': request.data.get('after')}]                 if request.data.get('before') else []
+
         def _block(c):
             try:
                 return int(c.get('blockId'))
@@ -471,25 +474,35 @@ class ApplyView(APIView):
                 return None
         changes = [(str(c.get('before') or ''), str(c.get('after') or ''), _block(c)) for c in raw if isinstance(c, dict)]
         changes = [(b, a, bid) for b, a, bid in changes if b.strip() and b != a]
-        if not changes:
+        edits = [e for e in (request.data.get('edits') or []) if isinstance(e, dict) and e.get('find')]
+        for e in edits:                                    # the paragraph index arrives as JSON
+            try:
+                e['n'] = int(e.get('n'))
+            except (TypeError, ValueError):
+                e['n'] = None
+        if not changes and not edits:
             return Response({'error': 'Nothing to change.'}, status=400)
-        from .docfile import apply_tracked
+        from .docfile import apply_edits, apply_tracked
         df = ensure_file(session, request.user)
         if df.editing:
             df = force_save(df)                            # keep what was typed before we change the file
-        data, applied, skipped = _file_bytes(df), 0, []
+        data, applied, skipped, skipped_edits = _file_bytes(df), 0, [], []
+        if edits:
+            data, done, skipped_edits = apply_edits(data, edits)
+            applied += len(done)
         for before, after, block_id in changes:            # one after another on the same file
             data, ok = apply_tracked(data, before, after, block_id=block_id)
             applied += ok
             if not ok:
                 skipped.append(block_id)
         if not applied:
-            return Response({'error': "The clause has changed since Lisa read it, so the change can't be "
-                                      'placed automatically. Copy the new text into the clause.'}, status=409)
+            return Response({'error': "The text has changed since Lisa read it, so the change can't be "
+                                      'placed automatically. Ask Lisa again, or copy the new text in.'}, status=409)
         store_version(df, data, request.user.id)
-        # skippedBlocks: which clauses still need the new text copied in by hand.
+        # skippedBlocks / skippedEdits: what still needs doing by hand (named on the page).
         return Response({'config': editor_config(session, request.user), 'applied': applied,
-                         'skipped': len(changes) - applied, 'skippedBlocks': skipped})
+                         'skipped': len(changes) + len(edits) - applied, 'skippedBlocks': skipped,
+                         'skippedEdits': skipped_edits})
 
 
 # --- version history and compare (the editor's own screens, docs/ONLYOFFICE_PLAN.md) ------------

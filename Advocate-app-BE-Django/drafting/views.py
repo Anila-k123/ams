@@ -1,3 +1,4 @@
+import logging
 import time
 from django.db.models import ProtectedError
 from django.shortcuts import get_object_or_404
@@ -6,6 +7,8 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from .files import FileDownloadMixin
+
+logger = logging.getLogger(__name__)
 
 
 def _drafting_op(request, operation):
@@ -510,6 +513,51 @@ class DraftSessionViewSet(viewsets.ModelViewSet):
             'rationale': edit.rationale, 'model': model, 'shrunk': shrunk,
             'elapsed_ms': int((time.time() - t0) * 1000),
         })
+
+    @action(detail=True, methods=['post'], url_path='assist')
+    @_metered_action('draft.edit')
+    def assist(self, request, pk=None):
+        """Ask Lisa for a change to an ONLYOFFICE draft (services/doc_edits.py): the open document is saved
+        first so she reads what is on screen, then she answers with checked find / replace edits for every
+        place it applies, or a question when the instruction could mean different text. Nothing changes
+        until the accepted edits are sent to onlyoffice/apply/ ("Update in document")."""
+        from . import onlyoffice
+        from .docfile import paragraph_listing
+        from .models import DraftEdit
+        from .services.doc_edits import plan_edits
+        session = self.get_object()
+        instruction = (request.data.get('instruction') or '').strip()
+        if not instruction:
+            return Response({'detail': 'Enter an instruction.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not onlyoffice.enabled():
+            return Response({'detail': 'The document editor is not switched on.'}, status=status.HTTP_400_BAD_REQUEST)
+        if onlyoffice.editor_role(session, request.user) == 'view':
+            return Response({'detail': 'You can view this draft but not change it.'}, status=status.HTTP_403_FORBIDDEN)
+        model = request.data.get('model') or session.llm
+        t0 = time.time()
+        df = onlyoffice.ensure_file(session, request.user)
+        if df.editing:
+            df = onlyoffice.force_save(df)                 # read what is on screen, not the last save
+        paras = paragraph_listing(onlyoffice._file_bytes(df))
+        headings = {b.id: b.heading for b in session.blocks.all()}
+        try:
+            plan = plan_edits(session, instruction, paras, model=model, headings=headings)
+        except Exception:                                  # noqa: BLE001 - model down / unreadable reply
+            logger.exception('assist: planning edits for draft %s failed', session.id)
+            return Response({'detail': 'Lisa could not work out the change. Please try again.'},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        plan['elapsed_ms'] = int((time.time() - t0) * 1000)
+        if plan['kind'] == 'edits' and plan['edits']:
+            # Kept like a clause edit (history, accept / reject state).
+            first = plan['edits'][0]
+            edit = DraftEdit.objects.create(
+                session=session, block_id=first['blockId'] if first['blockId'] in headings else None,
+                instruction=instruction,
+                before_text='\n'.join(f'P{e["n"]}: {e["find"]}' for e in plan['edits'])[:20000],
+                after_text='\n'.join(f'P{e["n"]}: {e["replace"]}' for e in plan['edits'])[:20000],
+                rationale=plan['summary'], status=DraftEdit.Status.PENDING, created_by_id=request.user.id)
+            plan['edit_id'] = edit.id
+        return Response(plan)
 
     @action(detail=True, methods=['post'], url_path='refine')
     @_metered_action('draft.refine')

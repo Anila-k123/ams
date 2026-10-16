@@ -507,9 +507,10 @@ export const draftingApi = {
     api.post<{ config: Record<string, unknown> }>(`/draft-sessions/${id}/onlyoffice/apply/`, { before, after })
       .then(r => r.data),
   // Several of Lisa's changes in one pass (her "Apply all"): one version, one editor reload.
-  applyOfficeMany: (id: number, changes: { before: string; after: string; blockId?: number }[]) =>
-    api.post<{ config: Record<string, unknown>; applied: number; skipped: number; skippedBlocks?: (number | null)[] }>(
-      `/draft-sessions/${id}/onlyoffice/apply/`, { changes }).then(r => r.data),
+  applyOfficeMany: (id: number, changes: { before: string; after: string; blockId?: number }[],
+    edits: { id: number; n: number; text: string; find: string; replace: string }[] = []) =>
+    api.post<{ config: Record<string, unknown>; applied: number; skipped: number; skippedBlocks?: (number | null)[]; skippedEdits?: number[] }>(
+      `/draft-sessions/${id}/onlyoffice/apply/`, { changes, edits }).then(r => r.data),
   // The editor's version history (refreshHistory / setHistoryData), restore, and the document to compare with.
   getOfficeHistory: (id: number) =>
     api.get<Record<string, unknown>>(`/draft-sessions/${id}/onlyoffice/history/`).then(r => r.data),
@@ -635,6 +636,9 @@ export const draftingApi = {
   // Put the draft back to a saved version (the draft as it was is saved as a version first).
   restoreVersion: (id: number, versionId: number) =>
     api.post<DraftSession>(`/draft-sessions/${id}/versions/${versionId}/restore/`).then(r => r.data),
+  // Ask Lisa (ONLYOFFICE drafts): checked find / replace edits for every place, or a question.
+  assist: (id: number, body: { instruction: string; model?: string }) =>
+    api.post<AssistResult>(`/draft-sessions/${id}/assist/`, body).then(r => r.data),
   // Chat-edit: propose a clause rewrite for an instruction (records a pending edit).
   proposeEdit: (id: number, body: { instruction: string; focused_block_id?: number | null; current_text?: string; model?: string }) =>
     api.post<EditProposal>(`/draft-sessions/${id}/edit/`, body).then(r => r.data),
@@ -694,6 +698,26 @@ export interface ConsistencyReport {
 }
 
 /** A proposed clause edit returned by the chat-edit endpoint. */
+/** One of Lisa's edits on an ONLYOFFICE draft: in paragraph `n` (whose text was `text`), `find` becomes
+ *  `replace`. `extra`: not named by Lisa but the same words found there by search. */
+export interface DocEdit {
+  id: number
+  n: number
+  text: string
+  find: string
+  replace: string
+  blockId: number | null
+  heading?: string
+  before: string
+  after: string
+  extra: boolean
+  checked: boolean
+}
+
+export type AssistResult =
+  | { kind: 'edits'; summary: string; edits: DocEdit[]; dropped: number; edit_id?: number; elapsed_ms: number }
+  | { kind: 'question'; question: string; options: string[]; elapsed_ms: number }
+
 export interface EditProposal {
   edit_id: number
   block_id: number

@@ -137,8 +137,10 @@ You never lose work, but nothing becomes a version until you choose it.
 
 | # | Do | Expect |
 |---|---|---|
-| 5.1 | Ask Lisa: *"Change the monthly rent to Rs. 45,000"* | Lisa shows Removed / Added for the rent clause |
-| 5.2 | **Accept** | Nothing changes in the document yet: a bar above Lisa's message box says *1 accepted change not in the document yet* |
+| 5.1 | Ask Lisa: *"Change the monthly rent to Rs. 45,000"* | One card: every place the rent appears, each with a tick box and the old value struck through / the new one highlighted; places found by search say *also found here* |
+| 5.1a | Untick one place, then **Accept** | Only the ticked places are kept |
+| 5.1b | On a Vakalathnama with two advocates, ask *"Change the enrolment number to MS/3333/2026"* | Lisa asks **which one**, with one button per advocate's number and *All of them*; pick one → a card with that advocate's places only |
+| 5.2 | **Accept** | Nothing changes in the document yet: a bar above Lisa's message box says *N accepted changes not in the document yet* |
 | 5.2a | **Update in document** | The editor **reloads**; *40,000* struck through, *45,000* inserted, marked as **PactPro AI**'s change; only the changed digits are marked |
 | 5.3 | Editor **Review** tab → **Accept** | The redline disappears |
 | 5.4 | Another change, then **Reject** it | The clause stays as it was |

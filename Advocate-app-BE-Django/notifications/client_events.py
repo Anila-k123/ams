@@ -127,6 +127,28 @@ def hearing_scheduled(advocate, client, event, case=None):
         triggered_by='SYSTEM')
 
 
+def hearing_rescheduled(advocate, client, event, case=None, old_date=None):
+    """A hearing on the client's case has moved to another date."""
+    label = _case_label(case)
+    subject = 'Hearing date changed{}'.format(' - {}'.format(label) if label else '')
+    lines = [_greet(client), '',
+             'The hearing on your case has been moved to a new date.', '']
+    if old_date:
+        lines.append('Was     : {}'.format(old_date))
+    lines.append('Now     : {}'.format(event.date))
+    if event.time:
+        lines.append('Time    : {}'.format(event.time))
+    if event.title:
+        lines.append('Details : {}'.format(event.title))
+    if label:
+        lines.append('Case    : {}'.format(label))
+    lines.append(_sign_off(advocate))
+    return service.notify_client(
+        advocate.id, client, 'HEARING_RESCHEDULED', subject, '\n'.join(lines),
+        case_id=getattr(case, 'id', None), entity='CaseEvent', entity_id=event.id,
+        triggered_by='SYSTEM')
+
+
 def case_created(advocate, client, case):
     """A new case has been opened for the client."""
     label = _case_label(case)

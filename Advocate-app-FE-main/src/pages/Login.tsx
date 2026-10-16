@@ -9,6 +9,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { Icon } from '../ui/kit';
 import logo from '../assets/images/pactpro-logo.webp';
+import logoLight from '../assets/images/pactpro-logo-light.webp';
 
 /* Shared by the sign-in flow pages (forgot, verify, reset, set-password). */
 
@@ -53,6 +54,7 @@ export function AuthFrame({ children, brand }: { children: ReactNode; brand?: { 
       <span className="lg-band" aria-hidden="true" />
       <span className="lg-glow" aria-hidden="true" />
       <aside className="lg-hero" aria-label="About PactPro">
+        <img className="lg-hero-logo" src={logoLight} alt="PactPro" width={720} height={310} />
         <div className="lg-dash" aria-hidden="true" />
         <h2>The Smarter Way to Manage Your <em>Legal Practice.</em></h2>
         <p className="lg-lead">

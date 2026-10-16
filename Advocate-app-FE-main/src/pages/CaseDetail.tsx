@@ -3,6 +3,7 @@
 // hearing, fees, client, team). Every action is shown only to a role that holds
 // its permission; the API enforces the same rules.
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { HEARING_RESULTS, resultLabel, savedHearingMessage } from "../utils/hearingResults";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -283,7 +284,7 @@ const HEARING_PURPOSES = [
 ];
 const EMPTY_HEARING = {
   title: "", eventType: "HEARING", date: "", time: "", description: "",
-  purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "",
+  purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "", result: "",
 };
 
 function fmtDate(dateStr: any) {
@@ -823,15 +824,17 @@ export default function CaseDetail() {
         court: hearingForm.court,
         benchHall: hearingForm.benchHall,
         judge: hearingForm.judge,
-        nextDate: hearingForm.nextDate || null,
+        nextDate: hearingForm.result === "DISPOSED" ? null : (hearingForm.nextDate || null),
         outcome: hearingForm.outcome,
+        result: hearingForm.result,
       } : {}),
     };
     try {
+      let saved: any;
       if (editingEventId) {
-        await withLoading(api.put(`/api/events/update/${editingEventId}`, payload), "Saving hearing...");
+        saved = await withLoading(api.put(`/api/events/update/${editingEventId}`, payload), "Saving hearing...");
       } else {
-        await withLoading(api.post("/api/events/create", { ...payload, caseEntity: { id: Number(id) }, ...(allowDuplicate ? { allowDuplicate: true } : {}) }), "Adding hearing...");
+        saved = await withLoading(api.post("/api/events/create", { ...payload, caseEntity: { id: Number(id) }, ...(allowDuplicate ? { allowDuplicate: true } : {}) }), "Adding hearing...");
       }
       setShowHearingModal(false);
       setEditingEventId(null);
@@ -841,7 +844,7 @@ export default function CaseDetail() {
       fetchSummary();
       success(eventModalMode === "event"
         ? (editingEventId ? "Event updated." : "Event added to this case.")
-        : (editingEventId ? "Hearing updated." : "Hearing added to this case."));
+        : savedHearingMessage(editingEventId ? "Hearing updated." : "Hearing added to this case.", saved?.data));
     } catch (err) {
       // Same hearing already on this case: ask before adding it again.
       if (err.response?.status === 409 && err.response.data?.duplicate) { setDupEvent(err.response.data.duplicate); return; }
@@ -867,6 +870,7 @@ export default function CaseDetail() {
       judge: hd.judge || "",
       nextDate: hd.nextDate || "",
       outcome: hd.outcome || "",
+      result: hd.result || "",
     });
     setShowHearingModal(true);
   };
@@ -1401,6 +1405,7 @@ export default function CaseDetail() {
         {(ev.hearingDetail?.court || ev.hearingDetail?.benchHall || ev.hearingDetail?.judge) && (
           <div className="cs-sub">{[ev.hearingDetail.court, ev.hearingDetail.benchHall && `Hall ${ev.hearingDetail.benchHall}`, ev.hearingDetail.judge].filter(Boolean).join(" · ")}</div>
         )}
+        {ev.hearingDetail?.result && <div className="cs-sub">Result: {resultLabel(ev.hearingDetail.result)}</div>}
         {ev.hearingDetail?.nextDate && <div className="cs-sub">Next date: {fmtDate(ev.hearingDetail.nextDate)}</div>}
         {ev.hearingDetail?.outcome && <div className="cs-sub">Outcome: {ev.hearingDetail.outcome}</div>}
         {ev.description && <div className="cs-sub">{ev.description}</div>}
@@ -2463,7 +2468,13 @@ export default function CaseDetail() {
             <TextField label="Court" value={hearingForm.court} onChange={(e) => setHearingForm({ ...hearingForm, court: e.target.value })} />
             <TextField label="Bench / hall no." value={hearingForm.benchHall} onChange={(e) => setHearingForm({ ...hearingForm, benchHall: e.target.value })} />
             <TextField label="Judge / coram" value={hearingForm.judge} onChange={(e) => setHearingForm({ ...hearingForm, judge: e.target.value })} />
-            <TextField label="Next hearing date" type="date" value={hearingForm.nextDate} onChange={(e) => setHearingForm({ ...hearingForm, nextDate: e.target.value })} />
+            <SelectField label="Result" placeholder="Not recorded yet" options={HEARING_RESULTS} value={hearingForm.result}
+              hint="After the hearing"
+              onChange={(e) => setHearingForm({ ...hearingForm, result: e.target.value, ...(e.target.value === "DISPOSED" ? { nextDate: "" } : {}) })} />
+            <TextField label="Next hearing date" type="date" value={hearingForm.nextDate} min={hearingForm.date || undefined}
+              disabled={hearingForm.result === "DISPOSED"}
+              hint={hearingForm.result === "DISPOSED" ? "A disposed matter has no next hearing." : "Saving adds it to the calendar as the next hearing."}
+              onChange={(e) => setHearingForm({ ...hearingForm, nextDate: e.target.value })} />
             <TextArea label="Outcome / order" hint="After the hearing" full rows={3} value={hearingForm.outcome}
               onChange={(e) => setHearingForm({ ...hearingForm, outcome: e.target.value })} />
           </>}

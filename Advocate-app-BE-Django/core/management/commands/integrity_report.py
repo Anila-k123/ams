@@ -94,6 +94,25 @@ class Command(BaseCommand):
         n = _q("""SELECT count(*) FROM invoices i WHERE (SELECT coalesce(sum(p.amount), 0) FROM payment_invoice pi
                   JOIN client_payments p ON p.id = pi.payment_id WHERE pi.invoice_id = i.id) > i.amount + 0.005""")[0][0]
         (self.errors if n else self.ok).append(f'invoices paid more than their amount: {n}')
+        # Stored firm GSTINs that are set but invalid: forward-charge invoices for
+        # that firm are refused until corrected (invoices/gst.py, no state fallback).
+        from core.models import Advocate
+        from core.validators import clean_gstin
+        from firms.models import FirmSettings
+
+        def _invalid(value):
+            try:
+                clean_gstin(value)
+                return False
+            except ValueError:
+                return True
+        bad = [f'advocate {a.id}' for a in Advocate.objects.exclude(gst_number__isnull=True).exclude(gst_number='')
+               .only('id', 'gst_number') if _invalid(a.gst_number)]
+        bad += [f'firm {s.firm_id} settings' for s in FirmSettings.objects.exclude(gst_number='')
+                .only('firm_id', 'gst_number') if _invalid(s.gst_number)]
+        (self.warnings if bad else self.ok).append(
+            f'stored firm GSTINs that are not valid (fix in Profile / Firm Settings): {len(bad)}'
+            + (f' ({", ".join(bad[:10])})' if bad else ''))
 
         # 4. Document files on disk; versions.
         from documents.storage import resolve_stored_file

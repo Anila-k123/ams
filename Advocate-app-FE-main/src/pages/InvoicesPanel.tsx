@@ -363,6 +363,13 @@ export default function InvoicesPanel() {
       error("Fix the recipient GSTIN first: " + recipientGstinError);
       return;
     }
+    // Forward charge: the place of supply decides CGST + SGST or IGST, and the
+    // server refuses to guess it (invoices/gst.py), so ask here first.
+    if (isForward && !newInvoice.recipientState.trim() && !newInvoice.recipientStateCode.trim()
+        && !newInvoice.recipientGstin.trim()) {
+      error("Give the client's state or GSTIN: for a forward-charge invoice it decides CGST + SGST or IGST.");
+      return;
+    }
     setSubmitting(true);
     try {
       const particulars = newInvoice.particulars
@@ -805,12 +812,14 @@ export default function InvoicesPanel() {
                 error={gstinTouched ? recipientGstinError : ""}
                 hint={gstinStateMismatch(newInvoice.recipientGstin, newInvoice.recipientState) || "Leave blank if the client has none."} />
               <div className="form-grid fin-state">
-                <TextField label="State" name="recipientState" placeholder="e.g. TAMIL NADU" value={newInvoice.recipientState} onChange={handleChange} />
+                <TextField label="State" name="recipientState" placeholder="e.g. Tamil Nadu" value={newInvoice.recipientState} onChange={handleChange}
+                  required={isForward && !newInvoice.recipientGstin.trim()} />
                 <TextField label="State code" name="recipientStateCode" placeholder="e.g. 33" value={newInvoice.recipientStateCode} onChange={handleChange} />
               </div>
               <TextArea full label="Billing address" name="recipientAddress" rows={2} placeholder="Full billing address (one line per row)"
                 value={newInvoice.recipientAddress} onChange={handleChange} />
-              <TextField full label="Place of supply" name="placeOfSupply" placeholder="Defaults to State (e.g. TAMIL NADU - 33)"
+              <TextField full label="Place of supply" name="placeOfSupply" placeholder="Set from the GSTIN or state (e.g. Tamil Nadu - 33)"
+                hint="Worked out from the client's GSTIN, or their state when they have none."
                 value={newInvoice.placeOfSupply} onChange={handleChange} />
             </div>
           </fieldset>

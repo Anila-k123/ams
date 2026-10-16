@@ -76,6 +76,19 @@ class Command(BaseCommand):
         return NotificationQueue.objects.filter(status=PROCESSING, processing_started_at__lt=stale).update(
             status=service.QUEUED, processing_started_at=None)
 
+    @staticmethod
+    def _stale_hearing(payload):
+        """A hearing reminder whose hearing is no longer on the date it states.
+        Rows queued before reminders carried the date (no entityDate) are sent
+        as before."""
+        if payload.get('eventType') != 'HEARING_REMINDER' or not payload.get('entityDate'):
+            return False
+        if payload.get('entity') != 'CaseEvent' or not payload.get('entityId'):
+            return False
+        from core.models import CaseEvent
+        date = CaseEvent.objects.filter(id=payload['entityId']).values_list('date', flat=True).first()
+        return date is None or str(date) != payload['entityDate']
+
     def _cancel(self, row, reason):
         row.status, row.last_error = CANCELLED, reason[:2000]
         row.save(update_fields=['status', 'last_error'])
@@ -121,6 +134,12 @@ class Command(BaseCommand):
                 continue
             if not to_client and not can_receive(row.advocate_id, firm_id):
                 self._cancel(row, 'recipient no longer an active member of this firm')
+                cancelled += 1
+                continue
+            if self._stale_hearing(payload):
+                # The hearing moved or was removed after this reminder was queued:
+                # don't send the old date (the next scan raises one for the new date).
+                self._cancel(row, 'hearing moved or removed since this reminder was queued')
                 cancelled += 1
                 continue
 

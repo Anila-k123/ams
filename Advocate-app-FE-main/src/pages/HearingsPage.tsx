@@ -4,6 +4,7 @@
 // No "Today" button and no Agenda view: the firm decided against both (Prev /
 // Next and the period heading are enough, and Day covers what Agenda showed).
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { HEARING_RESULTS, resultLabel, savedHearingMessage } from "../utils/hearingResults";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
@@ -33,7 +34,7 @@ const FILTER_LABEL: Record<string, string> = { ...Object.fromEntries(EVENT_TYPES
 
 const emptyEvent = {
   title: "", eventType: "", description: "", date: "", time: "", caseId: "" as any,
-  purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "",
+  purpose: "", court: "", benchHall: "", judge: "", nextDate: "", outcome: "", result: "",
 };
 
 type View = "day" | "week" | "month";
@@ -189,7 +190,7 @@ function HearingsPage() {
   const createEvent = async (allowDuplicate: boolean) => {
     setSaving(true);
     try {
-      await withLoading(
+      const saved: any = await withLoading(
         api.post("/api/events/create", {
           ...(allowDuplicate ? { allowDuplicate: true } : {}),
           title: newEvent.title.trim(),
@@ -203,8 +204,9 @@ function HearingsPage() {
             court: newEvent.court,
             benchHall: newEvent.benchHall,
             judge: newEvent.judge,
-            nextDate: newEvent.nextDate || null,
+            nextDate: newEvent.result === "DISPOSED" ? null : (newEvent.nextDate || null),
             outcome: newEvent.outcome,
+            result: newEvent.result,
           } : {}),
         }),
         "Saving Event..."
@@ -213,7 +215,7 @@ function HearingsPage() {
       setNewEvent(emptyEvent);
       setDuplicate(null);
       fetchEvents();
-      success("Event created successfully!");
+      success(savedHearingMessage("Event created successfully!", saved?.data));
     } catch (err: any) {
       if (err.response?.status === 409 && err.response.data?.duplicate) {
         setDuplicate(err.response.data.duplicate);
@@ -466,6 +468,7 @@ function HearingsPage() {
                 <dt>Hall</dt><dd>{hd.benchHall || "—"}</dd>
                 <dt>Judge</dt><dd>{hd.judge || "—"}</dd>
                 <dt>Purpose</dt><dd>{hd.purpose || "—"}</dd>
+                {hd.result && <><dt>Result</dt><dd>{resultLabel(hd.result)}</dd></>}
                 {hd.nextDate && <><dt>Next date</dt><dd>{fdate(parseYmd(hd.nextDate))}</dd></>}
                 {hd.outcome && <><dt>Outcome</dt><dd>{hd.outcome}</dd></>}
               </>}
@@ -509,7 +512,12 @@ function HearingsPage() {
             <TextField label="Court" name="court" value={newEvent.court} onChange={handleChange} />
             <TextField label="Bench / hall no." name="benchHall" value={newEvent.benchHall} onChange={handleChange} />
             <TextField label="Judge / coram" name="judge" value={newEvent.judge} onChange={handleChange} />
-            <TextField label="Next hearing date" type="date" value={newEvent.nextDate} onChange={(e) => setField("nextDate", e.target.value)} />
+            <SelectField label="Result" value={newEvent.result} placeholder="Not recorded yet" hint="After the hearing"
+              options={HEARING_RESULTS} onChange={(e) => { setField("result", e.target.value); if (e.target.value === "DISPOSED") setField("nextDate", ""); }} />
+            <TextField label="Next hearing date" type="date" value={newEvent.nextDate} min={newEvent.date || undefined}
+              disabled={newEvent.result === "DISPOSED"}
+              hint={newEvent.result === "DISPOSED" ? "A disposed matter has no next hearing." : "Saving adds it to the calendar as the next hearing."}
+              onChange={(e) => setField("nextDate", e.target.value)} />
             <TextArea full label="Outcome / order" hint="After the hearing" name="outcome" rows={2} value={newEvent.outcome} onChange={handleChange} />
           </>}
 

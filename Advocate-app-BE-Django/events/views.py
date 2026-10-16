@@ -1,4 +1,5 @@
 import datetime
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -11,6 +12,7 @@ from core.practice import practice_ids
 from core.tenant import owned
 from notifications import client_events, internal_events
 from workspace.models import HearingDetail
+from . import scheduling
 
 # The event kinds the form offers; anything else is rejected so a bad payload
 # can't create an unlabelled event.
@@ -47,21 +49,16 @@ def _validate_event(data):
     return None
 
 
-def _upsert_hearing_detail(event_id, advocate_id, d):
-    """Create/update the advocate's extra hearing detail from request data.
-    Only writes when at least one detail field was provided, so non-hearing
-    events (meetings/reminders) never get an empty row."""
-    keys = {'purpose': 'purpose', 'court': 'court', 'bench_hall': 'benchHall',
-            'judge': 'judge', 'outcome': 'outcome'}
-    vals = {col: (d.get(api) or '') for col, api in keys.items()}
-    next_date = d.get('nextDate') or None
-    if not any(vals.values()) and not next_date:
-        # Nothing supplied — on update, clear any prior detail; on create, skip.
-        HearingDetail.objects.filter(event_id=event_id).delete()
-        return
-    HearingDetail.objects.update_or_create(
-        event_id=event_id,
-        defaults={**vals, 'next_date': next_date, 'advocate_id': advocate_id})
+def _saved(event, request, created_status=status.HTTP_200_OK, next_event=None, scheduled=False):
+    """The event, plus the next hearing its next date scheduled (or moved)."""
+    body = CaseEventSerializer(event).data
+    if next_event is not None:
+        body['nextHearing'] = {**CaseEventSerializer(next_event).data, 'created': scheduled}
+    return Response(body, status=created_status)
+
+
+def _refused(exc):
+    return Response({'error': str(exc), 'code': exc.code}, status=exc.status)
 
 
 def _base(request):
@@ -119,6 +116,10 @@ class CreateEventView(APIView):
         case = owned(Case.objects.filter(id=case_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_400_BAD_REQUEST)
+        try:   # next date / result checked before anything is saved
+            scheduling.check(data.get('eventType'), data.get('date'), case, data)
+        except scheduling.SchedulingError as exc:
+            return _refused(exc)
         # The same event twice would also notify the client and the team twice.
         # A repeat is refused with the existing event (409), unless the user chose
         # "Add anyway" (allowDuplicate). Callers that create events in bulk (a court
@@ -128,22 +129,24 @@ class CreateEventView(APIView):
             if existing is not None:
                 return Response({'error': 'This event already exists.', 'duplicate': CaseEventSerializer(existing).data},
                                 status=status.HTTP_409_CONFLICT)
-        event = CaseEvent.objects.create(
-            title=data.get('title'),
-            event_type=data.get('eventType'),
-            description=data.get('description'),
-            date=data.get('date'),
-            time=data.get('time') or None,
-            notified=False,
-            case=case,
-            advocate_id=request.user.id,
-        )
-        _upsert_hearing_detail(event.id, request.user.id, data)
+        with transaction.atomic():
+            event = CaseEvent.objects.create(
+                title=data.get('title'),
+                event_type=data.get('eventType'),
+                description=data.get('description'),
+                date=data.get('date'),
+                time=data.get('time') or None,
+                notified=False,
+                case=case,
+                advocate_id=request.user.id,
+            )
+            event.refresh_from_db()          # date as a date, for the next-date rules
+            nxt, scheduled = scheduling.save_detail(event, request.user, data)
         # Immediate: the client (existing) and now the case's team, so everyone
         # knows a date is set the moment it's added - not only near the date.
         client_events.hearing_scheduled(request.user, case.client, event, case)
         internal_events.hearing_added_team(request.user, event, case)
-        return Response(CaseEventSerializer(event).data, status=status.HTTP_201_CREATED)
+        return _saved(event, request, status.HTTP_201_CREATED, nxt, scheduled)
 
 
 class UpdateEventView(APIView):
@@ -157,15 +160,27 @@ class UpdateEventView(APIView):
         err = _validate_event(d)
         if err:
             return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
-        for attr, key in [('title', 'title'), ('event_type', 'eventType'),
-                          ('description', 'description'), ('date', 'date')]:
-            if key in d:
-                setattr(event, attr, d[key])
-        if 'time' in d:
-            event.time = d.get('time') or None
-        event.save()
-        _upsert_hearing_detail(event.id, request.user.id, d)
-        return Response(CaseEventSerializer(event).data)
+        try:   # with the event's new type and date, before anything is saved
+            scheduling.check(d.get('eventType', event.event_type), d.get('date', event.date), event.case, d)
+        except scheduling.SchedulingError as exc:
+            return _refused(exc)
+        with transaction.atomic():
+            # Locked, so the date compared below is the one this save replaces:
+            # a retried or parallel save of the same date is no change.
+            event = CaseEvent.objects.select_for_update().get(id=event.id)
+            was_hearing, old_date = event.event_type == 'HEARING', event.date
+            for attr, key in [('title', 'title'), ('event_type', 'eventType'),
+                              ('description', 'description'), ('date', 'date')]:
+                if key in d:
+                    setattr(event, attr, d[key])
+            if 'time' in d:
+                event.time = d.get('time') or None
+            event.save()
+            event.refresh_from_db()
+            if was_hearing and event.date != old_date:
+                scheduling.announce_moved(request.user, event, old_date)
+            nxt, scheduled = scheduling.save_detail(event, request.user, d)
+        return _saved(event, request, next_event=nxt, scheduled=scheduled)
 
 
 class DeleteEventView(APIView):
@@ -176,5 +191,8 @@ class DeleteEventView(APIView):
         if event is None:
             return Response({'error': 'Event not found'}, status=status.HTTP_404_NOT_FOUND)
         HearingDetail.objects.filter(event_id=event.id).delete()
+        # The hearing before it no longer leads anywhere (it keeps its next date
+        # text); a later save of that hearing can schedule again.
+        HearingDetail.objects.filter(next_event_id=event.id).update(next_event_id=None)
         event.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

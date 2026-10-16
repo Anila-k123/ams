@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import json
+from . import gst
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.db.models import Q, Sum
@@ -151,8 +152,60 @@ class RecipientDefaultsView(APIView):
                          'placeOfSupply': d['place_of_supply']})
 
 
-def _norm_state(s):
-    return ''.join((s or '').lower().split())
+def _supplier_location(raised_by):
+    """The firm's GSTIN(s) and state(s), most specific first: the practice
+    owner's registration, then the firm's settings."""
+    owner = Advocate.objects.filter(id=practice_root(raised_by)).first()
+    gstins = [('Profile → Office → GST number of the practice owner', getattr(owner, 'gst_number', '') or '')]
+    states = [getattr(owner, 'state', '') or '']
+    from core.tenant import firm_id_of_advocate
+    from firms.models import FirmSettings
+    fid = firm_id_of_advocate(raised_by.id) if hasattr(Invoice, 'firm_id') else None
+    fs = FirmSettings.objects.filter(firm_id=fid).only('gst_number', 'state').first() if fid else None
+    if fs is not None:
+        gstins.append(('Firm Settings → GST number', fs.gst_number or ''))
+        states.append(fs.state or '')
+    return gstins, states
+
+
+def _place_of_supply(raised_by, tax, tax_mode):
+    """Fill the recipient's state code / place of supply from GST codes and
+    decide intra- vs inter-state. Returns ({'interstate': bool|None}, None) or
+    (None, 400 Response).
+
+    Forward charge needs both locations: without them the tax type would be a
+    guess, so the invoice is refused. Reverse charge adds no tax, so it is not
+    blocked; its intra/inter flag is stored only when both are known."""
+    try:
+        recipient = gst.recipient_code(tax['recipient_gstin'], tax['recipient_state'],
+                                       tax['recipient_state_code'])
+    except gst.PlaceOfSupplyError as exc:
+        return None, Response({'error': str(exc), 'code': exc.code, 'errors': {exc.field: str(exc)}},
+                              status=http.HTTP_400_BAD_REQUEST)
+    gstins, states = _supplier_location(raised_by)
+    try:
+        supplier = gst.supplier_code(gstins, states)
+    except gst.PlaceOfSupplyError as exc:
+        if tax_mode == 'forward':        # the tax type depends on it: refuse, saying where to fix it
+            return None, Response({'error': str(exc), 'code': exc.code, 'errors': {exc.field: str(exc)}},
+                                  status=http.HTTP_400_BAD_REQUEST)
+        supplier = None                  # reverse charge adds no tax: location unknown, never the state instead
+    if tax_mode == 'forward':
+        if not supplier:
+            msg = ('Set the firm\'s state or GSTIN (Firm Settings) before raising a forward-charge invoice: '
+                   'the place of supply decides CGST + SGST or IGST.')
+            return None, Response({'error': msg, 'code': 'SUPPLIER_STATE_REQUIRED', 'errors': {'taxMode': msg}},
+                                  status=http.HTTP_400_BAD_REQUEST)
+        if not recipient:
+            msg = 'Give the client\'s state (or GSTIN): it decides CGST + SGST or IGST.'
+            return None, Response({'error': msg, 'code': 'RECIPIENT_STATE_REQUIRED',
+                                   'errors': {'recipientState': msg}}, status=http.HTTP_400_BAD_REQUEST)
+    if recipient:
+        tax['recipient_state_code'] = recipient
+        tax['recipient_state'] = tax['recipient_state'] if gst.state_code(tax['recipient_state']) == recipient \
+            else gst.state_name(recipient)
+        tax['place_of_supply'] = '{} - {}'.format(gst.state_name(recipient), recipient)   # as before
+    return {'interstate': gst.is_interstate(supplier, recipient)}, None
 
 
 def _compute_gst(taxable, tax_mode, gst_rate, interstate):
@@ -374,12 +427,10 @@ def _create_invoice(actor, data, case, raised_by=None):
         defaults = _recipient_defaults(case.client_id)
         for k in _TAX_KEYS:
             tax[k] = tax.get(k) or defaults[k]
-    if not tax['place_of_supply'] and tax['recipient_state']:
-        tax['place_of_supply'] = '{} - {}'.format(
-            tax['recipient_state'], tax['recipient_state_code']).strip(' -')
 
     # GST treatment. Forward charge splits CGST+SGST (intra-state) or IGST
-    # (inter-state, by comparing the firm's state to the recipient's).
+    # (inter-state), decided by GST state codes (invoices/gst.py), never by
+    # comparing free-text state names.
     tax_mode = (data.get('taxMode') or 'rcm').strip().lower()
     if tax_mode not in ('rcm', 'forward'):
         tax_mode = 'rcm'
@@ -390,11 +441,11 @@ def _create_invoice(actor, data, case, raised_by=None):
     if gst_rate not in GST_RATES:
         return None, Response({'error': 'GST rate must be one of {}%.'.format(', '.join(map(str, GST_RATES))),
                                'errors': {'gstRate': 'Invalid'}}, status=http.HTTP_400_BAD_REQUEST)
-    owner = Advocate.objects.filter(id=practice_root(raised_by)).first()
-    supplier_state = (owner.state if owner else '') or ''
-    interstate = bool(supplier_state and tax['recipient_state']
-                      and _norm_state(supplier_state) != _norm_state(tax['recipient_state']))
-    cgst, sgst, igst, total_value = _compute_gst(taxable, tax_mode, gst_rate, interstate)
+    supply, refused = _place_of_supply(raised_by, tax, tax_mode)
+    if refused is not None:
+        return None, refused
+    interstate = supply['interstate']
+    cgst, sgst, igst, total_value = _compute_gst(taxable, tax_mode, gst_rate, bool(interstate))
     tax.update({'tax_mode': tax_mode, 'gst_rate': gst_rate, 'is_interstate': interstate,
                 'taxable_value': float(taxable), 'cgst_amount': float(cgst), 'sgst_amount': float(sgst),
                 'igst_amount': float(igst), 'total_value': float(total_value)})

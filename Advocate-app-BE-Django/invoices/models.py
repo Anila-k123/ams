@@ -91,7 +91,10 @@ class InvoiceTaxDetail(models.Model):
     #   forward -> firm charges GST: CGST+SGST (intra-state) or IGST (inter-state)
     tax_mode = models.CharField(max_length=16, default='rcm')
     gst_rate = models.FloatField(default=18.0)
-    is_interstate = models.BooleanField(default=False)
+    # Intra- (False) or inter-state (True) by GST state codes; None when the
+    # firm's or client's state wasn't known (reverse charge only: forward
+    # charge is refused without both, invoices/gst.py).
+    is_interstate = models.BooleanField(null=True, default=False)
     taxable_value = models.FloatField(default=0)
     cgst_amount = models.FloatField(default=0)
     sgst_amount = models.FloatField(default=0)

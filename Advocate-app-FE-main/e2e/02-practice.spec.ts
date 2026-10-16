@@ -173,12 +173,17 @@ test('client portal: invited client sets a password and sees only their own matt
   const r = await api(request, 'post', `/api/clients/${clientId}/logins`, { email, fullName: 'Meena' })
   expect(r.status(), await r.text()).toBeLessThan(300)
   const mail = await waitForMail(email, 'set-password')
-  const link = mail.replace(/=\r?\n/g, '').match(/http:\/\/localhost:5180\/set-password\?token=[A-Za-z0-9_-]+/)![0]
+  // The invite opens the portal's own page with the firm's signed key (?f=, for its
+  // name and logo) before the one-time token (clientaccess.views.portal_url).
+  const link = mail.replace(/=\r?\n/g, '').match(/http:\/\/localhost:5180\/client\/set-password\?f=[^&\s"'<>]+&token=[A-Za-z0-9_-]+/)![0]
   await page.goto(link)
   await page.getByLabel(/New password/).fill('Meena#Portal2026')
   await page.getByLabel(/Confirm password/).fill('Meena#Portal2026')
   await page.locator('button[type=submit]').click()
-  await expect(page).toHaveURL(/client|dashboard|login/)
+  // The set-password page is itself under /client/, so wait until it has been
+  // left for the portal (the password is saved by then).
+  await expect(page).not.toHaveURL(/set-password/)
+  await expect(page).toHaveURL(/\/client(\/|\?|$)/)
   const ct = await apiLogin(request, email, 'Meena#Portal2026')
   const cases = await (await request.get(`${API}/api/client/cases`, { headers: bearer(ct) })).json()
   expect(JSON.stringify(cases)).toContain(`OS/${run()}/2026`)

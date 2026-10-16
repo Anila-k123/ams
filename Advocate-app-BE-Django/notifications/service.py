@@ -63,7 +63,7 @@ EVENT_TYPES = {
 def notify(advocate_id, event_type, subject, body, channels=(IN_APP,),
            case_id=None, client_id=None, recipient_name=None,
            recipient_email=None, recipient_phone=None, entity=None,
-           entity_id=None, triggered_by='SYSTEM'):
+           entity_id=None, triggered_by='SYSTEM', entity_date=None):
     """Queue one notification per channel. Returns the queued row ids.
 
     Raising a notification must never break the thing that raised it, so any
@@ -94,6 +94,10 @@ def notify(advocate_id, event_type, subject, body, channels=(IN_APP,),
             'entityId': entity_id,
             'triggeredBy': triggered_by,
         }
+        if entity_date is not None:
+            # The date the message speaks of (a hearing reminder's hearing date):
+            # the drain drops it if the hearing has moved since it was queued.
+            payload['entityDate'] = str(entity_date)
         try:
             row = NotificationQueue.objects.create(
                 type=event_type,

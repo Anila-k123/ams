@@ -116,7 +116,10 @@ class AmountAndTransitionTests(_Firms, TestCase):
         self.assertFalse(Invoice.objects.exists())
 
     def test_decimal_gst_has_no_float_drift(self):
-        r = _create(self, self.user['A'], self.case['A'], taxMode='forward', gstRate=18,
+        # Forward charge needs both locations (invoices/gst.py): same state here.
+        self.user['A'].state = 'Tamil Nadu'
+        self.user['A'].save()
+        r = _create(self, self.user['A'], self.case['A'], taxMode='forward', gstRate=18, recipientState='Tamil Nadu',
                     particulars=[{'description': 'a', 'amount': '0.10'}, {'description': 'b', 'amount': '0.20'}])
         inv = Invoice.objects.get(id=r.json()['id'])
         # 0.30 + 18% = 0.354 -> 0.35 (CGST 0.03 + SGST 0.02 -> total 0.35)

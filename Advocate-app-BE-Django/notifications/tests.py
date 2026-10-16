@@ -53,6 +53,36 @@ class ReminderTests(TestCase):
         # Other firms hear nothing about firm A's hearing.
         self.assertFalse(_queued(self.other).exists() or _queued(self.third).exists())
 
+    def test_a_reminder_for_a_hearing_that_moved_is_not_sent_with_the_old_date(self):
+        events.upcoming_hearings(self.senior)
+        row = _queued(self.senior).get()
+        self.assertEqual(json.loads(row.payload_json)['entityDate'], str(self.event.date))
+        CaseEvent.objects.filter(id=self.event.id).update(date=self.event.date + datetime.timedelta(days=14))
+        _drain()
+        row.refresh_from_db()
+        self.assertEqual((row.status, row.last_error),
+                         ('CANCELLED', 'hearing moved or removed since this reminder was queued'))
+
+    def test_a_reminder_for_a_removed_hearing_is_not_sent(self):
+        events.upcoming_hearings(self.senior)
+        row = _queued(self.senior).get()
+        CaseEvent.objects.filter(id=self.event.id).delete()
+        _drain()
+        row.refresh_from_db()
+        self.assertEqual(row.status, 'CANCELLED')
+
+    def test_an_unchanged_hearing_and_older_rows_are_sent_as_before(self):
+        events.upcoming_hearings(self.senior)
+        row = _queued(self.senior).get()
+        legacy = _queued(self.junior).get()                      # queued before reminders carried the date
+        payload = json.loads(legacy.payload_json)
+        payload.pop('entityDate')
+        NotificationQueue.objects.filter(id=legacy.id).update(payload_json=json.dumps(payload))
+        _drain()
+        row.refresh_from_db()
+        legacy.refresh_from_db()
+        self.assertEqual((row.status, legacy.status), ('SENT', 'SENT'))
+
     def test_overlapping_scans_cannot_both_queue_it(self):
         # Simulate a second scan that passed the history check at the same time:
         # the unique key still lets only one through.

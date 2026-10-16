@@ -136,6 +136,30 @@ def hearing_added_team(actor, event, case):
         return []
 
 
+def hearing_rescheduled_team(actor, event, case, old_date=None):
+    """A hearing on a case moved to another date -> tell the case's team at once
+    (same people as a new hearing: CASE_ALERTS holders; not the person who moved it)."""
+    try:
+        if case is None or not getattr(case, 'advocate_id', None):
+            return []
+        recipients = alert_members(case.advocate, permission=case_alert_permission())
+        title = getattr(event, 'title', '') or 'Hearing'
+        tm = getattr(event, 'time', None)
+        subject = 'Hearing moved - {}'.format(getattr(case, 'case_number', '') or title)
+        body = ('A hearing on this case has a new date.\n\n'
+                'Case    : {}\nWhat    : {}\nWas     : {}\nNow     : {}{}\nChanged by: {}\n').format(
+            getattr(case, 'case_number', '') or '-', title, old_date or '-',
+            getattr(event, 'date', ''), (' ' + str(tm)) if tm else '', getattr(actor, 'full_name', ''))
+        return _fanout_now(
+            recipients, 'HEARING_RESCHEDULED', subject, body,
+            actor_id=getattr(actor, 'id', None), case_id=getattr(case, 'id', None),
+            client_id=getattr(case, 'client_id', None),
+            entity='CaseEvent', entity_id=getattr(event, 'id', None))
+    except Exception:                                        # noqa: BLE001
+        log.exception('hearing_rescheduled_team notification failed')
+        return []
+
+
 def client_assigned(actor, client, advocate):
     """A client was added (or handed over) with a named handling advocate ->
     tell that advocate at once, in-app + email per their preference.

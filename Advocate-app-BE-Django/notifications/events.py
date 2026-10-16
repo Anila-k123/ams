@@ -187,7 +187,7 @@ def upcoming_hearings(advocate, today=None):
             ev.title or 'Hearing')
         queued += fanout(
             advocate, 'HEARING_REMINDER', subject, body, since,
-            entity='CaseEvent', entity_id=ev.id, case_id=ev.case_id,
+            entity='CaseEvent', entity_id=ev.id, case_id=ev.case_id, entity_date=ev.date.isoformat(),
             require_permission=case_alert_permission(), triggered_by='SCHEDULED',
             period=today.isoformat(), firm_id=getattr(ev, 'firm_id', None))
     return queued

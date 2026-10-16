@@ -119,12 +119,20 @@ def build_timeline(case, user):
             if d:
                 bits += [d.purpose or None, d.bench_hall and 'Court ' + d.bench_hall,
                          d.judge or None]
-            done = bool(d and d.outcome) or ev.date < today
+            recorded = bool(d and (d.outcome or d.result))
+            done = recorded or ev.date < today
+            result = dict(HearingDetail.RESULTS).get(d.result, '') if d else ''
+            after = ''
+            if result:
+                after += '\nResult: ' + result
+            if d and d.next_date:
+                after += '\nNext date: {:%d %b %Y}'.format(d.next_date)
+            if d and d.outcome:
+                after += '\nOutcome: ' + d.outcome
             b.add('event-%d' % ev.id,
-                  'HEARING_COMPLETED' if done and d and d.outcome else 'HEARING_CREATED', when,
+                  'HEARING_COMPLETED' if done and recorded else 'HEARING_CREATED', when,
                   '{} {}'.format(kind, 'held' if done else 'scheduled'),
-                  ' · '.join(x for x in bits if x) + (
-                      ('\nOutcome: ' + d.outcome) if d and d.outcome else ''),
+                  ' · '.join(x for x in bits if x) + after,
                   ref_type='HEARING', ref_id=ev.id, by=ev.advocate_id)
 
     if 'DOCUMENT_VIEW' in perms:

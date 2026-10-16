@@ -164,6 +164,18 @@ class HearingDetail(models.Model):
     judge = models.CharField(max_length=255, blank=True, default='')
     next_date = models.DateField(null=True, blank=True)
     outcome = models.TextField(blank=True, default='')
+    # What happened at the hearing, as a fixed choice (the outcome text above
+    # keeps the order / notes). events/scheduling.py decides from it whether a
+    # next hearing is scheduled; DISPOSED never schedules one.
+    ADJOURNED, PART_HEARD, RESERVED = 'ADJOURNED', 'PART_HEARD', 'RESERVED'
+    DISPOSED, NOT_REACHED, OTHER = 'DISPOSED', 'NOT_REACHED', 'OTHER'
+    RESULTS = [(ADJOURNED, 'Adjourned'), (PART_HEARD, 'Part-heard'), (RESERVED, 'Orders / judgment reserved'),
+               (DISPOSED, 'Disposed'), (NOT_REACHED, 'Not reached'), (OTHER, 'Other')]
+    result = models.CharField(max_length=16, blank=True, default='', choices=RESULTS)
+    # The hearing this one's next date became (one per hearing: a retried save
+    # moves it instead of adding another), and the hearing this one came from.
+    next_event_id = models.BigIntegerField(null=True, blank=True, unique=True)
+    previous_event_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -179,6 +191,9 @@ class HearingDetail(models.Model):
     def as_dict(self):
         d = {api: getattr(self, col) for col, api in self.FIELD_MAP}
         d['nextDate'] = self.next_date.isoformat() if self.next_date else None
+        d['result'] = self.result
+        d['nextEventId'] = self.next_event_id
+        d['previousEventId'] = self.previous_event_id
         return d
 
     @staticmethod

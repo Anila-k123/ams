@@ -23,9 +23,12 @@
   --lg-link: #0866C2;
   /* The diagonal: where the hero's right edge meets the top and the bottom of
      the screen (from the approved design, 1672 px wide). */
-  --lg-top: 50%;
-  --lg-bot: 70%;
-  --lg-band: 2.6%;
+  /* The band must end before the sign-in column, which starts at 63% (the
+     side column is 37% wide): bottom edge 58% + band 2.4% = 60.4%, so the
+     card never sits on the band at any width. */
+  --lg-top: 47%;
+  --lg-bot: 58%;
+  --lg-band: 2.4%;
   position: relative; min-height: 100vh; overflow: hidden;
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 37%);
   background: #F4F6FA; color: var(--lg-ink);
@@ -80,6 +83,7 @@
   padding: clamp(16px, 4vh, 44.8px) clamp(22.4px, 3.6vw, 60.8px);
   max-width: 720px;
 }
+.lg-hero-logo { display: block; align-self: flex-start; height: clamp(44px, 8.4vh, 74px); width: auto; margin-bottom: clamp(14px, 3.2vh, 30px); }
 .lg-dash { width: 44.8px; height: 3px; background: #F3223D; margin-bottom: clamp(8px, 2.08vh, 20.8px); }
 .lg-hero h2 {
   font: 600 clamp(22.4px, min(2.64vw, 4.8vh), 46.4px)/1.1 var(--f-display);
@@ -173,7 +177,6 @@
 
 /* ---- smaller screens ---- */
 @media (max-width: 1280px) {
-  .lg-auth { --lg-top: 54%; --lg-bot: 66%; }
   .lg-feats { gap: 6.4px; }
   .lg-feat { padding-left: 8px; padding-right: 8px; }
 }

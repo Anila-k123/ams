@@ -48,7 +48,7 @@ import { useSaveChoice } from '../../components/SaveChoiceDialog'
 import { useOpenWith } from '../../components/OpenWithDialog'
 import { DESKTOP_SAVED_EVENT } from '../../components/DesktopEditsBar'
 import { saveBlob } from '../../utils/openWith'
-import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview, type ReviewRoundSummary, type DraftReviewRequest, type DraftComments, type DraftCommentThread, type WordForm } from './api/drafting'
+import { draftingApi, type DraftSession, type DraftBlock, type AmsTaskReview, type ReviewRoundSummary, type DraftReviewRequest, type DraftComments, type DraftCommentThread, type WordForm, type DocEdit } from './api/drafting'
 import DraftChanges, { changeSummary } from '../../components/DraftChanges'
 import { RiskContext, type RiskMap } from './context/RiskContext'
 import { sanitizeHtml } from '../../utils/sanitizeHtml'
@@ -512,7 +512,10 @@ export default function DraftPage() {
   // Lisa's accepted changes for an ONLYOFFICE draft wait here until "Update in document" (like the
   // Placeholders panel's Apply): then they go to the server in one request, one version, one editor reload.
   // Requests never overlap, so they can't overwrite each other.
-  type OfficeChange = { before: string; after: string; blockId: number; heading?: string }
+  // A clause rewritten as a whole (Refine), or one of Ask Lisa's find / replace edits.
+  type OfficeChange =
+    | { kind?: 'clause'; before: string; after: string; blockId: number; heading?: string }
+    | { kind: 'edit'; edit: DocEdit }
   // Kept per draft in this browser, so a refresh doesn't lose accepted changes not yet in the document.
   const pendingKey = `pp_office_pending_${sessionId}`
   const [officePending, setOfficePending] = useState<OfficeChange[]>(() => {
@@ -1132,7 +1135,7 @@ export default function DraftPage() {
       setOfficePending(list => {
         // A newer accepted change to the same clause replaces the waiting one (both start from the text
         // Lisa read, so only the latest can be placed).
-        const same = list.find(c => c.blockId === blockId)
+        const same = list.find((c): c is Extract<OfficeChange, { before: string }> => c.kind !== 'edit' && c.blockId === blockId)
         const next = { before: same ? same.before : beforeText, after: afterText, blockId, heading }
         return same ? list.map(c => (c === same ? next : c)) : [...list, next]
       })
@@ -1151,6 +1154,13 @@ export default function DraftPage() {
     toast.success('Lisa\'s change is in the document as a tracked change: accept or reject it there.')
   }
 
+  // Ask Lisa's accepted edits join the list; the same place accepted again replaces the earlier one.
+  const queueOfficeEdits = (edits: DocEdit[]) => setOfficePending(list => {
+    const key = (e: DocEdit) => `${e.n}|${e.find}`
+    const fresh = new Set(edits.map(key))
+    return [...list.filter(c => c.kind !== 'edit' || !fresh.has(key(c.edit))), ...edits.map(edit => ({ kind: 'edit' as const, edit }))]
+  })
+
   // "Update in document": every accepted change waiting, in one request, after any request still running.
   const updateOfficeDocument = () => {
     const changes = officePending
@@ -1158,18 +1168,23 @@ export default function DraftPage() {
     setOfficeUpdating(true)
     officeChain.current = officeChain.current.then(async () => {
       try {
+        const clauses = changes.filter((c): c is Extract<OfficeChange, { before: string }> => c.kind !== 'edit')
+        const edits = changes.flatMap(c => (c.kind === 'edit' ? [c.edit] : []))
         const res = await draftingApi.applyOfficeMany(Number(sessionId),
-          changes.map(c => ({ before: c.before, after: c.after, blockId: c.blockId })))
+          clauses.map(c => ({ before: c.before, after: c.after, blockId: c.blockId })),
+          edits.map((e, i) => ({ id: i, n: e.n, text: e.text, find: e.find, replace: e.replace })))
         setOfficePending(list => list.filter(c => !changes.includes(c)))
         setOffice(o => (o ? { ...o, config: res.config } : o))
         setOfficeDirty(false)
         const what = changes.length === 1 ? 'Lisa\'s change is' : `${res.applied} of Lisa's changes are`
         toast.success(`${what} in the document as tracked changes: accept or reject them there.`)
         if (res.skipped) {
-          const names = changes.filter(c => (res.skippedBlocks ?? []).includes(c.blockId))
-            .map(c => c.heading || `Clause ${c.blockId}`)
+          const names = [
+            ...clauses.filter(c => (res.skippedBlocks ?? []).includes(c.blockId)).map(c => c.heading || `Clause ${c.blockId}`),
+            ...edits.filter((_, i) => (res.skippedEdits ?? []).includes(i)).map(e => `"${e.find}"`),
+          ]
           toast.warning(`Couldn't place ${names.length ? names.join(', ') : `${res.skipped} change${res.skipped === 1 ? '' : 's'}`}: `
-            + 'the clause changed since Lisa read it. Copy the new text in yourself.')
+            + 'the text changed since Lisa read it. Ask Lisa again, or change it yourself.')
         }
       } catch (e) {
         // Nothing was placed: the changes stay waiting, so Update can be pressed again.
@@ -1880,6 +1895,7 @@ export default function DraftPage() {
                     facts={session.facts}
                     getClauses={refineClauses}
                     onApply={patchClause}
+                    onApplyEdits={queueOfficeEdits}
                     pendingUpdates={office ? officePending.length : undefined}
                     onUpdateDocument={updateOfficeDocument}
                     updating={officeUpdating}

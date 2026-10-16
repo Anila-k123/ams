@@ -2358,6 +2358,67 @@ class ServerTrackedChangeTest(TestCase):
         self.assertEqual([''.join(t.text for t in d.iter(qn('w:delText'))) for d in body.iter(qn('w:del'))], ['10/2014'])
         self.assertEqual([''.join(t.text for t in i.iter(qn('w:t'))) for i in body.iter(qn('w:ins'))], ['23/2026'])
 
+    def _ask_lisa(self, reply):
+        """Ask Lisa (views.assist) with the model answering `reply` (a dict, sent as its JSON)."""
+        import json as _json
+        llm = mock.Mock()
+        llm.complete.return_value = _json.dumps(reply)
+        with mock.patch('drafting.services.doc_edits.get_llm', return_value=llm):
+            return self.client.post(f'/api/drafting/draft-sessions/{self.session.id}/assist/',
+                                    {'instruction': 'Change the rent to Rs. 45,000'},
+                                    content_type='application/json', **auth(self.owner))
+
+    def test_ask_lisa_changes_every_place_and_update_writes_them(self):
+        """Lisa names one paragraph; the same value elsewhere is found by search, every place is shown and
+        ticked, a made-up edit is dropped, and Update in document writes them as one version."""
+        from .docfile import paragraph_listing, review_state
+        from .models import DraftEdit, DraftFile
+        self.session.blocks.create(position=2, block_type='clause', heading='Renewal', source='generated',
+                                   text='On renewal the rent of Rs. 40,000 rises by 5%.')
+        self.client.get(f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/', **auth(self.owner))
+        with DraftFile.objects.get(session=self.session).file.open('rb') as f:
+            paras = paragraph_listing(f.read())
+        first = next(p['n'] for p in paras if p['text'] == self.RENT)
+        resp = self._ask_lisa({'summary': 'Rent changed.', 'edits': [
+            {'p': first, 'find': 'Rs. 40,000', 'replace': 'Rs. 45,000'},
+            {'p': first, 'find': 'words that are not there', 'replace': 'x'}]})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        plan = resp.json()
+        self.assertEqual(plan['kind'], 'edits')
+        self.assertEqual(plan['dropped'], 1)
+        self.assertEqual(len(plan['edits']), 2)                       # the one named + the one found
+        self.assertEqual([e['extra'] for e in plan['edits']], [False, True])
+        self.assertTrue(all(e['checked'] for e in plan['edits']))      # a value: ticked everywhere
+        self.assertEqual(plan['edits'][1]['heading'], 'Renewal')
+        self.assertTrue(DraftEdit.objects.filter(id=plan['edit_id'], status='pending').exists())
+        version = DraftFile.objects.get(session=self.session).version
+        done = self.client.post(f'/api/drafting/draft-sessions/{self.session.id}/onlyoffice/apply/', {'edits': [
+            {k: e[k] for k in ('id', 'n', 'text', 'find', 'replace')} for e in plan['edits']]},
+            content_type='application/json', **auth(self.owner))
+        self.assertEqual(done.status_code, 200, done.content)
+        self.assertEqual((done.json()['applied'], done.json()['skipped']), (2, 0))
+        df = DraftFile.objects.get(session=self.session)
+        self.assertEqual(df.version, version + 1)                      # one version for both places
+        with df.file.open('rb') as f:
+            self.assertEqual(review_state(f.read())['changes'], 4)     # 40 -> 45 twice: a deletion + an insertion each
+
+    def test_ask_lisa_asks_when_the_instruction_could_mean_different_text(self):
+        resp = self._ask_lisa({'question': 'Which amount?', 'options': ['Rent Rs. 40,000', 'Deposit Rs. 2,40,000']})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json(), {**resp.json(), 'kind': 'question', 'question': 'Which amount?',
+                                       'options': ['Rent Rs. 40,000', 'Deposit Rs. 2,40,000']})
+
+    def test_ask_lisa_needs_edit_rights_and_a_readable_answer(self):
+        stranger = make_advocate(permissions=ALL_PERMISSIONS)
+        url = f'/api/drafting/draft-sessions/{self.session.id}/assist/'
+        self.assertEqual(self.client.post(url, {'instruction': 'x'}, content_type='application/json',
+                                          **auth(stranger)).status_code, 404)
+        llm = mock.Mock()
+        llm.complete.return_value = 'Sorry, I cannot help with that.'
+        with mock.patch('drafting.services.doc_edits.get_llm', return_value=llm):
+            resp = self.client.post(url, {'instruction': 'x'}, content_type='application/json', **auth(self.owner))
+        self.assertEqual(resp.status_code, 503)
+
     def test_endpoint_writes_redline_and_refuses_when_it_cannot_place_it(self):
         from .docfile import clause_texts, review_state
         from .models import DraftFile

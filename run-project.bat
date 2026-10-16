@@ -67,6 +67,14 @@ if not errorlevel 1 (
     start "Scheduler" cmd /k "cd /d "%BE%" && venv\Scripts\python.exe manage.py run_scheduler"
 )
 
+REM --- Court order sync (new orders every 30 min in court hours) --------------
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'manage\.py run_order_sync' }) { exit 0 } else { exit 1 }"
+if not errorlevel 1 (
+    echo Court order sync already running - not starting another.
+) else (
+    start "Order Sync" cmd /k "cd /d "%BE%" && venv\Scripts\python.exe manage.py run_order_sync"
+)
+
 REM --- Backend (port 8080) --------------------------------------------------
 start "Backend" cmd /k "cd /d "%BE%" && venv\Scripts\python.exe manage.py runserver 0.0.0.0:8080"
 

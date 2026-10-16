@@ -93,3 +93,22 @@ class CauseListItem(models.Model):
         return '{} {} court {} item {}: {}'.format(
             self.court, self.list_date, self.court_number,
             self.item_number, self.case_string)
+
+
+class CaseOrderSync(models.Model):
+    """Which court orders PactPro already knows for a case (order_sync.py, docs/ORDER_SYNC.md).
+
+    An order whose key isn't in known_keys is new: its PDF is saved to the case and the team and the client
+    are told, once. The first look at a case only records what is there (no alerts for old orders).
+    `recent` keeps the last new orders for the case page's "New order" mark."""
+    case_id = models.BigIntegerField(unique=True)              # -> cases.id (Spring-owned)
+    known_keys = models.JSONField(default=list)
+    recent = models.JSONField(default=list)                     # [{key, label, date, foundAt, documentId}]
+    checked_at = models.DateTimeField(null=True, blank=True)
+    last_new_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=200, blank=True, default='')
+    # Offline cases: when the sync last tried to link the case to its court record by its CNR (daily).
+    link_tried_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'courtsearch_order_sync'

@@ -56,6 +56,8 @@ EVENT_TYPES = {
     'DRAFT_REVIEW_REQUESTED', 'DRAFT_REVIEW_DONE',   # drafting/review_requests.py
     'DRAFT_COMMENT',                                 # drafting/comments.py
     'DOCUMENT_COMMENT',                              # documents/editor.py (@mention in the editor)
+    'APPEAL_POSSIBLE', 'APPEAL_WATCH',               # appeals/decisions.py (widened in appeals/0005)
+    'COURT_ORDER_NEW',                               # courtsearch/order_sync.py (widened in courtsearch/0006)
     'PASSWORD_RESET',
 }
 

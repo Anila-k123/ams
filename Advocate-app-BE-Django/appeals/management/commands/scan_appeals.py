@@ -57,6 +57,9 @@ class Command(BaseCommand):
                             help='Report what would be recorded; write nothing.')
         parser.add_argument('--no-notify', action='store_true',
                             help='Record detections without emailing or notifying.')
+        parser.add_argument('--watching', action='store_true',
+                            help='Only cases decided for our client and still watched '
+                                 '(appeals/decisions.py; the evening run of run_order_sync).')
         parser.add_argument('--all-benches', action='store_true',
                             help='Search every bench of the High Court, not just the '
                                  'first (thorough but several times slower).')
@@ -68,6 +71,9 @@ class Command(BaseCommand):
         records = ImportedCaseRecord.objects.all().order_by('-id')
         if o['advocate']:
             records = records.filter(advocate_id=o['advocate'])
+        if o.get('watching'):
+            from appeals.decisions import watching_case_ids
+            records = records.filter(case_id__in=watching_case_ids())
 
         checked = found = 0
         new_rows = []
@@ -100,6 +106,9 @@ class Command(BaseCommand):
                 continue
 
             checked += 1
+            if not dry:
+                from appeals.models import CaseDecision
+                CaseDecision.objects.filter(case_id=case.id).update(watched_at=timezone.now())
             self.stdout.write('  [{}] {} -> {} (state {}) as "{}"'.format(
                 checked, case.case_number, forum['court_id'],
                 forum['state_code'], term))

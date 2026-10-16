@@ -211,6 +211,16 @@ class CaseProfile(models.Model):
     case_year = models.IntegerField(null=True, blank=True)
     cnr = models.CharField(max_length=16, blank=True, default='', db_index=True)
     acts_sections = models.TextField(blank=True, default='')
+    # Why the case was closed (cases/closure.py, docs/CASE_CLOSURE.md): "decided by the court" keeps the court
+    # watch going for appeals; "no longer acting" / "settled" stop everything that reaches the court or the
+    # client. '' while open, or for cases closed before the reason was asked.
+    COURT_DECIDED, NO_LONGER_ACTING, SETTLED, OTHER = 'court_decided', 'no_longer_acting', 'settled', 'other'
+    CLOSED_REASONS = [(COURT_DECIDED, 'Decided by the court'), (NO_LONGER_ACTING, 'We no longer act for the client'),
+                      (SETTLED, 'Settled / withdrawn by the client'), (OTHER, 'Other')]
+    closed_reason = models.CharField(max_length=20, choices=CLOSED_REASONS, blank=True, default='')
+    closed_note = models.CharField(max_length=500, blank=True, default='')
+    closed_on = models.DateField(null=True, blank=True)
+    closed_by_id = models.BigIntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

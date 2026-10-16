@@ -69,9 +69,14 @@ def save(case_id, data):
 def payload(profile):
     if profile is None:
         return {'matterType': CaseProfile.LITIGATION, 'courtName': '', 'courtHall': '', 'judge': '',
-                'ourSide': '', 'filingDate': None, 'caseYear': None, 'cnr': '', 'actsSections': ''}
+                'ourSide': '', 'filingDate': None, 'caseYear': None, 'cnr': '', 'actsSections': '',
+                'closedReason': '', 'closedNote': '', 'closedOn': None}
     out = {api: getattr(profile, field) for api, field in FIELDS.items()}
     out['filingDate'] = profile.filing_date.isoformat() if profile.filing_date else None
+    # Why it was closed: set only through the case's status change (cases/closure.py), read here.
+    out['closedReason'] = profile.closed_reason
+    out['closedNote'] = profile.closed_note
+    out['closedOn'] = profile.closed_on.isoformat() if profile.closed_on else None
     return out
 
 

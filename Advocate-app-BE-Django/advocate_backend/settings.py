@@ -229,6 +229,10 @@ COURT_PDF_CACHE_DIR = config(
     default=str(BASE_DIR / 'court_pdf_cache'),
 )
 
+# --- Court order sync (courtsearch/order_sync.py, docs/ORDER_SYNC.md): court cases fetched at once per
+# round. Raise slowly: the court sites rate-limit, and one scraper serves every firm. ---
+ORDER_SYNC_WORKERS = config('ORDER_SYNC_WORKERS', default=3, cast=int)
+
 # --- Draft PDF export: LibreOffice converts the Word export (drafting/export/pdf.py).
 # Blank = `soffice` on PATH or the usual install folder; without it PDF export is a 503. ---
 LIBREOFFICE_PATH = config('LIBREOFFICE_PATH', default='')

@@ -7,4 +7,7 @@ urlpatterns = [
     # court/case-number/judgment-date and did nothing with them.
     path('appeal-detections', views.AppealDetectionListView.as_view()),
     path('appeal-detections/<int:pk>', views.AppealDetectionStatusView.as_view()),
+    # Decided cases: can we appeal / may the other side (appeals/decisions.py).
+    path('appeal-decisions', views.CaseDecisionListView.as_view()),
+    path('appeal-decisions/<int:pk>', views.CaseDecisionView.as_view()),
 ]

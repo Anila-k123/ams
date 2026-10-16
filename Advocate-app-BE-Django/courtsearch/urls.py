@@ -54,4 +54,5 @@ urlpatterns = [
     # Persisted full court-API record for an imported case
     path('courtsearch/imported-records', views.ImportedRecordView.as_view()),
     path('courtsearch/cases/<int:case_id>/refresh', views.RefreshCourtRecordView.as_view()),
+    path('courtsearch/cases/<int:case_id>/link', views.LinkCourtRecordView.as_view()),
 ]

@@ -71,3 +71,35 @@ class AppealDetection(models.Model):
                 name='uniq_appeal_per_source_case',
             ),
         ]
+
+
+class CaseDecision(models.Model):
+    """A case the court has decided, and what that means for an appeal (appeals/decisions.py,
+    docs/APPEALS.md). One row per case, made when the order sync (or a Refresh) sees the case disposed.
+
+    `outcome` is who won by the court's wording ("ALLOWED", "DISMISSED"...); with our client's side it puts
+    the case on the Appeal Alerts page under "You can appeal" (we lost), "The other side may appeal" (we won,
+    the evening appeal check watches the higher court), or "Needs a look" (unclear, or our side unknown).
+    No limitation date yet: that is the next piece of work."""
+    PETITIONER, RESPONDENT, PARTLY, NO_CONTEST, UNCLEAR = 'petitioner', 'respondent', 'partly', 'no_contest', 'unclear'
+    OPEN, APPEALING, NO_APPEAL, WATCHING, WATCH_STOPPED = 'open', 'appealing', 'no_appeal', 'watching', 'watch_stopped'
+
+    id = models.BigAutoField(primary_key=True)
+    case_id = models.BigIntegerField(unique=True)                # -> cases.id (Spring-owned)
+    advocate_id = models.BigIntegerField(db_index=True)          # the case's advocate (practice scope)
+    court_id = models.CharField(max_length=32)
+    decided_on = models.DateField(null=True, blank=True)
+    nature = models.CharField(max_length=255, blank=True, default='')   # the court's own words
+    outcome = models.CharField(max_length=16, default=UNCLEAR)          # who won (petitioner side / respondent side)
+    our_side = models.CharField(max_length=16, blank=True, default='')  # petitioner | respondent | '' unknown
+    side_source = models.CharField(max_length=16, blank=True, default='')   # profile | parties | asked
+    next_forum = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=16, default=OPEN)
+    decided_by_id = models.BigIntegerField(null=True, blank=True)        # who chose appeal / no appeal
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    alerted_at = models.DateTimeField(null=True, blank=True)
+    watched_at = models.DateTimeField(null=True, blank=True)             # last evening appeal check
+
+    class Meta:
+        db_table = 'appeal_case_decision'

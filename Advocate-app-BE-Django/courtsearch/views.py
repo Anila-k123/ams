@@ -1117,49 +1117,77 @@ class RefreshCourtRecordView(APIView):
         if rec is None:
             return Response({'error': 'No imported court record for this case.'},
                             status=status.HTTP_404_NOT_FOUND)
+        from .refresh import NotRefreshable, fetch_fresh, store_fresh
         court_id = rec.court_id
         old_raw = rec.raw or {}
-        query = rec.query or {}
         try:
-            if court_id == 'sci':
-                new_raw = client.sci_case_detail(
-                    query.get('diary_no'), query.get('diary_year'),
-                    expand=True, timeout=REFRESH_TIMEOUT)
-            elif court_id in ('ecourts_hc', 'ecourts_dc'):
-                fresh_cases = []
-                for c in old_raw.get('cases', []) or []:
-                    vt = c.get('view_token')
-                    if not vt:
-                        fresh_cases.append(c)
-                        continue
-                    if court_id == 'ecourts_hc':
-                        resp = client.hc_case_detail(vt, timeout=REFRESH_TIMEOUT)
-                    else:
-                        resp = client.post_json(
-                            '/courts/ecourts_dc/case:detail',
-                            {'court_complex': query.get('court_complex', ''), 'view_token': vt},
-                            timeout=REFRESH_TIMEOUT)
-                    got = (resp.get('cases') if isinstance(resp, dict) else None) or []
-                    fresh_cases.extend(got if got else [c])
-                new_raw = {'cases': fresh_cases}
-            else:
-                return Response({'error': f'Refresh is not available for {court_id}.'},
-                                status=status.HTTP_400_BAD_REQUEST)
+            new_raw = fetch_fresh(rec, timeout=REFRESH_TIMEOUT)
+        except NotRefreshable:
+            return Response({'error': f'Refresh is not available for {court_id}.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         except client.ScraperUnavailable:
             return _unavailable()
         except client.ScraperError as exc:
             return _mapped(exc)
-
-        _bust_order_cache(old_raw)
-        _bust_order_cache(new_raw)
-        rec.raw = new_raw
-        rec.fetched_at = datetime.datetime.now()
-        rec.save(update_fields=['raw', 'fetched_at'])
+        store_fresh(rec, old_raw, new_raw)
+        # A new order found by hand is saved and announced like one found by the sync (order_sync.py).
+        from .order_sync import note_decision, take_new_orders
+        take_new_orders(rec, old_raw)
+        note_decision(rec)
         return Response({
             'ok': True, 'caseId': case_id, 'courtId': court_id,
             'raw': new_raw,
             'fetchedAt': rec.fetched_at.isoformat() if rec.fetched_at else None,
         })
+
+
+class LinkCourtRecordView(APIView):
+    """POST /api/courtsearch/cases/<case_id>/link — a case entered by hand, linked to its court record so it is
+    monitored like an imported one (linking.py, docs/ORDER_SYNC.md).
+
+    Body: {cnr} (District / High Court) or {diaryNo, diaryYear} (Supreme Court), and `confirm`:
+    without it the record found is only described ({courtId, summary}); with it the record, the parties not
+    on the case yet and the upcoming hearings are added ({linked: true, courtId}). 404 when the courts have
+    no such case, 409 when the case is linked already."""
+    permission_classes = [RequirePermission('CASE_EDIT')]
+
+    def post(self, request, case_id):
+        from core.models import Case
+        from core.tenant import owned
+        from . import linking
+        case = owned(Case.objects.select_related('advocate', 'client').filter(
+            id=case_id, deleted=False, advocate_id__in=practice_ids(request.user)), request.user).first()
+        if case is None:
+            return Response({'error': 'Case not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if ImportedCaseRecord.objects.filter(case_id=case.id).exists():
+            return Response({'error': 'This case is already linked to its court record.'}, status=status.HTTP_409_CONFLICT)
+        d = request.data
+        try:
+            if d.get('diaryNo'):
+                no, year = str(d.get('diaryNo')).strip(), str(d.get('diaryYear') or '').strip()
+                if not no.isdigit() or not (year.isdigit() and len(year) == 4):
+                    return Response({'error': 'Enter the diary number and its 4-digit year.'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                court_id, raw, query = linking.find_by_diary(no, year, timeout=REFRESH_TIMEOUT)
+            else:
+                cnr = linking.clean_cnr(d.get('cnr'))
+                if not cnr:
+                    return Response({'error': 'A CNR is 16 characters: 4 letters then 12 digits.'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                court_id, raw, query = linking.find_by_cnr(cnr)
+        except linking.NotFound:
+            return Response({'error': 'The court has no case with that number.'}, status=status.HTTP_404_NOT_FOUND)
+        except client.ScraperUnavailable:
+            return _unavailable()
+        except client.ScraperError as exc:
+            return _mapped(exc)
+        if not d.get('confirm'):
+            return Response({'courtId': court_id, 'summary': linking.summary(court_id, raw)})
+        try:
+            linking.link_case(case, court_id, query, raw, actor=request.user)
+        except linking.AlreadyLinked:
+            return Response({'error': 'This case is already linked to its court record.'}, status=status.HTTP_409_CONFLICT)
+        return Response({'linked': True, 'courtId': court_id})
 
 
 class ImportedRecordView(APIView):
@@ -1192,10 +1220,20 @@ class ImportedRecordView(APIView):
         rec = qs.order_by('-id').first()
         if rec is None:
             return Response({'error': 'No imported record found'}, status=status.HTTP_404_NOT_FOUND)
+        # Orders the sync found in the last week: the case page marks them "New" (order_sync.py).
+        from .models import CaseOrderSync
+        state = CaseOrderSync.objects.filter(case_id=rec.case_id).first()
+        week_ago = (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat()
+        new_orders = [o for o in (state.recent if state else []) if (o.get('foundAt') or '') >= week_ago]
+        if request.query_params.get('light') == '1':       # "is it monitored?" without the full record
+            return Response({'id': rec.id, 'caseId': rec.case_id, 'courtId': rec.court_id,
+                             'checkedAt': state.checked_at.isoformat() if state and state.checked_at else None})
         return Response({
             'id': rec.id, 'caseId': rec.case_id, 'courtId': rec.court_id,
             'query': rec.query, 'raw': rec.raw,
             'fetchedAt': rec.fetched_at.isoformat() if rec.fetched_at else None,
+            'newOrders': new_orders,
+            'checkedAt': state.checked_at.isoformat() if state and state.checked_at else None,
         })
 
 

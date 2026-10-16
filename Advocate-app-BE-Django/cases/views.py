@@ -248,6 +248,13 @@ class UpdateCaseView(APIView):
         if case is None:
             return Response({'error': 'Case not found'}, status=status.HTTP_404_NOT_FOUND)
         data = request.data
+        from . import closure
+        was = case.status
+        reason = (data.get('closedReason') or '').strip()
+        from workspace.models import CaseProfile
+        if reason and reason not in {r for r, _ in CaseProfile.CLOSED_REASONS}:
+            return Response({'error': 'closedReason must be one of: {}.'.format(
+                ', '.join(r for r, _ in CaseProfile.CLOSED_REASONS))}, status=status.HTTP_400_BAD_REQUEST)
         for attr, key in [('case_title', 'caseTitle'), ('case_type', 'caseType'),
                           ('court_level', 'courtLevel'), ('status', 'status'),
                           ('amount', 'amount'), ('description', 'description')]:
@@ -259,6 +266,12 @@ class UpdateCaseView(APIView):
         if client_id is not None:
             case.client = owned(Client.objects.filter(id=client_id, advocate_id__in=practice_ids(request.user)), request.user).first()
         case.save()
+        # Closing records why (and stops monitoring for "no longer acting"); reopening clears it. A closed case
+        # given a reason later (closedReason without a status change) is recorded too.
+        if 'status' in data and (closure.is_closed(case.status) != closure.is_closed(was) or reason):
+            closure.apply_status(case, case.status, reason, data.get('closedNote') or '', request.user)
+        elif reason and closure.is_closed(case.status):
+            closure.apply_status(case, case.status, reason, data.get('closedNote') or '', request.user)
         if 'amount' in data:
             case = recalc_case_totals(case.id) or case
         return Response(CaseSerializer(case).data)

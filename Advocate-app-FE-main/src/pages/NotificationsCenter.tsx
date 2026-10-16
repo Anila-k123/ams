@@ -41,6 +41,9 @@ const EVENT_LABELS: Record<string, string> = {
   CLIENT_REVIEW_REMINDER: "Client Review Reminder",
   CLIENT_REVIEW_REPLIED: "Client Replied",
   CLIENT_REVIEW_APPROVED: "Client Approved",
+  COURT_ORDER_NEW: "New Court Order",
+  APPEAL_POSSIBLE: "Appeal Possible",
+  APPEAL_WATCH: "Other Side May Appeal",
   PASSWORD_RESET: "Password Reset",
 };
 

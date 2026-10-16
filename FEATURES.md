@@ -114,11 +114,14 @@ A single-shell dashboard with live-updating widgets.
    - **Acts / sections**, and the **Agreed fee (₹)**, which drives "pending from client".
 
    On save, the client and the opposite party go on the Parties tab and the next hearing becomes an event, as an import would do. The extra details are stored in `workspace.CaseProfile` (`case_profile`), at `GET/PUT /api/workspace/cases/<id>/profile`.
-3. **Link to court record** (Case Detail → Actions, for a case with no court record):
-   - Enter the CNR, check the record that's found, then **Link this record**.
+3. **Link to court record** (Case Detail → Actions, or the **Not monitored** mark in the case header, for a case with no court record):
+   - Enter the **CNR** (District / High Court) or the Supreme Court **diary number and year**, check the record that's found, then **Link this record**. Done on the server (`courtsearch/linking.py`, `POST /api/courtsearch/cases/<id>/link`).
+   - Offline cases with a CNR on their profile are **linked automatically** by the order sync, tried once a day until the court has the case (`docs/ORDER_SYNC.md`). Once linked, new orders and hearings come in automatically.
    - The court record, its parties (skipping ones already on the case) and its upcoming hearings are added to the **existing** case. Notes, tasks, documents and bills are kept.
    - The CNR is saved on the case, and **importing the same CNR again is refused** (409), so no duplicate is created.
-   - Works for District and High Courts through the CNR lookup; Supreme Court CNRs aren't covered.
+   - District and High Courts by CNR; the Supreme Court by diary number. Tribunals and other forums without an online source stay manual.
+
+**Closing and reopening** (`docs/CASE_CLOSURE.md`): anyone who can edit the case can close it (Status → Closed, or the Cases list edit form) and must say why: *Decided by the court* (still checked weekly, Appeal Alerts apply), *We no longer act for the client*, *Settled / withdrawn* or *Other* (court monitoring, alerts and client emails stop; history and dues stay). Reopening brings everything back. The reason shows in the case header; cases closed earlier show *Closed: reason not recorded*.
 
 **Case list:**
 - Columns: Case No., Title, Type, Status, Next Hearing, Tags, Client, Agreed fee, Actions.
@@ -356,6 +359,8 @@ Deep integration with Indian court systems via an external scraper service, with
 
 **Immutable PDF cache:** court orders/judgments cached by content hash.
 
+**Automatic order sync** (`docs/ORDER_SYNC.md`): every 30 minutes Mon-Sat 10:00-18:00, and at 19:30, each imported case's court record is re-read (today's listed cases first, disposed ones weekly). A new order's PDF is saved to the case (category *Order*, shared with the client), the advocate and their team get an in-app / email alert (*New Court Order*), and the client gets an email that also shows in their portal. The case's Orders tab marks it **New** for a week and shows when the record was last checked. The page's Refresh does the same.
+
 **Endpoints:** under `/api/courtsearch/...` — `courts`, `courts/<id>/case-types`, `search`, `cnr`, `ecourts/*`, `sci/*`, `hc/*`, `imported-records`, `cases/<id>/refresh`.
 
 ---
@@ -372,12 +377,13 @@ Deep integration with Indian court systems via an external scraper service, with
 
 ## 13. Appeal Detection & Alerts
 
-- Nightly sweep (`manage.py scan_appeals`) that detects **appeals filed in higher courts** (High Court / Supreme Court) against the advocate's decided cases.
+- **Decided cases** (`docs/APPEALS.md`): when the order sync sees a case disposed, the court's wording becomes who won and, with our client's side, the case lands on **Appeal Alerts** under **You can appeal** (we lost: *We will appeal* / *No appeal*), **The other side may appeal** (we won: watched every evening) or **Needs a look** (unclear, or *Our client is the Petitioner / Respondent*). The advocate and team get an in-app alert; the client is never told. Usual next forum shown; limitation date coming next.
+- Evening appeal watch (`scan_appeals --watching`, after the 19:30 order-sync round) that detects **appeals filed in higher courts** (High Court / Supreme Court) against cases decided for our client.
 - Records matches with forum, appeal case number, CNR, parties, filed date, match score, and status (NEW / CONFIRMED / DISMISSED).
 - Deduplicated per (advocate, source case, appeal CNR); notifies via in-app + email.
 - Manual confirm/dismiss workflow in the UI (Appeal Alert page).
 
-**Endpoints:** `GET /api/appeal-detections`; `GET/PUT /api/appeal-detections/<id>`.
+**Endpoints:** `GET /api/appeal-decisions`; `PATCH /api/appeal-decisions/<id>`; `GET /api/appeal-detections`; `GET/PUT /api/appeal-detections/<id>`.
 
 ---
 

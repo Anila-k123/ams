@@ -177,7 +177,10 @@ def upcoming_hearings(advocate, today=None):
               .filter(advocate_id=advocate.id, date__gte=today, date__lte=end,
                       event_type__iexact='HEARING')
               .order_by('date'))
+    from cases.closure import is_closed
     for ev in events:
+        if ev.case_id and ev.case and is_closed(ev.case.status):
+            continue                                       # closed case: decided, or no longer ours
         case_no = ev.case.case_number if ev.case_id and ev.case else 'N/A'
         when = 'today' if ev.date == today else ev.date.strftime('%d %b %Y')
         subject = 'Hearing {}: {}'.format(when, case_no)

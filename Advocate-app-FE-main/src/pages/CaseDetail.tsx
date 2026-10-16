@@ -16,10 +16,11 @@ import { useToast } from "../contexts/ToastContext";
 import { usePermission } from "../contexts/PermissionContext";
 import { useLoading } from "../contexts/LoadingContext";
 import { formatCurrency } from "../utils/formatCurrency";
-import { persistCourtRecord } from "./AddCase";
 import { Button, Chip, StatusChip, Avatar, Panel, EmptyState, Skel, Spinner, PopMenu, Icon, titleCase, type MenuItem, type Tone } from "../ui/kit";
 import { TextField, TextArea, SelectField, Field, Check, Tabs, SearchInput } from "../ui/forms";
 import { Modal, confirm } from "../ui/overlays";
+import CloseCaseDialog from "../components/CloseCaseDialog";
+import { closeReasonLabel, isClosedStatus } from "../constants/caseClosure";
 import "../ui/pages/casedetail.css";
 import { copyText } from "../utils/clipboard";
 import DuplicateEventDialog from "../components/DuplicateEventDialog";
@@ -337,6 +338,10 @@ export default function CaseDetail() {
   const [courtRecordLoading, setCourtRecordLoading] = useState(false);
   const [courtRecordLoaded, setCourtRecordLoaded] = useState(false);
   const [orderDlBusy, setOrderDlBusy] = useState(-1);
+  // Orders the background sync found in the last week (courtsearch/order_sync.py), and when it last looked.
+  const [newOrders, setNewOrders] = useState<any[]>([]);
+  const [ordersCheckedAt, setOrdersCheckedAt] = useState<string | null>(null);
+  const isNewOrder = (o: any) => newOrders.some((n) => (n.date || "") === (o.date || "") && String(n.number || "") === String(o.number || ""));
 
   const [hearingBizModal, setHearingBizModal] = useState(null);
   const [hearingViewBusy, setHearingViewBusy] = useState(null);
@@ -494,6 +499,28 @@ export default function CaseDetail() {
     }
   };
 
+  // Status by hand (anyone who can edit the case): closing asks why (cases/closure.py), reopening confirms,
+  // since both change what PactPro keeps doing for the case (court sync, alerts, client emails).
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closeBusy, setCloseBusy] = useState(false);
+  const changeStatus = async (v: string) => {
+    if (isClosedStatus(v) && !isClosedStatus(summary.status)) { setCloseOpen(true); return; }
+    if (!isClosedStatus(v) && isClosedStatus(summary.status)
+        && !(await confirmAsync("Reopen this case? Court monitoring, reminders and alerts start again.", "Reopen case?", "Reopen"))) return;
+    await patchCase({ status: v });
+    loadMonitoring();
+  };
+  const closeWith = async (reason: string, note: string) => {
+    setCloseBusy(true);
+    try {
+      await patchCase({ status: isClosedStatus(summary.status) ? summary.status : "Closed", closedReason: reason, closedNote: note });
+      setCloseOpen(false);
+      loadMonitoring();
+    } catch { /* patchCase showed the error */ } finally {
+      setCloseBusy(false);
+    }
+  };
+
   // ---------- Header actions: archive / transfer ----------
   const archiveCase = async () => {
     if (!(await confirmAsync("Archive this case? It will be hidden from the workspace (you can restore it from the Cases list).", "Archive this case?", "Archive case"))) return;
@@ -548,29 +575,42 @@ export default function CaseDetail() {
 
   // Re-scrape the court record and refresh the stored copy (new hearings/orders/
   // disposal, or a wrong scrape). Can take a while — it re-fetches full detail.
-  // ---- Link a manual case to its court record (by CNR) ----
+  // ---- Link a manual case to its court record ----
   // A case entered by hand (a CNR not assigned yet, the scraper down) can pick
   // up its court record later without being re-created: the record, parties
   // and upcoming hearings are added to THIS case, keeping its notes, tasks and
-  // bills. Same steps as an import (AddCase.persistCourtRecord).
+  // bills. The order sync also links cases with a CNR on its own, once a day.
+  // Link a case entered by hand to its court record (courtsearch/linking.py): by CNR (District / High
+  // Court) or by diary number (Supreme Court). The server looks it up, shows what it found, then links it.
   const [linkOpen, setLinkOpen] = useState(false);
+  const [linkBy, setLinkBy] = useState<"cnr" | "diary">("cnr");
   const [linkCnr, setLinkCnr] = useState("");
+  const [linkDiary, setLinkDiary] = useState({ no: "", year: "" });
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkError, setLinkError] = useState("");
-  const [linkFound, setLinkFound] = useState<any>(null);   // {courtId, record}
+  const [linkFound, setLinkFound] = useState<any>(null);   // {courtId, summary}
+  // Is the case monitored (has a court record)? null while loading. With its profile, for the header mark.
+  const [monitored, setMonitored] = useState<boolean | null>(null);
+  const [profileInfo, setProfileInfo] = useState<{ matterType?: string; cnr?: string; closedReason?: string; closedNote?: string; closedOn?: string } | null>(null);
+  const loadMonitoring = useCallback(() => {
+    api.get(`/api/courtsearch/imported-records?caseId=${id}&light=1`).then(() => setMonitored(true)).catch(() => setMonitored(false));
+    api.get(`/api/workspace/cases/${id}/profile`).then((r) => setProfileInfo(r.data || {})).catch(() => setProfileInfo({}));
+  }, [id]);
+  useEffect(() => { loadMonitoring(); }, [loadMonitoring]);
   const openLink = () => {
-    setLinkCnr(""); setLinkError(""); setLinkFound(null); setLinkOpen(true);
+    setLinkBy("cnr"); setLinkCnr(profileInfo?.cnr || ""); setLinkDiary({ no: "", year: "" });
+    setLinkError(""); setLinkFound(null); setLinkOpen(true);
   };
+  const linkBody = (): Record<string, string> => (linkBy === "cnr"
+    ? { cnr: linkCnr.replace(/\s+/g, "").toUpperCase() }
+    : { diaryNo: linkDiary.no.trim(), diaryYear: linkDiary.year.trim() });
   const findCnr = async () => {
-    const cnr = linkCnr.replace(/\s+/g, "").toUpperCase();
-    if (!/^[A-Z]{4}\d{12}$/.test(cnr)) { setLinkError("A CNR is 16 characters: 4 letters then 12 digits."); return; }
+    if (linkBy === "cnr" && !/^[A-Z]{4}\d{12}$/.test(linkBody().cnr || "")) { setLinkError("A CNR is 16 characters: 4 letters then 12 digits."); return; }
+    if (linkBy === "diary" && !(/^\d+$/.test(linkDiary.no.trim()) && /^\d{4}$/.test(linkDiary.year.trim()))) { setLinkError("Enter the diary number and its 4-digit year."); return; }
     setLinkBusy(true); setLinkError(""); setLinkFound(null);
     try {
-      const res = await api.post("/api/courtsearch/cnr", { cnr });
-      const cases = res.data?.cases || [];
-      if (!cases.length) { setLinkError("The court has no case with that CNR."); return; }
-      setLinkFound({ courtId: res.data?.courtId === "ecourts_hc" ? "ecourts_hc" : "ecourts_dc",
-                     record: { cases }, cnr });
+      const res = await api.post(`/api/courtsearch/cases/${id}/link`, linkBody());
+      setLinkFound(res.data);
     } catch (err: any) {
       setLinkError(err?.response?.data?.error || "Could not reach the court. Try again shortly.");
     } finally {
@@ -581,13 +621,10 @@ export default function CaseDetail() {
     if (!linkFound) return;
     setLinkBusy(true); setLinkError("");
     try {
-      const existing = await api.get(`/api/workspace/cases/${id}/parties`).then((r) => r.data || []).catch(() => []);
-      await persistCourtRecord(Number(id), linkFound.courtId, { cnr: linkFound.cnr }, linkFound.record,
-                               existing.map((p: any) => p.name || ""));
-      await api.put(`/api/workspace/cases/${id}/profile`, { cnr: linkFound.cnr });
+      await api.post(`/api/courtsearch/cases/${id}/link`, { ...linkBody(), confirm: true });
       setLinkOpen(false);
-      toast.success("Linked to the court record. Parties and upcoming hearings were added.");
-      fetchCourtRecord(); fetchParties(); fetchEvents(); fetchSummary();
+      toast.success("Linked to the court record. Parties and upcoming hearings were added, and new orders will now come in automatically.");
+      fetchCourtRecord(); fetchParties(); fetchEvents(); fetchSummary(); loadMonitoring();
     } catch (err: any) {
       setLinkError(err?.response?.data?.error || "Could not link the court record.");
     } finally {
@@ -1002,6 +1039,8 @@ export default function CaseDetail() {
       setCourtRecord(res.data?.raw || null);
       setCourtRecordComplex(res.data?.query?.court_complex || "");
       setCourtRecordCourtId(res.data?.courtId || "");
+      setNewOrders(res.data?.newOrders || []);
+      setOrdersCheckedAt(res.data?.checkedAt || null);
     } catch {
       setCourtRecord(null); // 404 = no imported record for this case
     } finally {
@@ -1273,6 +1312,9 @@ export default function CaseDetail() {
   const hearingEvents = (events || []).filter(
     (ev) => ev.eventType === "HEARING" && (!ev.date || ev.date >= _todayISO));
   const otherEvents = (events || []).filter((ev) => ev.eventType !== "HEARING");
+  // Litigation (or not-yet-filed) cases with no court record: orders and hearings aren't fetched for them.
+  const notMonitored = monitored === false && profileInfo !== null && profileInfo.matterType !== "non_litigation"
+    && !/closed|disposed|decided/i.test(summary.status || "");
   const orders = extractOrders(courtRecord);
   const uploadedOrders = (docs || []).filter((d) => (d.category || "").toLowerCase() === "order");
   const transferTarget = advocates.find((a) => String(a.id) === String(transferTo));
@@ -1508,6 +1550,26 @@ export default function CaseDetail() {
         )}
         <div className="row wrap" style={{ marginTop: "var(--s4)", gap: 6 }}>
           <StatusChip status={summary.status || "—"} />
+          {isClosedStatus(summary.status) && profileInfo !== null && (
+            profileInfo.closedReason
+              ? <span className="chip" title={[profileInfo.closedNote, profileInfo.closedOn && `Closed on ${profileInfo.closedOn}`].filter(Boolean).join(" · ") || undefined}>
+                  {closeReasonLabel(profileInfo.closedReason)}
+                </span>
+              : canEdit
+                ? <button type="button" className="chip warn" onClick={() => setCloseOpen(true)}
+                    title="Say why it was closed: decided by the court keeps watching for appeals; the other reasons stop monitoring.">
+                    Closed: reason not recorded
+                  </button>
+                : <span className="chip">Closed: reason not recorded</span>
+          )}
+          {notMonitored && (
+            canEdit
+              ? <button type="button" className="chip warn" onClick={openLink}
+                  title={profileInfo?.cnr ? "PactPro will try to link it by its CNR within a day. Or link it now." : "Link it to its court record to get new orders and hearings automatically."}>
+                  <Icon name="link" size="sm" /> {profileInfo?.cnr ? "Linking by CNR…" : "Not monitored · Link to court"}
+                </button>
+              : <span className="chip warn" title="No court record linked: orders and hearings aren't fetched automatically.">Not monitored</span>
+          )}
           {(summary.tags || []).map((t) => (
             <span key={t.id} className={`tag${HOT_TAGS.includes(t.label) ? " hot" : ""}`}>
               {t.label}
@@ -1561,7 +1623,7 @@ export default function CaseDetail() {
                   <dt>Case number</dt><dd className="mono">{summary.caseNumber}</dd>
                   <dt>Status</dt>
                   <dd><InlineEdit label="status" value={summary.status} display={<StatusChip status={summary.status || "—"} />} type="select" options={STATUS_SELECT}
-                    onSave={(v) => patchCase({ status: v })} /></dd>
+                    onSave={changeStatus} /></dd>
                   <dt>Case type</dt>
                   <dd><InlineEdit label="case type" value={summary.caseType} display={summary.caseType || "—"}
                     onSave={(v) => patchCase({ caseType: v })} /></dd>
@@ -1749,10 +1811,23 @@ export default function CaseDetail() {
           {activeTab === "orders" && (
             <div className="cs-sec-gap">
               <div className="row wrap">
-                <p className="muted small grow">Orders and judgments passed in this case. Court PDFs are fetched live from the court and downloaded to your device.</p>
+                <p className="muted small grow">
+                  Orders and judgments passed in this case. New ones are fetched from the court every 30 minutes in court hours and saved to the case.
+                  {ordersCheckedAt && <span className="faint"> Last checked {new Date(ordersCheckedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}.</span>}
+                </p>
                 {can("DOCUMENT_UPLOAD") && <Button size="sm" icon="upload" onClick={() => setShowUploadOrder(true)}>Upload order</Button>}
               </div>
               {courtRecordLoading && <Spinner label="Loading the court record" />}
+              {newOrders.length > 0 && (
+                <div className="callout info" role="status">
+                  <Icon name="bell" />
+                  <div>
+                    <b>New from the court{newOrders.length > 1 ? ` (${newOrders.length})` : ""}:</b>{" "}
+                    {newOrders.map((n) => n.label).join("; ")}.
+                    {newOrders.some((n) => n.documentId) ? " Saved below and shared with the client." : ""}
+                  </div>
+                </div>
+              )}
               {!courtRecordLoading && orders.length > 0 && (
                 <div className="table-wrap">
                   <table className="t">
@@ -1761,7 +1836,7 @@ export default function CaseDetail() {
                       {orders.map((o, i) => (
                         <tr key={i}>
                           <td className="mono small">{o.number || i + 1}</td>
-                          <td className="nowrap">{o.date || "—"}</td>
+                          <td className="nowrap">{o.date || "—"}{isNewOrder(o) && <> <span className="chip ok">New</span></>}</td>
                           <td className="small">{o.details || "—"}</td>
                           <td className="hide-sm small">{o.judge || "—"}</td>
                           <td className="right">
@@ -1786,7 +1861,7 @@ export default function CaseDetail() {
               )}
               {uploadedOrders.length > 0 && (
                 <div>
-                  <h3 style={{ fontSize: "var(--t-md)", marginBottom: "var(--s2)" }}>Uploaded orders</h3>
+                  <h3 style={{ fontSize: "var(--t-md)", marginBottom: "var(--s2)" }}>Saved orders</h3>
                   {docTable(uploadedOrders, "orders")}
                 </div>
               )}
@@ -2193,6 +2268,10 @@ export default function CaseDetail() {
         <DocumentSummaryModal doc={summaryDoc} onClose={() => setSummaryDoc(null)} canRegenerate={hasPermission("DOCUMENT_EDIT")} />
       )}
 
+      <CloseCaseDialog open={closeOpen} caseNumber={summary.caseNumber} busy={closeBusy}
+        initialReason={profileInfo?.closedReason || ""} initialNote={profileInfo?.closedNote || ""}
+        onCancel={() => setCloseOpen(false)} onConfirm={closeWith} />
+
       {/* ---------- Link to court record ---------- */}
       <Modal open={linkOpen} onClose={() => !linkBusy && setLinkOpen(false)} title="Link to court record" size="narrow"
         footer={<>
@@ -2202,17 +2281,38 @@ export default function CaseDetail() {
             : <Button variant="primary" icon="search" loading={linkBusy} onClick={findCnr} disabled={!linkCnr.trim()}>Find</Button>}
         </>}>
         <div className="stack" style={{ gap: "var(--s3)" }}>
-          <p className="muted small">For a case entered by hand: once it has a CNR, its court record (parties, hearings, orders) is added to this case. Notes, tasks, documents and bills stay as they are.</p>
-          <TextField label="CNR" className="mono" value={linkCnr} maxLength={16} autoFocus placeholder="16 characters, e.g. TNCH010015532025"
-            error={linkError || undefined}
-            onChange={(e) => { setLinkCnr(e.target.value.toUpperCase()); setLinkFound(null); setLinkError(""); }}
-            onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
+          <p className="muted small">For a case entered by hand: its court record (parties, hearings, orders) is added to this case, and from then on new orders and hearings come in automatically. Notes, tasks, documents and bills stay as they are.</p>
+          <div className="seg" role="group" aria-label="Find the case by">
+            <button type="button" aria-pressed={linkBy === "cnr"}
+              onClick={() => { setLinkBy("cnr"); setLinkFound(null); setLinkError(""); }}>CNR (District / High Court)</button>
+            <button type="button" aria-pressed={linkBy === "diary"}
+              onClick={() => { setLinkBy("diary"); setLinkFound(null); setLinkError(""); }}>Supreme Court diary no.</button>
+          </div>
+          {linkBy === "cnr" ? (
+            <TextField label="CNR" className="mono" value={linkCnr} maxLength={16} autoFocus placeholder="16 characters, e.g. TNCH010015532025"
+              hint="Printed on every order sheet and cause list."
+              error={linkError || undefined}
+              onChange={(e) => { setLinkCnr(e.target.value.toUpperCase()); setLinkFound(null); setLinkError(""); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
+          ) : (
+            <div className="cols" style={{ gridTemplateColumns: "2fr 1fr" }}>
+              <TextField label="Diary number" className="mono" inputMode="numeric" value={linkDiary.no} autoFocus
+                error={linkError || undefined}
+                onChange={(e) => { setLinkDiary((d) => ({ ...d, no: e.target.value.replace(/\D/g, "") })); setLinkFound(null); setLinkError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
+              <TextField label="Year" className="mono" inputMode="numeric" maxLength={4} value={linkDiary.year} placeholder="2025"
+                onChange={(e) => { setLinkDiary((d) => ({ ...d, year: e.target.value.replace(/\D/g, "") })); setLinkFound(null); setLinkError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !linkFound) findCnr(); }} />
+            </div>
+          )}
+          {linkBusy && !linkFound && <p className="faint xs">Asking the court: this can take a minute or two (the court sites are slow).</p>}
           {linkFound && (
             <div className="callout ok">
               <Icon name="ok" size="sm" />
               <div>
-                Found <strong className="mono">{linkFound.record.cases[0]?.case_number || linkFound.cnr}</strong>
-                {linkFound.record.cases[0]?.parties ? <> · {linkFound.record.cases[0].parties}</> : null}
+                Found in the <strong>{linkFound.summary?.court}</strong>: <strong className="mono">{linkFound.summary?.caseNumber || "—"}</strong>
+                {linkFound.summary?.title ? <div>{linkFound.summary.title}</div> : null}
+                {linkFound.summary?.status ? <div className="muted small">{linkFound.summary.status}</div> : null}
                 <div className="muted small">Check this is the same case, then link it.</div>
               </div>
             </div>

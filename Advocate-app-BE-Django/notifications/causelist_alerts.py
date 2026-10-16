@@ -67,7 +67,8 @@ def causelist_alerts(on, court=None, labels=None):
     ymd = int(on.strftime('%y%m%d'))
     since = timezone.now() - datetime.timedelta(days=60)
 
-    cases = list(Case.objects.filter(deleted=False).select_related('advocate'))
+    from cases.closure import is_closed
+    cases = [c for c in Case.objects.filter(deleted=False).select_related('advocate') if not is_closed(c.status)]
     identities = identities_for(cases)
 
     alert_perm = case_alert_permission()

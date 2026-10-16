@@ -6,6 +6,9 @@ they start at sign-in and come back if they stop:
     PactPro Scheduler   manage.py run_scheduler: sends queued notifications
                         every minute and raises hearing / overdue-invoice /
                         task-deadline reminders every 15 minutes
+    PactPro Order Sync  manage.py run_order_sync: new court orders for imported cases,
+                        every 30 minutes Mon-Sat 10:00-18:00 and at 19:30; saved to
+                        the case and announced to the team and the client
     PactPro Cause List Sync
                         scripts\sync_causelist.bat at 06:30 and 12:30 daily:
                         fetches today's and tomorrow's cause lists (a run, not
@@ -38,7 +41,9 @@ $services = @(
     @{ Task = 'PactPro Scraper'; Name = 'Scraper'; WorkDir = $ScraperDir; Exe = 'venv\Scripts\python.exe'
        Arguments = '-m uvicorn api.main:app --host 127.0.0.1 --port 8000'; Match = 'uvicorn.*api\.main:app' },
     @{ Task = 'PactPro Scheduler'; Name = 'Scheduler'; WorkDir = $be; Exe = 'venv\Scripts\python.exe'
-       Arguments = 'manage.py run_scheduler'; Match = 'manage\.py run_scheduler' }
+       Arguments = 'manage.py run_scheduler'; Match = 'manage\.py run_scheduler' },
+    @{ Task = 'PactPro Order Sync'; Name = 'OrderSync'; WorkDir = $be; Exe = 'venv\Scripts\python.exe'
+       Arguments = 'manage.py run_order_sync'; Match = 'manage\.py run_order_sync' }
 )
 
 # The process a task looks after, and its keepalive wrapper (by command line).
@@ -86,7 +91,7 @@ foreach ($svc in $services) {
 if (Get-ScheduledTask -TaskName $syncTask -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $syncTask -Confirm:$false
 }
-if ($Uninstall) { "Removed all three tasks and stopped their processes."; return }
+if ($Uninstall) { "Removed all the PactPro tasks and stopped their processes."; return }
 
 foreach ($svc in $services) {
     if (-not (Test-Path (Join-Path $svc.WorkDir $svc.Exe))) {

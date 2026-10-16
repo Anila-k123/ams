@@ -13,6 +13,7 @@ import { usePageModal } from "../utils/pageModal";
 import { Button, Chip, StatusChip, EmptyState, Spinner, PageHead, PopMenu, Icon, type MenuItem } from "../ui/kit";
 import { TextField, TextArea, SelectField, SearchInput, Segmented, FilterChip } from "../ui/forms";
 import { Modal, confirm } from "../ui/overlays";
+import { CLOSE_REASONS, isClosedStatus } from "../constants/caseClosure";
 import { DataTable, type Column } from "../ui/DataTable";
 import "../ui/pages/cases.css";
 import { DOCUMENT_ACCEPT } from "../utils/fileTypes";
@@ -197,6 +198,10 @@ function Cases() {
       setCaseNumberError(value.length !== 16 ? "Case Number must be exactly 16 digits." : "");
     }
   };
+  // Closing a case here asks why too (cases/closure.py): it decides whether PactPro keeps watching the court.
+  const [editOrigStatus, setEditOrigStatus] = useState("");
+  const [closing, setClosing] = useState({ reason: "", note: "" });
+  const closingNow = !!editCaseId && isClosedStatus(newCase.status) && !isClosedStatus(editOrigStatus);
   const handleChange = (e: any) => setField(e.target.name, e.target.value);
 
   // ---------------- UPDATE CASE ----------------
@@ -205,6 +210,7 @@ function Cases() {
     if (!token) { setErrorMessage("Please login first."); return; }
     if (!newCase.courtLevel || !newCase.status) { setErrorMessage("Please select the court level and status."); return; }
     if (!newCase.clientId) { setErrorMessage("Please choose a client for this case."); return; }
+    if (closingNow && !closing.reason) { setErrorMessage("Say why the case is being closed."); return; }
     if (newCase.caseNumber.length !== 16) {
       setCaseNumberError("Case Number must be exactly 16 digits.");
       return;
@@ -214,6 +220,7 @@ function Cases() {
       ...newCase,
       amount: newCase.amount ? parseFloat(newCase.amount) : 0,
       client: { id: Number(newCase.clientId) },
+      ...(closingNow ? { closedReason: closing.reason, closedNote: closing.note } : {}),
     };
 
     try {
@@ -246,6 +253,8 @@ function Cases() {
   };
 
   const handleEdit = (caseData: any) => {
+    setEditOrigStatus(caseData.status || "");
+    setClosing({ reason: "", note: "" });
     setNewCase({
       caseNumber: caseData.caseNumber || "",
       caseTitle: caseData.caseTitle || "",
@@ -562,6 +571,16 @@ function Cases() {
             onChange={(e) => setField("courtLevel", e.target.value)} />
           <SelectField label="Status" required value={newCase.status} placeholder="Select status" options={STATUSES}
             onChange={(e) => setField("status", e.target.value)} />
+          {closingNow && (
+            <SelectField label="Why is it closed?" required value={closing.reason} placeholder="Select a reason"
+              options={CLOSE_REASONS.map((r) => ({ value: r.value, label: r.label }))}
+              hint={CLOSE_REASONS.find((r) => r.value === closing.reason)?.hint}
+              onChange={(e) => setClosing({ ...closing, reason: e.target.value })} />
+          )}
+          {closingNow && (
+            <TextField label={closing.reason === "other" ? "Note" : "Note (optional)"} required={closing.reason === "other"}
+              value={closing.note} maxLength={500} onChange={(e) => setClosing({ ...closing, note: e.target.value })} />
+          )}
           <SelectField label="Client" required value={clients.find((c) => c.id === Number(newCase.clientId)) ? String(newCase.clientId) : ""}
             placeholder="Select client" options={clients.map((c) => ({ value: String(c.id), label: `${c.name} — ${c.email}` }))}
             onChange={(e) => setNewCase({ ...newCase, clientId: e.target.value })} />
